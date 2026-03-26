@@ -384,6 +384,7 @@ if (wg) {
   
   // L1 description pass: ensure each visible cell has a narrative description
   if (state && state.world && state.world.cells) {
+    const worldSeed = state.world.seed || state.rng_seed || "default";
     for (const id in state.world.cells) {
       const cell = state.world.cells[id];
       if (!cell) continue;
@@ -394,8 +395,9 @@ if (wg) {
           mx: cell.mx ?? state.world.position.mx,
           my: cell.my ?? state.world.position.my,
           lx: cell.lx,
-          ly: cell.ly
-        });
+          ly: cell.ly,
+          id: id  // Use cell key as unique identifier
+        }, worldSeed);
         cell.description = desc;
         changes1.push({ op: "set", path: `/world/cells/${id}/description`, value: desc });
       }

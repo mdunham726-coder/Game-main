@@ -364,6 +364,61 @@ function detectBiomeKeyword(desc) {
   return "rural";
 }
 
+/**
+ * Detect world tone/setting from player's world prompt
+ * Uses semantic understanding to infer mood, atmosphere, tech level, condition of world
+ * @param {string} worldPrompt - Player's world description
+ * @returns {Promise<string>} Descriptive tone/setting for narrative guidance
+ */
+async function detectWorldToneWithDeepSeek(worldPrompt) {
+  if (!process.env.DEEPSEEK_API_KEY || !axios) {
+    console.log('[WORLD] DeepSeek unavailable for tone detection');
+    return "A functional, atmospheric world";
+  }
+
+  try {
+    const messages = [
+      {
+        role: "system",
+        content: "You are a creative writing assistant. Based on a player's world description, infer the mood, atmosphere, and setting tone. Respond with 1-2 sentences describing the world's character, technology level, condition (maintained/abandoned/thriving), and emotional tone."
+      },
+      {
+        role: "user",
+        content: `Player wants to play in: "${worldPrompt}"\n\nDescribe in 1-2 sentences the tone and character this world should have. Focus on: atmosphere, era/tech level, whether places are maintained or decaying, dominant emotions/mood.`
+      }
+    ];
+
+    const resp = await axios.post(
+      "https://api.deepseek.com/v1/chat/completions",
+      {
+        model: "deepseek-chat",
+        messages,
+        temperature: 0.5,  // Some variation to get natural tone descriptions
+        max_tokens: 100
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 8000
+      }
+    );
+
+    const toneResponse = resp?.data?.choices?.[0]?.message?.content?.trim();
+    
+    if (toneResponse && toneResponse.length > 0) {
+      console.log(`[WORLD] Detected world tone: "${toneResponse}"`);
+      return toneResponse;
+    }
+
+    return "A functional, atmospheric world";
+  } catch (err) {
+    console.log(`[WORLD] Tone detection failed (${err?.message}), using default`);
+    return "A functional, atmospheric world";
+  }
+}
+
 // --- Settlement footprint + population data ---
 const SETTLEMENT_SIZES = {
   outpost:    { tier: 0, footprint: 1, width: 3, height: 3, buildings: 2, population_min: 5, population_max: 15 },
@@ -376,7 +431,12 @@ const SETTLEMENT_SIZES = {
 
 // --- L0: macro region logic (same) ---
 async function generateWorldFromDescription(desc, worldSeed) {
-  const biome = await detectBiomeWithDeepSeek(desc);
+  // Detect both biome and tone in parallel for efficiency
+  const [biome, worldTone] = await Promise.all([
+    detectBiomeWithDeepSeek(desc),
+    detectWorldToneWithDeepSeek(desc)
+  ]);
+  
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
   const l0s = DEFAULTS.L0_SIZE;
   const macroCells = {};
@@ -389,6 +449,7 @@ async function generateWorldFromDescription(desc, worldSeed) {
   return {
     seed: worldSeed,
     biome,
+    worldTone,  // NEW: Semantic tone for narrative guidance
     palette,
     l0_size: l0s,
     cells: macroCells,
@@ -470,10 +531,12 @@ function exposeSitesInWindow(state, worldData, posLx, posLy, posMx, posMy) {
 }
 
 // --- L1: feature description (same) ---
-function generateL1FeatureDescription(site) {
+function generateL1FeatureDescription(site, worldSeed = "default") {
   if (!site) return "An empty space";
   const st = site.subtype || "settlement";
-  return `A ${st} called ${generateSettlementName(site.id, "default")}`;
+  // Use cell ID/coordinates for unique settlement names per location
+  const siteId = site.id || `${site.mx || 0},${site.my || 0},${site.lx || 0},${site.ly || 0}`;
+  return `A ${st} called ${generateSettlementName(siteId, worldSeed)}`;
 }
 
 // =============================================================================
@@ -649,6 +712,7 @@ module.exports = {
   generateL3Building, 
   hashSeedFromLocationID, 
   makeLCG,
+  detectWorldToneWithDeepSeek,  // NEW: Export tone detection for external use if needed
   // PHASE 3C: New exports
   generateSettlementName,
   getNPCCountForSettlement,

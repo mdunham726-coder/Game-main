@@ -727,12 +727,13 @@ app.post('/narrate', async (req, res) => {
         const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, gameState.rng_seed || 0);
         if (worldData) {
           gameState.world.macro_biome = worldData.biome;
+          gameState.world.world_tone = worldData.worldTone;  // NEW: Store semantic tone
           gameState.world.macro_palette = worldData.palette;
           gameState.world.seed = worldData.seed;
           gameState.world.l0_size = worldData.l0_size;
           gameState.world.cells = worldData.cells;
           if (!gameState.world.sites) gameState.world.sites = worldData.sites;
-          console.log('[NARRATE] First turn: Set biome to', worldData.biome);
+          console.log('[NARRATE] First turn: Set biome to', worldData.biome, '| Tone:', worldData.worldTone);
         }
       }
       
@@ -944,11 +945,16 @@ app.post('/narrate', async (req, res) => {
       model: 'deepseek-chat',
       messages: [{
         role: 'user',
-        content: `You are narrating an interactive roguelike game driven by a procedural engine.
-- Translate engine output (terrain types, cell descriptions, entity lists) into vivid, coherent prose
-- Maintain environmental consistency: terrain types define what the player can see and interact with
-- Build narrative tension through descriptions of current terrain and environmental features
-- React to player action by describing immediate sensory consequences within the game world
+        content: `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
+
+WORLD TONE & CHARACTER:
+${gameState?.world?.world_tone || "A functional, atmospheric world"}
+
+CORE INSTRUCTIONS:
+- Let the world tone guide your descriptions and atmosphere
+- Expand on the location description with vivid sensory details matching the tone
+- React to the player's action naturally within the world
+- Only describe what's present in the location or adjacently mentioned
 
 CURRENT LOCATION:
 ${scene.currentCell.description}
@@ -965,12 +971,11 @@ NPCs PRESENT: ${scene.npcs && scene.npcs.length > 0 ? JSON.stringify(scene.npcs)
 
 Player action: "${String(action).replace(/"/g, '\\"')}"
 
-CONSTRAINTS:
-- If the player input is in parentheses (OOC), break character immediately and answer their technical question directly
-- Narrate ONLY what the player can see based on current location and adjacent areas
-- Do NOT invent dungeons, doors, or architecture not mentioned above
-- Do NOT reference locations you weren't provided
-- Write a full paragraph of immersive description
+NARRATION TASK:
+- Write a vivid paragraph describing the player's current surroundings and the result of their action
+- Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
+- Include sensory details (sights, sounds, smells, textures) that match the tone
+- Do not invent landmarks, creatures, or locations not described above
 
 DEBUG_FOOTER:
 At the end of your narration, append this metadata block:
