@@ -29,6 +29,9 @@
   <div id="loading">Loading narrative...</div>
 
   <script>
+    // Store session ID across page loads
+    let currentSessionId = null;
+
     async function submitAction() {
       const action = document.getElementById('actionInput').value;
       if (!action) return;
@@ -36,13 +39,26 @@
       document.getElementById('loading').style.display = 'block';
       
       try {
+        const headers = { 'Content-Type': 'application/json' };
+        // Send sessionId if we have one (all turns after first)
+        if (currentSessionId) {
+          headers['x-session-id'] = currentSessionId;
+        }
+
         const response = await fetch('/narrate', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: headers,
           body: JSON.stringify({ action: action })
         });
         
         const data = await response.json();
+        
+        // Store sessionId from response (important for subsequent turns!)
+        if (data.sessionId) {
+          currentSessionId = data.sessionId;
+          console.log('[SESSION] SessionId:', currentSessionId);
+        }
+
 const narrative = data.narrative || data.error || 'No response from server';
 document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
 document.getElementById('actionInput').value = '';
