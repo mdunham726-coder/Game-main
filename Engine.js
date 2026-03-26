@@ -145,47 +145,52 @@ function streamL1Cells(state) {
   const streamR = state.world.stream?.R || 2;
   const l1w = state.world.l1_default?.w || 12;
   const l1h = state.world.l1_default?.h || 12;
+  const l0w = state.world.l0_size?.w || 8;
+  const l0h = state.world.l0_size?.h || 8;
   
   console.log(`[STREAM] Generating L1 cells around position: M${pos.mx},${pos.my} L${pos.lx},${pos.ly} (radius: ${streamR})`);
 
-  // Find L0 macro cell to determine biome
-  const l0Key = `L0:${pos.mx},${pos.my}`;
-  const l0Cell = state.world.cells[l0Key];
-  let biome = "rural"; // Default fallback
-  
-  if (l0Cell && l0Cell.biome) {
-    biome = l0Cell.biome;
-    console.log(`[STREAM] Using biome from L0 cell: ${biome}`);
-  } else if (state.world.macro_biome) {
-    biome = state.world.macro_biome;
-    console.log(`[STREAM] Using world macro biome: ${biome}`);
-  } else {
-    console.log(`[STREAM] No biome found, using default: ${biome}`);
-  }
-
-  // Get terrain types for this biome
-  const terrainArray = BIOME_TERRAIN_TYPES[biome] || BIOME_TERRAIN_TYPES["rural"];
-  console.log(`[STREAM] Available terrain types: ${terrainArray.join(', ')}`);
-
   let cellsGenerated = 0;
 
-  // Generate cells in streaming radius around player
+  // Generate cells in streaming radius around player (including adjacent macro cells)
   for (let dx = -streamR; dx <= streamR; dx++) {
     for (let dy = -streamR; dy <= streamR; dy++) {
-      const lx = pos.lx + dx;
-      const ly = pos.ly + dy;
+      let lx = pos.lx + dx;
+      let ly = pos.ly + dy;
+      let mx = pos.mx;
+      let my = pos.my;
       
-      // Check L1 grid boundaries
-      if (lx < 0 || lx >= l1w || ly < 0 || ly >= l1h) {
-        continue;
-      }
+      // Handle L1 grid boundaries by wrapping to adjacent macro cells
+      if (lx < 0) { mx -= 1; lx = l1w - 1; }
+      if (lx >= l1w) { mx += 1; lx = 0; }
+      if (ly < 0) { my -= 1; ly = l1h - 1; }
+      if (ly >= l1h) { my += 1; ly = 0; }
+      
+      // Wrap macro coordinates around L0 grid
+      mx = ((mx % l0w) + l0w) % l0w;
+      my = ((my % l0h) + l0h) % l0h;
 
-      const cellKey = `L1:${pos.mx},${pos.my}:${lx},${ly}`;
+      const cellKey = `L1:${mx},${my}:${lx},${ly}`;
       
       // Skip if cell already exists
       if (state.world.cells[cellKey]) {
         continue;
       }
+
+      // Find biome for this macro cell
+      const l0Key = `L0:${mx},${my}`;
+      const l0Cell = state.world.cells[l0Key];
+      let biome = "rural"; // Default fallback
+      
+      if (l0Cell && l0Cell.biome) {
+        biome = l0Cell.biome;
+      } else if (state.world.macro_biome && mx === pos.mx && my === pos.my) {
+        // Only use world macro_biome for the player's current macro cell
+        biome = state.world.macro_biome;
+      }
+
+      // Get terrain types for this biome
+      const terrainArray = BIOME_TERRAIN_TYPES[biome] || BIOME_TERRAIN_TYPES["rural"];
 
       // Randomly select terrain type from biome palette
       const randomIndex = Math.floor(Math.random() * terrainArray.length);
@@ -196,15 +201,15 @@ function streamL1Cells(state) {
         type: terrainType,
         subtype: "",
         biome: biome,
-        mx: pos.mx,
-        my: pos.my,
+        mx: mx,
+        my: my,
         lx: lx,
         ly: ly,
         description: "" // Will be filled by L1 description pass
       };
 
       cellsGenerated++;
-      console.log(`[STREAM] Generated cell ${cellKey}: ${terrainType}`);
+      console.log(`[STREAM] Generated cell ${cellKey}: ${terrainType} (biome: ${biome})`);
     }
   }
 
