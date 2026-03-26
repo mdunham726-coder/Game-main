@@ -1,6 +1,13 @@
 // WorldGen.js — Phase 3C: Enhanced with NPC persistence, settlement metadata, and quest integration
 const crypto = require('crypto');
 
+let axios = null;
+try {
+  axios = require('axios');
+} catch (e) {
+  // axios will be validated at call-time
+}
+
 // --- Constants / Defaults (must match Engine/ActionProcessor) ---
 const WORLD_WRAP = false;
 const DEFAULTS = {
@@ -39,7 +46,7 @@ const TERRAIN_TYPES = {
 
 // Keyword matching for world descriptions (9 simple biomes)
 const BIOME_KEYWORDS = {
-  urban: ["city", "town", "urban", "street", "building", "taco bell", "store", "shop", "modern", "2025", "2024", "mall", "apartment"],
+  urban: ["city", "town", "urban", "street", "building", "taco bell", "store", "shop", "modern", "2025", "2024", "mall", "apartment", "paperboy", "newspaper", "19", "20", "downtown", "office", "industrial"],
   rural: ["farm", "village", "countryside", "pastoral", "field", "barn", "cottage", "hamlet", "ranch"],
   forest: ["forest", "woods", "trees", "grove", "woodland", "timber"],
   desert: ["desert", "sand", "dunes", "dry", "arid", "scorching", "wasteland", "barren", "sahara"],
@@ -287,8 +294,69 @@ function makeLCG(seed0){
   }};
 }
 
-// --- BIOME DETECTION (moved up) ---
-function detectBiome(desc) {
+// --- BIOME DETECTION: Use DeepSeek for semantic understanding, fallback to keywords ---
+
+/**
+ * Call DeepSeek to classify the world biome from player's world prompt
+ * Returns one of: urban, rural, forest, desert, tundra, jungle, coast, mountain, wetland
+ */
+async function detectBiomeWithDeepSeek(worldPrompt) {
+  if (!process.env.DEEPSEEK_API_KEY || !axios) {
+    // Silently fall back to keyword matching if API unavailable
+    console.log('[WORLD] DeepSeek unavailable, using keyword fallback');
+    return detectBiomeKeyword(worldPrompt);
+  }
+
+  try {
+    const messages = [
+      {
+        role: "system",
+        content: "You are a world-building assistant. Classify the world biome from a player's description. Respond with ONLY one biome name: urban, rural, forest, desert, tundra, jungle, coast, mountain, or wetland."
+      },
+      {
+        role: "user",
+        content: `Player wants: "${worldPrompt}"\n\nWhat biome should this world be? Respond with only the biome name.`
+      }
+    ];
+
+    const resp = await axios.post(
+      "https://api.deepseek.com/v1/chat/completions",
+      {
+        model: "deepseek-chat",
+        messages,
+        temperature: 0,
+        max_tokens: 20
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 8000
+      }
+    );
+
+    const biomeResponse = resp?.data?.choices?.[0]?.message?.content?.toLowerCase().trim();
+    const validBiomes = ['urban', 'rural', 'forest', 'desert', 'tundra', 'jungle', 'coast', 'mountain', 'wetland'];
+    
+    if (validBiomes.includes(biomeResponse)) {
+      console.log(`[WORLD] DeepSeek detected biome: ${biomeResponse} from "${worldPrompt}"`);
+      return biomeResponse;
+    }
+
+    // If response is invalid, fall back to keyword matching
+    console.log(`[WORLD] DeepSeek returned invalid biome "${biomeResponse}", using keyword fallback`);
+    return detectBiomeKeyword(worldPrompt);
+  } catch (err) {
+    console.log(`[WORLD] DeepSeek call failed (${err?.message}), using keyword fallback`);
+    return detectBiomeKeyword(worldPrompt);
+  }
+}
+
+/**
+ * Fallback: Quick keyword matching for biome detection (used when DeepSeek unavailable)
+ */
+function detectBiomeKeyword(desc) {
   const lower = String(desc||"").toLowerCase();
   for (const [biome, kws] of Object.entries(BIOME_KEYWORDS)) {
     if (kws.some(kw => lower.includes(kw))) return biome;
@@ -307,8 +375,8 @@ const SETTLEMENT_SIZES = {
 };
 
 // --- L0: macro region logic (same) ---
-function generateWorldFromDescription(desc, worldSeed) {
-  const biome = detectBiome(desc);
+async function generateWorldFromDescription(desc, worldSeed) {
+  const biome = await detectBiomeWithDeepSeek(desc);
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
   const l0s = DEFAULTS.L0_SIZE;
   const macroCells = {};
