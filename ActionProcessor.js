@@ -102,6 +102,41 @@ function merchantRegenOnTurn(state, turnCount) {
 // ============================================================================
 function applyPlayerActions(state, actions, deltas, flags){
   const act = actions?.action;
+  
+  // ========== MOVEMENT ==========
+  if (act === 'move') {
+    const dir = String(actions?.dir || '').toLowerCase();
+    const pos = state?.world?.position;
+    if (!pos) return; // No position to move from
+    
+    const l1w = state?.world?.l1_default?.w || 12;
+    const l1h = state?.world?.l1_default?.h || 12;
+    
+    // Map direction to coordinate delta
+    const dirMap = { north: {dx:0, dy:-1}, south: {dx:0, dy:1}, east: {dx:1, dy:0}, west: {dx:-1, dy:0} };
+    const delta = dirMap[dir];
+    if (!delta) return; // Invalid direction
+    
+    // Calculate new position
+    let newLx = pos.lx + delta.dx;
+    let newLy = pos.ly + delta.dy;
+    let newMx = pos.mx;
+    let newMy = pos.my;
+    
+    // Handle L1 grid wrapping (move to adjacent L0 macro cell if at boundary)
+    if (newLx < 0) { newMx -= 1; newLx = l1w - 1; }
+    if (newLx >= l1w) { newMx += 1; newLx = 0; }
+    if (newLy < 0) { newMy -= 1; newLy = l1h - 1; }
+    if (newLy >= l1h) { newMy += 1; newLy = 0; }
+    
+    // Update position in state
+    state.world.position = { mx: newMx, my: newMy, lx: newLx, ly: newLy };
+    deltas.push({ op:'set', path:'/world/position', value: state.world.position });
+    
+    console.log(`[ACTIONS] Move ${dir}: M${newMx},${newMy} L${newLx},${newLy}`);
+    return;
+  }
+  
   if (act === 'take'){
     // TODO: Implement take action logic
     // This should:
