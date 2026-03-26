@@ -958,11 +958,25 @@ app.post('/narrate', async (req, res) => {
   console.log('[narrate] scene:', JSON.stringify(scene, null, 2));
 
   try {
-    const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-      model: 'deepseek-chat',
-      messages: [{
-        role: 'user',
-        content: `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
+    // Build safe narration prompt with guards against undefined values
+    let nearbyStr = '';
+    if (scene.nearbyCells && Array.isArray(scene.nearbyCells)) {
+      nearbyStr = scene.nearbyCells
+        .filter(c => c && c.dir)
+        .map(c => `${c.dir}: ${c.description || 'Unknown'}`)
+        .join('\n');
+    } else {
+      nearbyStr = 'North: Unknown\nSouth: Unknown\nEast: Unknown\nWest: Unknown';
+    }
+
+    let npcsStr = '(None visible)';
+    if (scene.npcs && Array.isArray(scene.npcs) && scene.npcs.length > 0) {
+      npcsStr = JSON.stringify(scene.npcs.slice(0, 3));
+    }
+
+    let invStr = JSON.stringify(scene.inventory || []);
+
+    const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
 WORLD TONE & CHARACTER:
 ${gameState?.world?.world_tone || "A functional, atmospheric world"}
@@ -974,17 +988,14 @@ CORE INSTRUCTIONS:
 - Only describe what's present in the location or adjacently mentioned
 
 CURRENT LOCATION:
-${scene.currentCell.description}
-(Terrain: ${scene.currentCell.type}/${scene.currentCell.subtype})
+${scene.currentCell?.description || 'An empty space'}
+(Terrain: ${scene.currentCell?.type || 'void'}/${scene.currentCell?.subtype || 'unknown'})
 
 ADJACENT AREAS:
-North: ${scene.nearbyCells.find(c => c.dir === 'North')?.description || 'Unknown'}
-South: ${scene.nearbyCells.find(c => c.dir === 'South')?.description || 'Unknown'}
-East: ${scene.nearbyCells.find(c => c.dir === 'East')?.description || 'Unknown'}
-West: ${scene.nearbyCells.find(c => c.dir === 'West')?.description || 'Unknown'}
+${nearbyStr}
 
-INVENTORY: ${JSON.stringify(scene.inventory)}
-NPCs PRESENT: ${scene.npcs && scene.npcs.length > 0 ? JSON.stringify(scene.npcs) : 'None'}
+INVENTORY: ${invStr}
+NPCs PRESENT: ${npcsStr}
 
 Player action: "${String(action).replace(/"/g, '\\"')}"
 
@@ -992,17 +1003,15 @@ NARRATION TASK:
 - Write a vivid paragraph describing the player's current surroundings and the result of their action
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
-- Do not invent landmarks, creatures, or locations not described above
+- Do not invent landmarks, creatures, or locations not described above`;
 
-DEBUG_FOOTER:
-At the end of your narration, append this metadata block:
----DEBUG---
-current_cell: ${scene.currentCell.type}/${scene.currentCell.subtype}
-cell_description: ${scene.currentCell.description.substring(0, 50)}...
-adjacent_cells: [${scene.nearbyCells.map(c => c.dir + ':' + c.type).join(', ')}]
-npcs_count: ${scene.npcs.length}
-inventory_count: ${scene.inventory.length}
----END_DEBUG---`
+    console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
+
+    const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+      model: 'deepseek-chat',
+      messages: [{
+        role: 'user',
+        content: narrationContent
       }],
       temperature: 0.7
     }, {
@@ -1021,7 +1030,6 @@ inventory_count: ${scene.inventory.length}
       }
     } catch (parseErr) {
       console.error('Failed to parse DeepSeek response:', parseErr.message);
-      console.error('Response data:', JSON.stringify(response?.data).substring(0, 200));
     }
 
     return res.json({ 
@@ -1034,7 +1042,7 @@ inventory_count: ${scene.inventory.length}
       debug 
     });
   } catch (err) {
-    console.error('DeepSeek narration error:', err.message, 'Stack:', err.stack);
+    console.error('[NARRATE] Error:', err.message);
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative: "The engine encountered an error generating narration. Please try again.",
