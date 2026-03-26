@@ -963,7 +963,7 @@ West: ${scene.nearbyCells.find(c => c.dir === 'West')?.description || 'Unknown'}
 INVENTORY: ${JSON.stringify(scene.inventory)}
 NPCs PRESENT: ${scene.npcs && scene.npcs.length > 0 ? JSON.stringify(scene.npcs) : 'None'}
 
-Player action: "${action}"
+Player action: "${String(action).replace(/"/g, '\\"')}"
 
 CONSTRAINTS:
 - If the player input is in parentheses (OOC), break character immediately and answer their technical question directly
@@ -987,10 +987,21 @@ inventory_count: ${scene.inventory.length}
       headers: {
         'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         'Content-Type': 'application/json'
-      }
+      },
+      timeout: 15000
     });
 
-    const narrative = response.data.choices[0].message.content;
+    // Safely extract narrative
+    let narrative = "The engine processes your action.";
+    try {
+      if (response?.data?.choices?.[0]?.message?.content) {
+        narrative = String(response.data.choices[0].message.content);
+      }
+    } catch (parseErr) {
+      console.error('Failed to parse DeepSeek response:', parseErr.message);
+      console.error('Response data:', JSON.stringify(response?.data).substring(0, 200));
+    }
+
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative, 
@@ -1001,15 +1012,15 @@ inventory_count: ${scene.inventory.length}
       debug 
     });
   } catch (err) {
-    console.error('DeepSeek error:', err.message);
+    console.error('DeepSeek narration error:', err.message, 'Stack:', err.stack);
     return res.json({ 
       sessionId: resolvedSessionId,
-      narrative: "The engine processes your action.",
+      narrative: "The engine encountered an error generating narration. Please try again.",
       state: gameState,
       engine_output: engineOutput,
       scene,
       diagnostics,
-      error: err.message,
+      error: `narration_failed: ${err.message}`,
       debug
     });
   }
