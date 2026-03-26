@@ -123,8 +123,11 @@ diagLog.innerHTML = `
       
       debugLoading.style.display = 'block';
       debugResponse.style.display = 'none';
+      debugResponse.innerHTML = '';
 
       try {
+        console.log('[FRONTEND] Sending request to /ask-deepseek...');
+        
         const response = await fetch('/ask-deepseek', {
           method: 'POST',
           headers: {
@@ -134,11 +137,14 @@ diagLog.innerHTML = `
           body: JSON.stringify({ question, debugLevel })
         });
 
+        console.log('[FRONTEND] Response status:', response.status);
         const data = await response.json();
+        console.log('[FRONTEND] Response data:', data);
 
         if (data.error) {
-          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">Error:</strong> ${data.message || data.error}`;
-        } else {
+          const errorMsg = data.details ? JSON.stringify(data.details, null, 2) : data.message;
+          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">❌ ${data.error}:</strong><br>${errorMsg}`;
+        } else if (data.response) {
           debugResponse.innerHTML = `
             <div style="margin-bottom: 10px; color: #4a90e2;"><strong>💭 DeepSeek Response:</strong></div>
             <div>${(data.response || '').replace(/\n/g, '<br>')}</div>
@@ -146,11 +152,14 @@ diagLog.innerHTML = `
               Debug Level: ${data.debugLevel} | Context: ${data.contextLength || 0} chars | ${data.timestamp}
             </div>
           `;
+        } else {
+          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">⚠️ Unexpected response format</strong><br><pre style="font-size: 11px; overflow-x: auto;">${JSON.stringify(data, null, 2)}</pre>`;
         }
         
         debugResponse.style.display = 'block';
       } catch (err) {
-        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">Network Error:</strong> ${err.message}`;
+        console.error('[FRONTEND] Fetch error:', err);
+        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">🔴 Network Error:</strong><br>${err.message}<br><br><small>Check browser console (F12) for details. DeepSeek API may be temporarily unavailable.</small>`;
         debugResponse.style.display = 'block';
       } finally {
         debugLoading.style.display = 'none';

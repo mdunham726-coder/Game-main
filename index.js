@@ -1256,6 +1256,8 @@ app.post('/ask-deepseek', async (req, res) => {
   }
 
   try {
+    console.log(`[DEEPSEEK-DEBUG] Question: "${question}" | Level: ${debugLevel} | Context size: ${context.length} chars`);
+    
     const messages = [
       {
         role: "system",
@@ -1267,6 +1269,8 @@ app.post('/ask-deepseek', async (req, res) => {
       }
     ];
 
+    console.log(`[DEEPSEEK-DEBUG] Sending request to DeepSeek API...`);
+    
     const response = await axios.post(
       "https://api.deepseek.com/v1/chat/completions",
       {
@@ -1280,11 +1284,25 @@ app.post('/ask-deepseek', async (req, res) => {
           "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           "Content-Type": "application/json"
         },
-        timeout: 15000
+        timeout: 30000  // Increased to 30 seconds
       }
     );
 
+    console.log(`[DEEPSEEK-DEBUG] Response received, status: ${response?.status}`);
+    
     const deepseekResponse = response?.data?.choices?.[0]?.message?.content;
+
+    if (!deepseekResponse) {
+      console.error('[DEEPSEEK-DEBUG] No valid response content found:', response?.data);
+      return res.json({
+        sessionId: resolvedSessionId,
+        error: "invalid_response",
+        message: "DeepSeek returned empty response",
+        question
+      });
+    }
+
+    console.log(`[DEEPSEEK-DEBUG] Success! Response length: ${deepseekResponse.length}`);
 
     return res.json({
       sessionId: resolvedSessionId,
@@ -1297,11 +1315,15 @@ app.post('/ask-deepseek', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('[DEEPSEEK] Debug query failed:', err?.message);
+    console.error('[DEEPSEEK-DEBUG] Error:', err?.message);
+    console.error('[DEEPSEEK-DEBUG] Error code:', err?.code);
+    console.error('[DEEPSEEK-DEBUG] Error response:', err?.response?.data);
+    
     return res.json({
       sessionId: resolvedSessionId,
-      error: "deepseek_failed",
+      error: err?.code || "deepseek_failed",
       message: err?.message || "Failed to query DeepSeek",
+      details: err?.response?.data?.error || null,
       question
     });
   }
