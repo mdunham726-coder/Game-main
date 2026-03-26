@@ -1,5 +1,6 @@
 // WorldGen.js — Phase 3C: Enhanced with NPC persistence, settlement metadata, and quest integration
 const crypto = require('crypto');
+const { createLogger } = require('./logger');
 
 let axios = null;
 try {

@@ -1,8 +1,10 @@
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const axios = require('axios');
 const Engine = require('./Engine.js');
 const WorldGen = require('./WorldGen.js');
+const { createLogger } = require('./logger.js');
 // Legacy import retained for compatibility
 const Actions = require('./ActionProcessor.js');
 
@@ -24,10 +26,13 @@ function getSessionState(sessionId) {
   if (!sessionId || !sessionStates.has(sessionId)) {
     const newSessionId = generateSessionId();
     const newState = initializeGame();
+    const logger = createLogger({ sessionId: newSessionId });
     sessionStates.set(newSessionId, {
       gameState: newState.state,
-      isFirstTurn: true
+      isFirstTurn: true,
+      logger: logger
     });
+    logger.sessionStarted({ newSessionId });
     return { sessionId: newSessionId, ...sessionStates.get(newSessionId) };
   }
   return { sessionId, ...sessionStates.get(sessionId) };
@@ -711,6 +716,18 @@ app.post('/narrate', async (req, res) => {
     clarification: null
   };
 
+  // Log player action parsing
+  const session = sessionStates.get(resolvedSessionId);
+  const logger = session?.logger;
+  if (logger && !isFirstTurn) {
+    logger.playerActionParsed(userInput, {
+      success: parseResult?.success,
+      confidence: parseResult?.confidence,
+      action: parseResult?.intent?.primaryAction?.action,
+      error: parseResult?.error
+    });
+  }
+
   // Before-turn debug info
   const beforeCells = Object.keys(gameState?.world?.cells || {}).length;
   console.log('[turn] cells_before=', beforeCells);
@@ -719,8 +736,13 @@ app.post('/narrate', async (req, res) => {
   let engineOutput = null;
   if (isFirstTurn === true) {
     isFirstTurn = false;
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
+    const session = sessionStates.get(resolvedSessionId);
+    const logger = session?.logger;
+    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
     const inputObj = mapActionToInput(action, "WORLD_PROMPT");
+    
+    if (logger) logger.worldPromptReceived(inputObj.WORLD_PROMPT);
+    
     try {
       // Handle async world generation with DeepSeek biome detection
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
@@ -734,6 +756,24 @@ app.post('/narrate', async (req, res) => {
           gameState.world.l0_size = worldData.l0_size;
           gameState.world.cells = worldData.cells;
           if (!gameState.world.sites) gameState.world.sites = worldData.sites;
+          
+          // Log NPC spawning for all settlements
+          if (logger && worldData.cells) {
+            const settlementCells = Object.values(worldData.cells).filter(c => c.type === 'settlement');
+            settlementCells.forEach(settlement => {
+              if (settlement.npc_ids && settlement.npc_ids.length > 0) {
+                logger.npcSpawnSucceeded(settlement.id || settlement.subtype, settlement.npc_ids);
+              }
+            });
+          }
+          
+          if (logger) {
+            logger.biomeDetected(worldData.biome);
+            logger.toneDetected(worldData.worldTone);
+            logger.locationTypeDetected(worldData.startingLocationType);
+            logger.worldInitialized(worldData.seed, worldData.biome);
+          }
+          
           console.log('[NARRATE] First turn: Set biome to', worldData.biome, '| Tone:', worldData.worldTone, '| Starting location:', worldData.startingLocationType);
           
           // NEW: Create starting location cell with semantic location type
@@ -757,7 +797,7 @@ app.post('/narrate', async (req, res) => {
       engineOutput = Engine.buildOutput(gameState, inputObj);
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
-        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
+        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: false, logger });
       }
     } catch (err) {
       console.error('Engine error on first turn:', err.message);
@@ -836,9 +876,20 @@ app.post('/narrate', async (req, res) => {
         engineOutput = Engine.buildOutput(gameState, inputObj);
       }
       
+      // Log player movement if position changed
+      const oldPos = { mx: gameState.world?.position?.mx || 0, my: gameState.world?.position?.my || 0, lx: gameState.world?.position?.lx || 0, ly: gameState.world?.position?.ly || 0 };
+      
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
-        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
+        
+        const newPos = { mx: gameState.world?.position?.mx || 0, my: gameState.world?.position?.my || 0, lx: gameState.world?.position?.lx || 0, ly: gameState.world?.position?.ly || 0 };
+        
+        // Log if player moved
+        if (logger && (oldPos.mx !== newPos.mx || oldPos.my !== newPos.my || oldPos.lx !== newPos.lx || oldPos.ly !== newPos.ly)) {
+          logger.playerMoved(oldPos, newPos);
+        }
+        
+        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
       }
     } catch (err) {
       console.error('Engine error:', err.message);
@@ -1031,6 +1082,11 @@ NARRATION TASK:
     } catch (parseErr) {
       console.error('Failed to parse DeepSeek response:', parseErr.message);
     }
+    
+    // Log narration generation
+    if (logger) {
+      logger.narrationGenerated(narrative.length);
+    }
 
     return res.json({ 
       sessionId: resolvedSessionId,
@@ -1043,6 +1099,9 @@ NARRATION TASK:
     });
   } catch (err) {
     console.error('[NARRATE] Error:', err.message);
+    if (logger) {
+      logger.narrationFailed(err.message);
+    }
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative: "The engine encountered an error generating narration. Please try again.",
@@ -1431,6 +1490,117 @@ app.post('/ask-deepseek', async (req, res) => {
       details: errorDetails,
       question,
       contextLength: context.length
+    });
+  }
+});
+
+// =============================================================================
+// LOGS ENDPOINT: Flush session logs to disk
+// =============================================================================
+app.post('/logs/flush', (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+  
+  if (!sessionId) {
+    return res.json({
+      error: "no_session",
+      message: "No session ID provided."
+    });
+  }
+  
+  try {
+    const session = sessionStates.get(sessionId);
+    if (!session || !session.logger) {
+      return res.json({
+        error: "no_logger",
+        message: `No logger found for session ${sessionId}`
+      });
+    }
+    
+    const logFilePath = session.logger.flush();
+    
+    return res.json({
+      sessionId,
+      success: true,
+      logFile: logFilePath,
+      message: "Logs flushed to disk"
+    });
+  } catch (err) {
+    return res.json({
+      sessionId,
+      error: "flush_failed",
+      message: err.message
+    });
+  }
+});
+
+// =============================================================================
+// LOGS ENDPOINT: List all available log files
+// =============================================================================
+app.get('/logs/list', (req, res) => {
+  try {
+    const logsDir = path.join(__dirname, 'logs');
+    
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+    
+    const files = fs.readdirSync(logsDir);
+    const logFiles = files
+      .filter(f => f.endsWith('.json'))
+      .map(f => {
+        const filePath = path.join(logsDir, f);
+        const stats = fs.statSync(filePath);
+        return {
+          filename: f,
+          size: stats.size,
+          created: stats.birthtime,
+          modified: stats.mtime
+        };
+      })
+      .sort((a, b) => b.modified - a.modified);
+    
+    return res.json({
+      success: true,
+      logCount: logFiles.length,
+      logs: logFiles,
+      logsDirectory: logsDir
+    });
+  } catch (err) {
+    return res.json({
+      error: "list_failed",
+      message: err.message
+    });
+  }
+});
+
+// =============================================================================
+// LOGS ENDPOINT: Read a specific log file
+// =============================================================================
+app.get('/logs/read/:sessionId', (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const logFilePath = path.join(__dirname, 'logs', `${sessionId}.json`);
+    
+    if (!fs.existsSync(logFilePath)) {
+      return res.json({
+        error: "not_found",
+        message: `Log file for session ${sessionId} not found`
+      });
+    }
+    
+    const content = fs.readFileSync(logFilePath, 'utf8');
+    const logData = JSON.parse(content);
+    
+    return res.json({
+      success: true,
+      sessionId,
+      data: logData
+    });
+  } catch (err) {
+    return res.json({
+      error: "read_failed",
+      message: err.message
     });
   }
 });
