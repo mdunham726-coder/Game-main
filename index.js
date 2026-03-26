@@ -2,6 +2,7 @@ const path = require('path');
 const express = require('express');
 const axios = require('axios');
 const Engine = require('./Engine.js');
+const WorldGen = require('./WorldGen.js');
 // Legacy import retained for compatibility
 const Actions = require('./ActionProcessor.js');
 
@@ -723,7 +724,7 @@ app.post('/narrate', async (req, res) => {
     try {
       // Handle async world generation with DeepSeek biome detection
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
-        const worldData = await Engine.WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, gameState.rng_seed || 0);
+        const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, gameState.rng_seed || 0);
         if (worldData) {
           gameState.world.macro_biome = worldData.biome;
           gameState.world.macro_palette = worldData.palette;

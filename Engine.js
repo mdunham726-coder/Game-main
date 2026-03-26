@@ -369,12 +369,8 @@ function buildOutput(prevState, inputObj) {
   Actions.applyPlayerActions(state, actions, changes1, phaseFlags);
 
   // WorldGen step (movement + streaming + site reveal)
-// Biome initialization if missing
-console.log('[ENGINE] Biome check - has biome?', !!state?.world?.macro_biome, 'has WORLD_PROMPT?', !!inputObj?.WORLD_PROMPT, 'prompt value:', inputObj?.WORLD_PROMPT);
-if (!state?.world?.macro_biome && inputObj?.WORLD_PROMPT) {
-  // Mark for async processing; will be handled by wrapper in index.js
-  state.__pendingWorldPrompt = inputObj.WORLD_PROMPT;
-}
+  // Biome should already be set by index.js before this is called
+  console.log('[ENGINE] Biome check - has biome?', !!state?.world?.macro_biome);
 const wg = WorldGen.worldGenStep(state.world, { actions });
 if (wg && Array.isArray(wg.deltas)) {
   for (const d of wg.deltas) changes1.push(d);
