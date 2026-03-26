@@ -876,6 +876,24 @@ app.post('/narrate', async (req, res) => {
   const afterCells = Object.keys(gameState?.world?.cells || {}).length;
   console.log('[turn] cells_after=', afterCells);
 
+  // ============================================================================
+  // COLLECT DIAGNOSTIC DATA FOR FRONTEND
+  // ============================================================================
+  const cellTypes = Object.values(gameState?.world?.cells || {})
+    .map(c => c?.type)
+    .filter(t => t && t !== 'void');
+  
+  const uniqueTerrains = [...new Set(cellTypes)].slice(0, 5); // Up to 5 unique terrain types
+  
+  const diagnostics = {
+    macro_biome: gameState?.world?.macro_biome || "UNDEFINED",
+    has_world_prompt: !!gameState?.world?.macro_biome, // If biome exists, world prompt was processed
+    world_prompt_value: gameState?.world?.macro_biome ? `Detected: ${gameState.world.macro_biome}` : "none",
+    cells_generated: afterCells,
+    sample_cell_types: uniqueTerrains,
+    first_turn: isFirstTurn
+  };
+
   if (!process.env.DEEPSEEK_API_KEY) {
     return res.json({ 
       sessionId: resolvedSessionId,
@@ -884,6 +902,7 @@ app.post('/narrate', async (req, res) => {
       state: gameState,
       engine_output: engineOutput,
       scene,
+      diagnostics,
       debug
     });
   }
@@ -948,6 +967,7 @@ inventory_count: ${scene.inventory.length}
       state: gameState, 
       engine_output: engineOutput, 
       scene, 
+      diagnostics,
       debug 
     });
   } catch (err) {
@@ -958,6 +978,7 @@ inventory_count: ${scene.inventory.length}
       state: gameState,
       engine_output: engineOutput,
       scene,
+      diagnostics,
       error: err.message,
       debug
     });
