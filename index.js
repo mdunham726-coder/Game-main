@@ -1605,6 +1605,35 @@ app.get('/logs/read/:sessionId', (req, res) => {
   }
 });
 
+// =============================================================================
+// LOGS ENDPOINT: Download a specific log file
+// =============================================================================
+app.get('/logs/download/:sessionId', (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const logFilePath = path.join(__dirname, 'logs', `${sessionId}.json`);
+    
+    if (!fs.existsSync(logFilePath)) {
+      return res.status(404).json({
+        error: "not_found",
+        message: `Log file for session ${sessionId} not found`
+      });
+    }
+    
+    // Set headers for file download
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${sessionId}.json"`);
+    
+    // Send the file
+    res.sendFile(logFilePath);
+  } catch (err) {
+    return res.status(500).json({
+      error: "download_failed",
+      message: err.message
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

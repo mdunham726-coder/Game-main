@@ -45,6 +45,20 @@
   <div id="debugResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #4a90e2; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 400px; overflow-y: auto; display: none;"></div>
 </div>
 
+<!-- Logs Panel -->
+<div id="logsPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #2ecc71; border-radius: 4px;">
+  <h3 style="margin: 0 0 10px 0; color: #2ecc71;">📋 SESSION LOGS (Phase A)</h3>
+  <p style="font-size: 12px; color: #888; margin: 0 0 10px 0;">Structured event logging | Real-time console + file persistence</p>
+  <div style="margin-bottom: 10px;">
+    <button onclick="flushLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #2ecc71; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">💾 Flush</button>
+    <button onclick="downloadLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #e74c3c; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">⬇️ Download</button>
+    <button onclick="listLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #3498db; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">📂 List</button>
+    <button onclick="readCurrentLog()" style="width: 24%; padding: 10px; font-size: 14px; background: #f39c12; color: white; border: none; cursor: pointer; border-radius: 3px;">👁️ View</button>
+  </div>
+  <div id="logsLoading" style="display: none; color: #2ecc71; margin-top: 10px; font-size: 12px;">Processing logs...</div>
+  <div id="logsResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #2ecc71; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.4; max-height: 500px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word; font-family: monospace;"></div>
+</div>
+
   </div>
   <div id="loading">Loading narrative...</div>
 
@@ -228,6 +242,201 @@ diagLog.innerHTML = `
         debugResponse.style.display = 'block';
       } finally {
         debugLoading.style.display = 'none';
+      }
+    }
+
+    // ========== LOGS FUNCTIONS ==========
+    async function flushLogs() {
+      if (!currentSessionId) {
+        alert('No active game session. Start a game first!');
+        return;
+      }
+
+      const logsLoading = document.getElementById('logsLoading');
+      const logsResponse = document.getElementById('logsResponse');
+      
+      logsLoading.style.display = 'block';
+      logsResponse.style.display = 'none';
+      logsResponse.innerHTML = '';
+
+      try {
+        const response = await fetch('/logs/flush', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-session-id': currentSessionId
+          }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          logsResponse.innerHTML = `✅ Logs flushed successfully!\n\nSession: ${data.sessionId}\nFile: ${data.logFile}\n\nYou can now download or view the log.`;
+          logsResponse.style.color = '#2ecc71';
+        } else {
+          logsResponse.innerHTML = `❌ Error: ${data.error}\n${data.message}`;
+          logsResponse.style.color = '#e74c3c';
+        }
+        
+        logsResponse.style.display = 'block';
+      } catch (err) {
+        logsResponse.innerHTML = `🔴 Network Error:\n${err.message}`;
+        logsResponse.style.color = '#e74c3c';
+        logsResponse.style.display = 'block';
+      } finally {
+        logsLoading.style.display = 'none';
+      }
+    }
+
+    async function downloadLogs() {
+      if (!currentSessionId) {
+        alert('No active game session. Start a game first!');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/logs/download/${currentSessionId}`, {
+          method: 'GET'
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          alert(`Error: ${data.error} - ${data.message}`);
+          return;
+        }
+
+        // Get filename from content-disposition header or use default
+        const contentDisposition = response.headers.get('content-disposition');
+        let filename = `game-log-${currentSessionId}.json`;
+        if (contentDisposition) {
+          const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+          if (filenameMatch) filename = filenameMatch[1];
+        }
+
+        // Download the file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        const logsResponse = document.getElementById('logsResponse');
+        logsResponse.innerHTML = `✅ Log file downloaded!\nFilename: ${filename}`;
+        logsResponse.style.color = '#2ecc71';
+        logsResponse.style.display = 'block';
+      } catch (err) {
+        const logsResponse = document.getElementById('logsResponse');
+        logsResponse.innerHTML = `🔴 Download Error:\n${err.message}`;
+        logsResponse.style.color = '#e74c3c';
+        logsResponse.style.display = 'block';
+      }
+    }
+
+    async function listLogs() {
+      const logsLoading = document.getElementById('logsLoading');
+      const logsResponse = document.getElementById('logsResponse');
+      
+      logsLoading.style.display = 'block';
+      logsResponse.style.display = 'none';
+      logsResponse.innerHTML = '';
+
+      try {
+        const response = await fetch('/logs/list', {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          let output = `📂 Total Saved Logs: ${data.logCount}\n`;
+          output += `Directory: ${data.logsDirectory}\n\n`;
+          
+          if (data.logs.length === 0) {
+            output += '(No logs saved yet)';
+          } else {
+            output += 'Log Files:\n' + '='.repeat(60) + '\n';
+            data.logs.forEach((log, idx) => {
+              output += `\n${idx + 1}. ${log.filename}\n`;
+              output += `   Size: ${(log.size / 1024).toFixed(2)}KB\n`;
+              output += `   Created: ${new Date(log.created).toLocaleString()}\n`;
+              output += `   Modified: ${new Date(log.modified).toLocaleString()}\n`;
+            });
+          }
+          
+          logsResponse.innerHTML = output;
+          logsResponse.style.color = '#2ecc71';
+        } else {
+          logsResponse.innerHTML = `❌ Error: ${data.error}\n${data.message}`;
+          logsResponse.style.color = '#e74c3c';
+        }
+        
+        logsResponse.style.display = 'block';
+      } catch (err) {
+        logsResponse.innerHTML = `🔴 Network Error:\n${err.message}`;
+        logsResponse.style.color = '#e74c3c';
+        logsResponse.style.display = 'block';
+      } finally {
+        logsLoading.style.display = 'none';
+      }
+    }
+
+    async function readCurrentLog() {
+      if (!currentSessionId) {
+        alert('No active game session. Start a game first!');
+        return;
+      }
+
+      const logsLoading = document.getElementById('logsLoading');
+      const logsResponse = document.getElementById('logsResponse');
+      
+      logsLoading.style.display = 'block';
+      logsResponse.style.display = 'none';
+      logsResponse.innerHTML = '';
+
+      try {
+        const response = await fetch(`/logs/read/${currentSessionId}`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success && data.data) {
+          const log = data.data;
+          let output = `📋 Session Log: ${log.sessionId}\n`;
+          output += `Generated: ${log.generatedAt}\n`;
+          output += `Total Events: ${log.eventCount}\n`;
+          output += '\n' + '='.repeat(70) + '\n';
+          output += 'EVENT TIMELINE:\n' + '='.repeat(70) + '\n\n';
+          
+          log.events.forEach((event, idx) => {
+            output += `[${idx + 1}] ${event.timestamp}\n`;
+            output += `    Category: ${event.category} | Event: ${event.event} | Level: ${event.level}\n`;
+            output += `    Data: ${JSON.stringify(event.data)}\n\n`;
+          });
+          
+          logsResponse.innerHTML = output;
+          logsResponse.style.color = '#2ecc71';
+        } else if (data.error) {
+          logsResponse.innerHTML = `❌ Error: ${data.error}\n${data.message}`;
+          logsResponse.style.color = '#e74c3c';
+        } else {
+          logsResponse.innerHTML = `❌ Unexpected response:\n${JSON.stringify(data, null, 2)}`;
+          logsResponse.style.color = '#e74c3c';
+        }
+        
+        logsResponse.style.display = 'block';
+      } catch (err) {
+        logsResponse.innerHTML = `🔴 Network Error:\n${err.message}`;
+        logsResponse.style.color = '#e74c3c';
+        logsResponse.style.display = 'block';
+      } finally {
+        logsLoading.style.display = 'none';
       }
     }
   </script>
