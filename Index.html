@@ -25,6 +25,23 @@
   <div id="diagnostic-log"></div>
 </div>
 
+<!-- DeepSeek Debug Console -->
+<div id="debugConsole" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #4a90e2; border-radius: 4px;">
+  <h3 style="margin: 0 0 10px 0; color: #4a90e2;">🤖 ASK DEEPSEEK</h3>
+  <p style="font-size: 12px; color: #888; margin: 0 0 10px 0;">Ask the AI about the world, locations, generation, or debug info. Turn will NOT advance.</p>
+  <div style="margin-bottom: 10px;">
+    <input type="text" id="debugQuestion" placeholder="e.g., Why are there no people here? Tell me about this biome..." style="width: 70%; padding: 10px; font-size: 14px; background: #333; color: #e0e0e0; border: 1px solid #666; margin-right: 10px;">
+    <select id="debugLevel" style="width: 18%; padding: 10px; font-size: 14px; background: #333; color: #e0e0e0; border: 1px solid #666;">
+      <option value="basic">Basic</option>
+      <option value="detailed" selected>Detailed</option>
+      <option value="full">Full</option>
+    </select>
+  </div>
+  <button onclick="askDeepSeek()" style="width: 100%; padding: 10px; font-size: 14px; background: #4a90e2; color: white; border: none; cursor: pointer; border-radius: 3px;">Ask DeepSeek</button>
+  <div id="debugLoading" style="display: none; color: #4a90e2; margin-top: 10px; font-size: 12px;">Consulting the AI...</div>
+  <div id="debugResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #4a90e2; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 400px; overflow-y: auto; display: none;"></div>
+</div>
+
   </div>
   <div id="loading">Loading narrative...</div>
 
@@ -84,6 +101,65 @@ diagLog.innerHTML = `
     
     document.getElementById('actionInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') submitAction();
+    });
+
+    // DeepSeek Debug Console Function
+    async function askDeepSeek() {
+      const question = document.getElementById('debugQuestion').value;
+      const debugLevel = document.getElementById('debugLevel').value;
+      
+      if (!question) {
+        alert('Please enter a question');
+        return;
+      }
+
+      if (!currentSessionId) {
+        alert('No active game session. Start a game first!');
+        return;
+      }
+
+      const debugLoading = document.getElementById('debugLoading');
+      const debugResponse = document.getElementById('debugResponse');
+      
+      debugLoading.style.display = 'block';
+      debugResponse.style.display = 'none';
+
+      try {
+        const response = await fetch('/ask-deepseek', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-session-id': currentSessionId
+          },
+          body: JSON.stringify({ question, debugLevel })
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">Error:</strong> ${data.message || data.error}`;
+        } else {
+          debugResponse.innerHTML = `
+            <div style="margin-bottom: 10px; color: #4a90e2;"><strong>💭 DeepSeek Response:</strong></div>
+            <div>${(data.response || '').replace(/\n/g, '<br>')}</div>
+            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #333; font-size: 11px; color: #666;">
+              Debug Level: ${data.debugLevel} | Context: ${data.contextLength || 0} chars | ${data.timestamp}
+            </div>
+          `;
+        }
+        
+        debugResponse.style.display = 'block';
+      } catch (err) {
+        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">Network Error:</strong> ${err.message}`;
+        debugResponse.style.display = 'block';
+      } finally {
+        debugLoading.style.display = 'none';
+      }
+    }
+
+    // Allow Enter key in debug question field
+    document.getElementById('debugQuestion').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') askDeepSeek();
     });
   </script>
 </body>

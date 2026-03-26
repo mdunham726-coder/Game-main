@@ -419,6 +419,66 @@ async function detectWorldToneWithDeepSeek(worldPrompt) {
   }
 }
 
+/**
+ * Detect starting location type from player's world prompt
+ * Uses semantic understanding to infer what kind of place the character should start in
+ * @param {string} worldPrompt - Player's world description
+ * @returns {Promise<string>} Settlement type (e.g. "village", "shop", "tavern", "temple")
+ */
+async function detectStartingLocationWithDeepSeek(worldPrompt) {
+  if (!process.env.DEEPSEEK_API_KEY || !axios) {
+    console.log('[LOCATION] DeepSeek unavailable for starting location detection');
+    return "village";  // Default fallback
+  }
+
+  try {
+    const messages = [
+      {
+        role: "system",
+        content: "You are a game scenario interpreter. Given a player's world description or character role, determine what type of location they should START in. Respond with ONLY a single location type from this list: village, town, city, shop, tavern, temple, guildhall, house, forest, cave, castle, farm, market, port, mine, or laboratory. No explanation, just the word."
+      },
+      {
+        role: "user",
+        content: `Player wants: "${worldPrompt}"
+
+What location type should they START in? Choose one: village, town, city, shop, tavern, temple, guildhall, house, forest, cave, castle, farm, market, port, mine, laboratory`
+      }
+    ];
+
+    const resp = await axios.post(
+      "https://api.deepseek.com/v1/chat/completions",
+      {
+        model: "deepseek-chat",
+        messages,
+        temperature: 0,  // Deterministic for location choice
+        max_tokens: 20
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 8000
+      }
+    );
+
+    let locationType = resp?.data?.choices?.[0]?.message?.content?.trim().toLowerCase();
+    
+    // Sanitize to valid types
+    const validTypes = ["village", "town", "city", "shop", "tavern", "temple", "guildhall", "house", "forest", "cave", "castle", "farm", "market", "port", "mine", "laboratory"];
+    if (!validTypes.includes(locationType)) {
+      console.log(`[LOCATION] Invalid type "${locationType}", mapping to nearest settlement type`);
+      locationType = "village";
+    }
+
+    console.log(`[LOCATION] Detected starting location type: "${locationType}"`);
+    return locationType;
+  } catch (err) {
+    console.log(`[LOCATION] Starting location detection failed (${err?.message}), using default`);
+    return "village";
+  }
+}
+
 // --- Settlement footprint + population data ---
 const SETTLEMENT_SIZES = {
   outpost:    { tier: 0, footprint: 1, width: 3, height: 3, buildings: 2, population_min: 5, population_max: 15 },
@@ -431,10 +491,11 @@ const SETTLEMENT_SIZES = {
 
 // --- L0: macro region logic (same) ---
 async function generateWorldFromDescription(desc, worldSeed) {
-  // Detect both biome and tone in parallel for efficiency
-  const [biome, worldTone] = await Promise.all([
+  // Detect biome, tone, AND starting location in parallel for efficiency
+  const [biome, worldTone, startingLocationType] = await Promise.all([
     detectBiomeWithDeepSeek(desc),
-    detectWorldToneWithDeepSeek(desc)
+    detectWorldToneWithDeepSeek(desc),
+    detectStartingLocationWithDeepSeek(desc)
   ]);
   
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
@@ -450,6 +511,7 @@ async function generateWorldFromDescription(desc, worldSeed) {
     seed: worldSeed,
     biome,
     worldTone,  // NEW: Semantic tone for narrative guidance
+    startingLocationType,  // NEW: Semantic starting location type
     palette,
     l0_size: l0s,
     cells: macroCells,
@@ -713,6 +775,7 @@ module.exports = {
   hashSeedFromLocationID, 
   makeLCG,
   detectWorldToneWithDeepSeek,  // NEW: Export tone detection for external use if needed
+  detectStartingLocationWithDeepSeek,  // NEW: Export starting location detection
   // PHASE 3C: New exports
   generateSettlementName,
   getNPCCountForSettlement,
