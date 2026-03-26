@@ -1,5 +1,4 @@
 const path = require('path');
-const fs = require('fs');
 const express = require('express');
 const axios = require('axios');
 const Engine = require('./Engine.js');
@@ -39,7 +38,8 @@ function getSessionState(sessionId) {
 }
 
 // File system helper functions for save/load system
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 
 function getSavePath(sessionId) {
   return path.join(__dirname, 'saves', sessionId);
@@ -53,7 +53,7 @@ function getSaveFilePath(sessionId, saveName) {
 async function ensureSaveDir(sessionId) {
   const savePath = getSavePath(sessionId);
   try {
-    await fs.mkdir(savePath, { recursive: true });
+    await fsPromises.mkdir(savePath, { recursive: true });
   } catch (err) {
     console.error(`Failed to create save directory: ${err.message}`);
     throw err; // Re-throw to let caller handle
@@ -63,7 +63,7 @@ async function ensureSaveDir(sessionId) {
 async function getSaveCount(sessionId) {
   try {
     const savePath = getSavePath(sessionId);
-    const files = await fs.readdir(savePath);
+    const files = await fsPromises.readdir(savePath);
     return files.filter(file => file.endsWith('.json')).length;
   } catch (error) {
     return 0; // Directory doesn't exist yet
@@ -78,7 +78,7 @@ async function findUniqueSaveName(sessionId, baseName) {
   while (true) {
     const filePath = getSaveFilePath(sessionId, candidateName);
     try {
-      await fs.access(filePath);
+      await fsPromises.access(filePath);
       // File exists, try next number
       candidateName = `${cleanBase} (${counter})`;
       counter++;
@@ -97,7 +97,7 @@ async function findUniqueSaveName(sessionId, baseName) {
 async function saveExists(sessionId, saveName) {
   try {
     const filePath = getSaveFilePath(sessionId, saveName);
-    await fs.access(filePath);
+    await fsPromises.access(filePath);
     return true;
   } catch (error) {
     return false;
@@ -150,9 +150,9 @@ async function performSave(sessionId, saveName, gameState) {
       saveName: finalSaveName
     };
     
-    await fs.writeFile(filePath, JSON.stringify(saveData, null, 2));
+    await fsPromises.writeFile(filePath, JSON.stringify(saveData, null, 2));
     
-    const stats = await fs.stat(filePath);
+    const stats = await fsPromises.stat(filePath);
     const fileSizeKB = stats.size / 1024;
     if (fileSizeKB > 5) {
       console.warn(`[SAVE] Save file exceeds 5KB: ${fileSizeKB.toFixed(2)}KB`);
@@ -184,12 +184,12 @@ async function performLoad(sessionId, saveName) {
     const filePath = getSaveFilePath(sessionId, saveName);
     
     try {
-      await fs.access(filePath);
+      await fsPromises.access(filePath);
     } catch (error) {
       return { success: false, error: 'SAVE_NOT_FOUND', message: `Save file '${saveName}' not found` };
     }
     
-    const fileContent = await fs.readFile(filePath, 'utf8');
+    const fileContent = await fsPromises.readFile(filePath, 'utf8');
     const saveData = JSON.parse(fileContent);
     
     if (!saveData.gameState) {
@@ -231,7 +231,7 @@ async function listSavesData(sessionId) {
     let files = [];
     
     try {
-      files = await fs.readdir(savePath);
+      files = await fsPromises.readdir(savePath);
     } catch (error) {
       return { success: true, saves: [], count: 0 };
     }
