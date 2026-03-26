@@ -37,7 +37,10 @@
       <option value="full">Full</option>
     </select>
   </div>
-  <button onclick="askDeepSeek()" style="width: 100%; padding: 10px; font-size: 14px; background: #4a90e2; color: white; border: none; cursor: pointer; border-radius: 3px;">Ask DeepSeek</button>
+  <div style="margin-bottom: 10px;">
+    <button onclick="askDeepSeek()" style="width: 49%; padding: 10px; font-size: 14px; background: #4a90e2; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 2%;">Ask DeepSeek</button>
+    <button onclick="testContext()" style="width: 49%; padding: 10px; font-size: 14px; background: #888; color: white; border: none; cursor: pointer; border-radius: 3px;">Test Context</button>
+  </div>
   <div id="debugLoading" style="display: none; color: #4a90e2; margin-top: 10px; font-size: 12px;">Consulting the AI...</div>
   <div id="debugResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #4a90e2; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 400px; overflow-y: auto; display: none;"></div>
 </div>
@@ -170,6 +173,63 @@ diagLog.innerHTML = `
     document.getElementById('debugQuestion').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') askDeepSeek();
     });
+
+    // Test Context Function (diagnose context building without calling DeepSeek)
+    async function testContext() {
+      const debugLevel = document.getElementById('debugLevel').value;
+      
+      if (!currentSessionId) {
+        alert('No active game session. Start a game first!');
+        return;
+      }
+
+      const debugLoading = document.getElementById('debugLoading');
+      const debugResponse = document.getElementById('debugResponse');
+      
+      debugLoading.style.display = 'block';
+      debugResponse.style.display = 'none';
+      debugLoading.innerHTML = 'Building context...';
+
+      try {
+        console.log('[FRONTEND] Testing context build...');
+        
+        const response = await fetch('/test-context', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-session-id': currentSessionId
+          },
+          body: JSON.stringify({ debugLevel })
+        });
+
+        console.log('[FRONTEND] Context test status:', response.status);
+        const data = await response.json();
+        console.log('[FRONTEND] Context test response:', data);
+
+        if (data.error) {
+          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">❌ ${data.error}:</strong><br>${data.message}`;
+        } else if (data.success) {
+          debugResponse.innerHTML = `
+            <div style="color: #4ade80;"><strong>✅ Context Built Successfully!</strong></div>
+            <div style="margin-top: 10px; font-size: 12px; color: #aaa;">
+              <div><strong>Debug Level:</strong> ${data.debugLevel}</div>
+              <div><strong>Context Size:</strong> ${data.contextLength} characters</div>
+              <div style="margin-top: 10px; max-height: 300px; overflow-y: auto; background: #0a0a0a; padding: 10px; border: 1px solid #333; border-radius: 3px;">
+                <pre style="margin: 0; white-space: pre-wrap; word-wrap: break-word; font-size: 11px; line-height: 1.4;">${data.context}</pre>
+              </div>
+            </div>
+          `;
+        }
+        
+        debugResponse.style.display = 'block';
+      } catch (err) {
+        console.error('[FRONTEND] Context test error:', err);
+        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">🔴 Network Error:</strong><br>${err.message}<br><br><small>DeepSeek API endpoint may be unavailable.</small>`;
+        debugResponse.style.display = 'block';
+      } finally {
+        debugLoading.style.display = 'none';
+      }
+    }
   </script>
 </body>
 </html>

@@ -1162,15 +1162,15 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   context += `Cell Type: ${currentCell?.type || "unknown"}\n`;
   context += `Cell Subtype: ${currentCell?.subtype || "unknown"}\n`;
   context += `Cell Biome: ${currentCell?.biome || "unknown"}\n`;
-  context += `Description: ${currentCell?.description || "(not yet generated)"}\n`;
+  context += `Description: ${(currentCell?.description || "").substring(0, 200)}${currentCell?.description?.length > 200 ? "..." : ""}\n`;
 
   context += `\n=== NEARBY NPCS ===\n`;
   if (gameState.world.npcs && gameState.world.npcs.length > 0) {
-    gameState.world.npcs.slice(0, 5).forEach(npc => {
+    gameState.world.npcs.slice(0, 3).forEach(npc => {
       context += `- ${npc.name || "Unnamed"} (${npc.archetype || "unknown"})\n`;
     });
-    if (gameState.world.npcs.length > 5) {
-      context += `... and ${gameState.world.npcs.length - 5} more\n`;
+    if (gameState.world.npcs.length > 3) {
+      context += `... and ${gameState.world.npcs.length - 3} more\n`;
     }
   } else {
     context += `(None visible)\n`;
@@ -1180,49 +1180,76 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   if (debugLevel === "detailed" || debugLevel === "full") {
     context += `\n=== WORLD GENERATION PARAMETERS ===\n`;
     context += `Biome: ${gameState.world.macro_biome || "not detected"}\n`;
-    context += `World Tone: ${gameState.world.world_tone || "not detected"}\n`;
+    context += `World Tone: ${(gameState.world.world_tone || "not detected").substring(0, 150)}...\n`;
     context += `Starting Location Type: ${gameState.world.starting_location_type || "not detected"}\n`;
     context += `World Seed: ${gameState.world.seed || gameState.rng_seed || "unknown"}\n`;
     context += `Turn Counter: ${gameState.turn_counter || 0}\n`;
 
-    context += `\n=== VISIBLE CELLS (streaming radius) ===\n`;
+    context += `\n=== SETTLEMENTS (Summary) ===\n`;
+    const settlementKeys = Object.keys(gameState.world.settlements || {});
+    context += `Total Settlements: ${settlementKeys.length}\n`;
+    if (settlementKeys.length > 0) {
+      settlementKeys.slice(0, 3).forEach(k => {
+        const settlement = gameState.world.settlements[k];
+        context += `- ${settlement.name || "Unnamed"} (type: ${settlement.settlement_type || "unknown"}, ${(settlement.npcs || []).length} NPCs)\n`;
+      });
+      if (settlementKeys.length > 3) {
+        context += `... and ${settlementKeys.length - 3} more\n`;
+      }
+    } else {
+      context += `(No settlements created yet)\n`;
+    }
+
+    context += `\n=== VISIBLE CELLS (Sample) ===\n`;
     const cellKeys = Object.keys(gameState.world.cells || {})
       .filter(k => {
         const cell = gameState.world.cells[k];
         return cell && cell.mx === pos.mx && cell.my === pos.my;
       })
-      .slice(0, 10);
+      .slice(0, 5);
     
     if (cellKeys.length > 0) {
       cellKeys.forEach(k => {
         const cell = gameState.world.cells[k];
-        context += `- [${cell.lx},${cell.ly}] ${cell.type}/${cell.subtype} (${cell.biome})\n`;
+        context += `- [${cell.lx},${cell.ly}] ${cell.type}/${cell.subtype}\n`;
       });
-      context += `(Total: ${Object.keys(gameState.world.cells || {}).length} cells in world)\n`;
     } else {
-      context += `(No cells generated yet)\n`;
-    }
-
-    context += `\n=== SETTLEMENTS ===\n`;
-    const settlementKeys = Object.keys(gameState.world.settlements || {});
-    if (settlementKeys.length > 0) {
-      settlementKeys.slice(0, 5).forEach(k => {
-        const settlement = gameState.world.settlements[k];
-        context += `- ${settlement.name || "Unnamed"} (${settlement.settlement_type || "unknown"}, ${(settlement.npcs || []).length} NPCs)\n`;
-      });
-      if (settlementKeys.length > 5) {
-        context += `... and ${settlementKeys.length - 5} more settlements\n`;
-      }
-    } else {
-      context += `(No settlements created yet)\n`;
+      context += `(No cells in current macro)\n`;
     }
   }
 
   // === FULL LEVEL ===
   if (debugLevel === "full") {
-    context += `\n=== FULL GAME STATE (JSON) ===\n`;
-    context += JSON.stringify(gameState, null, 2).substring(0, 3000); // Truncate for safety
-    context += `\n...(truncated)\n`;
+    context += `\n=== WORLD STATE (Entries Summary) ===\n`;
+    context += `Total Cells: ${Object.keys(gameState.world.cells || {}).length}\n`;
+    context += `Total Settlements: ${Object.keys(gameState.world.settlements || {}).length}\n`;
+    context += `Total NPCs: ${(gameState.world.npcs || []).length}\n`;
+    context += `Total Quests: ${(gameState.quests?.active || []).length} active\n`;
+    
+    // Sample minimal JSON for full level
+    try {
+      const sample = {
+        player: { 
+          mx: gameState.player?.mx, 
+          my: gameState.player?.my,
+          inventory_count: (gameState.player?.inventory || []).length
+        },
+        world_position: pos,
+        current_cell: currentCell ? { type: currentCell.type, subtype: currentCell.subtype } : null,
+        settlements_count: Object.keys(gameState.world.settlements || {}).length,
+        npcs_count: (gameState.world.npcs || []).length,
+        turn_counter: gameState.turn_counter,
+        world_seed: gameState.world.seed || gameState.rng_seed
+      };
+      context += `\nMinimal JSON snapshot:\n${JSON.stringify(sample, null, 2)}\n`;
+    } catch (e) {
+      context += `(Could not create JSON snapshot)\n`;
+    }
+  }
+
+  // Safety: never exceed 4000 chars
+  if (context.length > 4000) {
+    context = context.substring(0, 4000) + "\n...(truncated for size)";
   }
 
   return context;
@@ -1232,9 +1259,41 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
  * Ask DeepSeek a question about the game state without advancing turn
  * Useful for interactive debugging and understanding AI comprehension
  */
+/**
+ * Test endpoint: Just return the context without calling DeepSeek
+ * Helps diagnose if issue is context building vs DeepSeek API
+ */
+app.post('/test-context', (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+  const { debugLevel = "detailed" } = req.body;
+
+  const { sessionId: resolvedSessionId, gameState } = getSessionState(sessionId);
+  
+  try {
+    const context = buildDebugContext(gameState, debugLevel);
+    
+    return res.json({
+      sessionId: resolvedSessionId,
+      success: true,
+      debugLevel,
+      contextSize: context.length,
+      context: context,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    return res.json({
+      sessionId: resolvedSessionId,
+      error: "context_build_failed",
+      message: err.message
+    });
+  }
+});
+
 app.post('/ask-deepseek', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
   const { question, debugLevel = "detailed" } = req.body;
+
+  console.log(`[DEEPSEEK-DEBUG] Starting request. SessionId: ${sessionId}, Level: ${debugLevel}`);
 
   if (!question) {
     return res.json({
@@ -1243,10 +1302,43 @@ app.post('/ask-deepseek', async (req, res) => {
     });
   }
 
-  const { sessionId: resolvedSessionId, gameState } = getSessionState(sessionId);
+  if (!sessionId) {
+    return res.json({
+      error: "no_session",
+      message: "No session ID provided. Start a game first."
+    });
+  }
 
-  // Build context based on debug level
-  const context = buildDebugContext(gameState, debugLevel);
+  let gameState = null;
+  try {
+    const session = getSessionState(sessionId);
+    gameState = session.gameState;
+  } catch (err) {
+    return res.json({
+      error: "session_fetch_failed",
+      message: err.message || "Could not retrieve session"
+    });
+  }
+
+  if (!gameState) {
+    return res.json({
+      error: "no_game_state",
+      message: "No game state found for this session"
+    });
+  }
+
+  // Build context
+  let context = "";
+  try {
+    context = buildDebugContext(gameState, debugLevel);
+    console.log(`[DEEPSEEK-DEBUG] Context built successfully. Size: ${context.length} chars`);
+  } catch (err) {
+    console.error('[DEEPSEEK-DEBUG] Context build failed:', err.message);
+    return res.json({
+      error: "context_build_failed",
+      message: err.message || "Failed to build game context"
+    });
+  }
 
   if (!process.env.DEEPSEEK_API_KEY) {
     return res.json({
@@ -1256,7 +1348,8 @@ app.post('/ask-deepseek', async (req, res) => {
   }
 
   try {
-    console.log(`[DEEPSEEK-DEBUG] Question: "${question}" | Level: ${debugLevel} | Context size: ${context.length} chars`);
+    console.log(`[DEEPSEEK-DEBUG] Question: "${question.substring(0, 50)}..."`);
+    console.log(`[DEEPSEEK-DEBUG] Building DeepSeek request...`);
     
     const messages = [
       {
@@ -1269,62 +1362,67 @@ app.post('/ask-deepseek', async (req, res) => {
       }
     ];
 
-    console.log(`[DEEPSEEK-DEBUG] Sending request to DeepSeek API...`);
+    console.log(`[DEEPSEEK-DEBUG] Sending request to DeepSeek API (timeout: 30s)...`);
     
     const response = await axios.post(
       "https://api.deepseek.com/v1/chat/completions",
       {
         model: "deepseek-chat",
         messages,
-        temperature: 0.7,  // Balanced for reasoning + explanation
-        max_tokens: 1000
+        temperature: 0.7,
+        max_tokens: 800
       },
       {
         headers: {
           "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           "Content-Type": "application/json"
         },
-        timeout: 30000  // Increased to 30 seconds
+        timeout: 30000
       }
     );
 
-    console.log(`[DEEPSEEK-DEBUG] Response received, status: ${response?.status}`);
+    console.log(`[DEEPSEEK-DEBUG] DeepSeek response received, status: ${response?.status}`);
     
     const deepseekResponse = response?.data?.choices?.[0]?.message?.content;
 
     if (!deepseekResponse) {
-      console.error('[DEEPSEEK-DEBUG] No valid response content found:', response?.data);
+      console.error('[DEEPSEEK-DEBUG] No valid response content:', response?.data);
       return res.json({
-        sessionId: resolvedSessionId,
         error: "invalid_response",
         message: "DeepSeek returned empty response",
         question
       });
     }
 
-    console.log(`[DEEPSEEK-DEBUG] Success! Response length: ${deepseekResponse.length}`);
+    console.log(`[DEEPSEEK-DEBUG] Success! Response length: ${deepseekResponse.length} chars`);
 
     return res.json({
-      sessionId: resolvedSessionId,
+      sessionId,
       question,
       debugLevel,
       response: deepseekResponse,
       contextLength: context.length,
       timestamp: new Date().toISOString(),
-      turnNotAdvanced: true  // Emphasize we didn't touch game state
+      turnNotAdvanced: true
     });
 
   } catch (err) {
-    console.error('[DEEPSEEK-DEBUG] Error:', err?.message);
+    console.error('[DEEPSEEK-DEBUG] DeepSeek ERROR:', err?.message);
     console.error('[DEEPSEEK-DEBUG] Error code:', err?.code);
-    console.error('[DEEPSEEK-DEBUG] Error response:', err?.response?.data);
+    
+    let errorDetails = null;
+    if (err?.response?.data) {
+      errorDetails = err.response.data;
+      console.error('[DEEPSEEK-DEBUG] API error response:', JSON.stringify(errorDetails));
+    }
     
     return res.json({
-      sessionId: resolvedSessionId,
+      sessionId,
       error: err?.code || "deepseek_failed",
       message: err?.message || "Failed to query DeepSeek",
-      details: err?.response?.data?.error || null,
-      question
+      details: errorDetails,
+      question,
+      contextLength: context.length
     });
   }
 });
