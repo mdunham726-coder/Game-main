@@ -823,7 +823,6 @@ app.post('/narrate', async (req, res) => {
   const pos = gameState?.world?.position || {};
   const l1w = (gameState?.world?.l1_default?.w) || 12;
   const l1h = (gameState?.world?.l1_default?.h) || 12;
-  function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
   function cellKey(mx,my,lx,ly){ return `L1:${mx},${my}:${lx},${ly}`; }
 
   const curKey = cellKey(pos.mx, pos.my, pos.lx, pos.ly);
@@ -849,9 +848,19 @@ app.post('/narrate', async (req, res) => {
   ];
 
   const nearbyCells = deltas.map(d => {
-    const lx = clamp((pos.lx || 0) + d.dx, 0, l1w - 1);
-    const ly = clamp((pos.ly || 0) + d.dy, 0, l1h - 1);
-    const key = cellKey(pos.mx, pos.my, lx, ly);
+    // Use same wrapping logic as movement code to handle L1 grid boundaries
+    let lx = (pos.lx || 0) + d.dx;
+    let ly = (pos.ly || 0) + d.dy;
+    let mx = pos.mx;
+    let my = pos.my;
+    
+    // Handle L1 grid wrapping (wrap to adjacent L0 macro cell if at boundary)
+    if (lx < 0) { mx -= 1; lx = l1w - 1; }
+    if (lx >= l1w) { mx += 1; lx = 0; }
+    if (ly < 0) { my -= 1; ly = l1h - 1; }
+    if (ly >= l1h) { my += 1; ly = 0; }
+    
+    const key = cellKey(mx, my, lx, ly);
     const c = cellsMap[key];
     return {
       dir: d.name,
