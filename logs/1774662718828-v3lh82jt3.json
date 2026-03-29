@@ -1,0 +1,163 @@
+{
+  "sessionId": "1774662718828-v3lh82jt3",
+  "generatedAt": "2026-03-28T02:15:35.776Z",
+  "eventCount": 13,
+  "events": [
+    {
+      "timestamp": "2026-03-28T01:51:58.828Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "SESSION",
+      "event": "session_started",
+      "data": {
+        "newSessionId": "1774662718828-v3lh82jt3"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T01:52:01.601Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "SESSION",
+      "event": "world_prompt_received",
+      "data": {
+        "prompt": "i am a samuri in ancient japan"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T01:52:04.752Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "BIOME",
+      "event": "biome_detected",
+      "data": {
+        "biome": "rural"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T01:52:04.752Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "WORLD_GEN",
+      "event": "tone_detected",
+      "data": {
+        "tone": "This world is one of honor-bound austerity and serene beauty, set in a feudal era where technology i"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T01:52:04.752Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "LOCATION",
+      "event": "starting_location_detected",
+      "data": {
+        "locationType": "castle"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T01:52:04.752Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "WORLD_GEN",
+      "event": "world_initialized",
+      "data": {
+        "seed": 0,
+        "biome": "rural"
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T01:52:16.035Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "NARRATION",
+      "event": "narration_generated",
+      "data": {
+        "length": 1532
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T02:06:21.561Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "SESSION",
+      "event": "player_action_parsed",
+      "data": {
+        "action": "look around",
+        "intent": {
+          "success": true,
+          "action": "look"
+        }
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T02:06:29.834Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "NARRATION",
+      "event": "narration_generated",
+      "data": {
+        "length": 1135
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T02:11:31.192Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "SESSION",
+      "event": "player_action_parsed",
+      "data": {
+        "action": "go into the armory",
+        "intent": {
+          "success": true,
+          "action": "move"
+        }
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T02:11:38.498Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "NARRATION",
+      "event": "narration_generated",
+      "data": {
+        "length": 905
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T02:14:01.428Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "SESSION",
+      "event": "player_action_parsed",
+      "data": {
+        "action": "take one of the swords",
+        "intent": {
+          "success": true,
+          "action": "take"
+        }
+      },
+      "context": {}
+    },
+    {
+      "timestamp": "2026-03-28T02:14:11.285Z",
+      "sessionId": "1774662718828-v3lh82jt3",
+      "level": "INFO",
+      "category": "NARRATION",
+      "event": "narration_generated",
+      "data": {
+        "length": 1153
+      },
+      "context": {}
+    }
+  ]
+}
