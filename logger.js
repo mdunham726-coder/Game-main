@@ -177,6 +177,37 @@ function createLogger(config = {}) {
     // Errors
     error: (category, message, data) => emit(category, 'error', { message, ...data }, { level: 'ERROR' }),
     warn: (category, message, data) => emit(category, 'warning', { message, ...data }, { level: 'WARN' }),
+    
+    // === MINIMAL TRUTH LAYER LOGGING (Phase 1-5) ===
+    
+    // Movement & Position (preserves full context)
+    player_move_attempted: (direction, fromPos, intendedToPos) => 
+      emit('MOVEMENT', 'player_move_attempted', { direction, from: fromPos, intended_to: intendedToPos }),
+    
+    player_move_resolved: (success, reason, finalPos) => 
+      emit('MOVEMENT', 'player_move_resolved', { success, reason, final_position: finalPos }),
+
+    // Location tracking (standardized naming)
+    location_changed: (fromCellType, fromSubLoc, toCellType, toSubLoc) => 
+      emit('LOCATION', 'location_changed', { from_cell_type: fromCellType, from_subloc: fromSubLoc, to_cell_type: toCellType, to_subloc: toSubLoc }),
+
+    // Action outcomes (logged at engine outcome determination, independent of narration)
+    action_resolved: (action, succeeded, outcome) => 
+      emit('SESSION', 'action_resolved', { action, succeeded, outcome }),
+
+    // Settlement existence
+    settlement_registered: (settlementId, name, type, cellPosition) => 
+      emit('SETTLEMENT', 'settlement_registered', { settlement_id: settlementId, name, type, cell_position: cellPosition }),
+
+    // NPC spawning
+    npc_spawn_attempted: (settlementId, expectedCount) => 
+      emit('NPC', 'npc_spawn_attempted', { settlement_id: settlementId, expected_count: expectedCount }),
+    
+    npc_spawn_succeeded: (settlementId, actualCount) => 
+      emit('NPC', 'npc_spawn_succeeded', { settlement_id: settlementId, actual_count: actualCount }),
+    
+    npc_spawn_failed: (settlementId, reason) => 
+      emit('NPC', 'npc_spawn_failed', { settlement_id: settlementId, reason }, { level: 'WARN' }),
   };
 }
 

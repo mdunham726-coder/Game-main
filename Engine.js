@@ -348,7 +348,7 @@ function applyQuestReward(state, quest) {
   return state;
 }
 
-function buildOutput(prevState, inputObj) {
+function buildOutput(prevState, inputObj, logger) {
   const nowUTC = toISO8601(inputObj && inputObj["timestamp_utc"]);
   const turnId = genTurnId(inputObj && inputObj["turn_id"]);
   let state = prevState ? deepClone(prevState) : initState(nowUTC);
@@ -366,7 +366,14 @@ function buildOutput(prevState, inputObj) {
 
   // Parse & apply player actions (non-movement)
   const actions = Actions.parseIntent(inputObj?.player_intent?.raw ?? inputObj?.player_intent ?? "") || { action:'noop' };
-  Actions.applyPlayerActions(state, actions, changes1, phaseFlags);
+  
+  // Save old position for location change detection
+  const oldPosition = state.world.position ? {...state.world.position} : null;
+  const oldCellKey = oldPosition ? `M${oldPosition.mx}x${oldPosition.my}/L${oldPosition.lx}x${oldPosition.ly}` : null;
+  const oldCell = oldCellKey ? state.world.cells?.[oldCellKey] : null;
+  const oldCellType = oldCell?.type || oldCell?.tags?.type || 'unknown';
+  
+  Actions.applyPlayerActions(state, actions, changes1, phaseFlags, logger);
 
   // WorldGen step (movement + streaming + site reveal)
   // Biome should already be set by index.js before this is called
@@ -379,8 +386,25 @@ if (wg) {
   state.world = { ...state.world, ...wg };
 }
 
+  // Track location change
+  const newPosition = state.world.position;
+  const positionChanged = oldPosition && (oldPosition.mx !== newPosition.mx || oldPosition.my !== newPosition.my || oldPosition.lx !== newPosition.lx || oldPosition.ly !== newPosition.ly);
+  
   // L1 CELL STREAMING: Generate terrain cells around player
   streamL1Cells(state);
+  
+  // Log location change if position actually changed
+  if (positionChanged && logger) {
+    const newCellKey = `M${newPosition.mx}x${newPosition.my}/L${newPosition.lx}x${newPosition.ly}`;
+    const newCell = state.world.cells?.[newCellKey];
+    const newCellType = newCell?.type || newCell?.tags?.type || 'unknown';
+    logger.location_changed(
+      oldCellType,
+      null,  // old sub-location (not currently tracked)
+      newCellType,
+      null   // new sub-location (not currently tracked)
+    );
+  }
   
   // L1 description pass: ensure each visible cell has a narrative description
   if (state && state.world && state.world.cells) {
@@ -545,7 +569,23 @@ function enterL2FromL1(state, l1_cell_data) {
   } else {
     // Generate new settlement with persistent NPCs
     const NPCs = require('./NPCs');
+    
+    // Log NPC spawn attempt (Phase 5)
+    const expectedNpcCount = WorldGen.getNPCCountForSettlement(subtype);
+    if (logger) {
+      logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+    }
+    
     npcs_here = WorldGen.generateL2NPCs(l2_id, subtype, state.rng_seed, NPCs);
+    
+    // Log NPC spawn success/failure (Phase 5)
+    if (logger) {
+      if (npcs_here && npcs_here.length > 0) {
+        logger.npc_spawn_succeeded(l2_id, npcs_here.length);
+      } else {
+        logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
+      }
+    }
     
     // PHASE 3C: Assign quest-giver flags deterministically
     assignQuestGiverFlags(npcs_here, state.rng_seed, l2_id);
@@ -553,6 +593,17 @@ function enterL2FromL1(state, l1_cell_data) {
     settlement = WorldGen.generateL2Settlement(l2_id, subtype, npcs_here);
     state.world.settlements = state.world.settlements || {};
     state.world.settlements[l2_id] = settlement;
+    
+    // Log settlement registration (Phase 4)
+    if (logger) {
+      const pos = state.world.position || { mx: 0, my: 0 };
+      logger.settlement_registered(
+        l2_id,
+        settlement.name,
+        settlement.type || subtype,
+        { mx: pos.mx, my: pos.my }
+      );
+    }
     
     console.log(`[ENGINE] Created new settlement: ${settlement.name} with ${npcs_here.length} NPCs`);
     

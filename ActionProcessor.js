@@ -97,10 +97,9 @@ function merchantRegenOnTurn(state, turnCount) {
   return state; // Return state unchanged for now
 }
 
-// ============================================================================
 // PLAYER ACTION EXECUTION — TAKE ACTION
 // ============================================================================
-function applyPlayerActions(state, actions, deltas, flags){
+function applyPlayerActions(state, actions, deltas, flags, logger){
   const act = actions?.action;
   
   // ========== MOVEMENT ==========
@@ -129,9 +128,28 @@ function applyPlayerActions(state, actions, deltas, flags){
     if (newLy < 0) { newMy -= 1; newLy = l1h - 1; }
     if (newLy >= l1h) { newMy += 1; newLy = 0; }
     
+    // Log movement attempt with full context
+    if (logger) {
+      logger.player_move_attempted(
+        dir,
+        { mx: pos.mx, my: pos.my, lx: pos.lx, ly: pos.ly },
+        { mx: newMx, my: newMy, lx: newLx, ly: newLy }
+      );
+    }
+    
     // Update position in state
     state.world.position = { mx: newMx, my: newMy, lx: newLx, ly: newLy };
     deltas.push({ op:'set', path:'/world/position', value: state.world.position });
+    
+    // Log movement resolution (success)
+    if (logger) {
+      logger.player_move_resolved(
+        true,
+        'success',
+        { mx: newMx, my: newMy, lx: newLx, ly: newLy }
+      );
+      logger.action_resolved('move', true, `moved ${dir}`);
+    }
     
     console.log(`[ACTIONS] Move ${dir}: M${newMx},${newMy} L${newLx},${newLy}`);
     return;
@@ -146,11 +164,15 @@ function applyPlayerActions(state, actions, deltas, flags){
     //   4. Mutate game state to move item to player inventory
     //   5. Return success/failure status for narrative
     console.log('[ACTIONS] Take action stub - needs implementation');
+    if (logger) {
+      logger.action_resolved('take', false, 'not implemented');
+    }
     return; 
   }
   if (act === 'drop'){
     const target = actions?.target||'';
     const res = resolveItemByName(state, target);
+    let dropSucceeded = false;
     if (res && res[0] === 'inventory'){
       const item = res[1];
       const inv = state.player.inventory;
@@ -159,15 +181,27 @@ function applyPlayerActions(state, actions, deltas, flags){
         inv.splice(idx,1);
         deltas.push({ op:'set', path:'/player/inventory', value: inv });
         flags.inventory_rev = true;
+        dropSucceeded = true;
       }
+    }
+    if (logger) {
+      logger.action_resolved('drop', dropSucceeded, dropSucceeded ? `dropped ${target}` : `could not drop ${target}`);
     }
     return;
   }
-  if (act === 'look'){ return; }
+  if (act === 'look'){ 
+    if (logger) {
+      logger.action_resolved('look', true, 'observed surroundings');
+    }
+    return; 
+  }
   
   // === PHASE 3C: Quest action execution ===
   if (['accept_quest', 'complete_quest'].includes(act)){
-    updateNPCQuestState(actions, state, deltas, flags);
+    const questSucceeded = updateNPCQuestState(actions, state, deltas, flags);
+    if (logger) {
+      logger.action_resolved(act, questSucceeded, questSucceeded ? `${act} completed` : `${act} failed`);
+    }
     return;
   }
 }

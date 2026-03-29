@@ -794,7 +794,7 @@ app.post('/narrate', async (req, res) => {
         }
       }
       
-      engineOutput = Engine.buildOutput(gameState, inputObj);
+      engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
         sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: false, logger });
@@ -851,7 +851,7 @@ app.post('/narrate', async (req, res) => {
             const d = String(queuedAction.dir).toLowerCase();
             mapped.player_intent.dir = dirMap[d] || d;
           }
-          const result = await Engine.buildOutput(gameState, mapped);
+          const result = await Engine.buildOutput(gameState, mapped, logger);
           allResponses.push(result);
           if (result && result.state) {
             gameState = result.state;
@@ -873,7 +873,7 @@ app.post('/narrate', async (req, res) => {
       }
 
       if (!engineOutput) {
-        engineOutput = Engine.buildOutput(gameState, inputObj);
+        engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       }
       
       // Log player movement if position changed
