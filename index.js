@@ -1020,9 +1020,9 @@ app.post('/narrate', async (req, res) => {
   const uniqueTerrains = [...new Set(cellTypes)].slice(0, 5); // Up to 5 unique terrain types
   
   // A1: Use same authoritative source as buildDebugContext for position/cell data
-  const pos = gameState?.world?.position || { mx: 0, my: 0, lx: 6, ly: 6 };
+  // Note: 'pos' already declared at line 942; reuse it here
   const currentCellKey = `L1:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
-  const currentCell = gameState?.world?.cells?.[currentCellKey];
+  const diagnosticCell = gameState?.world?.cells?.[currentCellKey];
   
   const diagnostics = {
     macro_biome: gameState?.world?.macro_biome || "UNDEFINED",
@@ -1033,8 +1033,8 @@ app.post('/narrate', async (req, res) => {
     first_turn: isFirstTurn,
     position_macro: `(${pos.mx},${pos.my})`,
     position_local: `(${pos.lx},${pos.ly})`,
-    cell_type: currentCell?.type || "unknown",
-    cell_subtype: currentCell?.subtype || "unknown",
+    cell_type: diagnosticCell?.type || "unknown",
+    cell_subtype: diagnosticCell?.subtype || "unknown",
     turn_counter: gameState.turn_counter ?? 0
   };
 
