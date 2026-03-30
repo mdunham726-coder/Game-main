@@ -849,7 +849,28 @@ app.post('/narrate', async (req, res) => {
 
       let inputObj = null;
 
-      if (parseResult && parseResult.success === true && typeof parseResult.confidence === 'number' && parseResult.confidence >= 0.5) {
+      // PHASE 1: ROUTING INSTRUMENTATION - Debug the routing decision
+      if (parseResult) {
+        console.log('[ROUTING-DEBUG] parseResult.success:', parseResult.success, '| typeof:', typeof parseResult.success);
+        console.log('[ROUTING-DEBUG] parseResult.confidence:', parseResult.confidence, '| typeof:', typeof parseResult.confidence);
+        const condA = parseResult.success === true;
+        const condB = typeof parseResult.confidence === 'number';
+        const condC = parseResult.confidence >= 0.5;
+        console.log('[ROUTING-DEBUG] Condition A (success===true):', condA);
+        console.log('[ROUTING-DEBUG] Condition B (typeof===number):', condB);
+        console.log('[ROUTING-DEBUG] Condition C (confidence>=0.5):', condC);
+        console.log('[ROUTING-DEBUG] FULL CONDITION (A && B && C):', condA && condB && condC);
+        console.log('[ROUTING-DEBUG] Will route to:', (condA && condB && condC) ? 'SEMANTIC_PARSER_PATH' : 'FALLBACK_LEGACY_PATH');
+      }
+
+      // PHASE 3B FIX: Normalize confidence to number at routing boundary (handles string "0.95" case)
+      let normalizedConfidence = parseResult?.confidence;
+      if (normalizedConfidence !== undefined && typeof normalizedConfidence !== 'number') {
+        normalizedConfidence = Number(normalizedConfidence) || 0;
+        console.log('[ROUTING-FIX] Coerced confidence to number:', normalizedConfidence);
+      }
+
+      if (parseResult && parseResult.success === true && typeof normalizedConfidence === 'number' && normalizedConfidence >= 0.5) {
         console.log('[PARSER] semantic_ok input="%s" action="%s" confidence=%s', userInput, parseResult.intent?.primaryAction?.action, parseResult.confidence);
         // [POINT-A] Log parseResult details for movement diagnosis
         console.log('[POINT-A-PARSE] parseResult:', { success: parseResult.success, confidence: parseResult.confidence, action: parseResult.intent?.primaryAction?.action, dir: parseResult.intent?.primaryAction?.dir });
