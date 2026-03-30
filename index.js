@@ -897,13 +897,19 @@ app.post('/narrate', async (req, res) => {
         for (const queuedAction of validation.queue) {
           const raw = [queuedAction.action, queuedAction.target].filter(Boolean).join(' ');
           const mapped = mapActionToInput(raw, getActionKind(queuedAction));
-          // [POINT-C] Log mapped input structure for movement diagnosis
-          console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
+          
+          // POPULATE PLAYER_INTENT FIELDS BEFORE DIAGNOSTIC LOG (data integrity fix)
+          mapped.player_intent.action = queuedAction.action;
+          
           if (queuedAction.action === 'move' && queuedAction.dir) {
             const dirMap = { north:'n', south:'s', east:'e', west:'w', up:'u', down:'d' };
             const d = String(queuedAction.dir).toLowerCase();
             mapped.player_intent.dir = dirMap[d] || d;
           }
+          
+          // [POINT-C] Log mapped input structure for movement diagnosis (now with complete data)
+          console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
+          
           const result = await Engine.buildOutput(gameState, mapped, logger);
           allResponses.push(result);
           if (result && result.state) {
