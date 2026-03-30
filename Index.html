@@ -55,8 +55,9 @@
     <button onclick="listLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #3498db; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">📂 List</button>
     <button onclick="readCurrentLog()" style="width: 24%; padding: 10px; font-size: 14px; background: #f39c12; color: white; border: none; cursor: pointer; border-radius: 3px;">👁️ View</button>
   </div>
-  <div style="margin-bottom: 10px;">
-    <button onclick="exportQASnapshot()" style="width: 100%; padding: 10px; font-size: 14px; background: #9b59b6; color: white; border: none; cursor: pointer; border-radius: 3px;">📦 QA Export (Copy to Clipboard)</button>
+  <div style="margin-bottom: 10px; display: flex; gap: 10px;">
+    <button onclick="exportQASnapshot('snapshot')" style="flex: 1; padding: 10px; font-size: 14px; background: #9b59b6; color: white; border: none; cursor: pointer; border-radius: 3px;">📸 Snapshot (Current Turn)</button>
+    <button onclick="exportQASnapshot('running')" style="flex: 1; padding: 10px; font-size: 14px; background: #16a085; color: white; border: none; cursor: pointer; border-radius: 3px;">📋 Log (Running Record)</button>
   </div>
   <div id="logsLoading" style="display: none; color: #2ecc71; margin-top: 10px; font-size: 12px;">Processing logs...</div>
   <div id="logsResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #2ecc71; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.4; max-height: 500px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word; font-family: monospace;"></div>
@@ -70,6 +71,10 @@
     let currentSessionId = null;
     let lastNarrative = "";
     let lastTurnCounter = 0;
+    // A2: Running QA log tracking
+    let qaExportHistory = [];
+    let lastExportedTurn = -1;
+    let firstSessionTimestamp = null;
 
     async function submitAction() {
       const action = document.getElementById('actionInput').value;
@@ -120,6 +125,14 @@
         }
         lastTurnCounter = data.state?.turn_counter ?? 0;
 
+        // A2: Reset QA export history on new game
+        if (data.diagnostics?.first_turn) {
+          qaExportHistory = [];
+          lastExportedTurn = -1;
+          firstSessionTimestamp = null;
+          console.log('[QA] New game detected, reset export history');
+        }
+
 const narrative = data.narrative || data.error || 'No response from server';
 document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
 document.getElementById('actionInput').value = '';
@@ -128,7 +141,9 @@ document.getElementById('actionInput').value = '';
 const diagLog = document.getElementById('diagnostic-log');
 const diag = data.diagnostics || {};
 diagLog.innerHTML = `
-  <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'}</div>
+  <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
+  <div><strong>Position Macro:</strong> ${diag.position_macro || 'unknown'} | <strong>Local:</strong> ${diag.position_local || 'unknown'}</div>
+  <div><strong>Current Cell:</strong> Type: ${diag.cell_type || 'unknown'} | Subtype: ${diag.cell_subtype || 'unknown'}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome || '<span style="color: #f00;">UNDEFINED</span>'}</div>
   <div><strong>Has World Prompt:</strong> ${diag.has_world_prompt ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
   <div><strong>Prompt Value:</strong> "${diag.world_prompt_value || 'none'}"</div>
@@ -467,15 +482,31 @@ diagLog.innerHTML = `
       }
     }
 
-    // [Priority 5] QA Export Function - Lightweight client-side implementation
-    async function exportQASnapshot() {
+    // A2/A3: QA Export Function with dual-mode support and log flushing
+    async function exportQASnapshot(mode = 'snapshot') {
       if (!currentSessionId) {
         alert('No active game session. Start a game first!');
         return;
       }
 
       try {
-        // 1. Fetch detailed context from existing endpoint
+        // A3: Force flush logs to disk before reading
+        try {
+          await fetch('/logs/flush', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: currentSessionId })
+          });
+        } catch (e) {
+          console.warn('[QA-EXPORT] Log flush warning:', e.message);
+        }
+
+        // Initialize session timestamp on first export
+        if (!firstSessionTimestamp) {
+          firstSessionTimestamp = new Date().toISOString();
+        }
+
+        // 1. Fetch detailed context
         let context = "(No context available)";
         try {
           const ctxRes = await fetch('/test-context', {
@@ -494,7 +525,7 @@ diagLog.innerHTML = `
           console.error('[QA-EXPORT] Context fetch failed:', e.message);
         }
 
-        // 2. Fetch formatted logs from existing endpoint
+        // 2. Fetch formatted logs
         let logs = "(No logs available)";
         try {
           const logRes = await fetch(`/logs/read/${currentSessionId}`, {
@@ -503,7 +534,6 @@ diagLog.innerHTML = `
           });
           const logData = await logRes.json();
           if (logData.success && logData.data && logData.data.events) {
-            // Format each event as one line
             logs = logData.data.events.map(e =>
               `[${e.timestamp}] ${e.category}/${e.event} - ${JSON.stringify(e.data)}`
             ).join('\n');
@@ -512,40 +542,76 @@ diagLog.innerHTML = `
           console.error('[QA-EXPORT] Logs fetch failed:', e.message);
         }
 
-        // 3. Assemble complete bundle with header (sessionId, turn, timestamp)
         const exportTimestamp = new Date().toISOString();
-        const bundle = `# QA SNAPSHOT EXPORT
+
+        // For running mode: append turn block to history if new turn
+        if (mode === 'running') {
+          if (lastTurnCounter !== lastExportedTurn) {
+            const turnBlock = `
+════════════════════════════════════════
+TURN ${lastTurnCounter} | ${exportTimestamp}
+════════════════════════════════════════
+[NARRATIVE]
+${lastNarrative}
+
+[CONTEXT]
+${context}
+
+[LOGS]
+${logs}
+`;
+            qaExportHistory.push(turnBlock.trim());
+            lastExportedTurn = lastTurnCounter;
+          }
+
+          const fullRunLog = `# QA RUNNING LOG
+
+Session: ${currentSessionId}
+Session Started: ${firstSessionTimestamp}
+Last Updated: ${exportTimestamp}
+Total Turns Recorded: ${qaExportHistory.length}
+
+═══════════════════════════════════════════════════════════════
+
+${qaExportHistory.join('\n\n')}
+
+═══════════════════════════════════════════════════════════════
+(End of QA running log)`;
+
+          await navigator.clipboard.writeText(fullRunLog);
+          const logsResponse = document.getElementById('logsResponse');
+          logsResponse.innerHTML = `✅ QA running log copied to clipboard!\n\nTotal turns: ${qaExportHistory.length}\nSession started: ${new Date(firstSessionTimestamp).toLocaleTimeString()}`;
+          logsResponse.style.display = 'block';
+          logsResponse.style.color = '#2ecc71';
+
+        } else {
+          // Snapshot mode: export current turn only
+          const snapshotBundle = `# QA SNAPSHOT EXPORT
 
 Session: ${currentSessionId}
 Turn: ${lastTurnCounter}
 Exported: ${exportTimestamp}
 
----
+═══════════════════════════════════════════════════════════════
 
-## STORY
+[NARRATIVE]
 ${lastNarrative}
 
----
-
-## DEEPSEEK CONTEXT
+[CONTEXT]
 ${context}
 
----
-
-## SESSION LOGS
+[LOGS]
 ${logs}
 
----
+═══════════════════════════════════════════════════════════════
 (End of QA snapshot)`;
 
-        // 4. Copy to clipboard
-        await navigator.clipboard.writeText(bundle);
-        
-        // Show success message
-        const logsResponse = document.getElementById('logsResponse');
-        logsResponse.innerHTML = '✅ QA snapshot copied to clipboard!\n\nYou can now paste it into any text editor or message.\n\nBundle includes:\n- Narrative story\n- Game state context\n- Complete event logs';
-        logsResponse.style.display = 'block';
-        logsResponse.style.color = '#2ecc71';
+          await navigator.clipboard.writeText(snapshotBundle);
+          const logsResponse = document.getElementById('logsResponse');
+          logsResponse.innerHTML = '✅ QA snapshot copied to clipboard!\n\nBundle includes:\n- Narrative story\n- Game state context\n- Complete event logs';
+          logsResponse.style.display = 'block';
+          logsResponse.style.color = '#2ecc71';
+        }
 
       } catch (err) {
         console.error('[QA-EXPORT] Error:', err);

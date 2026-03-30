@@ -594,6 +594,10 @@ function enterL2FromL1(state, l1_cell_data) {
     state.world.settlements = state.world.settlements || {};
     state.world.settlements[l2_id] = settlement;
     
+    // B2: Settlement storage debug logging
+    const totalSettlements = Object.keys(state.world.settlements).length;
+    console.log(`[B2-STORE] Settlement stored: l2_id=${l2_id}, name=${settlement.name}, type=${settlement.type}, totalCount=${totalSettlements}`);
+    
     // Log settlement registration (Phase 4)
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
@@ -617,7 +621,12 @@ function enterL2FromL1(state, l1_cell_data) {
   
   let l2 = null;
   if (type === "settlement") {
+    // B2: Settlement detection debug logging
+    console.log(`[B2-DETECT] Settlement cell detected: l2_id=${l2_id}, subtype=${subtype}, logger=${!!logger}`);
     l2 = WorldGen.generateL2Settlement(l2_id, subtype, npcs_here);
+    if (logger) {
+      logger.emit('settlement_detection_logged', { l2_id, subtype, npcs_count: npcs_here.length });
+    }
   } else if (type === "poi") {
     l2 = WorldGen.generateL2POI(l2_id, subtype);
   } else {

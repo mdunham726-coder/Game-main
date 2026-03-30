@@ -103,7 +103,12 @@ function generateSettlementName(settlementId, worldSeed) {
   const prefix = NAME_PREFIXES[Math.floor(rng() * NAME_PREFIXES.length)];
   const suffix = NAME_SUFFIXES[Math.floor(rng() * NAME_SUFFIXES.length)];
   
-  return `${prefix}${suffix}`;
+  const generatedName = `${prefix}${suffix}`;
+  
+  // B3: Settlement naming debug logging
+  console.log(`[B3-NAME] Generated settlement name: id=${settlementId}, worldSeed=${worldSeed}, combinedSeed=${combinedSeed}, hash=${hash}, name=${generatedName}`);
+  
+  return generatedName;
 }
 
 // =============================================================================
@@ -719,6 +724,9 @@ function generateL2Settlement(settlement_id, settlement_type, npc_array, worldSe
   // PHASE 3C: Add settlement metadata
   const settlementName = generateSettlementName(settlement_id, worldSeed || "default");
   const populationCount = npcs.length;
+  
+  // B3: Debug logging at call site
+  console.log(`[B3-CALLER] Settlement name generation called: settlement_id=${settlement_id}, worldSeed=${worldSeed}, result=${settlementName}`);
   
   return {
     id: settlement_id,

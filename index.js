@@ -1019,13 +1019,23 @@ app.post('/narrate', async (req, res) => {
   
   const uniqueTerrains = [...new Set(cellTypes)].slice(0, 5); // Up to 5 unique terrain types
   
+  // A1: Use same authoritative source as buildDebugContext for position/cell data
+  const pos = gameState?.world?.position || { mx: 0, my: 0, lx: 6, ly: 6 };
+  const currentCellKey = `L1:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+  const currentCell = gameState?.world?.cells?.[currentCellKey];
+  
   const diagnostics = {
     macro_biome: gameState?.world?.macro_biome || "UNDEFINED",
     has_world_prompt: !!gameState?.world?.macro_biome, // If biome exists, world prompt was processed
     world_prompt_value: gameState?.world?.macro_biome ? `Detected: ${gameState.world.macro_biome}` : "none",
     cells_generated: afterCells,
     sample_cell_types: uniqueTerrains,
-    first_turn: isFirstTurn
+    first_turn: isFirstTurn,
+    position_macro: `(${pos.mx},${pos.my})`,
+    position_local: `(${pos.lx},${pos.ly})`,
+    cell_type: currentCell?.type || "unknown",
+    cell_subtype: currentCell?.subtype || "unknown",
+    turn_counter: gameState.turn_counter ?? 0
   };
 
   if (!process.env.DEEPSEEK_API_KEY) {
