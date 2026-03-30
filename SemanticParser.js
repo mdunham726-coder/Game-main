@@ -203,13 +203,12 @@ async function normalizeUserIntent(userInput, gameContext) {
     primaryAction,
     secondaryActions: Array.isArray(v.secondaryActions) ? v.secondaryActions : undefined,
     compound: Boolean(v.compound),
-    rawInput: raw,
-    confidence
+    rawInput: raw
   };
 
   log("info", `input="${raw}" action="${primaryAction.action}" confidence=${confidence}`);
 
-  const result = { success: true, intent };
+  const result = { success: true, intent, confidence };
   setToCache(cacheKey, result);
   return result;
 }
