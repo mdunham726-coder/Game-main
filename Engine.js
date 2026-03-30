@@ -365,7 +365,11 @@ function buildOutput(prevState, inputObj, logger) {
   // Actions.tickMerchantsAndFactions(state, nowUTC, changes1, phaseFlags);
 
   // Parse & apply player actions (non-movement)
-  const actions = Actions.parseIntent(inputObj?.player_intent?.raw ?? inputObj?.player_intent ?? "") || { action:'noop' };
+  // Check if player_intent is already a structured object with action field (from semantic parser)
+  // If so, use it directly. Otherwise fall back to legacy parseIntent for backward compatibility
+  const actions = (typeof inputObj?.player_intent === 'object' && inputObj?.player_intent?.action)
+    ? inputObj.player_intent
+    : (Actions.parseIntent(inputObj?.player_intent?.raw ?? inputObj?.player_intent ?? "") || { action:'noop' });
   
   // Save old position for location change detection
   const oldPosition = state.world.position ? {...state.world.position} : null;
