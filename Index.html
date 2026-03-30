@@ -55,6 +55,9 @@
     <button onclick="listLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #3498db; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">📂 List</button>
     <button onclick="readCurrentLog()" style="width: 24%; padding: 10px; font-size: 14px; background: #f39c12; color: white; border: none; cursor: pointer; border-radius: 3px;">👁️ View</button>
   </div>
+  <div style="margin-bottom: 10px;">
+    <button onclick="exportQASnapshot()" style="width: 100%; padding: 10px; font-size: 14px; background: #9b59b6; color: white; border: none; cursor: pointer; border-radius: 3px;">📦 QA Export (Copy to Clipboard)</button>
+  </div>
   <div id="logsLoading" style="display: none; color: #2ecc71; margin-top: 10px; font-size: 12px;">Processing logs...</div>
   <div id="logsResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #2ecc71; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.4; max-height: 500px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word; font-family: monospace;"></div>
 </div>
@@ -65,6 +68,8 @@
   <script>
     // Store session ID across page loads
     let currentSessionId = null;
+    let lastNarrative = "";
+    let lastTurnCounter = 0;
 
     async function submitAction() {
       const action = document.getElementById('actionInput').value;
@@ -108,6 +113,12 @@
         } else {
           console.log('[SESSION] WARNING: No sessionId in response, currentSessionId remains:', currentSessionId);
         }
+        
+        // [Priority 5] Store narrative and turn counter for QA export
+        if (data.narrative) {
+          lastNarrative = data.narrative;
+        }
+        lastTurnCounter = data.state?.turn_counter ?? 0;
 
 const narrative = data.narrative || data.error || 'No response from server';
 document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
@@ -453,6 +464,95 @@ diagLog.innerHTML = `
         logsResponse.style.display = 'block';
       } finally {
         logsLoading.style.display = 'none';
+      }
+    }
+
+    // [Priority 5] QA Export Function - Lightweight client-side implementation
+    async function exportQASnapshot() {
+      if (!currentSessionId) {
+        alert('No active game session. Start a game first!');
+        return;
+      }
+
+      try {
+        // 1. Fetch detailed context from existing endpoint
+        let context = "(No context available)";
+        try {
+          const ctxRes = await fetch('/test-context', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-session-id': currentSessionId
+            },
+            body: JSON.stringify({ debugLevel: 'detailed' })
+          });
+          const ctxData = await ctxRes.json();
+          if (ctxData.context) {
+            context = ctxData.context;
+          }
+        } catch (e) {
+          console.error('[QA-EXPORT] Context fetch failed:', e.message);
+        }
+
+        // 2. Fetch formatted logs from existing endpoint
+        let logs = "(No logs available)";
+        try {
+          const logRes = await fetch(`/logs/read/${currentSessionId}`, {
+            method: 'GET',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          const logData = await logRes.json();
+          if (logData.success && logData.data && logData.data.events) {
+            // Format each event as one line
+            logs = logData.data.events.map(e =>
+              `[${e.timestamp}] ${e.category}/${e.event} - ${JSON.stringify(e.data)}`
+            ).join('\n');
+          }
+        } catch (e) {
+          console.error('[QA-EXPORT] Logs fetch failed:', e.message);
+        }
+
+        // 3. Assemble complete bundle with header (sessionId, turn, timestamp)
+        const exportTimestamp = new Date().toISOString();
+        const bundle = `# QA SNAPSHOT EXPORT
+
+Session: ${currentSessionId}
+Turn: ${lastTurnCounter}
+Exported: ${exportTimestamp}
+
+---
+
+## STORY
+${lastNarrative}
+
+---
+
+## DEEPSEEK CONTEXT
+${context}
+
+---
+
+## SESSION LOGS
+${logs}
+
+---
+(End of QA snapshot)`;
+
+        // 4. Copy to clipboard
+        await navigator.clipboard.writeText(bundle);
+        
+        // Show success message
+        const logsResponse = document.getElementById('logsResponse');
+        logsResponse.innerHTML = '✅ QA snapshot copied to clipboard!\n\nYou can now paste it into any text editor or message.\n\nBundle includes:\n- Narrative story\n- Game state context\n- Complete event logs';
+        logsResponse.style.display = 'block';
+        logsResponse.style.color = '#2ecc71';
+
+      } catch (err) {
+        console.error('[QA-EXPORT] Error:', err);
+        const logsResponse = document.getElementById('logsResponse');
+        logsResponse.innerHTML = `❌ Export failed: ${err.message}`;
+        logsResponse.style.display = 'block';
+        logsResponse.style.color = '#e74c3c';
       }
     }
   </script>

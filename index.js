@@ -851,9 +851,18 @@ app.post('/narrate', async (req, res) => {
 
       if (parseResult && parseResult.success === true && typeof parseResult.confidence === 'number' && parseResult.confidence >= 0.5) {
         console.log('[PARSER] semantic_ok input="%s" action="%s" confidence=%s', userInput, parseResult.intent?.primaryAction?.action, parseResult.confidence);
+        // [POINT-A] Log parseResult details for movement diagnosis
+        console.log('[POINT-A-PARSE] parseResult:', { success: parseResult.success, confidence: parseResult.confidence, action: parseResult.intent?.primaryAction?.action, dir: parseResult.intent?.primaryAction?.dir });
         debug.parser = "semantic";
         // Phase 4: validate queue and execute sequentially
         const validation = validateAndQueueIntent(gameState, parseResult.intent);
+        // [POINT-B] Log validation queue for movement diagnosis
+        console.log('[POINT-B-QUEUE] validation.valid:', validation.valid, 'queue.length:', validation.queue?.length);
+        if (validation.queue && validation.queue.length > 0) {
+          validation.queue.forEach((qa, i) => {
+            console.log(`[POINT-B-QUEUE] queue[${i}]:`, { action: qa.action, dir: qa.dir, target: qa.target });
+          });
+        }
         if (!validation.valid) {
           return res.json({
             sessionId: resolvedSessionId,
@@ -867,6 +876,8 @@ app.post('/narrate', async (req, res) => {
         for (const queuedAction of validation.queue) {
           const raw = [queuedAction.action, queuedAction.target].filter(Boolean).join(' ');
           const mapped = mapActionToInput(raw, getActionKind(queuedAction));
+          // [POINT-C] Log mapped input structure for movement diagnosis
+          console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
           if (queuedAction.action === 'move' && queuedAction.dir) {
             const dirMap = { north:'n', south:'s', east:'e', west:'w', up:'u', down:'d' };
             const d = String(queuedAction.dir).toLowerCase();
@@ -876,7 +887,10 @@ app.post('/narrate', async (req, res) => {
           allResponses.push(result);
           if (result && result.state) {
             gameState = result.state;
+            // [POINT-E] Log position persistence for movement diagnosis
+            console.log('[POINT-E-PERSIST] Before sessionStates.set - gameState.world.position:', gameState.world.position);
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
+            console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
           }
         }
         engineOutput = allResponses[allResponses.length - 1];
@@ -1275,8 +1289,8 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `Biome: ${gameState.world.macro_biome || "not detected"}\n`;
     context += `World Tone: ${(gameState.world.world_tone || "not detected").substring(0, 150)}...\n`;
     context += `Starting Location Type: ${gameState.world.starting_location_type || "not detected"}\n`;
-    context += `World Seed: ${gameState.world.seed || gameState.rng_seed || "unknown"}\n`;
-    context += `Turn Counter: ${gameState.turn_counter || 0}\n`;
+    context += `World Seed: ${gameState.world.seed ?? gameState.rng_seed ?? "unknown"}\n`;
+    context += `Turn Counter: ${gameState.turn_counter ?? 0}\n`;
 
     context += `\n=== SETTLEMENTS (Summary) ===\n`;
     const settlementKeys = Object.keys(gameState.world.settlements || {});
@@ -1284,7 +1298,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     if (settlementKeys.length > 0) {
       settlementKeys.slice(0, 3).forEach(k => {
         const settlement = gameState.world.settlements[k];
-        context += `- ${settlement.name || "Unnamed"} (type: ${settlement.settlement_type || "unknown"}, ${(settlement.npcs || []).length} NPCs)\n`;
+        context += `- ${settlement.name || "Unnamed"} (type: ${settlement.type || "unknown"}, ${(settlement.npcs || []).length} NPCs)\n`;
       });
       if (settlementKeys.length > 3) {
         context += `... and ${settlementKeys.length - 3} more\n`;

@@ -153,7 +153,7 @@ function createLogger(config = {}) {
     
     // World generation
     biomeDetected: (biome) => emit('BIOME', 'biome_detected', { biome }),
-    toneDetected: (tone) => emit('WORLD_GEN', 'tone_detected', { tone: tone?.substring(0, 100) }),
+    toneDetected: (tone) => emit('WORLD_GEN', 'tone_detected', { tone }),
     locationTypeDetected: (locationType) => emit('LOCATION', 'starting_location_detected', { locationType }),
     worldInitialized: (seed, biome) => emit('WORLD_GEN', 'world_initialized', { seed, biome }),
     

@@ -104,9 +104,15 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
   
   // ========== MOVEMENT ==========
   if (act === 'move') {
+    // [POINT-D] Log when movement branch is entered
+    console.log('[POINT-D-EXECUTE] Movement branch entered. action=', act, 'dir=', actions?.dir);
     const dir = String(actions?.dir || '').toLowerCase();
     const pos = state?.world?.position;
-    if (!pos) return; // No position to move from
+    console.log('[POINT-D-EXECUTE] pos exists?', !!pos, 'pos:', pos);
+    if (!pos) {
+      console.log('[POINT-D-EXECUTE] NO POSITION - returning early');
+      return; // No position to move from
+    }
     
     const l1w = state?.world?.l1_default?.w || 12;
     const l1h = state?.world?.l1_default?.h || 12;
@@ -114,7 +120,11 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     // Map direction to coordinate delta
     const dirMap = { north: {dx:0, dy:-1}, south: {dx:0, dy:1}, east: {dx:1, dy:0}, west: {dx:-1, dy:0} };
     const delta = dirMap[dir];
-    if (!delta) return; // Invalid direction
+    console.log('[POINT-D-EXECUTE] dir:', dir, 'delta:', delta);
+    if (!delta) {
+      console.log('[POINT-D-EXECUTE] INVALID DIRECTION - returning early');
+      return; // Invalid direction
+    }
     
     // Calculate new position
     let newLx = pos.lx + delta.dx;
@@ -139,7 +149,9 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     
     // Update position in state
     state.world.position = { mx: newMx, my: newMy, lx: newLx, ly: newLy };
+    console.log('[POINT-D-EXECUTE] POSITION MUTATED:', state.world.position);
     deltas.push({ op:'set', path:'/world/position', value: state.world.position });
+    console.log('[POINT-D-EXECUTE] delta pushed for position change');
     
     // Log movement resolution (success)
     if (logger) {
