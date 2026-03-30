@@ -902,9 +902,9 @@ app.post('/narrate', async (req, res) => {
           mapped.player_intent.action = queuedAction.action;
           
           if (queuedAction.action === 'move' && queuedAction.dir) {
-            const dirMap = { north:'n', south:'s', east:'e', west:'w', up:'u', down:'d' };
-            const d = String(queuedAction.dir).toLowerCase();
-            mapped.player_intent.dir = dirMap[d] || d;
+            // Pass direction through unchanged as long-form (north/south/east/west)
+            // ActionProcessor delta table is the canonical direction contract
+            mapped.player_intent.dir = String(queuedAction.dir).toLowerCase();
           }
           
           // [POINT-C] Log mapped input structure for movement diagnosis (now with complete data)
