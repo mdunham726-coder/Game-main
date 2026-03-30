@@ -78,6 +78,14 @@
         if (currentSessionId) {
           headers['x-session-id'] = currentSessionId;
         }
+        
+        // [DIAG-5] Log headers before sending Request
+        console.log('[DIAG-5-CLIENT-BEFORE-FETCH] Headers object:', JSON.stringify(headers));
+        console.log('[DIAG-5-CLIENT-BEFORE-FETCH] currentSessionId value:', currentSessionId);
+        console.log('[DIAG-5-CLIENT-BEFORE-FETCH] x-session-id header present?', 'x-session-id' in headers);
+        if (headers['x-session-id']) {
+          console.log('[DIAG-5-CLIENT-BEFORE-FETCH] x-session-id value:', headers['x-session-id']);
+        }
 
         const response = await fetch('/narrate', {
           method: 'POST',
@@ -87,10 +95,18 @@
         
         const data = await response.json();
         
+        // [DIAG-4] Log sessionId from response
+        console.log('[DIAG-4-CLIENT-AFTER-RESPONSE] Full response object keys:', Object.keys(data));
+        console.log('[DIAG-4-CLIENT-AFTER-RESPONSE] data.sessionId value:', data.sessionId);
+        console.log('[DIAG-4-CLIENT-AFTER-RESPONSE] data.sessionId type:', typeof data.sessionId);
+        console.log('[DIAG-4-CLIENT-AFTER-RESPONSE] data.sessionId is truthy?', !!data.sessionId);
+        
         // Store sessionId from response (important for subsequent turns!)
         if (data.sessionId) {
           currentSessionId = data.sessionId;
-          console.log('[SESSION] SessionId:', currentSessionId);
+          console.log('[SESSION] SessionId stored:', currentSessionId);
+        } else {
+          console.log('[SESSION] WARNING: No sessionId in response, currentSessionId remains:', currentSessionId);
         }
 
 const narrative = data.narrative || data.error || 'No response from server';

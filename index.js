@@ -22,8 +22,18 @@ function generateSessionId() {
 }
 
 function getSessionState(sessionId) {
+  // [DIAG-3] Log inside getSessionState
+  console.log('[DIAG-3-SERVER-GETSESSIONSTATE] Incoming sessionId:', sessionId);
+  console.log('[DIAG-3-SERVER-GETSESSIONSTATE] Type:', typeof sessionId);
+  console.log('[DIAG-3-SERVER-GETSESSIONSTATE] !sessionId evaluates to:', !sessionId);
+  console.log('[DIAG-3-SERVER-GETSESSIONSTATE] Current Map size:', sessionStates.size);
+  console.log('[DIAG-3-SERVER-GETSESSIONSTATE] Current Map keys (first 5):', Array.from(sessionStates.keys()).slice(0, 5));
+  
   if (!sessionId || !sessionStates.has(sessionId)) {
+    // [DIAG-3a] Creating new session
+    console.log('[DIAG-3a-SERVER-GETSESSIONSTATE] CREATING NEW SESSION because: !sessionId=', !sessionId, ', !has=', !sessionStates.has(sessionId));
     const newSessionId = generateSessionId();
+    console.log('[DIAG-3a-SERVER-GETSESSIONSTATE] Generated new sessionId:', newSessionId);
     const newState = initializeGame();
     const logger = createLogger({ sessionId: newSessionId });
     sessionStates.set(newSessionId, {
@@ -31,10 +41,15 @@ function getSessionState(sessionId) {
       isFirstTurn: true,
       logger: logger
     });
+    console.log('[DIAG-3a-SERVER-GETSESSIONSTATE] New session stored in Map. Map size now:', sessionStates.size);
     logger.sessionStarted({ newSessionId });
     return { sessionId: newSessionId, ...sessionStates.get(newSessionId) };
   }
-  return { sessionId, ...sessionStates.get(sessionId) };
+  // [DIAG-3b] Returning existing session
+  console.log('[DIAG-3b-SERVER-GETSESSIONSTATE] RETURNING EXISTING SESSION for sessionId:', sessionId);
+  const existing = sessionStates.get(sessionId);
+  console.log('[DIAG-3b-SERVER-GETSESSIONSTATE] Existing session isFirstTurn:', existing?.isFirstTurn);
+  return { sessionId, ...existing };
 }
 
 // File system helper functions for save/load system
@@ -636,6 +651,12 @@ async function detectSystemCommand(input, sessionId, currentGameState, sessionSt
 // Existing narrate endpoint begins here
 app.post('/narrate', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
+  
+  // [DIAG-2] Log incoming request header
+  console.log('[DIAG-2-SERVER-REQUEST-ENTRY] req.headers["x-session-id"]:', sessionId);
+  console.log('[DIAG-2-SERVER-REQUEST-ENTRY] Type:', typeof sessionId);
+  console.log('[DIAG-2-SERVER-REQUEST-ENTRY] Is truthy?', !!sessionId);
+  
   const { sessionId: resolvedSessionId, gameState: sessionGameState, isFirstTurn: sessionIsFirstTurn } = getSessionState(sessionId);
   
   let gameState = sessionGameState;
@@ -1088,6 +1109,11 @@ NARRATION TASK:
       logger.narrationGenerated(narrative.length);
     }
 
+    // [DIAG-1] Log before returning response
+    console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
+    console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
+    console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
+    
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative, 
