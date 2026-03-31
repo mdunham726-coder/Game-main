@@ -65,6 +65,34 @@ function createLogger(config = {}) {
   const logFilePath = path.join(logsDir, `${sessionId}.json`);
   const eventBuffer = [];
   
+  // QA-014: Turn-scoped logging
+  let currentTurnActive = false;
+  let currentTurnNumber = 0;
+  let currentTurnInput = null;
+  let currentTurnLogs = [];
+  
+  /**
+   * Begin turn scope for log capture
+   * QA-014: Separates session logs (init/biome/world) from turn-specific action logs
+   */
+  function beginTurn(turnNumber, rawInput) {
+    currentTurnActive = true;
+    currentTurnNumber = turnNumber;
+    currentTurnInput = rawInput;
+    currentTurnLogs = [];
+  }
+  
+  /**
+   * End turn scope and return captured turn logs
+   * QA-014: Returns logs for this turn so they can be stored with turn object
+   */
+  function endTurn() {
+    currentTurnActive = false;
+    const turnLogs = [...currentTurnLogs];
+    currentTurnLogs = [];
+    return turnLogs;
+  }
+  
   /**
    * Emit a structured event
    * @param {string} category - Event category (SESSION, WORLD_GEN, NPC, etc)
@@ -87,8 +115,12 @@ function createLogger(config = {}) {
       context
     };
     
-    // Add to buffer
-    eventBuffer.push(logEntry);
+    // QA-014: Route logs to turn buffer if turn is active, otherwise to session buffer
+    if (currentTurnActive) {
+      currentTurnLogs.push(logEntry);
+    } else {
+      eventBuffer.push(logEntry);  // Session-level logs (init, biome, world)
+    }
     
     // Colored console output
     const catColor = categoryColors[category] || colors.white;
@@ -142,6 +174,8 @@ function createLogger(config = {}) {
    */
   return {
     emit,
+    beginTurn,
+    endTurn,
     flush,
     sessionId,
     logFilePath,

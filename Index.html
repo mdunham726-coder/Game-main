@@ -71,6 +71,7 @@
     let currentSessionId = null;
     let lastNarrative = "";
     let lastTurnCounter = 0;
+    let lastGameResponse = null;  // QA-014: Store full response for turn history
     // A2: Running QA log tracking
     let qaExportHistory = [];
     let lastExportedTurn = -1;
@@ -124,6 +125,9 @@
           lastNarrative = data.narrative;
         }
         lastTurnCounter = data.state?.turn_counter ?? 0;
+        
+        // QA-014: Store full game response for turn history access
+        lastGameResponse = data;
 
         // A2: Reset QA export history on new game
         if (data.diagnostics?.first_turn) {
@@ -483,6 +487,7 @@ diagLog.innerHTML = `
     }
 
     // A2/A3: QA Export Function with dual-mode support and log flushing
+    // QA-014: Enhanced to render from turn_history for accurate, non-duplicated turn records
     async function exportQASnapshot(mode = 'snapshot') {
       if (!currentSessionId) {
         alert('No active game session. Start a game first!');
@@ -506,48 +511,157 @@ diagLog.innerHTML = `
           firstSessionTimestamp = new Date().toISOString();
         }
 
-        // 1. Fetch detailed context
-        let context = "(No context available)";
-        try {
-          const ctxRes = await fetch('/test-context', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-session-id': currentSessionId
-            },
-            body: JSON.stringify({ debugLevel: 'detailed' })
-          });
-          const ctxData = await ctxRes.json();
-          if (ctxData.context) {
-            context = ctxData.context;
+        // QA-014: Use turn_history from latest response if available
+        let turnHistory = lastGameResponse?.turn_history || [];
+        
+        if (mode === 'running' && turnHistory.length > 0) {
+          // QA-014: Render from turn history (new format)
+          let sessionHeader = `# QA RUNNING LOG (Turn-Scoped)
+
+Session ID: ${currentSessionId}
+Session Started: ${firstSessionTimestamp}
+Export Generated: ${new Date().toISOString()}
+Total Turns Included: ${turnHistory.length}
+
+═══════════════════════════════════════════════════════════════════════════════════════`;
+
+          let turnsBlock = turnHistory.map((turn, idx) => {
+            const turnNum = idx + 1;
+            const turnTimestamp = turn.timestamp || new Date().toISOString();
+            
+            // Format input section
+            const inputSection = `[INPUT]
+Raw Input: "${turn.input?.raw || 'unknown'}"
+Parsed Intent: ${turn.input?.parsed_intent ? JSON.stringify(turn.input.parsed_intent) : 'none'}`;
+            
+            // Format authoritative state section
+            let stateSection = `[AUTHORITATIVE STATE]
+Position: Macro(${turn.authoritative_state?.position?.mx},${turn.authoritative_state?.position?.my}) → Local(${turn.authoritative_state?.position?.lx},${turn.authoritative_state?.position?.ly})
+Cell Key: ${turn.authoritative_state?.cell_key || 'unknown'}
+Cell Type: ${turn.authoritative_state?.cell_type || 'unknown'}
+Cell Subtype: ${turn.authoritative_state?.cell_subtype || 'unknown'}
+Biome: ${turn.authoritative_state?.biome || 'unknown'}
+Turn Counter: ${turn.authoritative_state?.turn_counter || 0}
+Settlement Count: ${turn.authoritative_state?.settlement_count || 0}`;
+            
+            // Format narrative section
+            const narrativeSection = `[NARRATIVE]
+${turn.narrative || '(no narrative)'}`;
+            
+            // Format turn logs section
+            let logsSection = `[TURN LOGS]`;
+            if (turn.logs && turn.logs.length > 0) {
+              logsSection += '\n' + turn.logs.map(log => 
+                `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`
+              ).join('\n');
+            } else {
+              logsSection += '\n(no logs captured)';
+            }
+            
+            return `TURN ${turnNum} | ${turnTimestamp}
+${inputSection}
+
+${stateSection}
+
+${narrativeSection}
+
+${logsSection}`;
+          }).join('\n\n═══════════════════════════════════════════════════════════════════════════════════════\n\n');
+
+          const fullRunLog = `${sessionHeader}
+
+${turnsBlock}
+
+═══════════════════════════════════════════════════════════════════════════════════════
+(End of QA running log)`;
+
+          await navigator.clipboard.writeText(fullRunLog);
+          const logsResponse = document.getElementById('logsResponse');
+          logsResponse.innerHTML = `✅ QA running log copied to clipboard (turn-scoped)!\n\nTotal turns: ${turnHistory.length}\nSession started: ${new Date(firstSessionTimestamp).toLocaleTimeString()}`;
+          logsResponse.style.display = 'block';
+          logsResponse.style.color = '#2ecc71';
+
+        } else if (mode === 'snapshot' && turnHistory.length > 0) {
+          // QA-014: Snapshot mode using turn history
+          const lastTurn = turnHistory[turnHistory.length - 1];
+          const snapshotBundle = `# QA SNAPSHOT EXPORT (Turn-Scoped)
+
+Session ID: ${currentSessionId}
+Turn: ${turnHistory.length}
+Exported: ${new Date().toISOString()}
+
+═══════════════════════════════════════════════════════════════════════════════════════
+
+${lastTurn.input ? `[INPUT]
+Raw Input: "${lastTurn.input.raw || 'unknown'}"
+Parsed Intent: ${lastTurn.input.parsed_intent ? JSON.stringify(lastTurn.input.parsed_intent) : 'none'}
+
+` : ''}${`[AUTHORITATIVE STATE]
+Position: Macro(${lastTurn.authoritative_state?.position?.mx},${lastTurn.authoritative_state?.position?.my}) → Local(${lastTurn.authoritative_state?.position?.lx},${lastTurn.authoritative_state?.position?.ly})
+Cell Key: ${lastTurn.authoritative_state?.cell_key || 'unknown'}
+Cell Type: ${lastTurn.authoritative_state?.cell_type || 'unknown'}
+Cell Subtype: ${lastTurn.authoritative_state?.cell_subtype || 'unknown'}
+Biome: ${lastTurn.authoritative_state?.biome || 'unknown'}
+Turn Counter: ${lastTurn.authoritative_state?.turn_counter || 0}
+Settlement Count: ${lastTurn.authoritative_state?.settlement_count || 0}
+
+`}[NARRATIVE]
+${lastTurn.narrative || '(no narrative)'}
+
+[TURN LOGS]
+${lastTurn.logs && lastTurn.logs.length > 0 ? lastTurn.logs.map(log => `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`).join('\n') : '(no logs captured)'}
+
+═══════════════════════════════════════════════════════════════════════════════════════
+(End of QA snapshot)`;
+
+          await navigator.clipboard.writeText(snapshotBundle);
+          const logsResponse = document.getElementById('logsResponse');
+          logsResponse.innerHTML = '✅ QA snapshot copied to clipboard (turn-scoped)!\n\nBundle includes:\n- Current input\n- Authoritative state\n- Narrative\n- Turn-specific logs';
+          logsResponse.style.display = 'block';
+          logsResponse.style.color = '#2ecc71';
+
+        } else {
+          // Fallback: Original format if turn_history not available
+          let context = "(No context available)";
+          try {
+            const ctxRes = await fetch('/test-context', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-session-id': currentSessionId
+              },
+              body: JSON.stringify({ debugLevel: 'detailed' })
+            });
+            const ctxData = await ctxRes.json();
+            if (ctxData.context) {
+              context = ctxData.context;
+            }
+          } catch (e) {
+            console.error('[QA-EXPORT] Context fetch failed:', e.message);
           }
-        } catch (e) {
-          console.error('[QA-EXPORT] Context fetch failed:', e.message);
-        }
 
-        // 2. Fetch formatted logs
-        let logs = "(No logs available)";
-        try {
-          const logRes = await fetch(`/logs/read/${currentSessionId}`, {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' }
-          });
-          const logData = await logRes.json();
-          if (logData.success && logData.data && logData.data.events) {
-            logs = logData.data.events.map(e =>
-              `[${e.timestamp}] ${e.category}/${e.event} - ${JSON.stringify(e.data)}`
-            ).join('\n');
+          let logs = "(No logs available)";
+          try {
+            const logRes = await fetch(`/logs/read/${currentSessionId}`, {
+              method: 'GET',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            const logData = await logRes.json();
+            if (logData.success && logData.data && logData.data.events) {
+              logs = logData.data.events.map(e =>
+                `[${e.timestamp}] ${e.category}/${e.event} - ${JSON.stringify(e.data)}`
+              ).join('\n');
+            }
+          } catch (e) {
+            console.error('[QA-EXPORT] Logs fetch failed:', e.message);
           }
-        } catch (e) {
-          console.error('[QA-EXPORT] Logs fetch failed:', e.message);
-        }
 
-        const exportTimestamp = new Date().toISOString();
+          const exportTimestamp = new Date().toISOString();
 
-        // For running mode: append turn block to history if new turn
-        if (mode === 'running') {
-          if (lastTurnCounter !== lastExportedTurn) {
-            const turnBlock = `
+          // For running mode: append turn block to history if new turn
+          if (mode === 'running') {
+            if (lastTurnCounter !== lastExportedTurn) {
+              const turnBlock = `
 ════════════════════════════════════════
 TURN ${lastTurnCounter} | ${exportTimestamp}
 ════════════════════════════════════════

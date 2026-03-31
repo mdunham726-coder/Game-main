@@ -657,7 +657,7 @@ app.post('/narrate', async (req, res) => {
   console.log('[DIAG-2-SERVER-REQUEST-ENTRY] Type:', typeof sessionId);
   console.log('[DIAG-2-SERVER-REQUEST-ENTRY] Is truthy?', !!sessionId);
   
-  const { sessionId: resolvedSessionId, gameState: sessionGameState, isFirstTurn: sessionIsFirstTurn } = getSessionState(sessionId);
+  const { sessionId: resolvedSessionId, gameState: sessionGameState, isFirstTurn: sessionIsFirstTurn, logger } = getSessionState(sessionId);
   
   let gameState = sessionGameState;
   let isFirstTurn = sessionIsFirstTurn;
@@ -673,7 +673,16 @@ app.post('/narrate', async (req, res) => {
   if (gameState === null) {
     const init = initializeGame();
     gameState = init.state;
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: true });
+    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: true, logger });
+  }
+
+  // QA-014: Initialize turn history and begin turn scope for log capture
+  if (!gameState.turn_history) {
+    gameState.turn_history = [];
+  }
+  const turnNumber = gameState.turn_history.length + 1;
+  if (logger) {
+    logger.beginTurn(turnNumber, action);
   }
 
   // =========================================================================
@@ -1181,6 +1190,49 @@ NARRATION TASK:
       logger.narrationGenerated(narrative.length);
     }
 
+    // QA-014: End turn scope and create turn object
+    let turnLogs = [];
+    if (logger) {
+      turnLogs = logger.endTurn();  // Returns logs captured during this turn
+    }
+    
+    // Extract authoritative state for turn snapshot
+    const currentPosition = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
+    const cellKey = `L1:${currentPosition.mx},${currentPosition.my}:${currentPosition.lx},${currentPosition.ly}`;
+    const currentCell = gameState.world.cells ? gameState.world.cells[cellKey] : null;
+    const authoritativeState = {
+      position: currentPosition,
+      cell_key: cellKey,
+      cell_type: currentCell?.type || 'unknown',
+      cell_subtype: currentCell?.subtype || 'unknown',
+      biome: gameState.world.macro_biome || 'unknown',
+      turn_counter: gameState.turn_counter || 0,
+      settlement_count: Object.keys(gameState.world.settlements || {}).length,
+      current_settlement: null  // Will be populated if player is in a settlement
+    };
+    
+    // Parse intent from semantic parser if available
+    let parsedIntent = {};
+    if (engineOutput?.actions?.action) {
+      parsedIntent = { action: engineOutput.actions.action, dir: engineOutput.actions.dir };
+    }
+    
+    // Create turn object
+    const turnObject = {
+      turn_number: turnNumber,
+      timestamp: new Date().toISOString(),
+      input: { raw: action, parsed_intent: parsedIntent },
+      authoritative_state: authoritativeState,
+      narrative: narrative,
+      logs: turnLogs
+    };
+    
+    // Store turn object in turn history
+    gameState.turn_history.push(turnObject);
+    
+    // Persist updated gameState with turn history
+    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+
     // [DIAG-1] Log before returning response
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
@@ -1189,7 +1241,8 @@ NARRATION TASK:
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative, 
-      state: gameState, 
+      state: gameState,
+      turn_history: gameState.turn_history,  // QA-014: Include turn history for export
       engine_output: engineOutput, 
       scene, 
       diagnostics,
@@ -1204,6 +1257,7 @@ NARRATION TASK:
       sessionId: resolvedSessionId,
       narrative: "The engine encountered an error generating narration. Please try again.",
       state: gameState,
+      turn_history: gameState.turn_history,  // QA-014: Include turn history for export
       engine_output: engineOutput,
       scene,
       diagnostics,
