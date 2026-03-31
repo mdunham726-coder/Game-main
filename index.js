@@ -1211,27 +1211,39 @@ NARRATION TASK:
       cell_key: cellKey,
       cell_type: currentCell?.type || 'unknown',
       cell_subtype: currentCell?.subtype || 'unknown',
+      cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
       settlement_count: Object.keys(gameState.world.settlements || {}).length,
       current_settlement: currentSettlement  // Now populated if player is in a settlement
     };
     
-    // QA-016: Extract parsed intent from turn logs for richer diagnostic data
+    // QA-016 follow-up: Extract parsed intent from turn logs (actual parser output preferred)
     let parsedIntent = {};
+    let parsedIntentSource = 'none';  // Track source for export clarity
     const playerActionParsedLog = turnLogs.find(log => log.event === 'player_action_parsed');
     if (playerActionParsedLog && playerActionParsedLog.data) {
       const { action, intent, confidence, success } = playerActionParsedLog.data;
+      // Prefer actual parser output: use intent object structure from SemanticParser
       parsedIntent = {
         action: action || intent?.primaryAction?.action || 'unknown',
-        direction: intent?.primaryAction?.dir,
+        dir: intent?.primaryAction?.dir,  // Use 'dir' field (matches parser output)
         target: intent?.primaryAction?.target,
         confidence: confidence || 0,
-        success: success || false
+        success: success || false,
+        source: 'parser'  // Mark as actual parser output
       };
+      parsedIntentSource = 'parser';
     } else if (engineOutput?.actions?.action) {
-      // Fallback to engineOutput
-      parsedIntent = { action: engineOutput.actions.action, direction: engineOutput.actions.dir };
+      // Fallback: use engine output (inferred, not from parser)
+      parsedIntent = {
+        action: engineOutput.actions.action,
+        dir: engineOutput.actions.dir,
+        confidence: 0,
+        success: false,
+        source: 'fallback'  // Mark clearly as fallback/inferred
+      };
+      parsedIntentSource = 'fallback';
     }
     
     // QA-016: Extract movement before/after positions from turn logs
@@ -1273,11 +1285,12 @@ NARRATION TASK:
       });
     }
     
-    // Create turn object
+    // QA-016 follow-up: Create turn object with initialization flag for Turn 1
     const turnObject = {
       turn_number: turnNumber,
       timestamp: new Date().toISOString(),
-      input: { raw: action, parsed_intent: parsedIntent },
+      is_initialization: (turnNumber === 1),  // Special flag for Turn 1 world setup
+      input: { raw: action, parsed_intent: parsedIntent, parsed_intent_source: parsedIntentSource },
       authoritative_state: authoritativeState,
       movement: movement,
       nearby_cells: nearbyCellsSnapshot,
