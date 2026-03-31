@@ -1230,7 +1230,7 @@ NARRATION TASK:
         parsed_action: intent?.action || intent?.primaryAction?.action || 'unknown',  // Parser-resolved action
         direction: intent?.primaryAction?.dir || null,  // Direction from parser (explicit field)
         target: intent?.primaryAction?.target || null,  // Target from parser
-        confidence: confidence || intent?.primaryAction?.confidence || 0,  // Confidence score
+        confidence: (confidence !== undefined ? confidence : (intent?.primaryAction?.confidence !== undefined ? intent?.primaryAction?.confidence : null)),  // Confidence score (preserve 0)
         success: success || false,  // Whether parse succeeded
         source: 'parser'  // Mark as actual parser output
       };
