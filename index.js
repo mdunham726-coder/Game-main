@@ -748,7 +748,6 @@ app.post('/narrate', async (req, res) => {
 
   // Log player action parsing
   const session = sessionStates.get(resolvedSessionId);
-  const logger = session?.logger;
   if (logger && !isFirstTurn) {
     logger.playerActionParsed(userInput, {
       success: parseResult?.success,
