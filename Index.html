@@ -525,48 +525,144 @@ Total Turns Included: ${turnHistory.length}
 
 ═══════════════════════════════════════════════════════════════════════════════════════`;
 
+          // QA-016: Enhanced turn rendering with intent, movement, mismatch detection
           let turnsBlock = turnHistory.map((turn, idx) => {
-            const turnNum = idx + 1;
+            const turnNum = turn.turn_number || (idx + 1);
             const turnTimestamp = turn.timestamp || new Date().toISOString();
+            const parsedIntent = turn.input?.parsed_intent || {};
+            const authState = turn.authoritative_state || {};
+            const movement = turn.movement || null;
+            const nearbyCells = turn.nearby_cells || null;
             
-            // Format input section
-            const inputSection = `[INPUT]
-Raw Input: "${turn.input?.raw || 'unknown'}"
-Parsed Intent: ${turn.input?.parsed_intent ? JSON.stringify(turn.input.parsed_intent) : 'none'}`;
+            // 6. Turn header with emoji
+            const turnHeader = `━━━━━━━━━━ 🧭 TURN ${turnNum} ━━━━━━━━━━
+🕒 ${new Date(turnTimestamp).toLocaleString()}`;
             
-            // Format authoritative state section
-            let stateSection = `[AUTHORITATIVE STATE]
-Position: Macro(${turn.authoritative_state?.position?.mx},${turn.authoritative_state?.position?.my}) → Local(${turn.authoritative_state?.position?.lx},${turn.authoritative_state?.position?.ly})
-Cell Key: ${turn.authoritative_state?.cell_key || 'unknown'}
-Cell Type: ${turn.authoritative_state?.cell_type || 'unknown'}
-Cell Subtype: ${turn.authoritative_state?.cell_subtype || 'unknown'}
-Biome: ${turn.authoritative_state?.biome || 'unknown'}
-Turn Counter: ${turn.authoritative_state?.turn_counter || 0}
-Settlement Count: ${turn.authoritative_state?.settlement_count || 0}`;
+            // 7. Determine mismatch between state and narrative
+            let hasMismatch = false;
+            let mismatchInfo = '';
+            const narrativeKeywords = ['market', 'plaza', 'square', 'street', 'district', 'garden', 'settlement', 'forest', 'desert', 'lake', 'river', 'cave', 'temple', 'tower', 'ruins', 'camp'];
+            const cellType = authState.cell_type || 'unknown';
+            const narrativeText = (turn.narrative || '').toLowerCase();
+            for (const keyword of narrativeKeywords) {
+              if (narrativeText.includes(keyword)) {
+                // Simple category check: if keyword doesn't match cell_type general category
+                if (!cellType.toLowerCase().includes(keyword.slice(0, 3))) {
+                  hasMismatch = true;
+                  mismatchInfo = keyword;
+                }
+                break;
+              }
+            }
             
-            // Format narrative section
-            const narrativeSection = `[NARRATIVE]
+            // 7. Build turn summary line
+            const summaryLine = `
+🧪 SUMMARY
+Action     : ${parsedIntent.action || 'unknown'}${parsedIntent.direction ? ' ' + parsedIntent.direction : ''}
+Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}
+State      : ${cellType}
+Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ❌' : ' ✓'}`;
+            
+            // 8. Build movement block
+            let movementSection = '';
+            if (movement) {
+              const fromCoord = `(${movement.from?.mx || 0},${movement.from?.my || 0})→(${movement.from?.lx || 0},${movement.from?.ly || 0})`;
+              const toCoord = `(${movement.to?.mx || 0},${movement.to?.my || 0})→(${movement.to?.lx || 0},${movement.to?.ly || 0})`;
+              movementSection = `
+🔄 Movement
+From : ${fromCoord} ${movement.from_cell_type || '?'}
+To   : ${toCoord} ${movement.to_cell_type || '?'}`;
+            } else {
+              movementSection = `
+🔄 Movement
+(No movement this turn)`;
+            }
+            
+            // 9. Mismatch warning if detected
+            let mismatchWarning = '';
+            if (hasMismatch) {
+              mismatchWarning = `
+⚠️  MISMATCH DETECTED
+State      : ${cellType}
+Narrative  : ${mismatchInfo}`;
+            }
+            
+            // 10. Build structured state block
+            const stateSection = `
+📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
+🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
+🔑 Cell Key      : ${authState.cell_key || 'unknown'}
+🌍 Biome         : ${authState.biome || 'unknown'}
+🔢 Turn Counter  : ${authState.turn_counter || 0}
+🏘️  Settlement Count : ${authState.settlement_count || 0}`;
+            
+            // 11. Build settlement block
+            let settlementSection = '';
+            if (authState.current_settlement) {
+              const settlement = authState.current_settlement;
+              settlementSection = `
+🏘️  Settlement
+Name          : ${settlement.name || '(unknown)'}
+Type          : ${settlement.type || '(unknown)'}
+NPC Count     : ${settlement.npcs?.length || 0}`;
+            } else {
+              settlementSection = `
+🏘️  Settlement
+(Not in a settlement)`;
+            }
+            
+            // 12. Build nearby cells snapshot
+            let nearbyCellsSection = '';
+            if (nearbyCells) {
+              nearbyCellsSection = `
+🧭 Nearby Cells
+N: ${nearbyCells.North?.type || '?'} (${nearbyCells.North?.subtype || ''})
+S: ${nearbyCells.South?.type || '?'} (${nearbyCells.South?.subtype || ''})
+E: ${nearbyCells.East?.type || '?'} (${nearbyCells.East?.subtype || ''})
+W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
+            } else {
+              nearbyCellsSection = `
+🧭 Nearby Cells
+(No cell data available)`;
+            }
+            
+            // 13. Build intent section
+            const intentSection = `
+🧠 Intent
+Action     : ${parsedIntent.action || 'unknown'}
+Direction  : ${parsedIntent.direction || '(none)'}
+Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}`;
+            
+            // 14. Annotate narrative and logs sections
+            const narrativeSection = `
+🟡 NARRATIVE
 ${turn.narrative || '(no narrative)'}`;
             
-            // Format turn logs section
-            let logsSection = `[TURN LOGS]`;
+            // Filter diagnostic-only logs: exclude visible_cell dumps
+            let diagnosticLogs = [];
             if (turn.logs && turn.logs.length > 0) {
-              logsSection += '\n' + turn.logs.map(log => 
+              diagnosticLogs = turn.logs.filter(log => 
+                !log.category?.includes('visible') && 
+                (log.event === 'player_action_parsed' || 
+                 log.event?.includes('move') || 
+                 log.event === 'location_changed' ||
+                 log.event === 'narration_generated')
+              );
+            }
+            
+            let logsSection = `
+🟠 TURN LOGS (${diagnosticLogs.length} events)`;
+            if (diagnosticLogs.length > 0) {
+              logsSection += '\n' + diagnosticLogs.map(log => 
                 `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`
               ).join('\n');
             } else {
-              logsSection += '\n(no logs captured)';
+              logsSection += '\n(no diagnostic logs captured)';
             }
             
-            return `TURN ${turnNum} | ${turnTimestamp}
-${inputSection}
-
-${stateSection}
-
-${narrativeSection}
-
-${logsSection}`;
-          }).join('\n\n═══════════════════════════════════════════════════════════════════════════════════════\n\n');
+            // 15. Assemble complete turn block with visual separators
+            return `${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${settlementSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
+          }).join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
           const fullRunLog = `${sessionHeader}
 
@@ -577,46 +673,162 @@ ${turnsBlock}
 
           await navigator.clipboard.writeText(fullRunLog);
           const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = `✅ QA running log copied to clipboard (turn-scoped)!\n\nTotal turns: ${turnHistory.length}\nSession started: ${new Date(firstSessionTimestamp).toLocaleTimeString()}`;
+          logsResponse.innerHTML = `✅ QA running log copied to clipboard (enhanced)!\n\nTotal turns: ${turnHistory.length}\nSession started: ${new Date(firstSessionTimestamp).toLocaleTimeString()}`;
           logsResponse.style.display = 'block';
           logsResponse.style.color = '#2ecc71';
 
         } else if (mode === 'snapshot' && turnHistory.length > 0) {
-          // QA-014: Snapshot mode using turn history
+          // QA-016: Enhanced snapshot mode with structured formatting and mismatch detection
           const lastTurn = turnHistory[turnHistory.length - 1];
-          const snapshotBundle = `# QA SNAPSHOT EXPORT (Turn-Scoped)
+          const parsedIntent = lastTurn.input?.parsed_intent || {};
+          const authState = lastTurn.authoritative_state || {};
+          const movement = lastTurn.movement || null;
+          const nearbyCells = lastTurn.nearby_cells || null;
+          
+          // Build mismatch detection
+          let hasMismatch = false;
+          let mismatchInfo = '';
+          const narrativeKeywords = ['market', 'plaza', 'square', 'street', 'district', 'garden', 'settlement', 'forest', 'desert', 'lake', 'river', 'cave', 'temple', 'tower', 'ruins', 'camp'];
+          const cellType = authState.cell_type || 'unknown';
+          const narrativeText = (lastTurn.narrative || '').toLowerCase();
+          for (const keyword of narrativeKeywords) {
+            if (narrativeText.includes(keyword)) {
+              if (!cellType.toLowerCase().includes(keyword.slice(0, 3))) {
+                hasMismatch = true;
+                mismatchInfo = keyword;
+              }
+              break;
+            }
+          }
+          
+          // Build turn header
+          const turnNum = lastTurn.turn_number || turnHistory.length;
+          const turnTimestamp = lastTurn.timestamp || new Date().toISOString();
+          const turnHeader = `━━━━━━━━━━ 🧭 TURN ${turnNum} ━━━━━━━━━━
+🕒 ${new Date(turnTimestamp).toLocaleString()}`;
+          
+          // Build summary
+          const summaryLine = `
+🧪 SUMMARY
+Action     : ${parsedIntent.action || 'unknown'}${parsedIntent.direction ? ' ' + parsedIntent.direction : ''}
+Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}
+State      : ${cellType}
+Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ❌' : ' ✓'}`;
+          
+          // Build movement block
+          let movementSection = '';
+          if (movement) {
+            const fromCoord = `(${movement.from?.mx || 0},${movement.from?.my || 0})→(${movement.from?.lx || 0},${movement.from?.ly || 0})`;
+            const toCoord = `(${movement.to?.mx || 0},${movement.to?.my || 0})→(${movement.to?.lx || 0},${movement.to?.ly || 0})`;
+            movementSection = `
+🔄 Movement
+From : ${fromCoord} ${movement.from_cell_type || '?'}
+To   : ${toCoord} ${movement.to_cell_type || '?'}`;
+          } else {
+            movementSection = `
+🔄 Movement
+(No movement this turn)`;
+          }
+          
+          // Mismatch warning
+          let mismatchWarning = '';
+          if (hasMismatch) {
+            mismatchWarning = `
+⚠️  MISMATCH DETECTED
+State      : ${cellType}
+Narrative  : ${mismatchInfo}`;
+          }
+          
+          // State block
+          const stateSection = `
+📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
+🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
+🔑 Cell Key      : ${authState.cell_key || 'unknown'}
+🌍 Biome         : ${authState.biome || 'unknown'}
+🔢 Turn Counter  : ${authState.turn_counter || 0}
+🏘️  Settlement Count : ${authState.settlement_count || 0}`;
+          
+          // Settlement block
+          let settlementSection = '';
+          if (authState.current_settlement) {
+            const settlement = authState.current_settlement;
+            settlementSection = `
+🏘️  Settlement
+Name          : ${settlement.name || '(unknown)'}
+Type          : ${settlement.type || '(unknown)'}
+NPC Count     : ${settlement.npcs?.length || 0}`;
+          } else {
+            settlementSection = `
+🏘️  Settlement
+(Not in a settlement)`;
+          }
+          
+          // Nearby cells snapshot
+          let nearbyCellsSection = '';
+          if (nearbyCells) {
+            nearbyCellsSection = `
+🧭 Nearby Cells
+N: ${nearbyCells.North?.type || '?'} (${nearbyCells.North?.subtype || ''})
+S: ${nearbyCells.South?.type || '?'} (${nearbyCells.South?.subtype || ''})
+E: ${nearbyCells.East?.type || '?'} (${nearbyCells.East?.subtype || ''})
+W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
+          } else {
+            nearbyCellsSection = `
+🧭 Nearby Cells
+(No cell data available)`;
+          }
+          
+          // Build intent section
+          const intentSection = `
+🧠 Intent
+Action     : ${parsedIntent.action || 'unknown'}
+Direction  : ${parsedIntent.direction || '(none)'}
+Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}`;
+          
+          // Narrative section
+          const narrativeSection = `
+🟡 NARRATIVE
+${lastTurn.narrative || '(no narrative)'}`;
+          
+          // Filter diagnostic logs
+          let diagnosticLogs = [];
+          if (lastTurn.logs && lastTurn.logs.length > 0) {
+            diagnosticLogs = lastTurn.logs.filter(log => 
+              !log.category?.includes('visible') && 
+              (log.event === 'player_action_parsed' || 
+               log.event?.includes('move') || 
+               log.event === 'location_changed' ||
+               log.event === 'narration_generated')
+            );
+          }
+          
+          let logsSection = `
+🟠 TURN LOGS (${diagnosticLogs.length} events)`;
+          if (diagnosticLogs.length > 0) {
+            logsSection += '\n' + diagnosticLogs.map(log => 
+              `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`
+            ).join('\n');
+          } else {
+            logsSection += '\n(no diagnostic logs captured)';
+          }
+          
+          // Assemble snapshot
+          const snapshotBundle = `# QA SNAPSHOT EXPORT (Enhanced)
 
 Session ID: ${currentSessionId}
-Turn: ${turnHistory.length}
+Turn: ${turnNum}
 Exported: ${new Date().toISOString()}
 
 ═══════════════════════════════════════════════════════════════════════════════════════
 
-${lastTurn.input ? `[INPUT]
-Raw Input: "${lastTurn.input.raw || 'unknown'}"
-Parsed Intent: ${lastTurn.input.parsed_intent ? JSON.stringify(lastTurn.input.parsed_intent) : 'none'}
-
-` : ''}${`[AUTHORITATIVE STATE]
-Position: Macro(${lastTurn.authoritative_state?.position?.mx},${lastTurn.authoritative_state?.position?.my}) → Local(${lastTurn.authoritative_state?.position?.lx},${lastTurn.authoritative_state?.position?.ly})
-Cell Key: ${lastTurn.authoritative_state?.cell_key || 'unknown'}
-Cell Type: ${lastTurn.authoritative_state?.cell_type || 'unknown'}
-Cell Subtype: ${lastTurn.authoritative_state?.cell_subtype || 'unknown'}
-Biome: ${lastTurn.authoritative_state?.biome || 'unknown'}
-Turn Counter: ${lastTurn.authoritative_state?.turn_counter || 0}
-Settlement Count: ${lastTurn.authoritative_state?.settlement_count || 0}
-
-`}[NARRATIVE]
-${lastTurn.narrative || '(no narrative)'}
-
-[TURN LOGS]
-${lastTurn.logs && lastTurn.logs.length > 0 ? lastTurn.logs.map(log => `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`).join('\n') : '(no logs captured)'}
+${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${settlementSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}
 
 ═══════════════════════════════════════════════════════════════════════════════════════
 (End of QA snapshot)`;
 
           await navigator.clipboard.writeText(snapshotBundle);
           const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = '✅ QA snapshot copied to clipboard (turn-scoped)!\n\nBundle includes:\n- Current input\n- Authoritative state\n- Narrative\n- Turn-specific logs';
+          logsResponse.innerHTML = '✅ QA snapshot copied to clipboard (enhanced)!\n\nBundle includes:\n- Parsed intent\n- Movement before/after\n- Authoritative state\n- Settlement info\n- Nearby cells\n- Narrative + turn logs';
           logsResponse.style.display = 'block';
           logsResponse.style.color = '#2ecc71';
 

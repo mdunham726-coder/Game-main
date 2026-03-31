@@ -1197,6 +1197,15 @@ NARRATION TASK:
     const currentPosition = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
     const cellKey = `L1:${currentPosition.mx},${currentPosition.my}:${currentPosition.lx},${currentPosition.ly}`;
     const currentCell = gameState.world.cells ? gameState.world.cells[cellKey] : null;
+    
+    // QA-016: Lookup current settlement if player is in a settlement cell
+    let currentSettlement = null;
+    if (currentCell?.type === 'settlement' && gameState.world.settlements) {
+      // Calculate L2 settlement ID from cell position and subtype
+      const l2Id = `M${currentPosition.mx}x${currentPosition.my}/L1_${currentPosition.lx}_${currentPosition.ly}_${currentCell.subtype}`;
+      currentSettlement = gameState.world.settlements[l2Id] || null;
+    }
+    
     const authoritativeState = {
       position: currentPosition,
       cell_key: cellKey,
@@ -1205,13 +1214,63 @@ NARRATION TASK:
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
       settlement_count: Object.keys(gameState.world.settlements || {}).length,
-      current_settlement: null  // Will be populated if player is in a settlement
+      current_settlement: currentSettlement  // Now populated if player is in a settlement
     };
     
-    // Parse intent from semantic parser if available
+    // QA-016: Extract parsed intent from turn logs for richer diagnostic data
     let parsedIntent = {};
-    if (engineOutput?.actions?.action) {
-      parsedIntent = { action: engineOutput.actions.action, dir: engineOutput.actions.dir };
+    const playerActionParsedLog = turnLogs.find(log => log.event === 'player_action_parsed');
+    if (playerActionParsedLog && playerActionParsedLog.data) {
+      const { action, intent, confidence, success } = playerActionParsedLog.data;
+      parsedIntent = {
+        action: action || intent?.primaryAction?.action || 'unknown',
+        direction: intent?.primaryAction?.dir,
+        target: intent?.primaryAction?.target,
+        confidence: confidence || 0,
+        success: success || false
+      };
+    } else if (engineOutput?.actions?.action) {
+      // Fallback to engineOutput
+      parsedIntent = { action: engineOutput.actions.action, direction: engineOutput.actions.dir };
+    }
+    
+    // QA-016: Extract movement before/after positions from turn logs
+    let movement = null;
+    const playerMoveAttemptedLog = turnLogs.find(log => log.event === 'player_move_attempted');
+    const playerMoveResolvedLog = turnLogs.find(log => log.event === 'player_move_resolved');
+    const locationChangedLog = turnLogs.find(log => log.event === 'location_changed');
+    
+    if (playerMoveAttemptedLog && playerMoveResolvedLog) {
+      const attemptData = playerMoveAttemptedLog.data || {};
+      const resolvedData = playerMoveResolvedLog.data || {};
+      
+      // Extract before position from attempt, after position from resolved
+      const fromPos = attemptData.from || currentPosition;
+      const toPos = resolvedData.final_position || attemptData.intended_to || currentPosition;
+      
+      movement = {
+        from: fromPos,
+        to: toPos,
+        direction: attemptData.direction || parsedIntent.direction,
+        success: resolvedData.success || false,
+        from_cell_type: locationChangedLog?.data?.from_cell_type,
+        to_cell_type: locationChangedLog?.data?.to_cell_type
+      };
+    }
+    
+    // QA-016: Extract nearby cells snapshot for diagnostic context
+    let nearbyCellsSnapshot = null;
+    if (scene && scene.nearbyCells && Array.isArray(scene.nearbyCells)) {
+      nearbyCellsSnapshot = {};
+      scene.nearbyCells.forEach(cell => {
+        if (cell.dir) {
+          nearbyCellsSnapshot[cell.dir] = {
+            type: cell.type,
+            subtype: cell.subtype,
+            description: cell.description
+          };
+        }
+      });
     }
     
     // Create turn object
@@ -1220,6 +1279,8 @@ NARRATION TASK:
       timestamp: new Date().toISOString(),
       input: { raw: action, parsed_intent: parsedIntent },
       authoritative_state: authoritativeState,
+      movement: movement,
+      nearby_cells: nearbyCellsSnapshot,
       narrative: narrative,
       logs: turnLogs
     };
