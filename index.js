@@ -812,6 +812,20 @@ app.post('/narrate', async (req, res) => {
             is_starting_location: true  // Mark this for context
           };
           console.log('[WORLD] Created semantic starting location at', startPos.mx, startPos.my, 'type:', worldData.startingLocationType);
+          
+          // QA-012: PRE-REGISTER STARTING SETTLEMENT
+          // Immediately register the starting settlement so summary truthfully reflects it at startup
+          // enterL2FromL1 checks for duplicates, so re-entry is safe
+          const startingSettlement = Engine.enterL2FromL1(gameState, gameState.world.cells[startingLocationCellKey]);
+          if (startingSettlement && logger) {
+            logger.settlement_registered(
+              `M${startPos.mx}x${startPos.my}/L1_${startPos.lx}_${startPos.ly}_${worldData.startingLocationType}`,
+              startingSettlement.name,
+              startingSettlement.type || worldData.startingLocationType,
+              { mx: startPos.mx, my: startPos.my }
+            );
+          }
+          console.log('[WORLD] Pre-registered starting settlement:', startingSettlement?.name || 'unknown');
         }
       }
       
