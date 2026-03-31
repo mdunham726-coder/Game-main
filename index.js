@@ -1113,10 +1113,10 @@ app.post('/narrate', async (req, res) => {
     if (scene.nearbyCells && Array.isArray(scene.nearbyCells)) {
       nearbyStr = scene.nearbyCells
         .filter(c => c && c.dir)
-        .map(c => `${c.dir}: ${c.description || 'Unknown'}`)
+        .map(c => `${c.dir} → ${c.type || 'void'}`)
         .join('\n');
     } else {
-      nearbyStr = 'North: Unknown\nSouth: Unknown\nEast: Unknown\nWest: Unknown';
+      nearbyStr = 'North → void\nSouth → void\nEast → void\nWest → void';
     }
 
     let npcsStr = '(None visible)';
@@ -1141,7 +1141,7 @@ CURRENT LOCATION:
 ${scene.currentCell?.description || 'An empty space'}
 (Terrain: ${scene.currentCell?.type || 'void'}/${scene.currentCell?.subtype || 'unknown'})
 
-ADJACENT AREAS (reference context only — player is NOT here):
+IMMEDIATE EXITS (reference only, do not describe):
 ${nearbyStr}
 
 INVENTORY: ${invStr}
@@ -1150,6 +1150,9 @@ NPCs PRESENT: ${npcsStr}
 Player action: "${String(action).replace(/"/g, '\\"')}"
 
 NARRATION TASK:
+- Do NOT narrate entering, approaching, or arriving at adjacent cells
+- Do NOT use the player's movement or action to justify describing other locations
+- Describe ONLY the current location in the section labeled CURRENT LOCATION above
 - Write a vivid paragraph describing the player's actual location (listed in CURRENT LOCATION above) and the result of their action
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
