@@ -566,10 +566,58 @@ function enterL2FromL1(state, l1_cell_data) {
   let settlement = state.world.settlements && state.world.settlements[l2_id];
   let npcs_here = [];
   
-  if (settlement) {
-    // Use existing persistent NPCs
+  if (settlement && !settlement.is_stub) {
+    // Use existing fully-initialized persistent NPCs
     npcs_here = settlement.npcs || [];
     console.log(`[ENGINE] Reusing persistent settlement: ${settlement.name} with ${npcs_here.length} NPCs`);
+  } else if (settlement && settlement.is_stub) {
+    // QA-013: Complete the stub settlement that was pre-registered at startup
+    console.log(`[ENGINE] Completing stub settlement: ${settlement.name}`);
+    const NPCs = require('./NPCs');
+    
+    // Log NPC spawn attempt (Phase 5)
+    const expectedNpcCount = WorldGen.getNPCCountForSettlement(subtype);
+    if (logger) {
+      logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+    }
+    
+    npcs_here = WorldGen.generateL2NPCs(l2_id, subtype, state.rng_seed, NPCs);
+    
+    // Log NPC spawn success/failure (Phase 5)
+    if (logger) {
+      if (npcs_here && npcs_here.length > 0) {
+        logger.npc_spawn_succeeded(l2_id, npcs_here.length);
+      } else {
+        logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
+      }
+    }
+    
+    // PHASE 3C: Assign quest-giver flags deterministically
+    assignQuestGiverFlags(npcs_here, state.rng_seed, l2_id);
+    
+    // Upgrade stub to full settlement
+    settlement.npcs = npcs_here;
+    settlement.is_stub = false;  // Mark stub as now complete
+    
+    // Log settlement registration completion
+    if (logger) {
+      const pos = state.world.position || { mx: 0, my: 0 };
+      logger.settlement_registered(
+        l2_id,
+        settlement.name,
+        settlement.type || subtype,
+        { mx: pos.mx, my: pos.my }
+      );
+    }
+    
+    console.log(`[ENGINE] Completed stub settlement: ${settlement.name} with ${npcs_here.length} NPCs`);
+    
+    // PHASE 3C: Generate quests for stub settlement
+    if (!state.quests.allQuestsSeeded[l2_id]) {
+      const quests = generateSettlementQuests(state, l2_id, settlement, npcs_here);
+      state.quests.allQuestsSeeded[l2_id] = quests;
+      console.log(`[ENGINE] Generated ${quests.length} quests for ${settlement.name}`);
+    }
   } else {
     // Generate new settlement with persistent NPCs
     const NPCs = require('./NPCs');
