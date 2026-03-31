@@ -601,7 +601,6 @@ Total Turns Included: ${turnHistory.length}
             }
             
             // Detect mismatch: cell category vs narrative category divergence
-            let hasMismatch = false;
             if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
               hasMismatch = true;
               mismatchInfo = narrativeCue;
