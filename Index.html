@@ -578,42 +578,81 @@ Total Turns Included: ${turnHistory.length}
               cellCategory = 'structure_indoor';
             }
             
-            // QA-017: Classify narrative category - PRIORITY: raw narrative > filtered narrative
-            // Raw narrative catches dominant destinations (plaza, complex) even in directional context
+            // QA-1: Score-based dominant narrative category detection
+            // Count unique keyword presence per category; select dominant only if confident
             let narrativeCategory = '';
+            let narrativeCategoryScores = {
+              commerce_public: 0,
+              settlement_residential: 0,
+              nature_outdoor: 0,
+              structure_indoor: 0
+            };
+            let matchedKeywords = {
+              commerce_public: [],
+              settlement_residential: [],
+              nature_outdoor: [],
+              structure_indoor: []
+            };
             
-            // PASS 1: Check keywords in FULL raw narrative first (dominant descriptors)
+            // PASS 1: Score unique keyword matches in raw narrative
+            let textToScan = narrativeText;
             for (const [category, keywords] of Object.entries(locationKeywords)) {
               for (const keyword of keywords) {
-                const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
-                if (regex.test(narrativeText)) {
-                  narrativeCategory = category;
-                  narrativeCue = keyword;
-                  break;
+                const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+                if (regex.test(textToScan)) {
+                  narrativeCategoryScores[category]++;
+                  matchedKeywords[category].push(keyword);
                 }
               }
-              if (narrativeCategory) break;  // Found match in raw narrative, use it
             }
             
-            // PASS 2: Only fall back to filtered narrative if raw search found nothing
-            if (!narrativeCategory) {
+            // PASS 2: If no matches in raw, try filtered narrative
+            if (Object.values(narrativeCategoryScores).every(s => s === 0)) {
+              textToScan = contextFilteredNarrative;
               for (const [category, keywords] of Object.entries(locationKeywords)) {
                 for (const keyword of keywords) {
-                  const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
-                  if (regex.test(contextFilteredNarrative)) {
-                    narrativeCategory = category;
-                    narrativeCue = keyword;
-                    break;
+                  const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+                  if (regex.test(textToScan)) {
+                    narrativeCategoryScores[category]++;
+                    matchedKeywords[category].push(keyword);
                   }
                 }
-                if (narrativeCategory) break;
               }
             }
             
-            // Detect mismatch: cell category vs narrative category divergence
+            // Determine dominant category with confidence threshold
+            let dominantScore = 0;
+            let secondPlaceScore = 0;
+            const CONFIDENCE_THRESHOLD = 2;  // Must have at least 2 keywords
+            const MIN_MARGIN = 1;  // Must beat second place by at least 1
+            
+            for (const [category, score] of Object.entries(narrativeCategoryScores)) {
+              if (score > dominantScore) {
+                secondPlaceScore = dominantScore;
+                dominantScore = score;
+                narrativeCategory = category;
+              } else if (score > secondPlaceScore) {
+                secondPlaceScore = score;
+              }
+            }
+            
+            // Only accept dominant category if confident (meets thresholds)
+            if (dominantScore < CONFIDENCE_THRESHOLD || (dominantScore - secondPlaceScore) < MIN_MARGIN) {
+              narrativeCategory = '';  // Not confident; treat as inconclusive
+            }
+            
+            // For debugging: use first matched keyword if available
+            for (const [category, keywords] of Object.entries(matchedKeywords)) {
+              if (keywords.length > 0 && category === narrativeCategory) {
+                narrativeCue = keywords[0];
+                break;
+              }
+            }
+            
+            // Detect mismatch: cell category vs dominant narrative category
             if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
               hasMismatch = true;
-              mismatchInfo = narrativeCue;
+              mismatchInfo = narrativeCue || '(scored category mismatch)';
             }
             
             // 7. Build turn summary line (special case for initialization) - QA-017
@@ -809,41 +848,81 @@ ${turnsBlock}
             cellCategory = 'structure_indoor';
           }
           
-          // QA-017: Classify narrative category - PRIORITY: raw narrative > filtered narrative
+          // QA-1: Score-based dominant narrative category detection
+          // Count unique keyword presence per category; select dominant only if confident
           let narrativeCategory = '';
+          let narrativeCategoryScores = {
+            commerce_public: 0,
+            settlement_residential: 0,
+            nature_outdoor: 0,
+            structure_indoor: 0
+          };
+          let matchedKeywords = {
+            commerce_public: [],
+            settlement_residential: [],
+            nature_outdoor: [],
+            structure_indoor: []
+          };
           
-          // PASS 1: Check keywords in FULL raw narrative first (dominant descriptors)
+          // PASS 1: Score unique keyword matches in raw narrative
+          let textToScan = narrativeText;
           for (const [category, keywords] of Object.entries(locationKeywords)) {
             for (const keyword of keywords) {
-              const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
-              if (regex.test(narrativeText)) {
-                narrativeCategory = category;
-                narrativeCue = keyword;
-                break;
+              const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+              if (regex.test(textToScan)) {
+                narrativeCategoryScores[category]++;
+                matchedKeywords[category].push(keyword);
               }
             }
-            if (narrativeCategory) break;
           }
           
-          // PASS 2: Fall back to filtered narrative if raw search found nothing
-          if (!narrativeCategory) {
+          // PASS 2: If no matches in raw, try filtered narrative
+          if (Object.values(narrativeCategoryScores).every(s => s === 0)) {
+            textToScan = contextFilteredNarrative;
             for (const [category, keywords] of Object.entries(locationKeywords)) {
               for (const keyword of keywords) {
-                const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
-                if (regex.test(contextFilteredNarrative)) {
-                  narrativeCategory = category;
-                  narrativeCue = keyword;
-                  break;
+                const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+                if (regex.test(textToScan)) {
+                  narrativeCategoryScores[category]++;
+                  matchedKeywords[category].push(keyword);
                 }
               }
-              if (narrativeCategory) break;
             }
           }
           
-          // Detect mismatch: cell category vs narrative category divergence
+          // Determine dominant category with confidence threshold
+          let dominantScore = 0;
+          let secondPlaceScore = 0;
+          const CONFIDENCE_THRESHOLD = 2;  // Must have at least 2 keywords
+          const MIN_MARGIN = 1;  // Must beat second place by at least 1
+          
+          for (const [category, score] of Object.entries(narrativeCategoryScores)) {
+            if (score > dominantScore) {
+              secondPlaceScore = dominantScore;
+              dominantScore = score;
+              narrativeCategory = category;
+            } else if (score > secondPlaceScore) {
+              secondPlaceScore = score;
+            }
+          }
+          
+          // Only accept dominant category if confident (meets thresholds)
+          if (dominantScore < CONFIDENCE_THRESHOLD || (dominantScore - secondPlaceScore) < MIN_MARGIN) {
+            narrativeCategory = '';  // Not confident; treat as inconclusive
+          }
+          
+          // For debugging: use first matched keyword if available
+          for (const [category, keywords] of Object.entries(matchedKeywords)) {
+            if (keywords.length > 0 && category === narrativeCategory) {
+              narrativeCue = keywords[0];
+              break;
+            }
+          }
+          
+          // Detect mismatch: cell category vs dominant narrative category
           if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
             hasMismatch = true;
-            mismatchInfo = narrativeCue;
+            mismatchInfo = narrativeCue || '(scored category mismatch)';
           }
           
           // Build turn header
