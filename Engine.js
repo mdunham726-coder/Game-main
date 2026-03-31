@@ -373,7 +373,7 @@ function buildOutput(prevState, inputObj, logger) {
   
   // Save old position for location change detection
   const oldPosition = state.world.position ? {...state.world.position} : null;
-  const oldCellKey = oldPosition ? `M${oldPosition.mx}x${oldPosition.my}/L${oldPosition.lx}x${oldPosition.ly}` : null;
+  const oldCellKey = oldPosition ? `L1:${oldPosition.mx},${oldPosition.my}:${oldPosition.lx},${oldPosition.ly}` : null;
   const oldCell = oldCellKey ? state.world.cells?.[oldCellKey] : null;
   const oldCellType = oldCell?.type || oldCell?.tags?.type || 'unknown';
   
@@ -399,7 +399,7 @@ if (wg) {
   
   // Log location change if position actually changed
   if (positionChanged && logger) {
-    const newCellKey = `M${newPosition.mx}x${newPosition.my}/L${newPosition.lx}x${newPosition.ly}`;
+    const newCellKey = `L1:${newPosition.mx},${newPosition.my}:${newPosition.lx},${newPosition.ly}`;
     const newCell = state.world.cells?.[newCellKey];
     const newCellType = newCell?.type || newCell?.tags?.type || 'unknown';
     logger.location_changed(
