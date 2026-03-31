@@ -766,8 +766,6 @@ app.post('/narrate', async (req, res) => {
   let engineOutput = null;
   if (isFirstTurn === true) {
     isFirstTurn = false;
-    const session = sessionStates.get(resolvedSessionId);
-    const logger = session?.logger;
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
     const inputObj = mapActionToInput(action, "WORLD_PROMPT");
     
