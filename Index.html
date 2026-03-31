@@ -572,9 +572,9 @@ Total Turns Included: ${turnHistory.length}
               cellCategory = 'settlement_residential';
             } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square') || cellType.includes('alley')) {
               cellCategory = 'commerce_public';
-            } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain')) {
+            } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain') || cellType.includes('meadow') || cellType.includes('field') || cellType.includes('grassland') || cellType.includes('plain') || cellType.includes('woodland')) {
               cellCategory = 'nature_outdoor';
-            } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower') || cellType.includes('courtyard') || cellType.includes('pavilion') || cellType.includes('ruin')) {
+            } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower') || cellType.includes('courtyard') || cellType.includes('pavilion') || cellType.includes('ruin') || cellType.includes('building') || cellType.includes('structure') || cellType.includes('complex')) {
               cellCategory = 'structure_indoor';
             }
             
@@ -803,9 +803,9 @@ ${turnsBlock}
             cellCategory = 'settlement_residential';
           } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square') || cellType.includes('alley')) {
             cellCategory = 'commerce_public';
-          } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain')) {
+          } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain') || cellType.includes('meadow') || cellType.includes('field') || cellType.includes('grassland') || cellType.includes('plain') || cellType.includes('woodland')) {
             cellCategory = 'nature_outdoor';
-          } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower') || cellType.includes('courtyard') || cellType.includes('pavilion') || cellType.includes('ruin')) {
+          } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower') || cellType.includes('courtyard') || cellType.includes('pavilion') || cellType.includes('ruin') || cellType.includes('building') || cellType.includes('structure') || cellType.includes('complex')) {
             cellCategory = 'structure_indoor';
           }
           

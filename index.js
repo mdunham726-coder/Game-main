@@ -750,10 +750,10 @@ app.post('/narrate', async (req, res) => {
   const session = sessionStates.get(resolvedSessionId);
   if (logger && !isFirstTurn) {
     logger.playerActionParsed(userInput, {
-      success: parseResult?.success,
-      confidence: parseResult?.confidence,
-      action: parseResult?.intent?.primaryAction?.action,
-      error: parseResult?.error
+      ...parseResult?.intent,  // Spread full intent object (includes primaryAction with dir, confidence, etc.)
+      confidence: parseResult?.confidence,  // Explicit confidence from parseResult level
+      success: parseResult?.success,  // Success flag
+      error: parseResult?.error  // Error if any
     });
   }
 
@@ -1223,15 +1223,16 @@ NARRATION TASK:
     let parsedIntentSource = 'none';  // Track source for export clarity
     const playerActionParsedLog = turnLogs.find(log => log.event === 'player_action_parsed');
     if (playerActionParsedLog && playerActionParsedLog.data) {
-      const { action, intent, confidence, success } = playerActionParsedLog.data;
+      const { action, intent: intentData } = playerActionParsedLog.data;
+      // intentData structure: { primaryAction: { action, dir, target }, confidence, success, error }
       // Extract from actual parser output: separate raw input from parsed action
       parsedIntent = {
         raw_input: action || '',  // Original user input string
-        parsed_action: intent?.action || intent?.primaryAction?.action || 'unknown',  // Parser-resolved action
-        direction: intent?.primaryAction?.dir || null,  // Direction from parser (explicit field)
-        target: intent?.primaryAction?.target || null,  // Target from parser
-        confidence: (confidence !== undefined ? confidence : (intent?.primaryAction?.confidence !== undefined ? intent?.primaryAction?.confidence : null)),  // Confidence score (preserve 0)
-        success: success || false,  // Whether parse succeeded
+        parsed_action: intentData?.primaryAction?.action || 'unknown',  // Parser-resolved action
+        direction: intentData?.primaryAction?.dir || null,  // Direction from parser (explicit field)
+        target: intentData?.primaryAction?.target || null,  // Target from parser
+        confidence: (intentData?.confidence !== undefined ? intentData?.confidence : null),  // Confidence score (preserve 0)
+        success: intentData?.success || false,  // Whether parse succeeded
         source: 'parser'  // Mark as actual parser output
       };
       parsedIntentSource = 'parser';
