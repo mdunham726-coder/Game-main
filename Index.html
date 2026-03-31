@@ -621,110 +621,11 @@ ${lastTurn.logs && lastTurn.logs.length > 0 ? lastTurn.logs.map(log => `${log.ca
           logsResponse.style.color = '#2ecc71';
 
         } else {
-          // Fallback: Original format if turn_history not available
-          let context = "(No context available)";
-          try {
-            const ctxRes = await fetch('/test-context', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-session-id': currentSessionId
-              },
-              body: JSON.stringify({ debugLevel: 'detailed' })
-            });
-            const ctxData = await ctxRes.json();
-            if (ctxData.context) {
-              context = ctxData.context;
-            }
-          } catch (e) {
-            console.error('[QA-EXPORT] Context fetch failed:', e.message);
-          }
-
-          let logs = "(No logs available)";
-          try {
-            const logRes = await fetch(`/logs/read/${currentSessionId}`, {
-              method: 'GET',
-              headers: { 'Content-Type': 'application/json' }
-            });
-            const logData = await logRes.json();
-            if (logData.success && logData.data && logData.data.events) {
-              logs = logData.data.events.map(e =>
-                `[${e.timestamp}] ${e.category}/${e.event} - ${JSON.stringify(e.data)}`
-              ).join('\n');
-            }
-          } catch (e) {
-            console.error('[QA-EXPORT] Logs fetch failed:', e.message);
-          }
-
-          const exportTimestamp = new Date().toISOString();
-
-          // For running mode: append turn block to history if new turn
-          if (mode === 'running') {
-            if (lastTurnCounter !== lastExportedTurn) {
-              const turnBlock = `
-════════════════════════════════════════
-TURN ${lastTurnCounter} | ${exportTimestamp}
-════════════════════════════════════════
-[NARRATIVE]
-${lastNarrative}
-
-[CONTEXT]
-${context}
-
-[LOGS]
-${logs}
-`;
-            qaExportHistory.push(turnBlock.trim());
-            lastExportedTurn = lastTurnCounter;
-          }
-
-          const fullRunLog = `# QA RUNNING LOG
-
-Session: ${currentSessionId}
-Session Started: ${firstSessionTimestamp}
-Last Updated: ${exportTimestamp}
-Total Turns Recorded: ${qaExportHistory.length}
-
-═══════════════════════════════════════════════════════════════
-
-${qaExportHistory.join('\n\n')}
-
-═══════════════════════════════════════════════════════════════
-(End of QA running log)`;
-
-          await navigator.clipboard.writeText(fullRunLog);
+          // Fallback when no turn_history available
           const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = `✅ QA running log copied to clipboard!\n\nTotal turns: ${qaExportHistory.length}\nSession started: ${new Date(firstSessionTimestamp).toLocaleTimeString()}`;
+          logsResponse.innerHTML = '⚠️ No turn history available. Start a game and try again.';
           logsResponse.style.display = 'block';
-          logsResponse.style.color = '#2ecc71';
-
-        } else {
-          // Snapshot mode: export current turn only
-          const snapshotBundle = `# QA SNAPSHOT EXPORT
-
-Session: ${currentSessionId}
-Turn: ${lastTurnCounter}
-Exported: ${exportTimestamp}
-
-═══════════════════════════════════════════════════════════════
-
-[NARRATIVE]
-${lastNarrative}
-
-[CONTEXT]
-${context}
-
-[LOGS]
-${logs}
-
-═══════════════════════════════════════════════════════════════
-(End of QA snapshot)`;
-
-          await navigator.clipboard.writeText(snapshotBundle);
-          const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = '✅ QA snapshot copied to clipboard!\n\nBundle includes:\n- Narrative story\n- Game state context\n- Complete event logs';
-          logsResponse.style.display = 'block';
-          logsResponse.style.color = '#2ecc71';
+          logsResponse.style.color = '#f39c12';
         }
 
       } catch (err) {
