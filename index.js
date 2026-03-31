@@ -1135,13 +1135,13 @@ CORE INSTRUCTIONS:
 - Let the world tone guide your descriptions and atmosphere
 - Expand on the location description with vivid sensory details matching the tone
 - React to the player's action naturally within the world
-- Only describe what's present in the location or adjacently mentioned
+- Only describe what's present in the player's CURRENT LOCATION—do not place the player into adjacent areas
 
 CURRENT LOCATION:
 ${scene.currentCell?.description || 'An empty space'}
 (Terrain: ${scene.currentCell?.type || 'void'}/${scene.currentCell?.subtype || 'unknown'})
 
-ADJACENT AREAS:
+ADJACENT AREAS (reference context only — player is NOT here):
 ${nearbyStr}
 
 INVENTORY: ${invStr}
@@ -1150,7 +1150,7 @@ NPCs PRESENT: ${npcsStr}
 Player action: "${String(action).replace(/"/g, '\\"')}"
 
 NARRATION TASK:
-- Write a vivid paragraph describing the player's current surroundings and the result of their action
+- Write a vivid paragraph describing the player's actual location (listed in CURRENT LOCATION above) and the result of their action
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above`;
