@@ -543,47 +543,71 @@ Total Turns Included: ${turnHistory.length}
             // QA-016 follow-up: Strengthen mismatch detection heuristic
             let hasMismatch = false;
             let mismatchInfo = '';
+            let narrativeCue = '';  // Track which keyword triggered mismatch for debugging
             const cellType = authState.cell_type || 'unknown';
             const cellDesc = authState.cell_description || '';
             const narrativeText = (turn.narrative || '').toLowerCase();
             
-            // Expanded keyword mapping for better mismatch detection
+            // QA-017: Expanded keyword list with common location descriptors
             const locationKeywords = {
-              commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant'],
+              commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
               settlement_residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
-              nature_outdoor: ['forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast'],
-              structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room']
+              nature_outdoor: ['forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
+              structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
             };
             
-            // Check for divergence: if cell type suggests one category but narrative suggests another
-            let cellCategory = '';
-            let narrativeCategory = '';
+            // QA-017: Filter out directional phrases (adjacent references, not current location)
+            const directionalPhrases = ['to the north', 'to the south', 'to the east', 'to the west', 'beyond', 'you can see', 'ahead', 'in the distance', 'across'];
+            let contextFilteredNarrative = narrativeText;
+            for (const phrase of directionalPhrases) {
+              const phraseRegex = new RegExp(`[^.!?]*${phrase}[^.!?]*[.!?]`, 'gi');
+              contextFilteredNarrative = contextFilteredNarrative.replace(phraseRegex, '');
+            }
             
+            // Classify cell type category
+            let cellCategory = '';
             if (cellType.includes('settlement') || cellType.includes('house')) {
               cellCategory = 'settlement_residential';
-            } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square')) {
+            } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square') || cellType.includes('alley')) {
               cellCategory = 'commerce_public';
-            } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake')) {
+            } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain')) {
               cellCategory = 'nature_outdoor';
-            } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower')) {
+            } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower') || cellType.includes('courtyard') || cellType.includes('pavilion') || cellType.includes('ruin')) {
               cellCategory = 'structure_indoor';
             }
             
+            // QA-017: Classify narrative category with frequency weighting and context filtering
+            let narrativeCategory = '';
             for (const [category, keywords] of Object.entries(locationKeywords)) {
+              let keywordCount = 0;
+              let bestKeyword = '';
+              
+              // Count keyword occurrences in context-filtered narrative
               for (const keyword of keywords) {
-                if (narrativeText.includes(keyword)) {
-                  narrativeCategory = category;
-                  if (cellCategory && cellCategory !== narrativeCategory) {
-                    hasMismatch = true;
-                    mismatchInfo = keyword;
-                  }
-                  break;
+                const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+                const matches = (contextFilteredNarrative.match(regex) || []).length;
+                if (matches > 0) {
+                  keywordCount += matches;
+                  if (!bestKeyword) bestKeyword = keyword;
                 }
               }
-              if (mismatchInfo) break;
+              
+              // Strong signal: any occurrence (after context filtering removes directional phrases)
+              if (keywordCount > 0) {
+                narrativeCategory = category;
+                narrativeCue = bestKeyword;
+                break;
+              }
             }
             
-            // 7. Build turn summary line (special case for initialization)
+            // Detect mismatch: cell category vs narrative category divergence
+            let hasMismatch = false;
+            if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+              hasMismatch = true;
+              mismatchInfo = narrativeCue;
+            }
+            
+            // 7. Build turn summary line (special case for initialization) - QA-017
             let summaryLine = '';
             if (isInitialization) {
               summaryLine = `
@@ -593,10 +617,12 @@ Intent     : (N/A — system setup)
 Confidence : (N/A)
 State      : ${cellType}`;
             } else {
+              const parsedWithDirection = parsedIntent.parsed_action && parsedIntent.direction ? `${parsedIntent.parsed_action} ${parsedIntent.direction}` : parsedIntent.parsed_action || 'unknown';
+              const confidence = parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?';
               summaryLine = `
 🧪 SUMMARY
-Action     : ${parsedIntent.action || 'unknown'}${parsedIntent.dir ? ' ' + parsedIntent.dir : ''}
-Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}
+Action     : ${parsedWithDirection}
+Confidence : ${confidence}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}
 State      : ${cellType}
 Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ❌' : ' ✓'}`;
             }
@@ -622,7 +648,7 @@ To   : ${toCoord} ${movement.to_cell_type || '?'}`;
               mismatchWarning = `
 ⚠️  MISMATCH DETECTED
 State      : ${cellType}
-Narrative  : ${mismatchInfo}`;
+Narrative  : ${mismatchInfo} (narrative cue)`;
             }
             
             // 10. Build structured state block with cell description
@@ -665,18 +691,23 @@ W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
 (No cell data available)`;
             }
             
-            // 13. Build intent section (use 'dir' field from parser, not 'direction')
+            // 13. Build intent section with explicit field breakdown (QA-017)
             let intentSection = '';
             if (isInitialization) {
               intentSection = `
 🧠 Intent
 (N/A — world initialization)`;
             } else {
+              const rawInput = parsedIntent.raw_input || '(none)';
+              const parsedAction = parsedIntent.parsed_action || 'unknown';
+              const direction = parsedIntent.direction || '(none)';
+              const confidence = parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '(unknown)';
+              const source = parsedIntentSource === 'fallback' ? ' (inferred)' : '';
               intentSection = `
 🧠 Intent
-Action     : ${parsedIntent.action || 'unknown'}
-Direction  : ${parsedIntent.dir || '(none)'}
-Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}`;
+Raw Input  : ${rawInput}
+Parsed     : ${parsedAction}${direction !== '(none)' ? ' ' + direction : ''}
+Confidence : ${confidence}${source}`;
             }
             
             // 14. Annotate narrative and logs sections
@@ -740,38 +771,63 @@ ${turnsBlock}
           const cellDesc = authState.cell_description || '';
           const narrativeText = (lastTurn.narrative || '').toLowerCase();
           
+          // QA-017: Expanded keyword list with common location descriptors
           const locationKeywords = {
-            commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant'],
+            commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
             settlement_residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
-            nature_outdoor: ['forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast'],
-            structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room']
+            nature_outdoor: ['forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
+            structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
           };
           
-          let cellCategory = '';
-          let narrativeCategory = '';
+          // QA-017: Filter out directional phrases (adjacent references, not current location)
+          const directionalPhrases = ['to the north', 'to the south', 'to the east', 'to the west', 'beyond', 'you can see', 'ahead', 'in the distance', 'across'];
+          let contextFilteredNarrative = narrativeText;
+          for (const phrase of directionalPhrases) {
+            const phraseRegex = new RegExp(`[^.!?]*${phrase}[^.!?]*[.!?]`, 'gi');
+            contextFilteredNarrative = contextFilteredNarrative.replace(phraseRegex, '');
+          }
           
+          // Classify cell type category
+          let cellCategory = '';
+          let narrativeCue = '';  // Track which keyword triggered mismatch
           if (cellType.includes('settlement') || cellType.includes('house')) {
             cellCategory = 'settlement_residential';
-          } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square')) {
+          } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square') || cellType.includes('alley')) {
             cellCategory = 'commerce_public';
-          } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake')) {
+          } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain')) {
             cellCategory = 'nature_outdoor';
-          } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower')) {
+          } else if (cellType.includes('cave') || cellType.includes('temple') || cellType.includes('tower') || cellType.includes('courtyard') || cellType.includes('pavilion') || cellType.includes('ruin')) {
             cellCategory = 'structure_indoor';
           }
           
+          // QA-017: Classify narrative category with frequency weighting and context filtering
+          let narrativeCategory = '';
           for (const [category, keywords] of Object.entries(locationKeywords)) {
+            let keywordCount = 0;
+            let bestKeyword = '';
+            
+            // Count keyword occurrences in context-filtered narrative
             for (const keyword of keywords) {
-              if (narrativeText.includes(keyword)) {
-                narrativeCategory = category;
-                if (cellCategory && cellCategory !== narrativeCategory) {
-                  hasMismatch = true;
-                  mismatchInfo = keyword;
-                }
-                break;
+              const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+              const matches = (contextFilteredNarrative.match(regex) || []).length;
+              if (matches > 0) {
+                keywordCount += matches;
+                if (!bestKeyword) bestKeyword = keyword;
               }
             }
-            if (mismatchInfo) break;
+            
+            // Strong signal: any occurrence (after context filtering removes directional phrases)
+            if (keywordCount > 0) {
+              narrativeCategory = category;
+              narrativeCue = bestKeyword;
+              break;
+            }
+          }
+          
+          // Detect mismatch: cell category vs narrative category divergence
+          if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+            hasMismatch = true;
+            mismatchInfo = narrativeCue;
           }
           
           // Build turn header
@@ -790,10 +846,12 @@ Intent     : (N/A — system setup)
 Confidence : (N/A)
 State      : ${cellType}`;
           } else {
+            const parsedWithDirection = parsedIntent.parsed_action && parsedIntent.direction ? `${parsedIntent.parsed_action} ${parsedIntent.direction}` : parsedIntent.parsed_action || 'unknown';
+            const confidence = parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?';
             summaryLine = `
 🧪 SUMMARY
-Action     : ${parsedIntent.action || 'unknown'}${parsedIntent.dir ? ' ' + parsedIntent.dir : ''}
-Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}
+Action     : ${parsedWithDirection}
+Confidence : ${confidence}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}
 State      : ${cellType}
 Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ❌' : ' ✓'}`;
           }
@@ -819,7 +877,7 @@ To   : ${toCoord} ${movement.to_cell_type || '?'}`;
             mismatchWarning = `
 ⚠️  MISMATCH DETECTED
 State      : ${cellType}
-Narrative  : ${mismatchInfo}`;
+Narrative  : ${mismatchInfo} (narrative cue)`;
           }
           
           // State block with cell description
@@ -862,18 +920,23 @@ W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
 (No cell data available)`;
           }
           
-          // Build intent section (use 'dir' field, special case for Turn 1)
+          // Build intent section (QA-017: explicit field breakdown)
           let intentSection = '';
           if (isInitialization) {
             intentSection = `
 🧠 Intent
 (N/A — world initialization)`;
           } else {
+            const rawInput = parsedIntent.raw_input || '(none)';
+            const parsedAction = parsedIntent.parsed_action || 'unknown';
+            const direction = parsedIntent.direction || '(none)';
+            const confidence = parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '(unknown)';
+            const source = parsedIntentSource === 'fallback' ? ' (inferred)' : '';
             intentSection = `
 🧠 Intent
-Action     : ${parsedIntent.action || 'unknown'}
-Direction  : ${parsedIntent.dir || '(none)'}
-Confidence : ${parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?'}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}`;
+Raw Input  : ${rawInput}
+Parsed     : ${parsedAction}${direction !== '(none)' ? ' ' + direction : ''}
+Confidence : ${confidence}${source}`;
           }
           
           // Narrative section

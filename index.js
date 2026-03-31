@@ -1218,27 +1218,30 @@ NARRATION TASK:
       current_settlement: currentSettlement  // Now populated if player is in a settlement
     };
     
-    // QA-016 follow-up: Extract parsed intent from turn logs (actual parser output preferred)
+    // QA-017: Extract parsed intent with explicit field separation (raw vs parsed)
     let parsedIntent = {};
     let parsedIntentSource = 'none';  // Track source for export clarity
     const playerActionParsedLog = turnLogs.find(log => log.event === 'player_action_parsed');
     if (playerActionParsedLog && playerActionParsedLog.data) {
       const { action, intent, confidence, success } = playerActionParsedLog.data;
-      // Prefer actual parser output: use intent object structure from SemanticParser
+      // Extract from actual parser output: separate raw input from parsed action
       parsedIntent = {
-        action: action || intent?.primaryAction?.action || 'unknown',
-        dir: intent?.primaryAction?.dir,  // Use 'dir' field (matches parser output)
-        target: intent?.primaryAction?.target,
-        confidence: confidence || 0,
-        success: success || false,
+        raw_input: action || '',  // Original user input string
+        parsed_action: intent?.action || intent?.primaryAction?.action || 'unknown',  // Parser-resolved action
+        direction: intent?.primaryAction?.dir || null,  // Direction from parser (explicit field)
+        target: intent?.primaryAction?.target || null,  // Target from parser
+        confidence: confidence || intent?.primaryAction?.confidence || 0,  // Confidence score
+        success: success || false,  // Whether parse succeeded
         source: 'parser'  // Mark as actual parser output
       };
       parsedIntentSource = 'parser';
     } else if (engineOutput?.actions?.action) {
       // Fallback: use engine output (inferred, not from parser)
       parsedIntent = {
-        action: engineOutput.actions.action,
-        dir: engineOutput.actions.dir,
+        raw_input: engineOutput.actions.action || '',
+        parsed_action: engineOutput.actions.action || 'unknown',
+        direction: engineOutput.actions.dir || null,
+        target: null,
         confidence: 0,
         success: false,
         source: 'fallback'  // Mark clearly as fallback/inferred
