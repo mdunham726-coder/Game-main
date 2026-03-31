@@ -1147,13 +1147,13 @@ ${nearbyStr}
 INVENTORY: ${invStr}
 NPCs PRESENT: ${npcsStr}
 
-Player action: "${String(action).replace(/"/g, '\\"')}"
+The player has already moved. They are now in the location described above.
 
 NARRATION TASK:
 - Do NOT narrate entering, approaching, or arriving at adjacent cells
 - Do NOT use the player's movement or action to justify describing other locations
 - Describe ONLY the current location in the section labeled CURRENT LOCATION above
-- Write a vivid paragraph describing the player's actual location (listed in CURRENT LOCATION above) and the result of their action
+- Write a vivid paragraph describing the player's current surroundings as they experience them now
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above`;
