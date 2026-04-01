@@ -183,6 +183,10 @@ const diag = data.turn_history && data.turn_history.length > 0
     })()
   : (data.diagnostics || {});
 
+const _wb  = data.state?.world?.world_bias    || null;
+const _wc  = data.state?.world?.world_context  || null;
+const _wbn = (obj, field) => obj?.[field] ?? '(missing)';
+
 diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Position Macro:</strong> ${diag.position_macro || 'unknown'} | <strong>Local:</strong> ${diag.position_local || 'unknown'}</div>
@@ -192,6 +196,11 @@ diagLog.innerHTML = `
   <div><strong>Cells Generated (all regions):</strong> ${diag.cells_generated}</div>
   <div><strong>Current Region Cells:</strong> ${diag.region_cells !== undefined && diag.region_cells !== null ? diag.region_cells : 'n/a'}</div>
   <div><strong>Sample Terrain:</strong> ${(diag.sample_cell_types || []).join(', ') || 'none'}</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; INIT-TIME WORLD GENERATION INPUTS (frozen)</div>
+  <div><strong>settlement_density:</strong> ${_wbn(_wb,'settlement_density')} &nbsp;|&nbsp; <strong>landmark_density:</strong> ${_wbn(_wb,'landmark_density')}</div>
+  <div><strong>danger_level:</strong> ${_wbn(_wb,'danger_level')} &nbsp;|&nbsp; <strong>civilization_presence:</strong> ${_wbn(_wb,'civilization_presence')}</div>
+  <div><strong>environment_tone:</strong> ${_wbn(_wb,'environment_tone')}</div>
+  <div><strong>era:</strong> ${_wbn(_wc,'era')} &nbsp;|&nbsp; <strong>world_tone:</strong> ${data.state?.world?.world_tone ? data.state.world.world_tone.slice(0,80) + (data.state.world.world_tone.length > 80 ? '…' : '') : '(missing)'}</div>
 `;
 
       } catch (err) {
@@ -747,6 +756,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             const _wRegionPrefix = `L1:${_wMx},${_wMy}:`;
             const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
             const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^L1:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
+            const _qWb  = lastGameResponse?.state?.world?.world_bias    || null;
+            const _qWc  = lastGameResponse?.state?.world?.world_context  || null;
+            const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
             const stateSection = `
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
 📝 Description   : ${authState.cell_description || '(unknown)'}
@@ -755,7 +767,11 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}
-🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored`;
+🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
+── INIT-TIME WORLD GENERATION INPUTS (frozen) ──
+⚙️  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
+🏙️  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
+📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ? lastGameResponse.state.world.world_tone.slice(0,60) + (lastGameResponse.state.world.world_tone.length > 60 ? '…' : '') : '(missing)'}`;
             
             // 11. Build settlement block with clarified labels
             let settlementSection = '';
@@ -1055,6 +1071,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           const _wRegionPrefix = `L1:${_wMx},${_wMy}:`;
           const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
           const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^L1:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
+          const _qWb  = lastGameResponse?.state?.world?.world_bias    || null;
+          const _qWc  = lastGameResponse?.state?.world?.world_context  || null;
+          const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
           const stateSection = `
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
 📝 Description   : ${authState.cell_description || '(unknown)'}
@@ -1063,7 +1082,11 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}
-🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored`;
+🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
+── INIT-TIME WORLD GENERATION INPUTS (frozen) ──
+⚙️  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
+🏙️  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
+📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ? lastGameResponse.state.world.world_tone.slice(0,60) + (lastGameResponse.state.world.world_tone.length > 60 ? '…' : '') : '(missing)'}`;
           
           // Settlement block with clarified labels
           let settlementSection = '';
