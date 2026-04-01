@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Map v0 — Truth Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: monospace;
+      background: #0d0d0d;
+      color: #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #header {
+      padding: 8px 12px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    #header h1 {
+      font-size: 14px;
+      color: #d4af37;
+      letter-spacing: 1px;
+    }
+
+    #status-bar {
+      font-size: 11px;
+      color: #888;
+    }
+
+    #main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Map area ── */
+    #map-area {
+      flex: 1;
+      overflow: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    #map-notice {
+      font-size: 11px;
+      color: #f39c12;
+      padding: 4px 0;
+    }
+
+    #grid-container {
+      display: inline-block;
+      border: 1px solid #333;
+    }
+
+    .grid-row {
+      display: flex;
+    }
+
+    .cell {
+      width: 64px;
+      height: 52px;
+      border: 1px solid #222;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      line-height: 1.3;
+      text-align: center;
+      padding: 2px;
+      cursor: default;
+      background: #111;
+      color: #555;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    .cell.generated {
+      background: #1a1a2e;
+      color: #c0c0c0;
+      cursor: pointer;
+      border-color: #2a2a4a;
+    }
+
+    .cell.generated:hover {
+      background: #222244;
+      border-color: #4a4a8a;
+    }
+
+    .cell.generated.selected {
+      background: #1e3a1e;
+      border-color: #2ecc71;
+      color: #fff;
+    }
+
+    .cell.player-pos {
+      background: #2a1a0a !important;
+      border-color: #d4af37 !important;
+      color: #d4af37 !important;
+    }
+
+    .cell.player-pos.selected {
+      background: #3a2a0a !important;
+    }
+
+    .cell-type {
+      font-weight: bold;
+      font-size: 9px;
+      word-break: break-all;
+    }
+
+    .cell-biome {
+      font-size: 8px;
+      color: #888;
+    }
+
+    .cell.player-pos .cell-biome {
+      color: #d4af37;
+    }
+
+    .player-marker {
+      font-size: 10px;
+      line-height: 1;
+    }
+
+    /* ── Inspector ── */
+    #inspector {
+      width: 240px;
+      flex-shrink: 0;
+      border-left: 1px solid #333;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #inspector-header {
+      padding: 8px 10px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+      font-size: 11px;
+      color: #888;
+      font-weight: bold;
+      letter-spacing: 1px;
+    }
+
+    #inspector-content {
+      padding: 10px;
+      font-size: 11px;
+      flex: 1;
+    }
+
+    .inspector-empty {
+      color: #444;
+      font-style: italic;
+    }
+
+    .inspector-field {
+      margin-bottom: 8px;
+    }
+
+    .inspector-label {
+      color: #888;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+
+    .inspector-value {
+      color: #e0e0e0;
+      word-break: break-word;
+    }
+
+    .inspector-value.empty {
+      color: #444;
+      font-style: italic;
+    }
+
+    .inspector-value.settlement-yes {
+      color: #2ecc71;
+      font-weight: bold;
+    }
+
+    .inspector-divider {
+      border: none;
+      border-top: 1px solid #222;
+      margin: 10px 0;
+    }
+
+    #inspector-description {
+      margin-top: 4px;
+      color: #aaa;
+      font-size: 10px;
+      line-height: 1.5;
+      font-style: italic;
+    }
+
+    /* ── Error / message overlays ── */
+    #message-overlay {
+      display: none;
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85);
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    #message-overlay.visible {
+      display: flex;
+    }
+
+    #message-box {
+      background: #1a1a1a;
+      border: 1px solid #555;
+      padding: 20px 28px;
+      max-width: 420px;
+      text-align: center;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #e0e0e0;
+    }
+
+    #message-box.error {
+      border-color: #e74c3c;
+      color: #e74c3c;
+    }
+
+    #message-title {
+      font-weight: bold;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    #message-body {
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="header">
+    <h1>MAP v0 — TRUTH VIEWER</h1>
+    <span id="status-bar">Initializing...</span>
+  </div>
+
+  <div id="main" style="position: relative;">
+    <div id="map-area">
+      <div id="map-notice" style="display:none;"></div>
+      <div id="grid-container"></div>
+    </div>
+
+    <div id="inspector">
+      <div id="inspector-header">INSPECTOR</div>
+      <div id="inspector-content">
+        <span class="inspector-empty">Click a generated cell to inspect.</span>
+      </div>
+    </div>
+
+    <div id="message-overlay">
+      <div id="message-box">
+        <div id="message-title"></div>
+        <div id="message-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── Constants ──────────────────────────────────────────────────────────────
+    const POLL_INTERVAL_MS = 500;
+
+    // ── State ──────────────────────────────────────────────────────────────────
+    let lastRenderedTurnCounter = -1;
+    let selectedCell = null;
+
+    // ── Overlay helpers ────────────────────────────────────────────────────────
+    function showError(title, body) {
+      const overlay = document.getElementById('message-overlay');
+      const box = document.getElementById('message-box');
+      box.className = 'error';
+      document.getElementById('message-title').textContent = title;
+      document.getElementById('message-body').textContent = body;
+      overlay.classList.add('visible');
+    }
+
+    function hideOverlay() {
+      document.getElementById('message-overlay').classList.remove('visible');
+    }
+
+    function setStatus(text) {
+      document.getElementById('status-bar').textContent = text;
+    }
+
+    // ── State access ───────────────────────────────────────────────────────────
+    // lastGameResponse is the sole confirmed canonical in-memory frontend state.
+    // It is declared in Index.html and assigned after every /narrate response.
+    function getState() {
+      try {
+        const opener = window.opener;
+        if (!opener) return null;
+        const resp = opener.lastGameResponse;
+        if (!resp) return null;
+        return resp.state || null;
+      } catch (e) {
+        // Cross-origin or opener closed
+        return null;
+      }
+    }
+
+    // ── Key parsing ────────────────────────────────────────────────────────────
+    // Expected format: L1:${mx},${my}:${lx},${ly}
+    function parseL1Key(key) {
+      const m = key.match(/^L1:(\d+),(\d+):(\d+),(\d+)$/);
+      if (!m) return null;
+      return {
+        mx: parseInt(m[1], 10),
+        my: parseInt(m[2], 10),
+        lx: parseInt(m[3], 10),
+        ly: parseInt(m[4], 10)
+      };
+    }
+
+    // ── Rendering ──────────────────────────────────────────────────────────────
+    function render(state) {
+      const pos = state.world && state.world.position;
+      if (!pos) {
+        showError('State Error', 'world.position is absent in game state.');
+        return;
+      }
+
+      const { mx, my, lx: playerLx, ly: playerLy } = pos;
+      const allCells = (state.world && state.world.cells) || {};
+      const prefix = `L1:${mx},${my}:`;
+
+      // Filter cells for current L0 macro region
+      const regionEntries = Object.entries(allCells).filter(([k]) => k.startsWith(prefix));
+
+      if (regionEntries.length === 0) {
+        hideOverlay();
+        document.getElementById('grid-container').innerHTML = '';
+        document.getElementById('map-notice').style.display = 'block';
+        document.getElementById('map-notice').textContent = 'No cells generated for current region yet.';
+        setStatus(`Region (${mx},${my}) — no cells`);
+        return;
+      }
+
+      document.getElementById('map-notice').style.display = 'none';
+
+      // Determine grid bounds
+      const l1Default = state.world && state.world.l1_default;
+      let gridW, gridH, dimensionNotice;
+
+      if (l1Default && typeof l1Default.w === 'number' && typeof l1Default.h === 'number') {
+        gridW = l1Default.w;
+        gridH = l1Default.h;
+        dimensionNotice = null;
+      } else {
+        // No configured dimensions — derive tight bounding box from actual cell coords only
+        let minLx = Infinity, maxLx = -Infinity, minLy = Infinity, maxLy = -Infinity;
+        for (const [k] of regionEntries) {
+          const parsed = parseL1Key(k);
+          if (!parsed) continue;
+          if (parsed.lx < minLx) minLx = parsed.lx;
+          if (parsed.lx > maxLx) maxLx = parsed.lx;
+          if (parsed.ly < minLy) minLy = parsed.ly;
+          if (parsed.ly > maxLy) maxLy = parsed.ly;
+        }
+        if (minLx === Infinity) {
+          showError('Render Error', 'Could not parse cell coordinates from region keys.');
+          return;
+        }
+        // Tight bounding box: offset grid starts at (minLx, minLy)
+        gridW = maxLx - minLx + 1;
+        gridH = maxLy - minLy + 1;
+        dimensionNotice = `Region dimensions unavailable — showing known generated cells only.`;
+      }
+
+      // Build lookup map: "lx,ly" → cell data
+      const cellMap = {};
+      for (const [k, cell] of regionEntries) {
+        const parsed = parseL1Key(k);
+        if (!parsed) continue;
+        cellMap[`${parsed.lx},${parsed.ly}`] = cell;
+      }
+
+      // Compute lx/ly min offset for tight-bound mode
+      const lxOffset = (dimensionNotice != null)
+        ? Math.min(...regionEntries.map(([k]) => { const p = parseL1Key(k); return p ? p.lx : Infinity; }))
+        : 0;
+      const lyOffset = (dimensionNotice != null)
+        ? Math.min(...regionEntries.map(([k]) => { const p = parseL1Key(k); return p ? p.ly : Infinity; }))
+        : 0;
+
+      // Settlements lookup
+      const settlements = (state.world && state.world.settlements) || null;
+
+      // Render grid
+      const container = document.getElementById('grid-container');
+      container.innerHTML = '';
+
+      for (let row = 0; row < gridH; row++) {
+        const ly = lyOffset + row;
+        const rowEl = document.createElement('div');
+        rowEl.className = 'grid-row';
+
+        for (let col = 0; col < gridW; col++) {
+          const lx = lxOffset + col;
+          const key = `${lx},${ly}`;
+          const cellData = cellMap[key] || null;
+          const isPlayer = (lx === playerLx && ly === playerLy);
+
+          const el = document.createElement('div');
+          el.className = 'cell';
+          if (cellData) el.classList.add('generated');
+          if (isPlayer) el.classList.add('player-pos');
+
+          if (cellData) {
+            const typeLabel = cellData.type || '?';
+            const biomeLabel = cellData.biome || '—';
+
+            el.innerHTML = `
+              ${isPlayer ? '<div class="player-marker">◉</div>' : ''}
+              <div class="cell-type">${escapeHtml(typeLabel)}</div>
+              <div class="cell-biome">${escapeHtml(biomeLabel)}</div>
+            `;
+
+            el.addEventListener('click', () => {
+              // Deselect previous
+              if (selectedCell) selectedCell.classList.remove('selected');
+              el.classList.add('selected');
+              selectedCell = el;
+              showInspector(cellData, mx, my, lx, ly, settlements);
+            });
+          } else if (isPlayer) {
+            // Player is on an un-generated cell (edge case)
+            el.innerHTML = '<div class="player-marker">◉</div>';
+          }
+
+          rowEl.appendChild(el);
+        }
+
+        container.appendChild(rowEl);
+      }
+
+      // Notice for tight-bound mode
+      const noticeEl = document.getElementById('map-notice');
+      if (dimensionNotice) {
+        noticeEl.style.display = 'block';
+        noticeEl.textContent = dimensionNotice;
+      } else {
+        noticeEl.style.display = 'none';
+      }
+
+      hideOverlay();
+      setStatus(`Region (${mx},${my}) · ${regionEntries.length} cells · Turn ${state.turn_counter ?? '?'}`);
+    }
+
+    // ── Inspector ──────────────────────────────────────────────────────────────
+    function showInspector(cell, mx, my, lx, ly, settlements) {
+      const content = document.getElementById('inspector-content');
+
+      // Settlement presence: check settlements object for any key containing this cell's coordinates
+      let settlementText = null;
+      if (settlements === null) {
+        settlementText = null; // unavailable
+      } else {
+        // settlements keys are typically settlement names; values are objects with position data
+        // Look for any settlement at this exact mx/my/lx/ly
+        const present = Object.values(settlements).some(s => {
+          if (!s) return false;
+          // Check position fields (may vary): s.lx, s.ly, s.mx, s.my or s.position.*
+          const pos = s.position || s;
+          return pos.mx === mx && pos.my === my && pos.lx === lx && pos.ly === ly;
+        });
+        settlementText = present ? 'YES' : 'no';
+      }
+
+      const fields = [
+        { label: 'Type',    value: cell.type    || '' },
+        { label: 'Subtype', value: cell.subtype  || '' },
+        { label: 'Biome',   value: cell.biome    || '' },
+        { label: 'mx',      value: String(mx) },
+        { label: 'my',      value: String(my) },
+        { label: 'lx',      value: String(lx) },
+        { label: 'ly',      value: String(ly) },
+      ];
+
+      let html = '';
+      for (const f of fields) {
+        const valueClass = f.value === '' ? 'inspector-value empty' : 'inspector-value';
+        const display = f.value === '' ? '(empty)' : escapeHtml(f.value);
+        html += `
+          <div class="inspector-field">
+            <div class="inspector-label">${f.label}</div>
+            <div class="${valueClass}">${display}</div>
+          </div>`;
+      }
+
+      // Settlement
+      if (settlementText !== null) {
+        const cls = settlementText === 'YES' ? 'inspector-value settlement-yes' : 'inspector-value';
+        html += `
+          <div class="inspector-field">
+            <div class="inspector-label">Settlement</div>
+            <div class="${cls}">${settlementText}</div>
+          </div>`;
+      } else {
+        html += `
+          <div class="inspector-field">
+            <div class="inspector-label">Settlement</div>
+            <div class="inspector-value empty">(unavailable)</div>
+          </div>`;
+      }
+
+      // Description (supplemental)
+      if (cell.description) {
+        html += `<hr class="inspector-divider">
+          <div class="inspector-label">Description</div>
+          <div id="inspector-description">${escapeHtml(cell.description)}</div>`;
+      }
+
+      content.innerHTML = html;
+    }
+
+    // ── Utility ────────────────────────────────────────────────────────────────
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // ── Poll loop ──────────────────────────────────────────────────────────────
+    // Minimal v0 sync: polls window.opener.lastGameResponse every 500ms.
+    // Chosen as the smallest safe mechanism for same-origin opener access.
+    function poll() {
+      const state = getState();
+
+      if (!state) {
+        showError(
+          'Map Source Unavailable',
+          'Open this map from the game window. ' +
+          'If the game window was closed, refresh from there.'
+        );
+        setStatus('No source');
+        return;
+      }
+
+      const turnCounter = state.turn_counter ?? -1;
+      if (turnCounter === lastRenderedTurnCounter) return; // No change
+
+      lastRenderedTurnCounter = turnCounter;
+      selectedCell = null; // Reset inspector selection on new turn
+      document.getElementById('inspector-content').innerHTML =
+        '<span class="inspector-empty">Click a generated cell to inspect.</span>';
+
+      try {
+        render(state);
+      } catch (e) {
+        showError('Render Error', e.message || 'Unknown render error.');
+        setStatus('Error');
+      }
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────────────
+    poll(); // Immediate check on load
+    setInterval(poll, POLL_INTERVAL_MS);
+  </script>
+</body>
+</html>
