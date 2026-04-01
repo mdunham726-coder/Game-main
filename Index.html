@@ -677,7 +677,8 @@ Total Turns Included: ${turnHistory.length}
             }
             
             // Detect mismatch: cell category vs dominant narrative category
-            if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+            // Skip mismatch detection on Turn 1 (world initialization uses different language patterns)
+            if (!isInitialization && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
               hasMismatch = true;
               mismatchInfo = narrativeCue || '(scored category mismatch)';
             }
@@ -970,7 +971,8 @@ ${turnsBlock}
           }
           
           // Detect mismatch: cell category vs dominant narrative category
-          if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+          // Skip mismatch detection on Turn 1 (world initialization uses different language patterns)
+          if (!isInitialization && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
             hasMismatch = true;
             mismatchInfo = narrativeCue || '(scored category mismatch)';
           }
