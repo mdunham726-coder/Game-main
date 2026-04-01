@@ -787,6 +787,14 @@ app.post('/narrate', async (req, res) => {
           // Phase 1: Persist generation bias and expressive context — frozen after this point
           gameState.world.world_bias    = worldData.world_bias;
           gameState.world.world_context = worldData.world_context;
+
+          // Phase 3: Seed-derived terrain patch and start position
+          const phase3Seed = WorldGen.h32(inputObj.WORLD_PROMPT);
+          const startAnchor = WorldGen.selectStartAnchor(phase3Seed);
+          const patchCells  = WorldGen.generateTerrainPatch(startAnchor, worldData.biome, phase3Seed, gameState.world.cells);
+          Object.assign(gameState.world.cells, patchCells);
+          gameState.world.position = WorldGen.selectStartPosition(phase3Seed, worldData.world_bias, patchCells, startAnchor);
+          console.log('[PHASE3] anchor=', startAnchor, '| start=', gameState.world.position, '| patch cells=', Object.keys(patchCells).length);
           
           // Log NPC spawning for all settlements
           if (logger && worldData.cells) {

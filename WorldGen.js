@@ -854,6 +854,152 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
   return sites;
 }
 
+// =============================================================================
+// PHASE 3: TERRAIN-FIRST START & SEED-DERIVED ANCHOR
+// =============================================================================
+
+/**
+ * Terrain scoring table: how well each terrain group suits a given
+ * civilization_presence level as a starting position.
+ * Higher score = more likely to be selected as start cell.
+ */
+const CIV_TERRAIN_SCORE = {
+  open:       { high: 1.0, medium: 0.8, low: 0.5 },
+  forest:     { high: 0.6, medium: 0.8, low: 0.9 },
+  rugged:     { high: 0.4, medium: 0.6, low: 0.8 },
+  arid:       { high: 0.3, medium: 0.5, low: 0.7 },
+  cold:       { high: 0.1, medium: 0.3, low: 0.5 },
+  wetland:    { high: 0.5, medium: 0.7, low: 0.8 },
+  water:      { high: 0.1, medium: 0.1, low: 0.2 },
+  coast:      { high: 0.7, medium: 0.7, low: 0.6 },
+  urban:      { high: 1.0, medium: 0.7, low: 0.3 },
+  wilderness: { high: 0.3, medium: 0.5, low: 0.9 },
+};
+
+/**
+ * Derive a deterministic L0 + L1 anchor position from the world prompt hash.
+ *
+ * L0 range : mx 0–7, my 0–7   (DEFAULTS.L0_SIZE)
+ * L1 range : lx 2–9, ly 2–9   (inner zone — leaves edge margin for patch clamping)
+ *
+ * @param {number} promptSeed — h32(inputObj.WORLD_PROMPT), a u32
+ * @returns {{ mx, my, lx, ly }}
+ */
+function selectStartAnchor(promptSeed) {
+  const rng = mulberry32(promptSeed);
+  const l0w = DEFAULTS.L0_SIZE.w;   // 8
+  const l0h = DEFAULTS.L0_SIZE.h;   // 8
+  const innerMin = 2;
+  const innerRange = 8;              // yields 2–9 inclusive
+  const mx = Math.floor(rng() * l0w);
+  const my = Math.floor(rng() * l0h);
+  const lx = innerMin + Math.floor(rng() * innerRange);
+  const ly = innerMin + Math.floor(rng() * innerRange);
+  return { mx, my, lx, ly };
+}
+
+/**
+ * Pre-generate a deterministic 7×7 terrain patch centred on anchor.
+ *
+ * - Clamps to L1 bounds 0–11; cells outside bounds are silently skipped.
+ * - Skips cells already present in existingCells.
+ * - Uses seeded RNG per cell — NOT Math.random().
+ * - Cell structure is identical to cells produced by Engine.js streamL1Cells.
+ *
+ * @param {{ mx, my, lx, ly }} anchor
+ * @param {string} biome
+ * @param {number} promptSeed — h32(inputObj.WORLD_PROMPT)
+ * @param {object} existingCells — current gameState.world.cells (read-only)
+ * @returns {object} { [cellKey]: cellObj }
+ */
+function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
+  const l1w = DEFAULTS.L1_SIZE.w;   // 12
+  const l1h = DEFAULTS.L1_SIZE.h;   // 12
+  const palette = BIOME_PALETTES[biome] || BIOME_PALETTES['rural'];
+  const patch = {};
+
+  for (let dx = -3; dx <= 3; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      const lx = anchor.lx + dx;
+      const ly = anchor.ly + dy;
+
+      // Clamp to L1 bounds — no cross-macro wrapping in bootstrap patch
+      if (lx < 0 || lx >= l1w || ly < 0 || ly >= l1h) continue;
+
+      const cellKey = `L1:${anchor.mx},${anchor.my}:${lx},${ly}`;
+
+      // Skip cells that already exist (e.g. L0 macro cells)
+      if (existingCells && existingCells[cellKey]) continue;
+
+      // Per-cell deterministic RNG — independent of other cells
+      const cellRng = mulberry32(h32(`${promptSeed}|patch|${cellKey}`));
+      const terrainType = palette[Math.floor(cellRng() * palette.length)];
+
+      patch[cellKey] = {
+        type:        terrainType,
+        subtype:     '',
+        biome:       biome,
+        mx:          anchor.mx,
+        my:          anchor.my,
+        lx:          lx,
+        ly:          ly,
+        description: '',
+      };
+    }
+  }
+
+  return patch;
+}
+
+/**
+ * Select the best starting cell from a terrain patch based on world_bias.
+ *
+ * Scoring: CIV_TERRAIN_SCORE[terrainGroup][civilization_presence]
+ * Tie-break: deterministic hash per cell — total ordering is stable.
+ * Fallback 1: anchor centre (if patch is empty).
+ * Fallback 2: hardcoded (0,0,6,6) safety net — should never fire.
+ *
+ * @param {number} promptSeed — h32(inputObj.WORLD_PROMPT)
+ * @param {object} worldBias  — validated world_bias
+ * @param {object} patchCells — return value of generateTerrainPatch
+ * @param {{ mx, my, lx, ly }} anchor
+ * @returns {{ mx, my, lx, ly }}
+ */
+function selectStartPosition(promptSeed, worldBias, patchCells, anchor) {
+  const civLevel = worldBias?.civilization_presence || 'medium';
+  const entries = Object.entries(patchCells);
+
+  if (entries.length === 0) {
+    // Fallback 1 — patch was empty (all cells pre-existing)
+    return { mx: anchor.mx, my: anchor.my, lx: anchor.lx, ly: anchor.ly };
+  }
+
+  // Score + deterministic tiebreak sort
+  const scored = entries.map(([cellKey, cell]) => {
+    const group = terrainGroup(cell.type);
+    const score = (CIV_TERRAIN_SCORE[group] && CIV_TERRAIN_SCORE[group][civLevel] !== undefined)
+      ? CIV_TERRAIN_SCORE[group][civLevel]
+      : 0.5;
+    const tiebreak = h32(`${promptSeed}|tiebreak|${cellKey}`);
+    return { cellKey, cell, score, tiebreak };
+  });
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;  // higher score first
+    return a.tiebreak - b.tiebreak;                     // lower hash first (deterministic)
+  });
+
+  const winner = scored[0].cell;
+
+  if (winner === undefined) {
+    // Fallback 2 — belt-and-suspenders, should never fire
+    console.warn('[PHASE3] selectStartPosition used safety fallback — check patch generation');
+    return { mx: 0, my: 0, lx: 6, ly: 6 };
+  }
+
+  return { mx: winner.mx, my: winner.my, lx: winner.lx, ly: winner.ly };
+}
+
 // --- L0: macro region logic (same) ---
 async function generateWorldFromDescription(desc, worldSeed) {
   // Detect biome, tone, starting location, AND world bias/context in parallel
@@ -1159,4 +1305,9 @@ module.exports = {
   extractWorldBiasWithDeepSeek,
   // Phase 2
   evaluateCellForSites,
+  // Phase 3
+  h32,
+  selectStartAnchor,
+  generateTerrainPatch,
+  selectStartPosition,
 };
