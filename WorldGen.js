@@ -495,15 +495,159 @@ const SETTLEMENT_SIZES = {
   metropolis: { tier: 5, footprint: 7, width: 13, height: 13, buildings: 30, population_min: 5000, population_max: 20000 }
 };
 
+// ─── World Bias Extraction ────────────────────────────────────────────────────
+// world_bias drives procedural generation (density, category weights, danger).
+// world_context carries expressive fields for narration/naming (era).
+// Both are frozen at world init and never re-derived.
+
+const DEFAULT_WORLD_BIAS = {
+  settlement_density:    'medium',
+  landmark_density:      'medium',
+  danger_level:          'medium',
+  civilization_presence: 'medium',
+  environment_tone:      'neutral'
+};
+
+const DEFAULT_WORLD_CONTEXT = {
+  era: 'medieval'
+};
+
+const VALID_DENSITY_VALUES  = ['low', 'medium', 'high'];
+const VALID_ENV_TONE_VALUES = ['harsh', 'neutral', 'benign'];
+const VALID_ERA_VALUES      = ['ancient', 'medieval', 'early_modern', 'modern', 'future'];
+
+/**
+ * Validate a raw world_bias object against the schema.
+ * Returns { validated, corrections[] }.
+ */
+function validateWorldBias(raw) {
+  const corrections = [];
+  const validated = {};
+
+  const densityFields = ['settlement_density', 'landmark_density', 'danger_level', 'civilization_presence'];
+  for (const field of densityFields) {
+    const val = typeof raw?.[field] === 'string' ? raw[field].toLowerCase().trim() : null;
+    if (VALID_DENSITY_VALUES.includes(val)) {
+      validated[field] = val;
+    } else {
+      validated[field] = DEFAULT_WORLD_BIAS[field];
+      corrections.push(`${field}: "${raw?.[field]}" → default "${DEFAULT_WORLD_BIAS[field]}"`);
+    }
+  }
+
+  const envTone = typeof raw?.environment_tone === 'string' ? raw.environment_tone.toLowerCase().trim() : null;
+  if (VALID_ENV_TONE_VALUES.includes(envTone)) {
+    validated.environment_tone = envTone;
+  } else {
+    validated.environment_tone = DEFAULT_WORLD_BIAS.environment_tone;
+    corrections.push(`environment_tone: "${raw?.environment_tone}" → default "${DEFAULT_WORLD_BIAS.environment_tone}"`);
+  }
+
+  return { validated, corrections };
+}
+
+/**
+ * Validate an era string.
+ * Returns { era, corrected, original }.
+ */
+function validateEra(raw) {
+  const val = typeof raw === 'string' ? raw.toLowerCase().trim().replace(/\s+/g, '_') : null;
+  if (VALID_ERA_VALUES.includes(val)) return { era: val, corrected: false };
+  return { era: DEFAULT_WORLD_CONTEXT.era, corrected: true, original: raw };
+}
+
+/**
+ * Extract structured world bias profile and context from a world prompt.
+ * Uses a single DeepSeek call constrained to return JSON matching the schema.
+ * Falls back to defaults on any failure — never blocks initialization.
+ * @param {string} worldPrompt
+ * @returns {Promise<{ world_bias: object, world_context: object }>}
+ */
+async function extractWorldBiasWithDeepSeek(worldPrompt) {
+  if (!process.env.DEEPSEEK_API_KEY || !axios) {
+    console.log('[WORLD_BIAS] DeepSeek unavailable — using defaults');
+    return { world_bias: { ...DEFAULT_WORLD_BIAS }, world_context: { ...DEFAULT_WORLD_CONTEXT } };
+  }
+
+  try {
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a world-properties extractor for a game engine. Given a player's world description, output a JSON object with EXACTLY these fields and no others:
+{
+  "settlement_density": "low" | "medium" | "high",
+  "landmark_density": "low" | "medium" | "high",
+  "danger_level": "low" | "medium" | "high",
+  "civilization_presence": "low" | "medium" | "high",
+  "environment_tone": "harsh" | "neutral" | "benign",
+  "era": "ancient" | "medieval" | "early_modern" | "modern" | "future"
+}
+Output ONLY valid JSON. No explanation, no markdown fences, no extra fields.`
+          },
+          {
+            role: 'user',
+            content: `Player world description: "${worldPrompt}"\n\nExtract the world properties. Output only the JSON object.`
+          }
+        ],
+        temperature: 0,
+        max_tokens: 150
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 8000
+      }
+    );
+
+    const raw = resp?.data?.choices?.[0]?.message?.content?.trim();
+    // Strip markdown code fences if the model wraps output in them
+    const jsonStr = raw?.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseErr) {
+      console.log(`[WORLD_BIAS] JSON parse failed ("${jsonStr?.slice(0, 80)}...") — using defaults`);
+      return { world_bias: { ...DEFAULT_WORLD_BIAS }, world_context: { ...DEFAULT_WORLD_CONTEXT } };
+    }
+
+    const { validated: world_bias, corrections: biasCorrections } = validateWorldBias(parsed);
+    const { era, corrected: eraFixed, original: eraOrig } = validateEra(parsed.era);
+
+    if (biasCorrections.length > 0) {
+      console.log(`[WORLD_BIAS] Field corrections applied: ${biasCorrections.join(' | ')}`);
+    }
+    if (eraFixed) {
+      console.log(`[WORLD_BIAS] era: "${eraOrig}" → default "${era}"`);
+    }
+
+    console.log(`[WORLD_BIAS] Extracted: ${JSON.stringify(world_bias)} | era: ${era}`);
+    return { world_bias, world_context: { era } };
+
+  } catch (err) {
+    console.log(`[WORLD_BIAS] Extraction failed (${err?.message}) — using defaults`);
+    return { world_bias: { ...DEFAULT_WORLD_BIAS }, world_context: { ...DEFAULT_WORLD_CONTEXT } };
+  }
+}
+
 // --- L0: macro region logic (same) ---
 async function generateWorldFromDescription(desc, worldSeed) {
-  // Detect biome, tone, AND starting location in parallel for efficiency
-  const [biome, worldTone, startingLocationType] = await Promise.all([
+  // Detect biome, tone, starting location, AND world bias/context in parallel
+  const [biome, worldTone, startingLocationType, biasResult] = await Promise.all([
     detectBiomeWithDeepSeek(desc),
     detectWorldToneWithDeepSeek(desc),
-    detectStartingLocationWithDeepSeek(desc)
+    detectStartingLocationWithDeepSeek(desc),
+    extractWorldBiasWithDeepSeek(desc)
   ]);
-  
+
+  const { world_bias, world_context } = biasResult;
+
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
   const l0s = DEFAULTS.L0_SIZE;
   const macroCells = {};
@@ -516,8 +660,10 @@ async function generateWorldFromDescription(desc, worldSeed) {
   return {
     seed: worldSeed,
     biome,
-    worldTone,  // NEW: Semantic tone for narrative guidance
-    startingLocationType,  // NEW: Semantic starting location type
+    worldTone,
+    startingLocationType,
+    world_bias,      // Generation pipeline inputs — frozen after init
+    world_context,   // Expressive context (era) — for narration/naming only
     palette,
     l0_size: l0s,
     cells: macroCells,

@@ -784,6 +784,9 @@ app.post('/narrate', async (req, res) => {
           gameState.world.l0_size = worldData.l0_size;
           gameState.world.cells = worldData.cells;
           if (!gameState.world.sites) gameState.world.sites = worldData.sites;
+          // Phase 1: Persist generation bias and expressive context — frozen after this point
+          gameState.world.world_bias    = worldData.world_bias;
+          gameState.world.world_context = worldData.world_context;
           
           // Log NPC spawning for all settlements
           if (logger && worldData.cells) {
