@@ -149,10 +149,13 @@ const diag = data.turn_history && data.turn_history.length > 0
       const auth = lastTurn.authoritative_state || {};
       const fallbackDiag = data.diagnostics || {};
       
-      // Derive cells_generated from cached diagnostic (no reliable source in turn itself)
-      // Mark as debug-only since it's not part of authoritative state
-      const cellsGen = fallbackDiag.cells_generated || 0;
-      const cellsLabel = cellsGen > 0 ? `${cellsGen}` : `${cellsGen} (pre-init)`;
+      // Derive cells_generated and sample_cell_types from authoritative gameState.world.cells
+      const worldCells = data.state?.world?.cells || {};
+      const cellsGen = Object.keys(worldCells).length;
+      const sampleCells = Object.values(worldCells)
+        .filter(c => c && c.type && c.type !== 'void')
+        .slice(0, 5)
+        .map(c => c.type);
       
       return {
         first_turn: lastTurn.is_initialization || false,
@@ -163,8 +166,8 @@ const diag = data.turn_history && data.turn_history.length > 0
         cell_subtype: auth.cell_subtype || (fallbackDiag.cell_subtype || 'unknown'),
         macro_biome: auth.biome || (fallbackDiag.macro_biome || 'UNDEFINED'),
         world_initialized: !!auth.biome,  // True if biome exists (world was initialized)
-        cells_generated: cellsLabel,
-        sample_cell_types: fallbackDiag.sample_cell_types || []
+        cells_generated: cellsGen,
+        sample_cell_types: sampleCells
       };
     })()
   : (data.diagnostics || {});
@@ -175,7 +178,7 @@ diagLog.innerHTML = `
   <div><strong>Current Cell:</strong> Type: ${diag.cell_type || 'unknown'} | Subtype: ${diag.cell_subtype || 'unknown'}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>
   <div><strong>World Initialized:</strong> ${diag.world_initialized ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
-  <div><strong>Cells Generated:</strong> ${diag.cells_generated || '0 (debug)'}</div>
+  <div><strong>Cells Generated:</strong> ${diag.cells_generated}</div>
   <div><strong>Sample Terrain:</strong> ${(diag.sample_cell_types || []).join(', ') || 'none'}</div>
 `;
 
