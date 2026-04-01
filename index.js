@@ -835,7 +835,6 @@ app.post('/narrate', async (req, res) => {
           // Register a minimal stub settlement at startup to make summary truthful, without triggering
           // full NPC/job generation. The stub will be upgraded to fully initialized settlement on entry.
           const startL2Id = `M${startPos.mx}x${startPos.my}/L1_${startPos.lx}_${startPos.ly}_${worldData.startingLocationType}`;
-          const WorldGen = require('./WorldGen');
           const stubSettlement = {
             name: WorldGen.generateSettlementName(startL2Id, gameState.world.seed || gameState.rng_seed),
             type: worldData.startingLocationType,
