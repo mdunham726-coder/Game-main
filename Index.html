@@ -141,17 +141,41 @@ const narrative = data.narrative || data.error || 'No response from server';
 document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
 document.getElementById('actionInput').value = '';
 
-// Display diagnostics
+// Display diagnostics (rebind to authoritative turn_history state)
 const diagLog = document.getElementById('diagnostic-log');
-const diag = data.diagnostics || {};
+const diag = data.turn_history && data.turn_history.length > 0
+  ? (() => {
+      const lastTurn = data.turn_history[data.turn_history.length - 1];
+      const auth = lastTurn.authoritative_state || {};
+      const fallbackDiag = data.diagnostics || {};
+      
+      // Derive cells_generated from cached diagnostic (no reliable source in turn itself)
+      // Mark as debug-only since it's not part of authoritative state
+      const cellsGen = fallbackDiag.cells_generated || 0;
+      const cellsLabel = cellsGen > 0 ? `${cellsGen}` : `${cellsGen} (pre-init)`;
+      
+      return {
+        first_turn: lastTurn.is_initialization || false,
+        turn_counter: auth.turn_counter ?? (fallbackDiag.turn_counter ?? 0),
+        position_macro: auth.position ? `(${auth.position.mx},${auth.position.my})` : (fallbackDiag.position_macro || 'unknown'),
+        position_local: auth.position ? `(${auth.position.lx},${auth.position.ly})` : (fallbackDiag.position_local || 'unknown'),
+        cell_type: auth.cell_type || (fallbackDiag.cell_type || 'unknown'),
+        cell_subtype: auth.cell_subtype || (fallbackDiag.cell_subtype || 'unknown'),
+        macro_biome: auth.biome || (fallbackDiag.macro_biome || 'UNDEFINED'),
+        world_initialized: !!auth.biome,  // True if biome exists (world was initialized)
+        cells_generated: cellsLabel,
+        sample_cell_types: fallbackDiag.sample_cell_types || []
+      };
+    })()
+  : (data.diagnostics || {});
+
 diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Position Macro:</strong> ${diag.position_macro || 'unknown'} | <strong>Local:</strong> ${diag.position_local || 'unknown'}</div>
   <div><strong>Current Cell:</strong> Type: ${diag.cell_type || 'unknown'} | Subtype: ${diag.cell_subtype || 'unknown'}</div>
-  <div><strong>Biome:</strong> ${diag.macro_biome || '<span style="color: #f00;">UNDEFINED</span>'}</div>
-  <div><strong>Has World Prompt:</strong> ${diag.has_world_prompt ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
-  <div><strong>Prompt Value:</strong> "${diag.world_prompt_value || 'none'}"</div>
-  <div><strong>Cells Generated:</strong> ${diag.cells_generated || 0}</div>
+  <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>
+  <div><strong>World Initialized:</strong> ${diag.world_initialized ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
+  <div><strong>Cells Generated:</strong> ${diag.cells_generated || '0 (debug)'}</div>
   <div><strong>Sample Terrain:</strong> ${(diag.sample_cell_types || []).join(', ') || 'none'}</div>
 `;
 
@@ -758,14 +782,27 @@ Parsed     : ${parsedAction}${direction !== '(none)' ? ' ' + direction : ''}
 Confidence : ${confidence}${source}`;
             }
             
-            // 14. QA-017: Build diagnostics section from rule-based flags
+            // 14. QA-017: Build diagnostics section from rule-based flags (with severity rollup)
             let diagnosticsSection = '';
             if (turn.diagnostics && turn.diagnostics.length > 0) {
+              const highCount = turn.diagnostics.filter(d => d.severity === 'high').length;
+              const mediumCount = turn.diagnostics.filter(d => d.severity === 'medium').length;
+              const lowCount = turn.diagnostics.filter(d => d.severity === 'low').length;
+              
+              const marker = highCount > 0 ? '🛑' : mediumCount > 0 ? '⚠️' : '•';
+              const countParts = [];
+              if (highCount > 0) countParts.push(`${highCount} HIGH`);
+              if (mediumCount > 0) countParts.push(`${mediumCount} MEDIUM`);
+              if (lowCount > 0) countParts.push(`${lowCount} LOW`);
+              const countStr = countParts.join(', ');
+              
               diagnosticsSection = `
-🔧 QA-017 DIAGNOSTICS (${turn.diagnostics.length} flag${turn.diagnostics.length !== 1 ? 's' : ''})`;
-              diagnosticsSection += '\n' + turn.diagnostics.map(diag => 
-                `${diag.type} [${diag.severity.toUpperCase()}]\n  → ${diag.detail}`
-              ).join('\n');
+╭─ ${marker} QA-017 DIAGNOSTICS (${turn.diagnostics.length} flag${turn.diagnostics.length !== 1 ? 's' : ''} — ${countStr})`;
+              diagnosticsSection += '\n' + turn.diagnostics.map(diag => {
+                const icon = diag.severity === 'high' ? '🚨' : diag.severity === 'medium' ? '⚠️' : '•';
+                return `│ ${icon} ${diag.type} [${diag.severity.toUpperCase()}]\n│   → ${diag.detail}`;
+              }).join('\n');
+              diagnosticsSection += '\n╰─────────────────────────────────────────';
             }
             
             // 15. Annotate narrative and logs sections
@@ -795,8 +832,8 @@ ${turn.narrative || '(no narrative)'}`;
               logsSection += '\n(no diagnostic logs captured)';
             }
             
-            // 16. Assemble complete turn block with visual separators (QA-017 diagnostics included)
-            return `${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${diagnosticsSection}${stateSection}${settlementSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
+            // 16. Assemble complete turn block with visual separators (QA-017 diagnostics FIRST)
+            return `${turnHeader}${diagnosticsSection}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${settlementSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
           }).join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
           const fullRunLog = `${sessionHeader}

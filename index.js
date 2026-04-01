@@ -1384,9 +1384,9 @@ The player has already moved. They are now in the location described above.
       }
     }
     
-    // 2. Check: missing_parsed_intent
+    // 2. Check: missing_parsed_intent (SKIP ON INITIALIZATION TURN)
     // Only flag if player action exists but parsed intent is genuinely missing/invalid
-    if (action && action.trim()) {
+    if (action && action.trim() && turnNumber !== 1) {  // Skip Turn 1
       const hasValidParsedIntent = parsedIntent && parsedIntent.parsed_action && parsedIntent.parsed_action !== 'unknown';
       const hasValidFallback = engineOutput && engineOutput.actions && engineOutput.actions.action && engineOutput.actions.action !== 'unknown';
       
