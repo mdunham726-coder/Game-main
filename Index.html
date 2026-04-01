@@ -75,6 +75,7 @@
     let lastNarrative = "";
     let lastTurnCounter = 0;
     let lastGameResponse = null;  // QA-014: Store full response for turn history
+    window.lastGameResponse = null; // Exposed for Map.html cross-window access via window.opener.lastGameResponse
     // A2: Running QA log tracking
     let qaExportHistory = [];
     let lastExportedTurn = -1;
@@ -131,6 +132,7 @@
         
         // QA-014: Store full game response for turn history access
         lastGameResponse = data;
+        window.lastGameResponse = data; // Keep window-exposed copy in sync for Map.html
 
         // A2: Reset QA export history on new game
         if (data.diagnostics?.first_turn) {
