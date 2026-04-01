@@ -1295,6 +1295,184 @@ The player has already moved. They are now in the location described above.
       });
     }
     
+    // ========================================================================
+    // QA-017: Per-turn diagnostic generation (rule-based, lightweight)
+    // ========================================================================
+    const diagnostics = [];
+    
+    // Helper: Classify cell type to category (mirrors frontend logic)
+    function classifyCellCategory(cellType) {
+      if (!cellType) return '';
+      const type = cellType.toLowerCase();
+      if (type.includes('settlement') || type.includes('village') || type.includes('town') || type.includes('house')) {
+        return 'settlement_residential';
+      } else if (type.includes('market') || type.includes('plaza') || type.includes('square') || type.includes('alley')) {
+        return 'commerce_public';
+      } else if (type.includes('forest') || type.includes('desert') || type.includes('lake') || type.includes('mountain') || 
+                 type.includes('meadow') || type.includes('field') || type.includes('grassland') || type.includes('plain') || type.includes('woodland')) {
+        return 'nature_outdoor';
+      } else if (type.includes('cave') || type.includes('temple') || type.includes('tower') || type.includes('courtyard') || 
+                 type.includes('pavilion') || type.includes('ruin') || type.includes('building') || type.includes('structure') || type.includes('complex')) {
+        return 'structure_indoor';
+      }
+      return '';
+    }
+    
+    // Helper: Score narrative category using QA-1 logic (mirrors frontend exactly)
+    function scoreNarrativeCategory(narrativeText) {
+      const locationKeywords = {
+        commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
+        settlement_residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
+        nature_outdoor: ['park', 'forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
+        structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
+      };
+      
+      const scores = { commerce_public: 0, settlement_residential: 0, nature_outdoor: 0, structure_indoor: 0 };
+      const textLower = narrativeText.toLowerCase();
+      
+      // Count unique keyword matches per category
+      for (const [category, keywords] of Object.entries(locationKeywords)) {
+        for (const keyword of keywords) {
+          const regex = new RegExp(`\\b${keyword}\\b`, 'i');
+          if (regex.test(textLower)) {
+            scores[category]++;
+          }
+        }
+      }
+      
+      // Find dominant score with confidence thresholds (mirrors QA-1)
+      let dominantScore = 0;
+      let secondPlaceScore = 0;
+      let dominantCategory = '';
+      const CONFIDENCE_THRESHOLD = 2;
+      const MIN_MARGIN = 1;
+      
+      for (const [category, score] of Object.entries(scores)) {
+        if (score > dominantScore) {
+          secondPlaceScore = dominantScore;
+          dominantScore = score;
+          dominantCategory = category;
+        } else if (score > secondPlaceScore) {
+          secondPlaceScore = score;
+        }
+      }
+      
+      // Only return dominant if confident
+      if (dominantScore < CONFIDENCE_THRESHOLD || (dominantScore - secondPlaceScore) < MIN_MARGIN) {
+        return { category: '', score: dominantScore, secondPlace: secondPlaceScore };
+      }
+      
+      return { category: dominantCategory, score: dominantScore, secondPlace: secondPlaceScore };
+    }
+    
+    // 1. Check: narration_mismatch (using QA-1 scoring logic)
+    if (!turnNumber || turnNumber === 1) {
+      // Skip diagnostics on initialization turn
+    } else {
+      const cellType = authoritativeState.cell_type || '';
+      const cellCategory = classifyCellCategory(cellType);
+      const narrativeScoring = scoreNarrativeCategory(narrative);
+      const narrativeCategory = narrativeScoring.category;
+      
+      // Flag mismatch only if BOTH categories are confident and differ
+      if (cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+        diagnostics.push({
+          type: 'narration_mismatch',
+          severity: 'high',
+          detail: `cell is ${cellType} (${cellCategory}) but narrative describes ${narrativeCategory}`
+        });
+      }
+    }
+    
+    // 2. Check: missing_parsed_intent
+    // Only flag if player action exists but parsed intent is genuinely missing/invalid
+    if (action && action.trim()) {
+      const hasValidParsedIntent = parsedIntent && parsedIntent.parsed_action && parsedIntent.parsed_action !== 'unknown';
+      const hasValidFallback = engineOutput && engineOutput.actions && engineOutput.actions.action && engineOutput.actions.action !== 'unknown';
+      
+      // Flag ONLY if no valid parsed intent AND no valid fallback (turn truly unresolved)
+      if (!hasValidParsedIntent && !hasValidFallback) {
+        diagnostics.push({
+          type: 'missing_parsed_intent',
+          severity: 'medium',
+          detail: `player action exists but no usable intent extracted: "${action.substring(0, 50)}${action.length > 50 ? '...' : ''}"`
+        });
+      }
+      // Also flag if parser explicitly failed (not just fallback)
+      else if (parsedIntent && parsedIntent.success === false) {
+        diagnostics.push({
+          type: 'missing_parsed_intent',
+          severity: 'medium',
+          detail: `parser failed to classify: "${action.substring(0, 50)}${action.length > 50 ? '...' : ''}"`
+        });
+      }
+    }
+    
+    // 3. Check: movement_inconsistency (contradictions only)
+    // Only flag contradictions between logs/state, not mere failures
+    if (movement && movement.success === true) {
+      // Movement succeeded; verify final position matches expectation
+      const finalPos = movement.to;
+      const authoritative = authoritativeState.position;
+      
+      // Check if positions actually mismatch (after normalizing)
+      const positionMismatch = finalPos && authoritative && 
+        (finalPos.mx !== authoritative.mx || finalPos.my !== authoritative.my ||
+         finalPos.lx !== authoritative.lx || finalPos.ly !== authoritative.ly);
+      
+      if (positionMismatch) {
+        diagnostics.push({
+          type: 'movement_inconsistency',
+          severity: 'high',
+          detail: `move succeeded but final position (${finalPos.mx},${finalPos.my})→(${finalPos.lx},${finalPos.ly}) does not match authoritative (${authoritative.mx},${authoritative.my})→(${authoritative.lx},${authoritative.ly})`
+        });
+      }
+    } else if (movement && !movement.success) {
+      // Movement failed; check if logs/state contradict each other
+      const attemptLog = turnLogs.find(log => log.event === 'player_move_attempted');
+      const resolveLog = turnLogs.find(log => log.event === 'player_move_resolved');
+      
+      // Flag only if logs exist but contradict (e.g., attempt says success but resolve says failure)
+      if (attemptLog && resolveLog) {
+        const attemptSuccess = attemptLog.data?.success || false;
+        const resolveSuccess = resolveLog.data?.success || false;
+        if (attemptSuccess !== resolveSuccess) {
+          diagnostics.push({
+            type: 'movement_inconsistency',
+            severity: 'high',
+            detail: `movement logs contradict: attempt=${attemptSuccess} vs resolve=${resolveSuccess}`
+          });
+        }
+      }
+    }
+    
+    // 4. Check: settlement_presence_mismatch (contradictions, not absence)
+    const cellType = authoritativeState.cell_type || '';
+    const isSettlementCell = cellType.toLowerCase().includes('settlement');
+    
+    if (isSettlementCell) {
+      // Settlement cell requires consistent settlement state
+      if (!currentSettlement) {
+        diagnostics.push({
+          type: 'settlement_presence_mismatch',
+          severity: 'high',
+          detail: `cell type is settlement but settlement not found in registry`
+        });
+      } else if (!currentSettlement.name || currentSettlement.name.trim() === '') {
+        diagnostics.push({
+          type: 'settlement_presence_mismatch',
+          severity: 'medium',
+          detail: `settlement exists but missing or empty name field`
+        });
+      } else if (!currentSettlement.id) {
+        diagnostics.push({
+          type: 'settlement_presence_mismatch',
+          severity: 'low',
+          detail: `settlement exists but missing id field`
+        });
+      }
+    }
+    
     // QA-016 follow-up: Create turn object with initialization flag for Turn 1
     const turnObject = {
       turn_number: turnNumber,
@@ -1305,6 +1483,7 @@ The player has already moved. They are now in the location described above.
       movement: movement,
       nearby_cells: nearbyCellsSnapshot,
       narrative: narrative,
+      diagnostics: diagnostics,
       logs: turnLogs
     };
     

@@ -758,7 +758,17 @@ Parsed     : ${parsedAction}${direction !== '(none)' ? ' ' + direction : ''}
 Confidence : ${confidence}${source}`;
             }
             
-            // 14. Annotate narrative and logs sections
+            // 14. QA-017: Build diagnostics section from rule-based flags
+            let diagnosticsSection = '';
+            if (turn.diagnostics && turn.diagnostics.length > 0) {
+              diagnosticsSection = `
+🔧 QA-017 DIAGNOSTICS (${turn.diagnostics.length} flag${turn.diagnostics.length !== 1 ? 's' : ''})`;
+              diagnosticsSection += '\n' + turn.diagnostics.map(diag => 
+                `${diag.type} [${diag.severity.toUpperCase()}]\n  → ${diag.detail}`
+              ).join('\n');
+            }
+            
+            // 15. Annotate narrative and logs sections
             const narrativeSection = `
 🟡 NARRATIVE
 ${turn.narrative || '(no narrative)'}`;
@@ -785,8 +795,8 @@ ${turn.narrative || '(no narrative)'}`;
               logsSection += '\n(no diagnostic logs captured)';
             }
             
-            // 15. Assemble complete turn block with visual separators
-            return `${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${settlementSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
+            // 16. Assemble complete turn block with visual separators (QA-017 diagnostics included)
+            return `${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${diagnosticsSection}${stateSection}${settlementSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
           }).join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
 
           const fullRunLog = `${sessionHeader}
