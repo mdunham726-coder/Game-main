@@ -308,16 +308,19 @@
     // ── State access ───────────────────────────────────────────────────────────
     // lastGameResponse is the sole confirmed canonical in-memory frontend state.
     // It is declared in Index.html and assigned after every /narrate response.
+    // Returns { ok: true, state } on success, or { ok: false, reason } on failure.
     function getState() {
       try {
         const opener = window.opener;
-        if (!opener) return null;
+        if (!opener) return { ok: false, reason: 'no_opener' };
         const resp = opener.lastGameResponse;
-        if (!resp) return null;
-        return resp.state || null;
+        if (!resp) return { ok: false, reason: 'no_response' };
+        const state = resp.state;
+        if (!state) return { ok: false, reason: 'no_state' };
+        return { ok: true, state };
       } catch (e) {
-        // Cross-origin or opener closed
-        return null;
+        // Thrown when opener access is blocked (e.g. cross-origin or closed window)
+        return { ok: false, reason: 'cross_origin' };
       }
     }
 
@@ -548,18 +551,24 @@
     // ── Poll loop ──────────────────────────────────────────────────────────────
     // Minimal v0 sync: polls window.opener.lastGameResponse every 500ms.
     // Chosen as the smallest safe mechanism for same-origin opener access.
-    function poll() {
-      const state = getState();
+    const DIAG_MESSAGES = {
+      no_opener:    { title: 'Map Source Unavailable', body: 'No opener window detected. Open this map using the \uD83D\uDDFA\uFE0F Open Map button from the game window.' },
+      no_response:  { title: 'Map Source Unavailable', body: 'Opener found, but lastGameResponse is undefined. Play at least one turn first.' },
+      no_state:     { title: 'Map Source Unavailable', body: 'lastGameResponse found, but state is missing. The server response may be malformed.' },
+      cross_origin: { title: 'Origin Error',           body: 'Cross-origin access blocked. Map.html must be served from the same origin as the game (e.g. http://localhost:3000/Map.html). Do not open it as a file:// URL.' },
+    };
 
-      if (!state) {
-        showError(
-          'Map Source Unavailable',
-          'Open this map from the game window. ' +
-          'If the game window was closed, refresh from there.'
-        );
+    function poll() {
+      const result = getState();
+
+      if (!result.ok) {
+        const msg = DIAG_MESSAGES[result.reason] || { title: 'Map Source Unavailable', body: 'Unknown connection error.' };
+        showError(msg.title, msg.body);
         setStatus('No source');
         return;
       }
+
+      const state = result.state;
 
       const turnCounter = state.turn_counter ?? -1;
       if (turnCounter === lastRenderedTurnCounter) return; // No change
