@@ -636,6 +636,224 @@ Output ONLY valid JSON. No explanation, no markdown fences, no extra fields.`
   }
 }
 
+// ─── Phase 2: Site Evaluation Primitive ──────────────────────────────────────
+//
+// evaluateCellForSites — pure, deterministic function.
+// Returns zero or more site records describing what physically exists at a cell.
+// No game state is read or modified. No DeepSeek calls. No naming logic.
+//
+// DENSITY_WEIGHTS maps world_bias density strings to numeric probability tiers.
+// BIAS_LEVEL maps density strings to a 0–1 modifier used in budget calculation.
+// CATEGORY_AFFINITIES maps broad terrain groups to weighted category arrays.
+// VISIBLE_DEFAULTS gives the initial visible_from_l0 value per category.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DENSITY_WEIGHTS    = { low: 0.25, medium: 0.55, high: 0.85 };
+const CIV_WEIGHTS        = { low: 0.15, medium: 0.50, high: 0.85 };
+const ENV_TONE_MODS      = { harsh: -0.10, neutral: 0.0, benign: 0.10 };
+// Explicit baseline for settlement weight scaling — matches CIV_WEIGHTS.medium.
+// Named here so the coupling is visible if CIV_WEIGHTS.medium is ever adjusted.
+const CIV_NEUTRAL_BASELINE = 0.50;
+
+// Maps terrain type keywords to a terrain group used for affinity lookup.
+// Any terrain not matching falls into 'wilderness'.
+const TERRAIN_GROUP_MAP = {
+  plains_grassland:   'open',  plains_wildflower: 'open',  meadow:          'open',
+  hills_rolling:      'open',  hills_rocky:       'rugged', scrubland:       'open',
+  forest_deciduous:   'forest', forest_coniferous: 'forest', forest_mixed:   'forest',
+  desert_sand:        'arid',  desert_dunes:      'arid',   desert_rocky:   'arid',
+  badlands:           'arid',  canyon:            'arid',   mesa:           'arid',
+  mountain_slopes:    'rugged', mountain_peak:    'rugged', mountain_pass:  'rugged',
+  rocky_terrain:      'rugged', scree:            'rugged', alpine:         'rugged',
+  tundra:             'cold',  snowfield:         'cold',   ice_sheet:      'cold',
+  permafrost:         'cold',
+  swamp:              'wetland', marsh:            'wetland', wetland:       'wetland', bog: 'wetland',
+  river_crossing:     'water',  stream:           'water',  lake_shore:    'water',
+  beach_sand:         'coast',  beach_pebble:     'coast',  cliffs_coastal: 'coast',
+  tidepools:          'coast',  dunes_coastal:    'coast',
+  street:             'urban',  plaza:            'urban',  alley:         'urban',
+  district_commercial:'urban',  district_residential: 'urban', building_complex: 'urban',
+  market_square:      'urban',  park_urban:       'urban',  garden_urban:  'urban',
+};
+
+// Per-group category affinity tables.
+// Each entry: [category, baseWeight]
+// Weights are relative — they are normalised during selection.
+const CATEGORY_AFFINITIES = {
+  open:     [ ['settlement', 40], ['building', 30], ['landmark', 20], ['passage', 5], ['vessel', 5] ],
+  forest:   [ ['landmark', 35],   ['building', 25], ['passage', 25],  ['settlement', 10], ['vessel', 5] ],
+  rugged:   [ ['landmark', 40],   ['passage', 35],  ['building', 15], ['settlement', 8],  ['vessel', 2] ],
+  arid:     [ ['landmark', 45],   ['passage', 25],  ['building', 20], ['settlement', 8],  ['vessel', 2] ],
+  cold:     [ ['landmark', 35],   ['passage', 30],  ['building', 20], ['settlement', 12], ['vessel', 3] ],
+  wetland:  [ ['landmark', 30],   ['passage', 25],  ['building', 20], ['settlement', 15], ['vessel', 10] ],
+  water:    [ ['vessel', 35],     ['landmark', 30], ['building', 20], ['passage', 10],    ['settlement', 5] ],
+  coast:    [ ['settlement', 30], ['vessel', 30],   ['building', 20], ['landmark', 15],   ['passage', 5] ],
+  urban:    [ ['settlement', 50], ['building', 30], ['landmark', 10], ['vessel', 5],      ['passage', 5] ],
+  wilderness: [ ['landmark', 40], ['passage', 30],  ['building', 20], ['settlement', 8],  ['vessel', 2] ],
+};
+
+// visible_from_l0 heuristic defaults per category.
+// Acknowledged as tunable — these are initial values only.
+const VISIBLE_DEFAULTS = {
+  settlement: true,
+  building:   true,
+  landmark:   false,   // many landmarks are hidden until discovered
+  passage:    false,
+  vessel:     true,
+};
+
+/**
+ * Weighted random pick from an array of [item, weight] pairs using a seeded rng.
+ * @param {Array} pairs  — [[item, weight], ...]
+ * @param {Function} rng — mulberry32 instance
+ * @returns {string} chosen item
+ */
+function weightedPick(pairs, rng) {
+  const total = pairs.reduce((s, [, w]) => s + w, 0);
+  let roll = rng() * total;
+  for (const [item, w] of pairs) {
+    roll -= w;
+    if (roll <= 0) return item;
+  }
+  return pairs[pairs.length - 1][0];
+}
+
+/**
+ * Derive the terrain group for a given terrain type string.
+ * Falls back to 'wilderness' for any unrecognised terrain.
+ */
+function terrainGroup(terrainType) {
+  return TERRAIN_GROUP_MAP[terrainType] || 'wilderness';
+}
+
+/**
+ * Derive the per-cell complexity budget from world_bias.
+ *
+ * Budget represents the expected maximum number of sites for most cells.
+ * It is a soft ceiling — actual site count is determined by seeded rolls.
+ *
+ * Formula:
+ *   rawBudget = (sD + lD) / 2     where sD, lD ∈ {0.25, 0.55, 0.85}
+ *   budget    = Math.ceil(rawBudget * BUDGET_SCALE) + ENV_TONE_MOD
+ *
+ * BUDGET_SCALE = 3 (engine-owned constant, tunable separately)
+ *
+ * Examples:
+ *   low  + low   → ceil(0.25 * 3) = 1  + tone_mod
+ *   med  + med   → ceil(0.55 * 3) = 2  + tone_mod
+ *   high + high  → ceil(0.85 * 3) = 3  + tone_mod
+ */
+const BUDGET_SCALE = 3;
+
+function deriveBudget(worldBias) {
+  const sd = DENSITY_WEIGHTS[worldBias?.settlement_density] ?? DENSITY_WEIGHTS.medium;
+  const ld = DENSITY_WEIGHTS[worldBias?.landmark_density]   ?? DENSITY_WEIGHTS.medium;
+  const et = ENV_TONE_MODS[worldBias?.environment_tone]     ?? 0;
+  const raw = (sd + ld) / 2;
+  const budget = Math.ceil(raw * BUDGET_SCALE) + Math.round(et * BUDGET_SCALE);
+  return budget;  // No forced floor — zero or negative budget is a valid outcome
+}
+
+/**
+ * evaluateCellForSites
+ *
+ * Pure, deterministic function. No side effects. No async.
+ * Returns an array of site records (may be empty).
+ *
+ * @param {string} cellKey      — e.g. "L1:0,0:6,6" — used as seed component
+ * @param {string} terrainType  — e.g. "plains_grassland"
+ * @param {object} worldBias    — validated world_bias from Phase 1
+ * @param {number|string} worldSeed — global world seed
+ * @param {object} options
+ *   @param {boolean} [options.isStartingCell=false]
+ * @returns {Array<object>} site records
+ */
+function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, options = {}) {
+  const { isStartingCell = false } = options;
+
+  // ── 1. Seed RNG deterministically ────────────────────────────────────────
+  const seedStr = `${worldSeed}|${cellKey}`;
+  const rng = mulberry32(h32(seedStr));
+
+  // ── 2. Resolve terrain group + affinities ────────────────────────────────
+  const group = terrainGroup(terrainType);
+  const affinities = CATEGORY_AFFINITIES[group] || CATEGORY_AFFINITIES.wilderness;
+
+  // ── 3. Derive complexity budget ──────────────────────────────────────────
+  const budget = deriveBudget(worldBias);
+  if (budget <= 0) return [];  // Zero/negative budget → no sites regardless of existence roll
+
+  // ── 4. Compute base site-existence probability ───────────────────────────
+  // Base probability = average of settlement_density and landmark_density weights.
+  // Starting cell receives an additional upward bias from civilization_presence,
+  // but terrain constraints are never overridden.
+  const sd = DENSITY_WEIGHTS[worldBias?.settlement_density] ?? DENSITY_WEIGHTS.medium;
+  const ld = DENSITY_WEIGHTS[worldBias?.landmark_density]   ?? DENSITY_WEIGHTS.medium;
+  const et = ENV_TONE_MODS[worldBias?.environment_tone]     ?? 0;
+  let siteProb = (sd + ld) / 2 + et;
+
+  if (isStartingCell) {
+    const civBoost = CIV_WEIGHTS[worldBias?.civilization_presence] ?? CIV_WEIGHTS.medium;
+    siteProb = Math.min(0.95, siteProb + civBoost * 0.3);
+  }
+  siteProb = Math.max(0, Math.min(0.95, siteProb));
+
+  // ── 5. Roll for site existence ───────────────────────────────────────────
+  if (rng() > siteProb) return [];   // No sites at this cell
+
+  // ── 6. Determine how many sites (1 up to budget, weighted toward fewer) ──
+  // Roll additional sites with diminishing probability each time.
+  const ADDITIONAL_SITE_DECAY = 0.35;  // Engine constant: prob each extra site appears
+  const sites = [];
+  let siteCount = 1;
+  while (siteCount < budget && rng() < ADDITIONAL_SITE_DECAY) {
+    siteCount++;
+  }
+
+  // ── 7. Select categories and build records ───────────────────────────────
+  // Apply civilization_presence as a multiplier on settlement weight to avoid
+  // settlements dominating in low-civ worlds or being absent in high-civ ones.
+  const civMod = CIV_WEIGHTS[worldBias?.civilization_presence] ?? CIV_WEIGHTS.medium;
+  const adjustedAffinities = affinities.map(([cat, w]) => {
+    if (cat === 'settlement') {
+      return [cat, Math.round(w * (civMod / CIV_NEUTRAL_BASELINE))];
+    }
+    return [cat, w];
+  });
+
+  const usedCategories = new Set();
+  for (let i = 0; i < siteCount; i++) {
+    // Filter out already-used categories for this cell (one site per category max)
+    const available = adjustedAffinities.filter(([cat]) => !usedCategories.has(cat));
+    if (available.length === 0) break;
+
+    const category = weightedPick(available, rng);
+    usedCategories.add(category);
+
+    // Derive position from cellKey: parse "L1:mx,my:lx,ly"
+    const match = String(cellKey).match(/^L1:(-?\d+),(-?\d+):(-?\d+),(-?\d+)$/);
+    const mx = match ? parseInt(match[1], 10) : 0;
+    const my = match ? parseInt(match[2], 10) : 0;
+    const lx = match ? parseInt(match[3], 10) : 0;
+    const ly = match ? parseInt(match[4], 10) : 0;
+
+    const site_id = `site_${h32(seedStr + '|' + i + '|' + category).toString(16).padStart(8, '0')}`;
+
+    sites.push({
+      site_id,
+      l0_ref:          { mx, my, lx, ly },
+      category,
+      visible_from_l0: VISIBLE_DEFAULTS[category] ?? false,
+      name:            null,
+      identity:        null,
+      entered:         false,
+      l2_id:           null,
+    });
+  }
+
+  return sites;
+}
+
 // --- L0: macro region logic (same) ---
 async function generateWorldFromDescription(desc, worldSeed) {
   // Detect biome, tone, starting location, AND world bias/context in parallel
@@ -929,12 +1147,16 @@ module.exports = {
   generateL3Building, 
   hashSeedFromLocationID, 
   makeLCG,
-  detectWorldToneWithDeepSeek,  // NEW: Export tone detection for external use if needed
-  detectStartingLocationWithDeepSeek,  // NEW: Export starting location detection
+  detectWorldToneWithDeepSeek,
+  detectStartingLocationWithDeepSeek,
   // PHASE 3C: New exports
   generateSettlementName,
   getNPCCountForSettlement,
   generateNPCTraits,
   generateNPCInventory,
-  generateL2NPCs
+  generateL2NPCs,
+  // Phase 1
+  extractWorldBiasWithDeepSeek,
+  // Phase 2
+  evaluateCellForSites,
 };
