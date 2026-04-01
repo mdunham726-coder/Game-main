@@ -117,6 +117,17 @@
       background: #3a2a0a !important;
     }
 
+    .cell.unloaded {
+      background: #0a0a0a;
+      border-color: #1c1c1c;
+      cursor: pointer;
+    }
+
+    .cell.unloaded:hover {
+      background: #141414;
+      border-color: #2a2a2a;
+    }
+
     .cell-type {
       font-weight: bold;
       font-size: 9px;
@@ -430,6 +441,10 @@
           el.className = 'cell';
           if (cellData) el.classList.add('generated');
           if (isPlayer) el.classList.add('player-pos');
+          if (!cellData) {
+            el.classList.add('unloaded');
+            el.addEventListener('click', () => showUnloadedInspector(lx, ly));
+          }
 
           if (cellData) {
             const typeLabel = cellData.type || '?';
@@ -469,7 +484,7 @@
       }
 
       hideOverlay();
-      setStatus(`Region (${mx},${my}) · ${regionEntries.length} cells · Turn ${state.turn_counter ?? '?'}`);
+      setStatus(`Region (${mx},${my}) · ${regionEntries.length} cells in region · Turn ${state.turn_counter ?? '?'}`);
     }
 
     // ── Inspector ──────────────────────────────────────────────────────────────
@@ -537,6 +552,26 @@
       }
 
       content.innerHTML = html;
+    }
+
+    function showUnloadedInspector(lx, ly) {
+      const content = document.getElementById('inspector-content');
+      content.innerHTML = `
+        <div class="inspector-field">
+          <div class="inspector-label">Status</div>
+          <div class="inspector-value empty">UNLOADED</div>
+        </div>
+        <div class="inspector-field">
+          <div class="inspector-label">lx</div>
+          <div class="inspector-value">${lx}</div>
+        </div>
+        <div class="inspector-field">
+          <div class="inspector-label">ly</div>
+          <div class="inspector-value">${ly}</div>
+        </div>
+        <hr class="inspector-divider">
+        <div style="font-size:10px; color:#444;">Cell not currently loaded in memory</div>
+      `;
     }
 
     // ── Utility ────────────────────────────────────────────────────────────────

@@ -161,6 +161,11 @@ const diag = data.turn_history && data.turn_history.length > 0
         .filter(c => c && c.type && c.type !== 'void')
         .slice(0, 5)
         .map(c => c.type);
+      const diagPos = data.state?.world?.position;
+      const diagRegionPrefix = diagPos ? `L1:${diagPos.mx},${diagPos.my}:` : null;
+      const regionCells = diagRegionPrefix
+        ? Object.keys(worldCells).filter(k => k.startsWith(diagRegionPrefix)).length
+        : null;
       
       return {
         first_turn: lastTurn.is_initialization || false,
@@ -172,6 +177,7 @@ const diag = data.turn_history && data.turn_history.length > 0
         macro_biome: auth.biome || (fallbackDiag.macro_biome || 'UNDEFINED'),
         world_initialized: !!auth.biome,  // True if biome exists (world was initialized)
         cells_generated: cellsGen,
+        region_cells: regionCells,
         sample_cell_types: sampleCells
       };
     })()
@@ -183,7 +189,8 @@ diagLog.innerHTML = `
   <div><strong>Current Cell:</strong> Type: ${diag.cell_type || 'unknown'} | Subtype: ${diag.cell_subtype || 'unknown'}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>
   <div><strong>World Initialized:</strong> ${diag.world_initialized ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
-  <div><strong>Cells Generated:</strong> ${diag.cells_generated}</div>
+  <div><strong>Cells Generated (all regions):</strong> ${diag.cells_generated}</div>
+  <div><strong>Current Region Cells:</strong> ${diag.region_cells !== undefined && diag.region_cells !== null ? diag.region_cells : 'n/a'}</div>
   <div><strong>Sample Terrain:</strong> ${(diag.sample_cell_types || []).join(', ') || 'none'}</div>
 `;
 
@@ -733,6 +740,13 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             }
             
             // 10. Build structured state block with cell description
+            const _wCells = lastGameResponse?.state?.world?.cells || {};
+            const _wTotal = Object.keys(_wCells).length;
+            const _wMx = authState.position?.mx ?? 0;
+            const _wMy = authState.position?.my ?? 0;
+            const _wRegionPrefix = `L1:${_wMx},${_wMy}:`;
+            const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
+            const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^L1:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
             const stateSection = `
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
 📝 Description   : ${authState.cell_description || '(unknown)'}
@@ -740,7 +754,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🔑 Cell Key      : ${authState.cell_key || 'unknown'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
-🏘️  Settlement Count : ${authState.settlement_count || 0}`;
+🏘️  Settlement Count : ${authState.settlement_count || 0}
+🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored`;
             
             // 11. Build settlement block with clarified labels
             let settlementSection = '';
@@ -1033,6 +1048,13 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           }
           
           // State block with cell description
+          const _wCells = lastGameResponse?.state?.world?.cells || {};
+          const _wTotal = Object.keys(_wCells).length;
+          const _wMx = authState.position?.mx ?? 0;
+          const _wMy = authState.position?.my ?? 0;
+          const _wRegionPrefix = `L1:${_wMx},${_wMy}:`;
+          const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
+          const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^L1:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
           const stateSection = `
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
 📝 Description   : ${authState.cell_description || '(unknown)'}
@@ -1040,7 +1062,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🔑 Cell Key      : ${authState.cell_key || 'unknown'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
-🏘️  Settlement Count : ${authState.settlement_count || 0}`;
+🏘️  Settlement Count : ${authState.settlement_count || 0}
+🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored`;
           
           // Settlement block with clarified labels
           let settlementSection = '';

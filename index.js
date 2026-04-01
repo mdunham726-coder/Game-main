@@ -1109,6 +1109,25 @@ app.post('/narrate', async (req, res) => {
   console.log('[narrate] scene:', JSON.stringify(scene, null, 2));
 
   try {
+    // Pre-narration: settle name directive — only active when player is on a settlement cell
+    const _narCellKey = `L1:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+    const _narCell = gameState?.world?.cells?.[_narCellKey] || null;
+    let _settlementDirective = '';
+    let _preNarSettlementKey = null;
+    let _expectingSettlementName = false;
+    if (_narCell?.type === 'settlement' && gameState?.world?.settlements) {
+      _preNarSettlementKey = `M${pos.mx}x${pos.my}/L1_${pos.lx}_${pos.ly}_${_narCell.subtype}`;
+      const _stub = gameState.world.settlements[_preNarSettlementKey] || null;
+      if (_stub) {
+        if (_stub.narrative_name) {
+          _settlementDirective = `\n\nSETTLEMENT NAME:\nThis settlement is known as "${_stub.narrative_name}". Use this name consistently in your narration.`;
+        } else {
+          _settlementDirective = `\n\nSETTLEMENT NAMING:\nThis is the first description of this ${_narCell.subtype}. Choose a fitting name for it that matches the world tone. Begin your entire response with exactly this line:\n[settlement_name: <chosen name>]\nThen write your narration paragraph on the next line.`;
+          _expectingSettlementName = true;
+        }
+      }
+    }
+
     // Build safe narration prompt with guards against undefined values
     let nearbyStr = '';
     if (scene.nearbyCells && Array.isArray(scene.nearbyCells)) {
@@ -1160,7 +1179,7 @@ The player has already moved. They are now in the location described above.
 - Write a vivid paragraph describing the player's current surroundings as they experience them now
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
-- Do not invent landmarks, creatures, or locations not described above`;
+- Do not invent landmarks, creatures, or locations not described above${_settlementDirective}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -1188,7 +1207,22 @@ The player has already moved. They are now in the location described above.
     } catch (parseErr) {
       console.error('Failed to parse DeepSeek response:', parseErr.message);
     }
-    
+
+    // Settlement name capture: strip [settlement_name: ...] prefix and persist to state
+    if (_expectingSettlementName && _preNarSettlementKey) {
+      const nameMatch = narrative.match(/^\[settlement_name:\s*(.+?)\]\s*\n?/);
+      if (nameMatch) {
+        const capturedName = nameMatch[1].trim();
+        narrative = narrative.slice(nameMatch[0].length).trim();
+        const settlement = gameState.world.settlements[_preNarSettlementKey];
+        if (settlement) {
+          settlement.narrative_name = capturedName;
+          settlement.name = capturedName;
+          console.log(`[NARRATE] Captured settlement name: "${capturedName}" for key ${_preNarSettlementKey}`);
+        }
+      }
+    }
+
     // Log narration generation
     if (logger) {
       logger.narrationGenerated(narrative.length);
