@@ -866,25 +866,8 @@ app.post('/narrate', async (req, res) => {
             console.log('[WORLD] [Phase6B] Settlement site already present from Phase 4D — skipped injection.');
           }
 
-          // Phase 6B: Legacy L2 stub (backward compat for enterL2FromL1 subtype key lookup).
-          // name starts null — Phase 5 site_updates fills it on first narration.
-          const startL2Id = `M${startPos.mx}x${startPos.my}/L1_${startPos.lx}_${startPos.ly}_${worldData.startingLocationType}`;
-          gameState.world.settlements = gameState.world.settlements || {};
-          if (!gameState.world.settlements[startL2Id]) {
-            gameState.world.settlements[startL2Id] = {
-              name:                null,   // will be filled by Phase 5 site_updates capture
-              type:                worldData.startingLocationType,
-              subtype:             worldData.startingLocationType,
-              mx:                  startPos.mx,
-              my:                  startPos.my,
-              lx:                  startPos.lx,
-              ly:                  startPos.ly,
-              npcs:                [],
-              is_stub:             true,
-              is_starting_location: true
-            };
-            console.log('[WORLD] [Phase6B] Registered legacy L2 stub key:', startL2Id);
-          }
+          // Phase 7: Legacy L2 stub block removed.
+          // recordSiteToCell now stores the stub under the canonical site.l2_id key.
         }
       }
       
@@ -1325,15 +1308,14 @@ The player has already moved. They are now in the location described above.
     const cellKey = `L1:${currentPosition.mx},${currentPosition.my}:${currentPosition.lx},${currentPosition.ly}`;
     const currentCell = gameState.world.cells ? gameState.world.cells[cellKey] : null;
     
-    // Phase 6D5: Resolve current settlement from cell.sites (authoritative).
-    // Prefer site_id key; fall back to legacy subtype-based L2 key for backward compat.
+    // Phase 7: Resolve current settlement from cell.sites (authoritative).
+    // Prefer canonical l2_id key; fall back to site_id for sessions loaded but not yet entered.
     let currentSettlement = null;
     {
       const _settlementSite = Object.values(currentCell?.sites || {}).find(s => s.category === 'settlement');
       if (_settlementSite && gameState.world.settlements) {
-        const _legacyL2Id = `M${currentPosition.mx}x${currentPosition.my}/L1_${currentPosition.lx}_${currentPosition.ly}_${currentCell.subtype || _settlementSite.identity || ''}`;
-        currentSettlement = gameState.world.settlements[_settlementSite.site_id]
-          || gameState.world.settlements[_legacyL2Id]
+        currentSettlement = gameState.world.settlements[_settlementSite.l2_id]
+          || gameState.world.settlements[_settlementSite.site_id]
           || null;
       }
     }

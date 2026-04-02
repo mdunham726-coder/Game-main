@@ -235,15 +235,22 @@ function recordSiteToCell(state, cellKey, site) {
   const cell = state.world.cells[cellKey];
   if (!cell) return;
 
+  // Phase 7: Reserve canonical l2_id on settlement sites at registration time.
+  // This is identity reservation only — no L2 content is generated here.
+  if (site.category === 'settlement' && !site.l2_id) {
+    site.l2_id = `${site.site_id}/l2`;
+  }
+
   cell.sites = cell.sites || {};
   cell.sites[site.site_id] = site;
 
-  // TEMP (Phase 6 removes): mirror settlement-category sites into world.settlements
+  // Mirror settlement-category sites into world.settlements as stubs (keyed by canonical l2_id).
+  // Actual L2 content is generated lazily on first entry via enterL2FromL1.
   if (site.category === 'settlement') {
     state.world.settlements = state.world.settlements || {};
-    state.world.settlements[site.site_id] = {
+    state.world.settlements[site.l2_id] = {
       name:    site.name ?? null,
-      type:    site.category,
+      type:    site.identity || site.subtype || site.category,
       npcs:    [],
       is_stub: true,
       mx:      cell.mx,
@@ -416,6 +423,32 @@ function buildOutput(prevState, inputObj, logger) {
   const oldCellType = oldCell?.type || oldCell?.tags?.type || 'unknown';
   
   Actions.applyPlayerActions(state, actions, changes1, phaseFlags, logger);
+
+  // Phase 7: Handle 'enter' action — site-driven L2 entry.
+  // Lives in buildOutput (not ActionProcessor) to avoid circular dependency.
+  if (actions.action === 'enter') {
+    const enterPos = state.world.position;
+    const enterCellKey = `L1:${enterPos.mx},${enterPos.my}:${enterPos.lx},${enterPos.ly}`;
+    const enterCell = state.world.cells && state.world.cells[enterCellKey];
+    const enterSites = enterCell ? Object.values(enterCell.sites || {}) : [];
+
+    // Phase 7 temporary scaffolding: minimal site resolution.
+    // Priority: explicit name match → first settlement site → first poi site.
+    // Multi-site disambiguation and clarification prompts are deferred to a later phase.
+    let targetSite = null;
+    const targetName = (actions.target || '').toLowerCase().trim();
+    if (targetName) {
+      targetSite = enterSites.find(s => s.name && s.name.toLowerCase().includes(targetName));
+    }
+    if (!targetSite) targetSite = enterSites.find(s => s.category === 'settlement');
+    if (!targetSite) targetSite = enterSites.find(s => s.category === 'poi');
+
+    if (targetSite) {
+      enterL2FromL1(state, { cell_key: enterCellKey, site_id: targetSite.site_id });
+    } else {
+      console.log('[Phase7-ENTER] No enterable site found at', enterCellKey);
+    }
+  }
 
   // WorldGen step (movement + streaming + site reveal)
   // Biome should already be set by index.js before this is called
@@ -593,150 +626,142 @@ if (require.main === module) main();
 
 /**
  * Enter an L2 location (settlement or POI) from an L1 cell.
- * PHASE 3C: Enhanced with persistent NPCs and quest generation
+ * Phase 7: Site-driven entry — l2_id derived from site.site_id, not cell subtype.
+ * Input: { cell_key, site_id } — caller resolves target site before calling.
  */
-function enterL2FromL1(state, l1_cell_data) {
-  if (!state || !state.world || !l1_cell_data) return null;
-  const { mx, my, lx, ly, type, subtype } = l1_cell_data;
-  const l2_id = `M${mx}x${my}/L1_${lx}_${ly}_${subtype}`;
-  
-  // PHASE 3C: Check if settlement already exists with persistent NPCs
-  let settlement = state.world.settlements && state.world.settlements[l2_id];
-  let npcs_here = [];
-  
+function enterL2FromL1(state, { cell_key, site_id }) {
+  if (!state || !state.world) return null;
+
+  // Resolve site from cell.sites
+  const cell = state.world.cells && state.world.cells[cell_key];
+  if (!cell) return null;
+  const site = cell.sites && cell.sites[site_id];
+  if (!site) return null;
+
+  // Defensive: accept both site.identity (Phase 7) and site.subtype (WorldGen legacy format)
+  const identity = site.identity || site.subtype || 'village';
+  const sid = site.site_id || site.id || site_id;
+
+  // Ensure l2_id is set — should already be set by recordSiteToCell, but assign lazily
+  // for sites that were created before Phase 7 (old sessions).
+  if (!site.l2_id) {
+    site.l2_id = `${sid}/l2`;
+  }
+  const l2_id = site.l2_id;
+
+  // Phase 7 migration guard: if canonical l2_id key is missing, check legacy key formats
+  // and re-key to canonical before use. Prevents duplicate generation for old sessions.
+  state.world.settlements = state.world.settlements || {};
+  if (!state.world.settlements[l2_id]) {
+    // Legacy format 1: Phase-6 recordSiteToCell keyed by site_id directly
+    const legacyKey6 = sid;
+    // Legacy format 2: old subtype-based key M{mx}x{my}/L1_{lx}_{ly}_{identity}
+    const parts = cell_key.match(/^L1:(\d+),(\d+):(\d+),(\d+)$/);
+    const legacyKeySubtype = parts
+      ? `M${parts[1]}x${parts[2]}/L1_${parts[3]}_${parts[4]}_${identity}`
+      : null;
+
+    const found = state.world.settlements[legacyKey6]
+      || (legacyKeySubtype && state.world.settlements[legacyKeySubtype])
+      || null;
+
+    if (found) {
+      // Re-key to canonical format; remove old key to avoid duplication
+      state.world.settlements[l2_id] = found;
+      if (state.world.settlements[legacyKey6] && legacyKey6 !== l2_id) delete state.world.settlements[legacyKey6];
+      if (legacyKeySubtype && state.world.settlements[legacyKeySubtype]) delete state.world.settlements[legacyKeySubtype];
+      console.log(`[Phase7-MIGRATE] Re-keyed settlement to canonical l2_id=${l2_id}`);
+    }
+  }
+
+  let settlement = state.world.settlements[l2_id];
+  const NPCs = require('./NPCs');
+
   if (settlement && !settlement.is_stub) {
-    // Use existing fully-initialized persistent NPCs
-    npcs_here = settlement.npcs || [];
-    console.log(`[ENGINE] Reusing persistent settlement: ${settlement.name} with ${npcs_here.length} NPCs`);
+    // Reuse: full settlement already exists — no generation needed
+    console.log(`[ENGINE] Reusing persistent settlement: ${settlement.name} with ${(settlement.npcs || []).length} NPCs`);
+
   } else if (settlement && settlement.is_stub) {
-    // QA-013: Complete the stub settlement that was pre-registered at startup
-    console.log(`[ENGINE] Completing stub settlement: ${settlement.name}`);
-    const NPCs = require('./NPCs');
-    
-    // Log NPC spawn attempt (Phase 5)
-    const expectedNpcCount = WorldGen.getNPCCountForSettlement(subtype);
+    // Complete stub: generate NPCs and upgrade the existing stub object in-place.
+    // world.settlements[l2_id] is mutated directly so stored object == active object.
+    console.log(`[ENGINE] Completing stub settlement for l2_id=${l2_id}, identity=${identity}`);
+
+    const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
+    if (logger) logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+
+    const npcs_here = WorldGen.generateL2NPCs(l2_id, identity, state.rng_seed, NPCs);
+
     if (logger) {
-      logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+      if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(l2_id, npcs_here.length);
+      else logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
     }
-    
-    npcs_here = WorldGen.generateL2NPCs(l2_id, subtype, state.rng_seed, NPCs);
-    
-    // Log NPC spawn success/failure (Phase 5)
-    if (logger) {
-      if (npcs_here && npcs_here.length > 0) {
-        logger.npc_spawn_succeeded(l2_id, npcs_here.length);
-      } else {
-        logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
-      }
-    }
-    
-    // PHASE 3C: Assign quest-giver flags deterministically
+
     assignQuestGiverFlags(npcs_here, state.rng_seed, l2_id);
-    
-    // Upgrade stub to full settlement
+
+    // Upgrade stub in-place — same reference stays in world.settlements[l2_id]
     settlement.npcs = npcs_here;
-    settlement.is_stub = false;  // Mark stub as now complete
-    
-    // Log settlement registration completion
+    settlement.is_stub = false;
+    settlement.type = settlement.type || identity;
+
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
-      logger.settlement_registered(
-        l2_id,
-        settlement.name,
-        settlement.type || subtype,
-        { mx: pos.mx, my: pos.my }
-      );
+      logger.settlement_registered(l2_id, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
     }
-    
-    console.log(`[ENGINE] Completed stub settlement: ${settlement.name} with ${npcs_here.length} NPCs`);
-    
-    // PHASE 3C: Generate quests for stub settlement
+
+    console.log(`[ENGINE] Completed stub: ${settlement.name}, ${npcs_here.length} NPCs`);
+
     if (!state.quests.allQuestsSeeded[l2_id]) {
       const quests = generateSettlementQuests(state, l2_id, settlement, npcs_here);
       state.quests.allQuestsSeeded[l2_id] = quests;
       console.log(`[ENGINE] Generated ${quests.length} quests for ${settlement.name}`);
     }
+
+    site.entered = true;
+
   } else {
-    // Generate new settlement with persistent NPCs
-    const NPCs = require('./NPCs');
-    
-    // Log NPC spawn attempt (Phase 5)
-    const expectedNpcCount = WorldGen.getNPCCountForSettlement(subtype);
+    // Fresh: no settlement record — generate and store. Exactly one generateL2Settlement call.
+    const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
+    if (logger) logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+
+    const npcs_here = WorldGen.generateL2NPCs(l2_id, identity, state.rng_seed, NPCs);
+
     if (logger) {
-      logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+      if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(l2_id, npcs_here.length);
+      else logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
     }
-    
-    npcs_here = WorldGen.generateL2NPCs(l2_id, subtype, state.rng_seed, NPCs);
-    
-    // Log NPC spawn success/failure (Phase 5)
-    if (logger) {
-      if (npcs_here && npcs_here.length > 0) {
-        logger.npc_spawn_succeeded(l2_id, npcs_here.length);
-      } else {
-        logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
-      }
-    }
-    
-    // PHASE 3C: Assign quest-giver flags deterministically
+
     assignQuestGiverFlags(npcs_here, state.rng_seed, l2_id);
-    
-    settlement = WorldGen.generateL2Settlement(l2_id, subtype, npcs_here);
-    state.world.settlements = state.world.settlements || {};
+
+    settlement = WorldGen.generateL2Settlement(l2_id, identity, npcs_here);
     state.world.settlements[l2_id] = settlement;
-    
-    // B2: Settlement storage debug logging
+
     const totalSettlements = Object.keys(state.world.settlements).length;
-    console.log(`[B2-STORE] Settlement stored: l2_id=${l2_id}, name=${settlement.name}, type=${settlement.type}, totalCount=${totalSettlements}`);
-    
-    // Log settlement registration (Phase 4)
+    console.log(`[Phase7-STORE] Settlement stored: l2_id=${l2_id}, name=${settlement.name}, type=${settlement.type}, totalCount=${totalSettlements}`);
+
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
-      logger.settlement_registered(
-        l2_id,
-        settlement.name,
-        settlement.type || subtype,
-        { mx: pos.mx, my: pos.my }
-      );
+      logger.settlement_registered(l2_id, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
     }
-    
+
     console.log(`[ENGINE] Created new settlement: ${settlement.name} with ${npcs_here.length} NPCs`);
-    
-    // PHASE 3C: Generate quests for new settlement
+
     if (!state.quests.allQuestsSeeded[l2_id]) {
       const quests = generateSettlementQuests(state, l2_id, settlement, npcs_here);
       state.quests.allQuestsSeeded[l2_id] = quests;
       console.log(`[ENGINE] Generated ${quests.length} quests for ${settlement.name}`);
     }
+
+    site.entered = true;
   }
-  
-  let l2 = null;
-  // Phase 6D7 compat shim: cell.type is now geographic after Phase 6B.
-  // Use subtype (retained as silent L2 hint) to detect settlement intent when type is no longer "settlement".
-  const _SETTLEMENT_SUBTYPES = ['village','hamlet','outpost','town','city','market','tavern','fort','monastery','inn','keep','citadel'];
-  if (type === "settlement" || (subtype && _SETTLEMENT_SUBTYPES.includes(subtype))) {
-    // B2: Settlement detection debug logging
-    console.log(`[B2-DETECT] Settlement entry: l2_id=${l2_id}, type=${type}, subtype=${subtype}, logger=${!!logger}`);
-    l2 = WorldGen.generateL2Settlement(l2_id, subtype, npcs_here);
-    if (logger) {
-      logger.emit('settlement_detection_logged', { l2_id, subtype, npcs_count: npcs_here.length });
-    }
-  } else if (type === "poi") {
-    l2 = WorldGen.generateL2POI(l2_id, subtype);
-  } else {
-    // fallback: treat as structure
-    l2 = WorldGen.generateL2POI(l2_id, "structure");
-  }
-  
-  // PHASE 3C: Ensure settlement data is preserved
-  l2.settlement_data = settlement;
-  
-  state.world.l2_active = l2;
+
+  // Stored object IS the active object — no secondary generation, no split references.
+  state.world.l2_active = state.world.settlements[l2_id];
   state.world.l3_active = null;
   state.world.current_layer = 2;
   if (!state.player) state.player = {};
   state.player.layer = 2;
   state.player.position = { x: 0, y: 0 };
-  return l2;
+  return state.world.l2_active;
 }
 
 /**

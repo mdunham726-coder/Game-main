@@ -68,7 +68,7 @@ function buildPrompt(userInput, contextStr) {
     contextStr,
     "",
     // === PHASE 3C: Quest actions added to valid actions list ===
-    "Valid actions: move, take, drop, examine, talk, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, help",
+    "Valid actions: move, take, drop, examine, talk, enter, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, help",
     "",
     "Directions: north, south, east, west, up, down",
     "",
