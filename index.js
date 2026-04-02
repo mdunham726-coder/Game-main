@@ -1164,6 +1164,30 @@ app.post('/narrate', async (req, res) => {
 
     let invStr = JSON.stringify(scene.inventory || []);
 
+    // Phase 5B: Build site context block from current cell's sites
+    let _siteContextBlock = '';
+    const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites) : [];
+    if (_narCellSites.length > 0) {
+      const _siteLines = _narCellSites
+        .map(s => `- site_id: ${s.site_id} | category: ${s.category} | name: ${s.name ?? '(unnamed)'}`)
+        .join('\n');
+      const _hasNamed   = _narCellSites.some(s => s.name != null);
+      const _hasUnnamed = _narCellSites.some(s => s.name == null);
+      let _instructionLines = '';
+      if (_hasNamed && _hasUnnamed) {
+        // Mixed: scope each instruction explicitly
+        _instructionLines = '\nSites that already have a name must keep that exact name — do not change or replace it.' +
+                            '\nSites marked (unnamed) may receive a first-fill name via a site_updates block.';
+      } else if (_hasNamed) {
+        // All named: lock only
+        _instructionLines = '\nAll sites above have stored names. Use them exactly as written — do not invent alternatives.';
+      } else {
+        // All unnamed: invitation only
+        _instructionLines = '\nAll sites above are unnamed. You may introduce names for them via a site_updates block.';
+      }
+      _siteContextBlock = `\n\nSITES AT CURRENT LOCATION:\n${_siteLines}${_instructionLines}`;
+    }
+
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
 WORLD TONE & CHARACTER:
@@ -1185,7 +1209,7 @@ ${scene.currentCell?.description || 'An empty space'}
 ${nearbyStr}
 
 INVENTORY: ${invStr}
-NPCs PRESENT: ${npcsStr}
+NPCs PRESENT: ${npcsStr}${_siteContextBlock}
 
 The player has already moved. They are now in the location described above.
 
@@ -1197,7 +1221,8 @@ The player has already moved. They are now in the location described above.
 - Write a vivid paragraph describing the player's current surroundings as they experience them now
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
-- Do not invent landmarks, creatures, or locations not described above${_settlementDirective}`;
+- Do not invent landmarks, creatures, or locations not described above
+- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.${_settlementDirective}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -1237,6 +1262,39 @@ The player has already moved. They are now in the location described above.
           settlement.narrative_name = capturedName;
           settlement.name = capturedName;
           console.log(`[NARRATE] Captured settlement name: "${capturedName}" for key ${_preNarSettlementKey}`);
+        }
+      }
+    }
+
+    // Phase 5D+E: Extract [site_updates: [...]] block, first-fill capture, legacy mirror sync
+    {
+      const _suMatch = narrative.match(/\[site_updates:\s*([\s\S]*?\])\s*\n?/);
+      if (_suMatch) {
+        // Always strip the block from narrative regardless of parse outcome
+        narrative = (narrative.slice(0, _suMatch.index) + narrative.slice(_suMatch.index + _suMatch[0].length)).trim();
+        try {
+          const _updates = JSON.parse(_suMatch[1]);
+          const _capCell = gameState.world.cells?.[_narCellKey];
+          if (Array.isArray(_updates) && _capCell?.sites) {
+            for (const _upd of _updates) {
+              if (!_upd?.site_id) continue;
+              const _tgt = _capCell.sites[_upd.site_id];
+              if (!_tgt) continue; // site_id not in this cell — skip
+              // First-fill only: never overwrite existing values
+              for (const _field of ['name', 'identity', 'description']) {
+                if (_upd[_field] != null && _tgt[_field] == null) {
+                  _tgt[_field] = _upd[_field];
+                  console.log(`[PHASE5] site ${_upd.site_id} ${_field} captured: "${_upd[_field]}"`);
+                  // Phase 5E: legacy mirror — name only
+                  if (_field === 'name' && gameState.world.settlements?.[_upd.site_id]) {
+                    gameState.world.settlements[_upd.site_id].name = _upd[_field];
+                  }
+                }
+              }
+            }
+          }
+        } catch (_suErr) {
+          console.warn('[PHASE5] site_updates parse failed:', _suErr.message);
         }
       }
     }
