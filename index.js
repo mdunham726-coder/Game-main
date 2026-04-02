@@ -1764,7 +1764,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   context += `Cell Type: ${currentCell?.type || "unknown"}\n`;
   context += `Cell Subtype: ${currentCell?.subtype || "unknown"}\n`;
   context += `Cell Biome: ${currentCell?.biome || "unknown"}\n`;
-  context += `Description: ${(currentCell?.description || "").substring(0, 200)}${currentCell?.description?.length > 200 ? "..." : ""}\n`;
+  context += `Description: ${currentCell?.description || ""}\n`;
 
   context += `\n=== NEARBY NPCS ===\n`;
   if (gameState.world.npcs && gameState.world.npcs.length > 0) {
@@ -1782,7 +1782,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   if (debugLevel === "detailed" || debugLevel === "full") {
     context += `\n=== WORLD GENERATION PARAMETERS ===\n`;
     context += `Biome               : ${gameState.world.macro_biome || "not detected"}\n`;
-    context += `World Tone          : ${(gameState.world.world_tone || "not detected").substring(0, 150)}...\n`;
+    context += `World Tone          : ${gameState.world.world_tone || "not detected"}\n`;
     context += `Starting Loc Type   : ${gameState.world.starting_location_type || "not detected"}\n`;
     context += `Phase3 Seed         : ${gameState.world.phase3_seed ?? "(not set)"}\n`;
     context += `World Seed          : ${gameState.world.seed ?? gameState.rng_seed ?? 0} (legacy / unused)\n`;
@@ -1790,14 +1790,15 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
 
     context += `\n=== CURRENT CELL SITES (authoritative) ===\n`;
     const _dbgSites = currentCell?.sites ? Object.values(currentCell.sites) : [];
+    context += `Site Count : ${_dbgSites.length}\n`;
     if (_dbgSites.length > 0) {
       _dbgSites.forEach(s => {
         context += `- ${s.site_id} | ${s.category} | name: ${s.name ?? '(unnamed)'}\n`;
         if (s.identity != null) context += `  identity : ${s.identity}\n`;
-        if (s.description != null) context += `  desc     : ${s.description.substring(0, 80)}${s.description.length > 80 ? '...' : ''}\n`;
+        if (s.description != null) context += `  desc     : ${s.description}\n`;
       });
     } else {
-      context += `(No sites at current cell)\n`;
+      context += `  • none\n`;
     }
 
     const _dbgCap = gameState.world._lastSiteCapture;
@@ -1874,11 +1875,6 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     } catch (e) {
       context += `(Could not create JSON snapshot)\n`;
     }
-  }
-
-  // Safety: never exceed 4000 chars
-  if (context.length > 4000) {
-    context = context.substring(0, 4000) + "\n...(truncated for size)";
   }
 
   return context;

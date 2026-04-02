@@ -20,8 +20,11 @@
     <input type="text" id="actionInput" placeholder="What do you do?" autofocus>
     <button onclick="submitAction()">Submit</button>
 <!-- Diagnostic Panel -->
-<div id="diagnostics" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #333; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; color: #0f0;">
-  <h3 style="margin: 0 0 10px 0;">🔧 DIAGNOSTICS</h3>
+<div id="diagnostics" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #333; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #0f0;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+    <h3 style="margin: 0;">🔧 DIAGNOSTICS</h3>
+    <button onclick="navigator.clipboard.writeText(document.getElementById('diagnostic-log').innerText)" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Diagnostics</button>
+  </div>
   <div id="diagnostic-log"></div>
 </div>
 
@@ -42,7 +45,10 @@
     <button onclick="testContext()" style="width: 49%; padding: 10px; font-size: 14px; background: #888; color: white; border: none; cursor: pointer; border-radius: 3px;">Test Context</button>
   </div>
   <div id="debugLoading" style="display: none; color: #4a90e2; margin-top: 10px; font-size: 12px;">Consulting the AI...</div>
-  <div id="debugResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #4a90e2; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 400px; overflow-y: auto; display: none;"></div>
+  <div style="display: flex; justify-content: flex-end; margin-top: 12px;">
+    <button onclick="navigator.clipboard.writeText(document.getElementById('debugResponse').innerText)" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Context</button>
+  </div>
+  <div id="debugResponse" style="margin-top: 4px; padding: 10px; background: #1a1a1a; border: 1px solid #4a90e2; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 600px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word;"></div>
 </div>
 
 <!-- Logs Panel -->
@@ -200,7 +206,7 @@ if (_curSites.length > 0) {
   _sitesHtml = _curSites.map(s => {
     const nameStr = s.name != null ? s.name : '<span style="color:#666">(unnamed)</span>';
     const identStr = s.identity != null ? s.identity : '<span style="color:#444">(null)</span>';
-    const descStr  = s.description != null ? s.description.slice(0,60) + (s.description.length > 60 ? '…' : '') : '<span style="color:#444">(null)</span>';
+    const descStr  = s.description != null ? s.description : '<span style="color:#444">(null)</span>';
     return `<div style="margin-left:8px">• <strong>${s.site_id}</strong> | ${s.category}<br>
       &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
       &nbsp;&nbsp;identity : ${identStr}<br>
@@ -209,7 +215,7 @@ if (_curSites.length > 0) {
     </div>`;
   }).join('');
 } else {
-  _sitesHtml = '<div style="color:#444;margin-left:8px">(no sites at current cell)</div>';
+  _sitesHtml = '<div style="color:#555;margin-left:8px">• none</div>';
 }
 
 // Build Phase 5 capture HTML
@@ -242,7 +248,7 @@ if (_curSites.length > 0) {
     return `<div style="margin-left:8px;color:#0a0">• ${s.site_id} → settlements.name=${mirror.name ?? '(unnamed)'}</div>`;
   }).join('');
 } else {
-  _mirrorHtml = '<div style="color:#444;margin-left:8px">(no sites to compare)</div>';
+  _mirrorHtml = '<div style="color:#555;margin-left:8px">no authoritative sites present — cell.sites is empty</div>';
 }
 
 diagLog.innerHTML = `
@@ -259,8 +265,10 @@ diagLog.innerHTML = `
   <div><strong>settlement_density:</strong> ${_wbn(_wb,'settlement_density')} &nbsp;|&nbsp; <strong>landmark_density:</strong> ${_wbn(_wb,'landmark_density')}</div>
   <div><strong>danger_level:</strong> ${_wbn(_wb,'danger_level')} &nbsp;|&nbsp; <strong>civilization_presence:</strong> ${_wbn(_wb,'civilization_presence')}</div>
   <div><strong>environment_tone:</strong> ${_wbn(_wb,'environment_tone')}</div>
-  <div><strong>era:</strong> ${_wbn(_wc,'era')} &nbsp;|&nbsp; <strong>world_tone:</strong> ${data.state?.world?.world_tone ? data.state.world.world_tone.slice(0,80) + (data.state.world.world_tone.length > 80 ? '…' : '') : '(missing)'}</div>
+  <div><strong>era:</strong> ${_wbn(_wc,'era')}</div>
+  <div style="word-break:break-word;"><strong>world_tone:</strong> ${data.state?.world?.world_tone ?? '(missing)'}</div>
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; CURRENT CELL SITES (authoritative)</div>
+  <div style="margin-left:8px;color:#777">Site Count: ${_curSites.length}</div>
   ${_sitesHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; PHASE 5 CAPTURE (last turn)</div>
   ${_captureHtml}
@@ -837,7 +845,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🌱 Phase3 Seed   : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
 ⚙️  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
 🏙️  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
-📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ? lastGameResponse.state.world.world_tone.slice(0,60) + (lastGameResponse.state.world.world_tone.length > 60 ? '…' : '') : '(missing)'}`;
+📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
             
             // Site diagnostic addendum
             const _sCellKey = authState.cell_key || null;
@@ -848,11 +856,11 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             if (_sCellSites.length > 0) {
               _sSitesTxt = _sCellSites.map(s => {
                 const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
-                const id = s.identity != null ? '"' + s.identity.slice(0,40) + (s.identity.length > 40 ? '\u2026' : '') + '"' : '(null)';
+                const id = s.identity != null ? '"' + s.identity + '"' : '(null)';
                 return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible_from_l0 ?? false) + ' | entered=' + (s.entered ?? false);
               }).join('\n');
             } else {
-              _sSitesTxt = '  (no sites at current cell)';
+              _sSitesTxt = '  \u2022 none';
             }
             let _sCaptureTxt = '';
             if (!_sLsc || !_sLsc.detected) {
@@ -871,9 +879,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
                 return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;
               }).join('\n');
             } else {
-              _sMirrorTxt = '  (no sites to compare)';
+              _sMirrorTxt = '  no authoritative sites present \u2014 cell.sites is empty';
             }
-            stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n' + _sSitesTxt
+            stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
               + '\n\u2500\u2500 PHASE 5 CAPTURE (last turn) \u2500\u2500\n' + _sCaptureTxt
               + '\n\u2500\u2500 LEGACY MIRROR CHECK (current cell) \u2500\u2500\n' + _sMirrorTxt;
 
@@ -1191,7 +1199,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🌱 Phase3 Seed   : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
 ⚙️  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
 🏙️  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
-📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ? lastGameResponse.state.world.world_tone.slice(0,60) + (lastGameResponse.state.world.world_tone.length > 60 ? '…' : '') : '(missing)'}`;
+📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
           
           // Site diagnostic addendum
           const _sCellKey = authState.cell_key || null;
@@ -1202,11 +1210,11 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           if (_sCellSites.length > 0) {
             _sSitesTxt = _sCellSites.map(s => {
               const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
-              const id = s.identity != null ? '"' + s.identity.slice(0,40) + (s.identity.length > 40 ? '\u2026' : '') + '"' : '(null)';
+              const id = s.identity != null ? '"' + s.identity + '"' : '(null)';
               return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible_from_l0 ?? false) + ' | entered=' + (s.entered ?? false);
             }).join('\n');
           } else {
-            _sSitesTxt = '  (no sites at current cell)';
+            _sSitesTxt = '  \u2022 none';
           }
           let _sCaptureTxt = '';
           if (!_sLsc || !_sLsc.detected) {
@@ -1225,9 +1233,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
               return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;
             }).join('\n');
           } else {
-            _sMirrorTxt = '  (no sites to compare)';
+            _sMirrorTxt = '  no authoritative sites present \u2014 cell.sites is empty';
           }
-          stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n' + _sSitesTxt
+          stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
             + '\n\u2500\u2500 PHASE 5 CAPTURE (last turn) \u2500\u2500\n' + _sCaptureTxt
             + '\n\u2500\u2500 LEGACY MIRROR CHECK (current cell) \u2500\u2500\n' + _sMirrorTxt;
 
