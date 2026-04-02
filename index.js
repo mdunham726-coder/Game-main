@@ -794,7 +794,15 @@ app.post('/narrate', async (req, res) => {
           const patchCells  = WorldGen.generateTerrainPatch(startAnchor, worldData.biome, phase3Seed, gameState.world.cells);
           Object.assign(gameState.world.cells, patchCells);
           gameState.world.position = WorldGen.selectStartPosition(phase3Seed, worldData.world_bias, patchCells, startAnchor);
+          // Phase 4A: persist seed so Engine.js can use it for deterministic site generation
+          gameState.world.phase3_seed = phase3Seed;
           console.log('[PHASE3] anchor=', startAnchor, '| start=', gameState.world.position, '| patch cells=', Object.keys(patchCells).length);
+
+          // Phase 4D: seed patch cells with sites (bypass streaming hook — patch cells pre-exist)
+          for (const [patchKey, patchCell] of Object.entries(patchCells)) {
+            const patchSites = WorldGen.evaluateCellForSites(patchKey, patchCell.type, worldData.world_bias, phase3Seed);
+            for (const pSite of patchSites) Engine.recordSiteToCell(gameState, patchKey, pSite);
+          }
           
           // Log NPC spawning for all settlements
           if (logger && worldData.cells) {

@@ -208,12 +208,50 @@ function streamL1Cells(state) {
         description: "" // Will be filled by L1 description pass
       };
 
+      // Phase 4: Deterministic site generation at cell creation time
+      const _worldSeed = state.world.phase3_seed || 0;
+      const _worldBias = state.world.world_bias;
+      const _sites = WorldGen.evaluateCellForSites(cellKey, terrainType, _worldBias, _worldSeed);
+      for (const _site of _sites) recordSiteToCell(state, cellKey, _site);
+
       cellsGenerated++;
-      console.log(`[STREAM] Generated cell ${cellKey}: ${terrainType} (biome: ${biome})`);
+      console.log(`[STREAM] Generated cell ${cellKey}: ${terrainType} (biome: ${biome}) sites: ${_sites.length}`);
     }
   }
 
   console.log(`[STREAM] Generated ${cellsGenerated} new L1 cells`);
+}
+
+/**
+ * Phase 4: Authoritative single write path for site records.
+ * Writes site to cell.sites and mirrors settlement-category sites to
+ * world.settlements for backward compatibility (temporary — removed in Phase 6).
+ *
+ * @param {object} state   — game state
+ * @param {string} cellKey — L1 cell key
+ * @param {object} site    — site record from evaluateCellForSites
+ */
+function recordSiteToCell(state, cellKey, site) {
+  const cell = state.world.cells[cellKey];
+  if (!cell) return;
+
+  cell.sites = cell.sites || {};
+  cell.sites[site.site_id] = site;
+
+  // TEMP (Phase 6 removes): mirror settlement-category sites into world.settlements
+  if (site.category === 'settlement') {
+    state.world.settlements = state.world.settlements || {};
+    state.world.settlements[site.site_id] = {
+      name:    site.name ?? null,
+      type:    site.category,
+      npcs:    [],
+      is_stub: true,
+      mx:      cell.mx,
+      my:      cell.my,
+      lx:      cell.lx,
+      ly:      cell.ly,
+    };
+  }
 }
 
 // PHASE 3C: Seeded RNG for deterministic NPC assignments
@@ -749,5 +787,7 @@ module.exports = {
   validateQuestAcceptance,
   validateQuestCompletion,
   applyQuestReward,
-  generateSettlementQuests
+  generateSettlementQuests,
+  // Phase 4
+  recordSiteToCell,
 };
