@@ -710,9 +710,12 @@ function enterL2FromL1(state, l1_cell_data) {
   }
   
   let l2 = null;
-  if (type === "settlement") {
+  // Phase 6D7 compat shim: cell.type is now geographic after Phase 6B.
+  // Use subtype (retained as silent L2 hint) to detect settlement intent when type is no longer "settlement".
+  const _SETTLEMENT_SUBTYPES = ['village','hamlet','outpost','town','city','market','tavern','fort','monastery','inn','keep','citadel'];
+  if (type === "settlement" || (subtype && _SETTLEMENT_SUBTYPES.includes(subtype))) {
     // B2: Settlement detection debug logging
-    console.log(`[B2-DETECT] Settlement cell detected: l2_id=${l2_id}, subtype=${subtype}, logger=${!!logger}`);
+    console.log(`[B2-DETECT] Settlement entry: l2_id=${l2_id}, type=${type}, subtype=${subtype}, logger=${!!logger}`);
     l2 = WorldGen.generateL2Settlement(l2_id, subtype, npcs_here);
     if (logger) {
       logger.emit('settlement_detection_logged', { l2_id, subtype, npcs_count: npcs_here.length });
