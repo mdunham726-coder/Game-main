@@ -1226,6 +1226,9 @@ The player has already moved. They are now in the location described above.
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
+    // Reset capture tracking for this turn
+    gameState.world._lastSiteCapture = { detected: false };
+
     const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
       model: 'deepseek-chat',
       messages: [{
@@ -1272,8 +1275,11 @@ The player has already moved. They are now in the location described above.
       if (_suMatch) {
         // Always strip the block from narrative regardless of parse outcome
         narrative = (narrative.slice(0, _suMatch.index) + narrative.slice(_suMatch.index + _suMatch[0].length)).trim();
+        // Build capture tracking record
+        const _cr = { detected: true, parseSuccess: false, updatesApplied: 0, skipped: 0, capturedNames: [] };
         try {
           const _updates = JSON.parse(_suMatch[1]);
+          _cr.parseSuccess = true;
           const _capCell = gameState.world.cells?.[_narCellKey];
           if (Array.isArray(_updates) && _capCell?.sites) {
             for (const _upd of _updates) {
@@ -1284,11 +1290,16 @@ The player has already moved. They are now in the location described above.
               for (const _field of ['name', 'identity', 'description']) {
                 if (_upd[_field] != null && _tgt[_field] == null) {
                   _tgt[_field] = _upd[_field];
-                  console.log(`[PHASE5] site ${_upd.site_id} ${_field} captured: "${_upd[_field]}"`);
+                  _cr.updatesApplied++;
+                  if (_field === 'name') _cr.capturedNames.push({ site_id: _upd.site_id, value: _upd[_field] });
+                  console.log(`[SITE_CAPTURE] site ${_upd.site_id} ${_field} set to "${_upd[_field]}"`);
                   // Phase 5E: legacy mirror — name only
                   if (_field === 'name' && gameState.world.settlements?.[_upd.site_id]) {
                     gameState.world.settlements[_upd.site_id].name = _upd[_field];
                   }
+                } else if (_upd[_field] != null && _tgt[_field] != null) {
+                  _cr.skipped++;
+                  console.log(`[SITE_CAPTURE] skipped (already set): ${_upd.site_id} ${_field}`);
                 }
               }
             }
@@ -1296,6 +1307,7 @@ The player has already moved. They are now in the location described above.
         } catch (_suErr) {
           console.warn('[PHASE5] site_updates parse failed:', _suErr.message);
         }
+        gameState.world._lastSiteCapture = _cr;
       }
     }
 
@@ -1769,25 +1781,52 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   // === DETAILED LEVEL ===
   if (debugLevel === "detailed" || debugLevel === "full") {
     context += `\n=== WORLD GENERATION PARAMETERS ===\n`;
-    context += `Biome: ${gameState.world.macro_biome || "not detected"}\n`;
-    context += `World Tone: ${(gameState.world.world_tone || "not detected").substring(0, 150)}...\n`;
-    context += `Starting Location Type: ${gameState.world.starting_location_type || "not detected"}\n`;
-    context += `World Seed: ${gameState.world.seed ?? gameState.rng_seed ?? "unknown"}\n`;
-    context += `Turn Counter: ${gameState.turn_counter ?? 0}\n`;
+    context += `Biome               : ${gameState.world.macro_biome || "not detected"}\n`;
+    context += `World Tone          : ${(gameState.world.world_tone || "not detected").substring(0, 150)}...\n`;
+    context += `Starting Loc Type   : ${gameState.world.starting_location_type || "not detected"}\n`;
+    context += `Phase3 Seed         : ${gameState.world.phase3_seed ?? "(not set)"}\n`;
+    context += `World Seed          : ${gameState.world.seed ?? gameState.rng_seed ?? 0} (legacy / unused)\n`;
+    context += `Turn Counter        : ${gameState.turn_counter ?? 0}\n`;
 
-    context += `\n=== SETTLEMENTS (Summary) ===\n`;
+    context += `\n=== CURRENT CELL SITES (authoritative) ===\n`;
+    const _dbgSites = currentCell?.sites ? Object.values(currentCell.sites) : [];
+    if (_dbgSites.length > 0) {
+      _dbgSites.forEach(s => {
+        context += `- ${s.site_id} | ${s.category} | name: ${s.name ?? '(unnamed)'}\n`;
+        if (s.identity != null) context += `  identity : ${s.identity}\n`;
+        if (s.description != null) context += `  desc     : ${s.description.substring(0, 80)}${s.description.length > 80 ? '...' : ''}\n`;
+      });
+    } else {
+      context += `(No sites at current cell)\n`;
+    }
+
+    const _dbgCap = gameState.world._lastSiteCapture;
+    context += `\n=== SITE CAPTURE (LAST TURN) ===\n`;
+    if (!_dbgCap || !_dbgCap.detected) {
+      context += `site_updates detected : no\n`;
+    } else {
+      context += `site_updates detected : yes\n`;
+      context += `parse result          : ${_dbgCap.parseSuccess ? 'success' : 'FAILED'}\n`;
+      context += `updates applied       : ${_dbgCap.updatesApplied}\n`;
+      context += `skipped               : ${_dbgCap.skipped}\n`;
+      if (_dbgCap.capturedNames?.length > 0) {
+        _dbgCap.capturedNames.forEach(n => { context += `names captured        : ${n.site_id} → "${n.value}"\n`; });
+      }
+    }
+
+    context += `\n=== SETTLEMENTS (legacy mirror) ===\n`;
     const settlementKeys = Object.keys(gameState.world.settlements || {});
-    context += `Total Settlements: ${settlementKeys.length}\n`;
+    context += `Total entries (mirror): ${settlementKeys.length}\n`;
     if (settlementKeys.length > 0) {
       settlementKeys.slice(0, 3).forEach(k => {
         const settlement = gameState.world.settlements[k];
-        context += `- ${settlement.name || "Unnamed"} (type: ${settlement.type || "unknown"}, ${(settlement.npcs || []).length} NPCs)\n`;
+        context += `- ${settlement.name || "(unnamed)"} (type: ${settlement.type || "unknown"}, ${(settlement.npcs || []).length} NPCs) [legacy]\n`;
       });
       if (settlementKeys.length > 3) {
         context += `... and ${settlementKeys.length - 3} more\n`;
       }
     } else {
-      context += `(No settlements created yet)\n`;
+      context += `(No legacy mirror entries)\n`;
     }
 
     context += `\n=== VISIBLE CELLS (Sample) ===\n`;
