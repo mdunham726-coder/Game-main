@@ -168,7 +168,7 @@ const diag = data.turn_history && data.turn_history.length > 0
         .slice(0, 5)
         .map(c => c.type);
       const diagPos = data.state?.world?.position;
-      const diagRegionPrefix = diagPos ? `L1:${diagPos.mx},${diagPos.my}:` : null;
+      const diagRegionPrefix = diagPos ? `LOC:${diagPos.mx},${diagPos.my}:` : null;
       const regionCells = diagRegionPrefix
         ? Object.keys(worldCells).filter(k => k.startsWith(diagRegionPrefix)).length
         : null;
@@ -195,7 +195,7 @@ const _wbn = (obj, field) => obj?.[field] ?? '(missing)';
 const _p3s = data.state?.world?.phase3_seed ?? null;
 const _lsc = data.state?.world?._lastSiteCapture || null;
 const _pos = data.state?.world?.position;
-const _curKey = _pos ? `L1:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}` : null;
+const _curKey = _pos ? `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}` : null;
 const _curSites = _curKey && data.state?.world?.cells?.[_curKey]?.sites
   ? Object.values(data.state.world.cells[_curKey].sites) : [];
 const _settlements = data.state?.world?.settlements || {};
@@ -826,9 +826,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             const _wTotal = Object.keys(_wCells).length;
             const _wMx = authState.position?.mx ?? 0;
             const _wMy = authState.position?.my ?? 0;
-            const _wRegionPrefix = `L1:${_wMx},${_wMy}:`;
+            const _wRegionPrefix = `LOC:${_wMx},${_wMy}:`;
             const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
-            const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^L1:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
+            const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^LOC:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
             const _qWb  = lastGameResponse?.state?.world?.world_bias    || null;
             const _qWc  = lastGameResponse?.state?.world?.world_context  || null;
             const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
@@ -1181,9 +1181,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           const _wTotal = Object.keys(_wCells).length;
           const _wMx = authState.position?.mx ?? 0;
           const _wMy = authState.position?.my ?? 0;
-          const _wRegionPrefix = `L1:${_wMx},${_wMy}:`;
+          const _wRegionPrefix = `LOC:${_wMx},${_wMy}:`;
           const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
-          const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^L1:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
+          const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^LOC:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
           const _qWb  = lastGameResponse?.state?.world?.world_bias    || null;
           const _qWc  = lastGameResponse?.state?.world?.world_context  || null;
           const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';

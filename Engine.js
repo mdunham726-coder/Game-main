@@ -171,7 +171,7 @@ function streamL1Cells(state) {
       mx = ((mx % l0w) + l0w) % l0w;
       my = ((my % l0h) + l0h) % l0h;
 
-      const cellKey = `L1:${mx},${my}:${lx},${ly}`;
+      const cellKey = `LOC:${mx},${my}:${lx},${ly}`;
       
       // Skip if cell already exists
       if (state.world.cells[cellKey]) {
@@ -179,7 +179,7 @@ function streamL1Cells(state) {
       }
 
       // Find biome for this macro cell
-      const l0Key = `L0:${mx},${my}`;
+      const l0Key = `MAC:${mx},${my}`;
       const l0Cell = state.world.cells[l0Key];
       let biome = "rural"; // Default fallback
       
@@ -236,7 +236,7 @@ function streamL1Cells(state) {
  * world.settlements for backward compatibility (temporary — removed in Phase 6).
  *
  * @param {object} state   — game state
- * @param {string} cellKey — L1 cell key
+ * @param {string} cellKey — LOC: coordinate key
  * @param {object} site    — site record from evaluateCellForSites
  */
 function recordSiteToCell(state, cellKey, site) {
@@ -426,7 +426,7 @@ function buildOutput(prevState, inputObj, logger) {
   
   // Save old position for location change detection
   const oldPosition = state.world.position ? {...state.world.position} : null;
-  const oldCellKey = oldPosition ? `L1:${oldPosition.mx},${oldPosition.my}:${oldPosition.lx},${oldPosition.ly}` : null;
+  const oldCellKey = oldPosition ? `LOC:${oldPosition.mx},${oldPosition.my}:${oldPosition.lx},${oldPosition.ly}` : null;
   const oldCell = oldCellKey ? state.world.cells?.[oldCellKey] : null;
   const oldCellType = oldCell?.type || oldCell?.tags?.type || 'unknown';
   
@@ -436,7 +436,7 @@ function buildOutput(prevState, inputObj, logger) {
   // Lives in buildOutput (not ActionProcessor) to avoid circular dependency.
   if (actions.action === 'enter') {
     const enterPos = state.world.position;
-    const enterCellKey = `L1:${enterPos.mx},${enterPos.my}:${enterPos.lx},${enterPos.ly}`;
+    const enterCellKey = `LOC:${enterPos.mx},${enterPos.my}:${enterPos.lx},${enterPos.ly}`;
     const enterCell = state.world.cells && state.world.cells[enterCellKey];
     const enterSites = enterCell ? Object.values(enterCell.sites || {}) : [];
 
@@ -478,7 +478,7 @@ if (wg) {
   
   // Log location change if position actually changed
   if (positionChanged && logger) {
-    const newCellKey = `L1:${newPosition.mx},${newPosition.my}:${newPosition.lx},${newPosition.ly}`;
+    const newCellKey = `LOC:${newPosition.mx},${newPosition.my}:${newPosition.lx},${newPosition.ly}`;
     const newCell = state.world.cells?.[newCellKey];
     const newCellType = newCell?.type || newCell?.tags?.type || 'unknown';
     logger.location_changed(
@@ -664,7 +664,7 @@ function enterSite(state, { cell_key, site_id }) {
     // Legacy format 1: Phase-6 recordSiteToCell keyed by site_id directly
     const legacyKey6 = sid;
     // Legacy format 2: old subtype-based key M{mx}x{my}/L1_{lx}_{ly}_{identity}
-    const parts = cell_key.match(/^L1:(\d+),(\d+):(\d+),(\d+)$/);
+    const parts = cell_key.match(/^LOC:(\d+),(\d+):(\d+),(\d+)$/);
     const legacyKeySubtype = parts
       ? `M${parts[1]}x${parts[2]}/L1_${parts[3]}_${parts[4]}_${identity}`
       : null;

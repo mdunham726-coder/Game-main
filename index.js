@@ -827,7 +827,7 @@ app.post('/narrate', async (req, res) => {
           // The patch cells were seeded by Phase 4D above. We must NOT overwrite cell.type with
           // "settlement" or destroy the sites that evaluateCellForSites already placed.
           const startPos = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
-          const startingLocationCellKey = `L1:${startPos.mx},${startPos.my}:${startPos.lx},${startPos.ly}`;
+          const startingLocationCellKey = `LOC:${startPos.mx},${startPos.my}:${startPos.lx},${startPos.ly}`;
           const _existingPatchCell = gameState.world.cells[startingLocationCellKey] || {};
 
           // Re-write cell: geographic type from patch (never "settlement"), preserve any existing sites
@@ -1027,7 +1027,7 @@ app.post('/narrate', async (req, res) => {
   const l1h = (gameState?.world?.l1_default?.h) || 12;
   const l0w = (gameState?.world?.l0_size?.w) || 8;
   const l0h = (gameState?.world?.l0_size?.h) || 8;
-  function cellKey(mx,my,lx,ly){ return `L1:${mx},${my}:${lx},${ly}`; }
+  function cellKey(mx,my,lx,ly){ return `LOC:${mx},${my}:${lx},${ly}`; }
 
   const curKey = cellKey(pos.mx, pos.my, pos.lx, pos.ly);
   const cellsMap = (gameState?.world?.cells) || {};
@@ -1103,7 +1103,7 @@ app.post('/narrate', async (req, res) => {
   
   // A1: Use same authoritative source as buildDebugContext for position/cell data
   // Note: 'pos' already declared at line 942; reuse it here
-  const currentCellKey = `L1:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+  const currentCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
   const diagnosticCell = gameState?.world?.cells?.[currentCellKey];
   
   const diagnostics = {
@@ -1138,7 +1138,7 @@ app.post('/narrate', async (req, res) => {
   try {
     // Phase 6D: _settlementDirective / _preNarSettlementKey / _expectingSettlementName removed.
     // Place identity and naming now exclusively resolved from cell.sites via Phase 5B site context block below.
-    const _narCellKey = `L1:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+    const _narCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
     const _narCell = gameState?.world?.cells?.[_narCellKey] || null;
 
     // Build safe narration prompt with guards against undefined values
@@ -1304,7 +1304,7 @@ The player has already moved. They are now in the location described above.
     
     // Extract authoritative state for turn snapshot
     const currentPosition = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
-    const cellKey = `L1:${currentPosition.mx},${currentPosition.my}:${currentPosition.lx},${currentPosition.ly}`;
+    const cellKey = `LOC:${currentPosition.mx},${currentPosition.my}:${currentPosition.lx},${currentPosition.ly}`;
     const currentCell = gameState.world.cells ? gameState.world.cells[cellKey] : null;
     
     // Phase 7: Resolve current settlement from cell.sites (authoritative).
@@ -1555,7 +1555,7 @@ The player has already moved. They are now in the location described above.
     }
     
     // 4. Check: settlement_presence_mismatch — Phase 6D6: use cell.sites authority, not cell.type
-    const _diagCellKey = `L1:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+    const _diagCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
     const _diagCellSites = gameState.world.cells?.[_diagCellKey]?.sites;
     const isSettlementCell = _diagCellSites
       ? Object.values(_diagCellSites).some(s => s.category === 'settlement')
@@ -1743,7 +1743,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   }
 
   const pos = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
-  const currentCellKey = `L1:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+  const currentCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
   const currentCell = gameState.world.cells?.[currentCellKey];
 
   // === BASIC LEVEL ===

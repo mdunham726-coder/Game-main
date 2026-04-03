@@ -336,9 +336,9 @@
     }
 
     // ── Key parsing ────────────────────────────────────────────────────────────
-    // Expected format: L1:${mx},${my}:${lx},${ly}
+    // Expected format: LOC:${mx},${my}:${lx},${ly}
     function parseL1Key(key) {
-      const m = key.match(/^L1:(\d+),(\d+):(\d+),(\d+)$/);
+      const m = key.match(/^LOC:(\d+),(\d+):(\d+),(\d+)$/);
       if (!m) return null;
       return {
         mx: parseInt(m[1], 10),
@@ -358,9 +358,9 @@
 
       const { mx, my, lx: playerLx, ly: playerLy } = pos;
       const allCells = (state.world && state.world.cells) || {};
-      const prefix = `L1:${mx},${my}:`;
+      const prefix = `LOC:${mx},${my}:`;
 
-      // Filter cells for current L0 macro region
+      // Filter cells for current MAC macro region
       const regionEntries = Object.entries(allCells).filter(([k]) => k.startsWith(prefix));
 
       if (regionEntries.length === 0) {

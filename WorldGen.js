@@ -793,7 +793,7 @@ function deriveBudget(worldBias) {
  * Pure, deterministic function. No side effects. No async.
  * Returns an array of site records (may be empty).
  *
- * @param {string} cellKey      — e.g. "L1:0,0:6,6" — used as seed component
+ * @param {string} cellKey      — e.g. "LOC:0,0:6,6" — used as seed component
  * @param {string} terrainType  — e.g. "plains_grassland"
  * @param {object} worldBias    — validated world_bias from Phase 1
  * @param {number|string} worldSeed — global world seed
@@ -863,8 +863,8 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
     const category = weightedPick(available, rng);
     usedCategories.add(category);
 
-    // Derive position from cellKey: parse "L1:mx,my:lx,ly"
-    const match = String(cellKey).match(/^L1:(-?\d+),(-?\d+):(-?\d+),(-?\d+)$/);
+    // Derive position from cellKey: parse "LOC:mx,my:lx,ly"
+    const match = String(cellKey).match(/^LOC:(-?\d+),(-?\d+):(-?\d+),(-?\d+)$/);
     const mx = match ? parseInt(match[1], 10) : 0;
     const my = match ? parseInt(match[2], 10) : 0;
     const lx = match ? parseInt(match[3], 10) : 0;
@@ -958,9 +958,9 @@ function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
       // Clamp to L1 bounds — no cross-macro wrapping in bootstrap patch
       if (lx < 0 || lx >= l1w || ly < 0 || ly >= l1h) continue;
 
-      const cellKey = `L1:${anchor.mx},${anchor.my}:${lx},${ly}`;
+      const cellKey = `LOC:${anchor.mx},${anchor.my}:${lx},${ly}`;
 
-      // Skip cells that already exist (e.g. L0 macro cells)
+      // Skip cells that already exist (e.g. MAC macro cells)
       if (existingCells && existingCells[cellKey]) continue;
 
       // Per-cell deterministic RNG — independent of other cells
@@ -1032,7 +1032,7 @@ function selectStartPosition(promptSeed, worldBias, patchCells, anchor) {
   return { mx: winner.mx, my: winner.my, lx: winner.lx, ly: winner.ly };
 }
 
-// --- L0: macro region logic (same) ---
+// --- MAC: macro region logic (same) ---
 async function generateWorldFromDescription(desc, worldSeed) {
   // Detect biome, tone, starting location, AND world bias/context in parallel
   const [biome, worldTone, startingLocationType, biasResult] = await Promise.all([
@@ -1063,7 +1063,7 @@ async function generateWorldFromDescription(desc, worldSeed) {
   const macroCells = {};
   for (let my = 0; my < l0s.h; my++) {
     for (let mx = 0; mx < l0s.w; mx++) {
-      const k = `L0:${mx},${my}`;
+      const k = `MAC:${mx},${my}`;
       macroCells[k] = { desc: "", biome, palette };
     }
   }
@@ -1081,7 +1081,7 @@ async function generateWorldFromDescription(desc, worldSeed) {
   };
 }
 
-// --- L1: site placement (same) ---
+// --- LOC: site placement (same) ---
 function worldGenStep(world) {
   if (!world || !world.cells) return world;
   const l0s = world.l0_size || DEFAULTS.L0_SIZE;
@@ -1090,7 +1090,7 @@ function worldGenStep(world) {
 
   const mx = Math.floor(Math.random() * l0s.w);
   const my = Math.floor(Math.random() * l0s.h);
-  const macroKey = `L0:${mx},${my}`;
+  const macroKey = `MAC:${mx},${my}`;
   const macro = macroCells[macroKey];
   if (!macro) return world;
 
@@ -1154,7 +1154,7 @@ function exposeSitesInWindow(state, worldData, posLx, posLy, posMx, posMy) {
   return out;
 }
 
-// --- L1: feature description (same) ---
+// --- LOC: feature description (same) ---
 function generateL1FeatureDescription(site, worldSeed = "default") {
   if (!site) return "An empty space";
   const st = site.subtype || "settlement";
