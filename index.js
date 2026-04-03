@@ -1084,7 +1084,6 @@ app.post('/narrate', async (req, res) => {
     currentCell,
     nearbyCells,
     worldPosition: gameState?.world?.position || {},
-    worldLayer: gameState?.world?.current_layer || 1,
     inventory: gameState?.player?.inventory || [],
     npcs: gameState?.world?.npcs || []
   };
@@ -1329,7 +1328,8 @@ The player has already moved. They are now in the location described above.
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
       settlement_count: Object.keys(gameState.world.settlements || {}).length,
-      current_settlement: currentSettlement  // Now populated if player is in a settlement
+      current_settlement: currentSettlement,  // Now populated if player is in a settlement
+      current_depth: gameState.world.current_depth || 1
     };
     
     // QA-017: Extract parsed intent with explicit field separation (raw vs parsed)
@@ -1671,7 +1671,7 @@ function initializeGame() {
   } else {
     state = {
       player: { mx: 0, my: 0, layer: 1, inventory: [] },
-      world: { npcs: [], cells: {}, l2_active: null, l3_active: null, current_layer: 1, position: { mx:0, my:0, lx:6, ly:6 }, l1_default: { w: 12, h: 12 } }
+      world: { npcs: [], cells: {}, active_site: null, active_building: null, current_depth: 1, position: { mx:0, my:0, lx:6, ly:6 }, l1_default: { w: 12, h: 12 } }
     };
   }
   return {

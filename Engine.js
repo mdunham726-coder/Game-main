@@ -253,7 +253,7 @@ function recordSiteToCell(state, cellKey, site) {
   cell.sites[site.site_id] = site;
 
   // Mirror settlement-category sites into world.settlements as stubs (keyed by canonical l2_id).
-  // Actual L2 content is generated lazily on first entry via enterL2FromL1.
+  // Actual site interior is generated lazily on first entry via enterSite().
   if (site.category === 'settlement') {
     state.world.settlements = state.world.settlements || {};
     state.world.settlements[site.l2_id] = {
@@ -432,7 +432,7 @@ function buildOutput(prevState, inputObj, logger) {
   
   Actions.applyPlayerActions(state, actions, changes1, phaseFlags, logger);
 
-  // Phase 7: Handle 'enter' action — site-driven L2 entry.
+  // Phase 7: Handle 'enter' action — site entry.
   // Lives in buildOutput (not ActionProcessor) to avoid circular dependency.
   if (actions.action === 'enter') {
     const enterPos = state.world.position;
@@ -452,7 +452,7 @@ function buildOutput(prevState, inputObj, logger) {
     if (!targetSite) targetSite = enterSites.find(s => s.category === 'poi');
 
     if (targetSite) {
-      enterL2FromL1(state, { cell_key: enterCellKey, site_id: targetSite.site_id });
+      enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id });
     } else {
       console.log('[Phase7-ENTER] No enterable site found at', enterCellKey);
     }
@@ -637,7 +637,7 @@ if (require.main === module) main();
  * Phase 7: Site-driven entry — l2_id derived from site.site_id, not cell subtype.
  * Input: { cell_key, site_id } — caller resolves target site before calling.
  */
-function enterL2FromL1(state, { cell_key, site_id }) {
+function enterSite(state, { cell_key, site_id }) {
   if (!state || !state.world) return null;
 
   // Resolve site from cell.sites
@@ -763,62 +763,62 @@ function enterL2FromL1(state, { cell_key, site_id }) {
   }
 
   // Stored object IS the active object — no secondary generation, no split references.
-  state.world.l2_active = state.world.settlements[l2_id];
-  state.world.l3_active = null;
-  state.world.current_layer = 2;
+  state.world.active_site = state.world.settlements[l2_id];
+  state.world.active_building = null;
+  state.world.current_depth = 2;
   if (!state.player) state.player = {};
-  state.player.layer = 2;
+  state.player.depth = 2;
   state.player.position = { x: 0, y: 0 };
-  return state.world.l2_active;
+  return state.world.active_site;
 }
 
 /**
- * Enter an L3 building from currently active L2.
+ * Enter a building from the currently active site.
  */
-function enterL3FromL2(state, building_id_short) {
-  if (!state || !state.world || !state.world.l2_active) return null;
-  const l2 = state.world.l2_active;
-  const bld = l2.buildings[building_id_short];
+function enterBuilding(state, building_id_short) {
+  if (!state || !state.world || !state.world.active_site) return null;
+  const site = state.world.active_site;
+  const bld = site.buildings[building_id_short];
   if (!bld) return null;
-  const full_id = `${l2.settlement_id}_${building_id_short}`;
-  const l3 = WorldGen.generateL3Building(full_id, bld);
-  state.world.l3_active = l3;
-  state.world.current_layer = 3;
+  const full_id = `${site.settlement_id}_${building_id_short}`;
+  const interior = WorldGen.generateL3Building(full_id, bld);
+  state.world.active_building = interior;
+  state.world.current_depth = 3;
   if (!state.player) state.player = {};
-  state.player.layer = 3;
-  return l3;
+  state.player.depth = 3;
+  return interior;
 }
 
 /**
- * Exit back to L1 from L2.
+ * Exit a site back to the overworld.
  */
-function exitL2ToL1(state) {
+function exitSite(state) {
   if (!state || !state.world) return;
-  state.world.l2_active = null;
-  state.world.current_layer = 1;
+  state.world.active_site = null;
+  state.world.current_depth = 1;
   if (!state.player) state.player = {};
-  state.player.layer = 1;
+  state.player.depth = 1;
 }
 
 /**
- * Exit back to L2 from L3.
+ * Exit a building back to the site.
  */
-function exitL3ToL2(state) {
+function exitBuilding(state) {
   if (!state || !state.world) return;
-  state.world.l3_active = null;
-  state.world.current_layer = 2;
+  state.world.active_building = null;
+  state.world.current_depth = 2;
   if (!state.player) state.player = {};
-  state.player.layer = 2;
+  state.player.depth = 2;
 }
 
 // PHASE 3C: Export quest functions for use in index.js
 module.exports = { 
   buildOutput, 
   initState, 
-  enterL2FromL1, 
-  enterL3FromL2, 
-  exitL2ToL1, 
-  exitL3ToL2,
+  enterSite, 
+  enterBuilding, 
+  exitSite, 
+  exitBuilding,
   // Quest system exports
   validateQuestAcceptance,
   validateQuestCompletion,

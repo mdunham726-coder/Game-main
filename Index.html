@@ -836,7 +836,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
 📝 Description   : ${authState.cell_description || '(unknown)'}
 🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
-🔑 Cell Key      : ${authState.cell_key || 'unknown'}
+🔑 Grid Key      : ${authState.cell_key || 'unknown'}
+🗂️  Layer          : ${{ 1: 'overworld', 2: 'site', 3: 'building' }[authState.current_depth] || 'overworld'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}
@@ -1190,7 +1191,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
 📝 Description   : ${authState.cell_description || '(unknown)'}
 🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
-🔑 Cell Key      : ${authState.cell_key || 'unknown'}
+🔑 Grid Key      : ${authState.cell_key || 'unknown'}
+🗂️  Layer          : ${{ 1: 'overworld', 2: 'site', 3: 'building' }[authState.current_depth] || 'overworld'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}

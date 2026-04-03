@@ -23,7 +23,7 @@ const DEFAULTS = {
 
 
 // Layer-scoped terrain vocabulary — authoritative boundary definition.
-// L0_GEOGRAPHY: valid cell.type values at the overworld (L0/L1) layer.
+// L0_GEOGRAPHY: valid cell.type values for overworld terrain cells (the coordinate grid, not architectural depth).
 // SITE_TRAVERSAL: valid traversal grid values inside a site (L1 layout, not cell.type).
 // BUILDING_INTERIOR: reserved vocabulary for L2 room contents (not yet routed).
 const LAYER_TERRAIN_VOCAB = {
