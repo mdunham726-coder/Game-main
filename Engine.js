@@ -3,6 +3,7 @@
 const readline = require('readline');
 const crypto = require('crypto');
 const WorldGen = require('./WorldGen');
+const { LAYER_TERRAIN_VOCAB } = require('./WorldGen');
 const Actions = require('./ActionProcessor');
 const { QuestSystem } = require('./QuestSystem');
 
@@ -14,8 +15,8 @@ const DEFAULTS = {
 };
 
 // L1 Cell Streaming: Biome-to-terrain mapping (inline implementation)
+// Values must only contain strings present in LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY
 const BIOME_TERRAIN_TYPES = {
-  urban: ["street", "plaza", "alley", "park_urban", "district_commercial", "district_residential", "building_complex", "market_square", "garden_urban", "meadow"],
   rural: ["plains_grassland", "plains_wildflower", "meadow", "forest_deciduous", "hills_rolling", "river_crossing", "stream"],
   forest: ["forest_deciduous", "forest_mixed", "forest_coniferous", "meadow", "stream", "hills_rolling"],
   desert: ["desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa"],
@@ -194,7 +195,14 @@ function streamL1Cells(state) {
 
       // Randomly select terrain type from biome palette
       const randomIndex = Math.floor(Math.random() * terrainArray.length);
-      const terrainType = terrainArray[randomIndex];
+      let terrainType = terrainArray[randomIndex];
+
+      // Validation guard: reject any terrain string that is not in the L0 geography vocabulary.
+      // This catches legacy urban terrain types in saved sessions and future palette mistakes.
+      if (!LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(terrainType)) {
+        console.error(`[STREAM] TERRAIN VIOLATION: cell ${cellKey} received invalid L0 type "${terrainType}" (biome: ${biome}) — substituting "plains_grassland"`);
+        terrainType = 'plains_grassland';
+      }
 
       // Create new L1 cell
       state.world.cells[cellKey] = {

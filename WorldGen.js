@@ -22,8 +22,34 @@ const DEFAULTS = {
 };
 
 
+// Layer-scoped terrain vocabulary — authoritative boundary definition.
+// L0_GEOGRAPHY: valid cell.type values at the overworld (L0/L1) layer.
+// SITE_TRAVERSAL: valid traversal grid values inside a site (L1 layout, not cell.type).
+// BUILDING_INTERIOR: reserved vocabulary for L2 room contents (not yet routed).
+const LAYER_TERRAIN_VOCAB = {
+  L0_GEOGRAPHY: [
+    "plains_grassland", "plains_wildflower", "meadow",
+    "forest_deciduous", "forest_coniferous", "forest_mixed",
+    "hills_rolling", "hills_rocky",
+    "desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa",
+    "tundra", "snowfield", "ice_sheet", "permafrost", "alpine",
+    "swamp", "marsh", "wetland", "bog",
+    "beach_sand", "beach_pebble", "cliffs_coastal", "tidepools", "dunes_coastal",
+    "mountain_slopes", "mountain_peak", "mountain_pass", "rocky_terrain", "scree",
+    "river_crossing", "stream", "lake_shore", "waterfall", "spring"
+  ],
+  // These strings are valid inside a site's traversal grid — never as L0 cell.type
+  SITE_TRAVERSAL: [
+    "street", "plaza", "alley", "park_urban",
+    "district_commercial", "district_residential", "building_complex",
+    "market_square", "garden_urban"
+  ],
+  // Reserved for L2 building interiors — not yet used for routing
+  BUILDING_INTERIOR: ["room", "corridor", "chamber", "stairwell"]
+};
+
 const TERRAIN_TYPES = {
-  geography: ["plains_grassland", "plains_wildflower", "forest_deciduous", "forest_coniferous", "forest_mixed", "meadow", "hills_rolling", "hills_rocky", "desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa", "tundra", "snowfield", "ice_sheet", "permafrost", "alpine", "swamp", "marsh", "wetland", "bog", "beach_sand", "beach_pebble", "cliffs_coastal", "tidepools", "dunes_coastal", "mountain_slopes", "mountain_peak", "mountain_pass", "rocky_terrain", "scree", "river_crossing", "stream", "lake_shore", "waterfall", "spring", "street", "plaza", "alley", "park_urban", "district_commercial", "district_residential", "building_complex", "market_square", "garden_urban"],
+  geography: ["plains_grassland", "plains_wildflower", "forest_deciduous", "forest_coniferous", "forest_mixed", "meadow", "hills_rolling", "hills_rocky", "desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa", "tundra", "snowfield", "ice_sheet", "permafrost", "alpine", "swamp", "marsh", "wetland", "bog", "beach_sand", "beach_pebble", "cliffs_coastal", "tidepools", "dunes_coastal", "mountain_slopes", "mountain_peak", "mountain_pass", "rocky_terrain", "scree", "river_crossing", "stream", "lake_shore", "waterfall", "spring"],
   settlement: [
     "campsite", "outpost", "hamlet", "village", "town", "city", "metropolis",
     "fort", "stronghold", "port", "harbor", "trading_post", "mining_camp",
@@ -58,9 +84,8 @@ const BIOME_KEYWORDS = {
   wetland: ["swamp", "marsh", "bog", "wetland", "murky", "mire"]
 };
 
-// Terrain palettes for each biome
+// Terrain palettes for each biome — L0 geography strings only (see LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY)
 const BIOME_PALETTES = {
-  urban: ["street", "plaza", "alley", "park_urban", "district_commercial", "district_residential", "building_complex", "market_square", "garden_urban", "meadow"],
   rural: ["plains_grassland", "plains_wildflower", "meadow", "forest_deciduous", "hills_rolling", "river_crossing", "stream"],
   forest: ["forest_deciduous", "forest_mixed", "forest_coniferous", "meadow", "stream", "hills_rolling"],
   desert: ["desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa"],
@@ -317,7 +342,7 @@ async function detectBiomeWithDeepSeek(worldPrompt) {
     const messages = [
       {
         role: "system",
-        content: "You are a world-building assistant. Classify the world biome from a player's description. Respond with ONLY one biome name: urban, rural, forest, desert, tundra, jungle, coast, mountain, or wetland."
+        content: "You are a world-building assistant. Classify the world biome from a player's description. Respond with ONLY one biome name: rural, forest, desert, tundra, jungle, coast, mountain, or wetland. Urban/city settings should be classified as rural."
       },
       {
         role: "user",
@@ -343,11 +368,17 @@ async function detectBiomeWithDeepSeek(worldPrompt) {
     );
 
     const biomeResponse = resp?.data?.choices?.[0]?.message?.content?.toLowerCase().trim();
-    const validBiomes = ['urban', 'rural', 'forest', 'desert', 'tundra', 'jungle', 'coast', 'mountain', 'wetland'];
+    const validBiomes = ['rural', 'forest', 'desert', 'tundra', 'jungle', 'coast', 'mountain', 'wetland'];
     
     if (validBiomes.includes(biomeResponse)) {
       console.log(`[WORLD] DeepSeek detected biome: ${biomeResponse} from "${worldPrompt}"`);
       return biomeResponse;
+    }
+
+    // If DeepSeek returned "urban", remap to rural and note bias should carry the signal
+    if (biomeResponse === 'urban') {
+      console.log(`[WORLD] DeepSeek returned "urban" — remapped to rural (use world_bias for civilization density)`);
+      return 'rural';
     }
 
     // If response is invalid, fall back to keyword matching
@@ -365,7 +396,13 @@ async function detectBiomeWithDeepSeek(worldPrompt) {
 function detectBiomeKeyword(desc) {
   const lower = String(desc||"").toLowerCase();
   for (const [biome, kws] of Object.entries(BIOME_KEYWORDS)) {
-    if (kws.some(kw => lower.includes(kw))) return biome;
+    if (kws.some(kw => lower.includes(kw))) {
+      // Urban keywords are a civilization density signal, not a biome.
+      // Return rural so the terrain palette stays geographic.
+      // world_bias will carry the urban density signal via generateWorldFromDescription.
+      if (biome === 'urban') return 'rural';
+      return biome;
+    }
   }
   return "rural";
 }
@@ -441,13 +478,13 @@ async function detectStartingLocationWithDeepSeek(worldPrompt) {
     const messages = [
       {
         role: "system",
-        content: "You are a game scenario interpreter. Given a player's world description or character role, determine what type of location they should START in. Respond with ONLY a single location type from this list: village, town, city, shop, tavern, temple, guildhall, house, forest, cave, castle, farm, market, port, mine, or laboratory. No explanation, just the word."
+        content: "You are a game scenario interpreter. Given a player's world description or character role, determine what type of location they should START in. Respond with ONLY a single location type from this list: village, town, city, outpost, fort, castle, cave, ruins, forest, port, mine, farm, wilderness. No explanation, just the word."
       },
       {
         role: "user",
         content: `Player wants: "${worldPrompt}"
 
-What location type should they START in? Choose one: village, town, city, shop, tavern, temple, guildhall, house, forest, cave, castle, farm, market, port, mine, laboratory`
+What location type should they START in? Choose one: village, town, city, outpost, fort, castle, cave, ruins, forest, port, mine, farm, wilderness`
       }
     ];
 
@@ -470,8 +507,8 @@ What location type should they START in? Choose one: village, town, city, shop, 
 
     let locationType = resp?.data?.choices?.[0]?.message?.content?.trim().toLowerCase();
     
-    // Sanitize to valid types
-    const validTypes = ["village", "town", "city", "shop", "tavern", "temple", "guildhall", "house", "forest", "cave", "castle", "farm", "market", "port", "mine", "laboratory"];
+    // Sanitize to valid site-scale types only (no building-scale vocabulary)
+    const validTypes = ["village", "town", "city", "outpost", "fort", "castle", "cave", "ruins", "forest", "port", "mine", "farm", "wilderness"];
     if (!validTypes.includes(locationType)) {
       console.log(`[LOCATION] Invalid type "${locationType}", mapping to nearest settlement type`);
       locationType = "village";
@@ -671,9 +708,6 @@ const TERRAIN_GROUP_MAP = {
   river_crossing:     'water',  stream:           'water',  lake_shore:    'water',
   beach_sand:         'coast',  beach_pebble:     'coast',  cliffs_coastal: 'coast',
   tidepools:          'coast',  dunes_coastal:    'coast',
-  street:             'urban',  plaza:            'urban',  alley:         'urban',
-  district_commercial:'urban',  district_residential: 'urban', building_complex: 'urban',
-  market_square:      'urban',  park_urban:       'urban',  garden_urban:  'urban',
 };
 
 // Per-group category affinity tables.
@@ -688,7 +722,6 @@ const CATEGORY_AFFINITIES = {
   wetland:  [ ['landmark', 30],   ['passage', 25],  ['building', 20], ['settlement', 15], ['vessel', 10] ],
   water:    [ ['vessel', 35],     ['landmark', 30], ['building', 20], ['passage', 10],    ['settlement', 5] ],
   coast:    [ ['settlement', 30], ['vessel', 30],   ['building', 20], ['landmark', 15],   ['passage', 5] ],
-  urban:    [ ['settlement', 50], ['building', 30], ['landmark', 10], ['vessel', 5],      ['passage', 5] ],
   wilderness: [ ['landmark', 40], ['passage', 30],  ['building', 20], ['settlement', 8],  ['vessel', 2] ],
 };
 
@@ -872,7 +905,6 @@ const CIV_TERRAIN_SCORE = {
   wetland:    { high: 0.5, medium: 0.7, low: 0.8 },
   water:      { high: 0.1, medium: 0.1, low: 0.2 },
   coast:      { high: 0.7, medium: 0.7, low: 0.6 },
-  urban:      { high: 1.0, medium: 0.7, low: 0.3 },
   wilderness: { high: 0.3, medium: 0.5, low: 0.9 },
 };
 
@@ -1011,6 +1043,20 @@ async function generateWorldFromDescription(desc, worldSeed) {
   ]);
 
   const { world_bias, world_context } = biasResult;
+
+  // If the prompt contains urban-signal keywords, elevate civilization density in world_bias.
+  // This carries the signal that biome detection no longer carries (urban is not a biome).
+  const _urbanSignals = BIOME_KEYWORDS.urban;
+  const _descLower = String(desc || '').toLowerCase();
+  if (_urbanSignals.some(kw => _descLower.includes(kw))) {
+    console.log('[WORLD] Urban signals detected in prompt — boosting world_bias civilization density');
+    if (!world_bias.civilization_presence || world_bias.civilization_presence !== 'high') {
+      world_bias.civilization_presence = 'high';
+    }
+    if (!world_bias.settlement_density || world_bias.settlement_density !== 'high') {
+      world_bias.settlement_density = 'high';
+    }
+  }
 
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
   const l0s = DEFAULTS.L0_SIZE;
@@ -1310,4 +1356,5 @@ module.exports = {
   selectStartAnchor,
   generateTerrainPatch,
   selectStartPosition,
+  LAYER_TERRAIN_VOCAB,
 };
