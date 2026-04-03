@@ -1135,6 +1135,8 @@ app.post('/narrate', async (req, res) => {
 
   console.log('[narrate] scene:', JSON.stringify(scene, null, 2));
 
+  let visibilityPayload = null;
+
   try {
     // Phase 6D: _settlementDirective / _preNarSettlementKey / _expectingSettlementName removed.
     // Place identity and naming now exclusively resolved from cell.sites via Phase 5B site context block below.
@@ -1183,10 +1185,20 @@ app.post('/narrate', async (req, res) => {
       _siteContextBlock = `\n\nSITES AT CURRENT LOCATION:\n${_siteLines}${_instructionLines}`;
     }
 
+    // Phase 9: Approved additive context — biome/civ/env enrichment only
+    const _narBiome = gameState?.world?.macro_biome || null;
+    const _narCivPresence = gameState?.world?.world_bias?.civilization_presence || null;
+    const _narEnvTone = gameState?.world?.world_bias?.environment_tone || null;
+
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
 WORLD TONE & CHARACTER:
 ${gameState?.world?.world_tone || "A functional, atmospheric world"}
+
+WORLD CONTEXT:
+Biome: ${_narBiome || '(unknown)'}
+Civilization Presence: ${_narCivPresence || '(unknown)'}
+Environment Tone: ${_narEnvTone || '(unknown)'}
 
 CORE INSTRUCTIONS:
 - Let the world tone guide your descriptions and atmosphere
@@ -1331,7 +1343,86 @@ The player has already moved. They are now in the location described above.
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1
     };
-    
+
+    // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
+    {
+      const _vpDepth = gameState.world.current_depth || 1;
+      const _vpDepthLabels = { 1: 'overworld', 2: 'site', 3: 'building', 4: 'subspace' };
+      const _vpSettlements = gameState.world.settlements || {};
+      const _vpActiveBuilding = gameState.world.active_building || null;
+      const _vpAllCells = gameState.world.cells || {};
+      const _vpWb = gameState.world.world_bias || null;
+      const _vpRegionKeys = new Set(
+        Object.keys(_vpAllCells).map(k => {
+          const _m = k.match(/^LOC:(-?\d+),(-?\d+):/);
+          return _m ? `${_m[1]},${_m[2]}` : null;
+        }).filter(Boolean)
+      );
+      const _vpSites = Object.entries(currentCell?.sites || {}).map(([, _s]) => {
+        const _sGenerated = !!(
+          _s.l2_id &&
+          _vpSettlements[_s.l2_id] &&
+          !_vpSettlements[_s.l2_id].is_stub
+        );
+        const _vpBuildings = _sGenerated
+          ? Object.entries(_vpSettlements[_s.l2_id].buildings || {}).map(([_bId, _b]) => ({
+              bld_id: _bId,
+              name: _b.name || null,
+              purpose: _b.purpose || null,
+              tier: _b.tier ?? null,
+              active: _vpDepth === 3 && !!_vpActiveBuilding && _vpActiveBuilding.name === _b.name
+            }))
+          : [];
+        return {
+          site_id: _s.site_id,
+          category: _s.category || null,
+          name: _s.name || null,
+          identity: _s.identity || null,
+          visible: _s.visible_from_l0 ?? false,
+          entered: _s.entered ?? false,
+          generated: _sGenerated,
+          l2_id: _s.l2_id || null,
+          l0_ref: _s.l0_ref || null,
+          buildings: _vpBuildings
+        };
+      });
+      visibilityPayload = {
+        layer: _vpDepthLabels[_vpDepth] || 'overworld',
+        current_depth: _vpDepth,
+        entered_site: _vpDepth >= 2,
+        entered_building: _vpDepth >= 3,
+        container: {
+          kind: 'cell',
+          grid_key: cellKey,
+          mac_key: `MAC:${currentPosition.mx},${currentPosition.my}`,
+          mx: currentPosition.mx,
+          my: currentPosition.my,
+          lx: currentPosition.lx,
+          ly: currentPosition.ly,
+          cell_type: currentCell?.type || null,
+          cell_subtype: currentCell?.subtype || null,
+          cell_description: currentCell?.description || null,
+          biome: gameState.world.macro_biome || null,
+          name: null,
+          identity: null
+        },
+        sites: _vpSites,
+        world_seed: gameState.world.phase3_seed || null,
+        world_tone: gameState.world.world_tone || null,
+        world_bias: {
+          settlement_density: _vpWb?.settlement_density || null,
+          civilization_presence: _vpWb?.civilization_presence || null,
+          environment_tone: _vpWb?.environment_tone || null
+        },
+        total_cells: Object.keys(_vpAllCells).length,
+        region_cell_count: Object.keys(_vpAllCells).filter(k => k.startsWith(`LOC:${currentPosition.mx},${currentPosition.my}:`)).length,
+        regions_explored: _vpRegionKeys.size,
+        turn_counter: gameState.turn_counter || 0,
+        settlement_count: Object.keys(_vpSettlements).length,
+        last_site_capture: gameState.world._lastSiteCapture || null
+      };
+    }
+
     // QA-017: Extract parsed intent with explicit field separation (raw vs parsed)
     let parsedIntent = {};
     let parsedIntentSource = 'none';  // Track source for export clarity
@@ -1591,6 +1682,7 @@ The player has already moved. They are now in the location described above.
       is_initialization: (turnNumber === 1),  // Special flag for Turn 1 world setup
       input: { raw: action, parsed_intent: parsedIntent, parsed_intent_source: parsedIntentSource },
       authoritative_state: authoritativeState,
+      visibility: visibilityPayload,
       movement: movement,
       nearby_cells: nearbyCellsSnapshot,
       narrative: narrative,
@@ -1617,6 +1709,7 @@ The player has already moved. They are now in the location described above.
       engine_output: engineOutput, 
       scene, 
       diagnostics,
+      visibility: visibilityPayload,
       debug 
     });
   } catch (err) {
@@ -1632,6 +1725,7 @@ The player has already moved. They are now in the location described above.
       engine_output: engineOutput,
       scene,
       diagnostics,
+      visibility: visibilityPayload,
       error: `narration_failed: ${err.message}`,
       debug
     });

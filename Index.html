@@ -211,7 +211,7 @@ if (_curSites.length > 0) {
       &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
       &nbsp;&nbsp;identity : ${identStr}<br>
       &nbsp;&nbsp;desc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${descStr}<br>
-      &nbsp;&nbsp;visible  : ${s.visible_from_l0 ?? false} &nbsp;|&nbsp; entered : ${s.entered ?? false}
+      &nbsp;&nbsp;visible  : ${s.visible ?? false} &nbsp;|&nbsp; entered : ${s.entered ?? false}
     </div>`;
   }).join('');
 } else {
@@ -822,15 +822,14 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             }
             
             // 10. Build structured state block with cell description
-            const _wCells = lastGameResponse?.state?.world?.cells || {};
-            const _wTotal = Object.keys(_wCells).length;
+            const _vis = turn.visibility || null;
+            const _wTotal = _vis?.total_cells ?? 0;
             const _wMx = authState.position?.mx ?? 0;
             const _wMy = authState.position?.my ?? 0;
-            const _wRegionPrefix = `LOC:${_wMx},${_wMy}:`;
-            const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
-            const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^LOC:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
-            const _qWb  = lastGameResponse?.state?.world?.world_bias    || null;
-            const _qWc  = lastGameResponse?.state?.world?.world_context  || null;
+            const _wRegionCount = _vis?.region_cell_count ?? 0;
+            const _wRegions = _vis?.regions_explored ?? 0;
+            const _qWb  = _vis?.world_bias || null;
+            const _qWc  = lastGameResponse?.state?.world?.world_context || null;
             const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
             let stateSection = `
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
@@ -850,15 +849,15 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             
             // Site diagnostic addendum
             const _sCellKey = authState.cell_key || null;
-            const _sCellSites = _sCellKey && _wCells[_sCellKey]?.sites ? Object.values(_wCells[_sCellKey].sites) : [];
+            const _sCellSites = _vis?.sites || [];
             const _sSettlements = lastGameResponse?.state?.world?.settlements || {};
-            const _sLsc = lastGameResponse?.state?.world?._lastSiteCapture || null;
+            const _sLsc = _vis?.last_site_capture || null;
             let _sSitesTxt = '';
             if (_sCellSites.length > 0) {
               _sSitesTxt = _sCellSites.map(s => {
                 const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
                 const id = s.identity != null ? '"' + s.identity + '"' : '(null)';
-                return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible_from_l0 ?? false) + ' | entered=' + (s.entered ?? false);
+                return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible ?? false) + ' | entered=' + (s.entered ?? false);
               }).join('\n');
             } else {
               _sSitesTxt = '  \u2022 none';
@@ -1177,15 +1176,14 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           }
           
           // State block with cell description
-          const _wCells = lastGameResponse?.state?.world?.cells || {};
-          const _wTotal = Object.keys(_wCells).length;
+          const _vis = lastTurn.visibility || null;
+          const _wTotal = _vis?.total_cells ?? 0;
           const _wMx = authState.position?.mx ?? 0;
           const _wMy = authState.position?.my ?? 0;
-          const _wRegionPrefix = `LOC:${_wMx},${_wMy}:`;
-          const _wRegionCount = Object.keys(_wCells).filter(k => k.startsWith(_wRegionPrefix)).length;
-          const _wRegions = new Set(Object.keys(_wCells).map(k => { const m = k.match(/^LOC:(-?\d+),(-?\d+):/); return m ? `${m[1]},${m[2]}` : null; }).filter(Boolean)).size;
-          const _qWb  = lastGameResponse?.state?.world?.world_bias    || null;
-          const _qWc  = lastGameResponse?.state?.world?.world_context  || null;
+          const _wRegionCount = _vis?.region_cell_count ?? 0;
+          const _wRegions = _vis?.regions_explored ?? 0;
+          const _qWb  = _vis?.world_bias || null;
+          const _qWc  = lastGameResponse?.state?.world?.world_context || null;
           const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
           let stateSection = `
 📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
@@ -1205,15 +1203,15 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           
           // Site diagnostic addendum
           const _sCellKey = authState.cell_key || null;
-          const _sCellSites = _sCellKey && _wCells[_sCellKey]?.sites ? Object.values(_wCells[_sCellKey].sites) : [];
+          const _sCellSites = _vis?.sites || [];
           const _sSettlements = lastGameResponse?.state?.world?.settlements || {};
-          const _sLsc = lastGameResponse?.state?.world?._lastSiteCapture || null;
+          const _sLsc = _vis?.last_site_capture || null;
           let _sSitesTxt = '';
           if (_sCellSites.length > 0) {
             _sSitesTxt = _sCellSites.map(s => {
               const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
               const id = s.identity != null ? '"' + s.identity + '"' : '(null)';
-              return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible_from_l0 ?? false) + ' | entered=' + (s.entered ?? false);
+              return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible ?? false) + ' | entered=' + (s.entered ?? false);
             }).join('\n');
           } else {
             _sSitesTxt = '  \u2022 none';

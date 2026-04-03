@@ -158,6 +158,61 @@
       flex-direction: column;
     }
 
+    /* ── World Tree ── */
+    #tree-panel {
+      width: 220px;
+      flex-shrink: 0;
+      border-left: 1px solid #333;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #tree-header {
+      padding: 8px 10px;
+      background: #1a1a1a;
+      border-bottom: 1px solid #333;
+      font-size: 11px;
+      color: #888;
+      font-weight: bold;
+      letter-spacing: 1px;
+      flex-shrink: 0;
+    }
+
+    #tree-content {
+      padding: 8px 6px;
+      font-size: 11px;
+      font-family: monospace;
+      line-height: 1.7;
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .tree-node {
+      white-space: pre;
+      cursor: default;
+      padding: 0 2px;
+      border-radius: 2px;
+    }
+
+    .tree-node.tree-active {
+      color: #c8a84b;
+      font-weight: bold;
+    }
+
+    .tree-node.tree-placeholder {
+      color: #444;
+      font-style: italic;
+    }
+
+    .tree-node.tree-toggle {
+      cursor: pointer;
+    }
+
+    .tree-node.tree-toggle:hover {
+      background: #1e1e1e;
+    }
+
     #inspector-header {
       padding: 8px 10px;
       background: #1a1a1a;
@@ -275,6 +330,11 @@
       <div id="grid-container"></div>
     </div>
 
+    <div id="tree-panel">
+      <div id="tree-header">WORLD TREE</div>
+      <div id="tree-content"><span class="tree-node tree-placeholder">Waiting for data...</span></div>
+    </div>
+
     <div id="inspector">
       <div id="inspector-header">INSPECTOR</div>
       <div id="inspector-content">
@@ -328,7 +388,7 @@
         if (!resp) return { ok: false, reason: 'no_response' };
         const state = resp.state;
         if (!state) return { ok: false, reason: 'no_state' };
-        return { ok: true, state };
+        return { ok: true, state, visibility: resp.visibility || null };
       } catch (e) {
         // Thrown when opener access is blocked (e.g. cross-origin or closed window)
         return { ok: false, reason: 'cross_origin' };
@@ -593,6 +653,85 @@
       cross_origin: { title: 'Origin Error',           body: 'Cross-origin access blocked. Map.html must be served from the same origin as the game (e.g. http://localhost:3000/Map.html). Do not open it as a file:// URL.' },
     };
 
+    // ── Tree state ─────────────────────────────────────────────────────────────
+    // collapseState[key] = true (collapsed) | false (expanded) | undefined (default: collapsed)
+    let collapseState = {};
+
+    function _treeEsc(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function toggleNode(key) {
+      // true = collapsed, false = expanded; undefined defaults to collapsed
+      const wasCollapsed = collapseState[key] !== false;
+      collapseState[key] = !wasCollapsed; // flip: collapsed->expanded, expanded->collapsed
+      const result = getState();
+      if (result.ok) renderTree(result.visibility);
+    }
+
+    function renderTree(visibility) {
+      const content = document.getElementById('tree-content');
+      if (!visibility) {
+        content.innerHTML = '<div class="tree-node tree-placeholder">(no visibility data)</div>';
+        return;
+      }
+
+      const depth = visibility.current_depth || 1;
+      const c = visibility.container || {};
+      const sites = visibility.sites || [];
+      let html = '';
+
+      // ── L0 node (always rendered, always root) ──────────────────────────────
+      const l0Active = depth === 1;
+      const l0Key = c.grid_key || '?';
+      const l0Type = c.cell_type || '?';
+      const l0Biome = c.biome || '?';
+      html += `<div class="tree-node${l0Active ? ' tree-active' : ''}">[L0] ${_treeEsc(l0Type)} &middot; ${_treeEsc(l0Biome)}</div>`;
+
+      // ── L1 nodes (sites) ────────────────────────────────────────────────────
+      if (sites.length === 0) {
+        html += '<div class="tree-node tree-placeholder">&nbsp;&nbsp;(no sites)</div>';
+      } else {
+        for (const site of sites) {
+          const siteKey = 'site:' + site.site_id;
+          const expanded = collapseState[siteKey] === false;
+          const toggle = expanded ? '&#9660;' : '&#9654;';
+          const siteName = _treeEsc(site.name || '(unnamed)');
+          const enteredMark = site.entered ? ' &bull;' : '';
+          const isSiteActive = depth >= 2 && site.entered;
+          html += `<div class="tree-node tree-toggle${isSiteActive ? ' tree-active' : ''}" onclick="toggleNode('${_treeEsc(siteKey)}')">&nbsp;&nbsp;${toggle} [${_treeEsc(site.category || '?')}] ${siteName}${enteredMark}</div>`;
+
+          if (expanded) {
+            // ── L2 nodes (buildings/places) ─────────────────────────────────
+            if (!site.generated) {
+              html += '<div class="tree-node tree-placeholder">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(not generated)</div>';
+            } else if (!site.buildings || site.buildings.length === 0) {
+              html += '<div class="tree-node tree-placeholder">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(no places)</div>';
+            } else {
+              for (const bld of site.buildings) {
+                const bldKey = 'bld:' + site.site_id + '/' + bld.bld_id;
+                const bldExpanded = collapseState[bldKey] === false;
+                const bldToggle = bldExpanded ? '&#9660;' : '&#9654;';
+                const bldLabel = _treeEsc((bld.name || '(unnamed)') + ' (' + (bld.purpose || '?') + ')');
+                const isBldActive = bld.active === true;
+                html += `<div class="tree-node tree-toggle${isBldActive ? ' tree-active' : ''}" onclick="toggleNode('${_treeEsc(bldKey)}')">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${bldToggle} ${bldLabel}</div>`;
+
+                if (bldExpanded) {
+                  // ── L3 node (always structural placeholder) ───────────────
+                  html += '<div class="tree-node tree-placeholder">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(not implemented)</div>';
+                }
+              }
+            }
+          }
+        }
+      }
+
+      content.innerHTML = html;
+    }
+
     function poll() {
       const result = getState();
 
@@ -615,6 +754,7 @@
 
       try {
         render(state);
+        renderTree(result.visibility);
       } catch (e) {
         showError('Render Error', e.message || 'Unknown render error.');
         setStatus('Error');
