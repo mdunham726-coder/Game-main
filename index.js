@@ -211,9 +211,17 @@ async function performLoad(sessionId, saveName) {
     if (!saveData.gameState) {
       return { success: false, error: 'INVALID_SAVE_FILE', message: 'Save file is corrupted or invalid' };
     }
-    
-    return { 
-      success: true, 
+
+    // Phase 10 migration shim: rename world.settlements → world.sites on old saves (one-time).
+    const _gs = saveData.gameState;
+    if (_gs.world && _gs.world.settlements && !_gs.world.sites) {
+      _gs.world.sites = _gs.world.settlements;
+      delete _gs.world.settlements;
+      console.log('[LOAD] Migrated world.settlements → world.sites on loaded save.');
+    }
+
+    return {
+      success: true,
       gameState: saveData.gameState,
       message: `Game loaded from '${saveName}'`
     };
@@ -854,10 +862,11 @@ app.post('/narrate', async (req, res) => {
             Engine.recordSiteToCell(gameState, startingLocationCellKey, {
               site_id:          _startSiteId,
               category:         'settlement',
-              identity:         worldData.startingLocationType,  // e.g. "village", "outpost"
+              site_name:        null,
+              site_tier:        worldData.startingLocationType,  // e.g. "village", "outpost" — migration scaffolding
+              enterable:        true,
               name:             null,                            // filled by Phase 5 site_updates on first narration
               description:      null,
-              visible_from_l0:  true,
               entered:          false,
               is_starting_location: true
             });
@@ -867,7 +876,7 @@ app.post('/narrate', async (req, res) => {
           }
 
           // Phase 7: Legacy L2 stub block removed.
-          // recordSiteToCell now stores the stub under the canonical site.l2_id key.
+          // recordSiteToCell now stores the stub under the canonical site.interior_key.
         }
       }
       
@@ -1286,8 +1295,8 @@ The player has already moved. They are now in the location described above.
                   if (_field === 'name') _cr.capturedNames.push({ site_id: _upd.site_id, value: _upd[_field] });
                   console.log(`[SITE_CAPTURE] site ${_upd.site_id} ${_field} set to "${_upd[_field]}"`);
                   // Phase 5E: legacy mirror — name only
-                  if (_field === 'name' && gameState.world.settlements?.[_upd.site_id]) {
-                    gameState.world.settlements[_upd.site_id].name = _upd[_field];
+                  if (_field === 'name' && gameState.world.sites?.[_upd.site_id]) {
+                    gameState.world.sites[_upd.site_id].name = _upd[_field];
                   }
                 } else if (_upd[_field] != null && _tgt[_field] != null) {
                   _cr.skipped++;
@@ -1319,14 +1328,14 @@ The player has already moved. They are now in the location described above.
     const cellKey = `LOC:${currentPosition.mx},${currentPosition.my}:${currentPosition.lx},${currentPosition.ly}`;
     const currentCell = gameState.world.cells ? gameState.world.cells[cellKey] : null;
     
-    // Phase 7: Resolve current settlement from cell.sites (authoritative).
-    // Prefer canonical l2_id key; fall back to site_id for sessions loaded but not yet entered.
+    // Phase 10: Resolve current interior from cell.sites (authoritative).
+    // Prefer canonical interior_key; fall back to site_id for sessions loaded but not yet entered.
     let currentSettlement = null;
     {
       const _settlementSite = Object.values(currentCell?.sites || {}).find(s => s.category === 'settlement');
-      if (_settlementSite && gameState.world.settlements) {
-        currentSettlement = gameState.world.settlements[_settlementSite.l2_id]
-          || gameState.world.settlements[_settlementSite.site_id]
+      if (_settlementSite && gameState.world.sites) {
+        currentSettlement = gameState.world.sites[_settlementSite.interior_key]
+          || gameState.world.sites[_settlementSite.site_id]
           || null;
       }
     }
@@ -1339,7 +1348,7 @@ The player has already moved. They are now in the location described above.
       cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
-      settlement_count: Object.keys(gameState.world.settlements || {}).length,
+      settlement_count: Object.keys(gameState.world.sites || {}).length,
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1
     };
@@ -1348,7 +1357,7 @@ The player has already moved. They are now in the location described above.
     {
       const _vpDepth = gameState.world.current_depth || 1;
       const _vpDepthLabels = { 1: 'overworld', 2: 'site', 3: 'building', 4: 'subspace' };
-      const _vpSettlements = gameState.world.settlements || {};
+      const _vpSettlements = gameState.world.sites || {};
       const _vpActiveBuilding = gameState.world.active_building || null;
       const _vpAllCells = gameState.world.cells || {};
       const _vpWb = gameState.world.world_bias || null;
@@ -1360,12 +1369,12 @@ The player has already moved. They are now in the location described above.
       );
       const _vpSites = Object.entries(currentCell?.sites || {}).map(([, _s]) => {
         const _sGenerated = !!(
-          _s.l2_id &&
-          _vpSettlements[_s.l2_id] &&
-          !_vpSettlements[_s.l2_id].is_stub
+          _s.interior_key &&
+          _vpSettlements[_s.interior_key] &&
+          !_vpSettlements[_s.interior_key].is_stub
         );
         const _vpBuildings = _sGenerated
-          ? Object.entries(_vpSettlements[_s.l2_id].buildings || {}).map(([_bId, _b]) => ({
+          ? Object.entries(_vpSettlements[_s.interior_key].buildings || {}).map(([_bId, _b]) => ({
               bld_id: _bId,
               name: _b.name || null,
               purpose: _b.purpose || null,
@@ -1377,11 +1386,12 @@ The player has already moved. They are now in the location described above.
           site_id: _s.site_id,
           category: _s.category || null,
           name: _s.name || null,
-          identity: _s.identity || null,
-          visible: _s.visible_from_l0 ?? false,
+          site_name: _s.site_name || null,
+          site_tier: _s.site_tier || null,
+          enterable: _s.enterable ?? false,
           entered: _s.entered ?? false,
           generated: _sGenerated,
-          l2_id: _s.l2_id || null,
+          interior_key: _s.interior_key || null,
           l0_ref: _s.l0_ref || null,
           buildings: _vpBuildings
         };
@@ -1403,8 +1413,7 @@ The player has already moved. They are now in the location described above.
           cell_subtype: currentCell?.subtype || null,
           cell_description: currentCell?.description || null,
           biome: gameState.world.macro_biome || null,
-          name: null,
-          identity: null
+          name: null
         },
         sites: _vpSites,
         world_seed: gameState.world.phase3_seed || null,
@@ -1876,8 +1885,9 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     if (_dbgSites.length > 0) {
       _dbgSites.forEach(s => {
         context += `- ${s.site_id} | ${s.category} | name: ${s.name ?? '(unnamed)'}\n`;
-        if (s.identity != null) context += `  identity : ${s.identity}\n`;
-        if (s.description != null) context += `  desc     : ${s.description}\n`;
+        if (s.site_name != null) context += `  site_name : ${s.site_name}\n`;
+        if (s.site_tier != null) context += `  site_tier : ${s.site_tier}\n`;
+        if (s.description != null) context += `  desc      : ${s.description}\n`;
       });
     } else {
       context += `  • none\n`;
@@ -1897,13 +1907,13 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       }
     }
 
-    context += `\n=== SETTLEMENTS (legacy mirror) ===\n`;
-    const settlementKeys = Object.keys(gameState.world.settlements || {});
-    context += `Total entries (mirror): ${settlementKeys.length}\n`;
+    context += `\n=== SITES (interior registry) ===\n`;
+    const settlementKeys = Object.keys(gameState.world.sites || {});
+    context += `Total entries: ${settlementKeys.length}\n`;
     if (settlementKeys.length > 0) {
       settlementKeys.slice(0, 3).forEach(k => {
-        const settlement = gameState.world.settlements[k];
-        context += `- ${settlement.name || "(unnamed)"} (type: ${settlement.type || "unknown"}, ${(settlement.npcs || []).length} NPCs) [legacy]\n`;
+        const settlement = gameState.world.sites[k];
+        context += `- ${settlement.name || "(unnamed)"} (type: ${settlement.type || "unknown"}, ${(settlement.npcs || []).length} NPCs)\n`;
       });
       if (settlementKeys.length > 3) {
         context += `... and ${settlementKeys.length - 3} more\n`;
@@ -1934,7 +1944,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   if (debugLevel === "full") {
     context += `\n=== WORLD STATE (Entries Summary) ===\n`;
     context += `Total Cells: ${Object.keys(gameState.world.cells || {}).length}\n`;
-    context += `Total Settlements: ${Object.keys(gameState.world.settlements || {}).length}\n`;
+    context += `Total Sites: ${Object.keys(gameState.world.sites || {}).length}\n`;
     context += `Total NPCs: ${(gameState.world.npcs || []).length}\n`;
     context += `Total Quests: ${(gameState.quests?.active || []).length} active\n`;
     
@@ -1948,7 +1958,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         },
         world_position: pos,
         current_cell: currentCell ? { type: currentCell.type, subtype: currentCell.subtype } : null,
-        settlements_count: Object.keys(gameState.world.settlements || {}).length,
+        sites_count: Object.keys(gameState.world.sites || {}).length,
         npcs_count: (gameState.world.npcs || []).length,
         turn_counter: gameState.turn_counter,
         world_seed: gameState.world.seed || gameState.rng_seed

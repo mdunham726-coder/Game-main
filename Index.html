@@ -205,13 +205,13 @@ let _sitesHtml = '';
 if (_curSites.length > 0) {
   _sitesHtml = _curSites.map(s => {
     const nameStr = s.name != null ? s.name : '<span style="color:#666">(unnamed)</span>';
-    const identStr = s.identity != null ? s.identity : '<span style="color:#444">(null)</span>';
     const descStr  = s.description != null ? s.description : '<span style="color:#444">(null)</span>';
     return `<div style="margin-left:8px">• <strong>${s.site_id}</strong> | ${s.category}<br>
       &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
-      &nbsp;&nbsp;identity : ${identStr}<br>
+      &nbsp;&nbsp;site_name: ${s.site_name != null ? s.site_name : '<span style="color:#444">(null)</span>'}<br>
+      &nbsp;&nbsp;site_tier: ${s.site_tier != null ? s.site_tier : '<span style="color:#444">(null)</span>'}<br>
       &nbsp;&nbsp;desc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${descStr}<br>
-      &nbsp;&nbsp;visible  : ${s.visible ?? false} &nbsp;|&nbsp; entered : ${s.entered ?? false}
+      &nbsp;&nbsp;enterable: ${s.enterable ?? false} &nbsp;|&nbsp; entered : ${s.entered ?? false}
     </div>`;
   }).join('');
 } else {
@@ -272,7 +272,7 @@ diagLog.innerHTML = `
   ${_sitesHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; PHASE 5 CAPTURE (last turn)</div>
   ${_captureHtml}
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; LEGACY MIRROR — world.settlements (current cell)</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; SITES MIRROR (world.sites / current cell)</div>
   ${_mirrorHtml}
 `;
 
@@ -856,8 +856,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             if (_sCellSites.length > 0) {
               _sSitesTxt = _sCellSites.map(s => {
                 const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
-                const id = s.identity != null ? '"' + s.identity + '"' : '(null)';
-                return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible ?? false) + ' | entered=' + (s.entered ?? false);
+                const sn = s.site_name != null ? '"' + s.site_name + '"' : '(null)';
+                const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
+                return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_name=' + sn + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
               }).join('\n');
             } else {
               _sSitesTxt = '  \u2022 none';
@@ -1210,8 +1211,9 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           if (_sCellSites.length > 0) {
             _sSitesTxt = _sCellSites.map(s => {
               const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
-              const id = s.identity != null ? '"' + s.identity + '"' : '(null)';
-              return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | identity=' + id + '\n    visible=' + (s.visible ?? false) + ' | entered=' + (s.entered ?? false);
+              const sn = s.site_name != null ? '"' + s.site_name + '"' : '(null)';
+              const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
+              return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_name=' + sn + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
             }).join('\n');
           } else {
             _sSitesTxt = '  \u2022 none';

@@ -233,7 +233,7 @@ function streamL1Cells(state) {
 /**
  * Phase 4: Authoritative single write path for site records.
  * Writes site to cell.sites and mirrors settlement-category sites to
- * world.settlements for backward compatibility (temporary — removed in Phase 6).
+ * world.sites (keyed by interior_key).
  *
  * @param {object} state   — game state
  * @param {string} cellKey — LOC: coordinate key
@@ -243,22 +243,22 @@ function recordSiteToCell(state, cellKey, site) {
   const cell = state.world.cells[cellKey];
   if (!cell) return;
 
-  // Phase 7: Reserve canonical l2_id on settlement sites at registration time.
+  // Phase 7: Reserve canonical interior_key on settlement sites at registration time.
   // This is identity reservation only — no L2 content is generated here.
-  if (site.category === 'settlement' && !site.l2_id) {
-    site.l2_id = `${site.site_id}/l2`;
+  if (site.category === 'settlement' && !site.interior_key) {
+    site.interior_key = `${site.site_id}/l2`;
   }
 
   cell.sites = cell.sites || {};
   cell.sites[site.site_id] = site;
 
-  // Mirror settlement-category sites into world.settlements as stubs (keyed by canonical l2_id).
+  // Mirror settlement-category sites into world.sites as stubs (keyed by canonical interior_key).
   // Actual site interior is generated lazily on first entry via enterSite().
   if (site.category === 'settlement') {
-    state.world.settlements = state.world.settlements || {};
-    state.world.settlements[site.l2_id] = {
+    state.world.sites = state.world.sites || {};
+    state.world.sites[site.interior_key] = {
       name:    site.name ?? null,
-      type:    site.identity || site.subtype || site.category,
+      type:    site.site_tier || site.identity || site.subtype,
       npcs:    [],
       is_stub: true,
       mx:      cell.mx,
@@ -646,21 +646,21 @@ function enterSite(state, { cell_key, site_id }) {
   const site = cell.sites && cell.sites[site_id];
   if (!site) return null;
 
-  // Defensive: accept both site.identity (Phase 7) and site.subtype (WorldGen legacy format)
-  const identity = site.identity || site.subtype || 'village';
+  // Defensive: accept site.site_tier (Phase 10), site.identity (Phase 7), or site.subtype (WorldGen legacy format)
+  const identity = site.site_tier || site.identity || 'village';
   const sid = site.site_id || site.id || site_id;
 
-  // Ensure l2_id is set — should already be set by recordSiteToCell, but assign lazily
-  // for sites that were created before Phase 7 (old sessions).
-  if (!site.l2_id) {
-    site.l2_id = `${sid}/l2`;
+  // Ensure interior_key is set — should already be set by recordSiteToCell, but assign lazily
+  // for sites that were created before Phase 10 (old sessions).
+  if (!site.interior_key) {
+    site.interior_key = site.l2_id || `${sid}/l2`;
   }
-  const l2_id = site.l2_id;
+  const interior_key = site.interior_key;
 
-  // Phase 7 migration guard: if canonical l2_id key is missing, check legacy key formats
-  // and re-key to canonical before use. Prevents duplicate generation for old sessions.
-  state.world.settlements = state.world.settlements || {};
-  if (!state.world.settlements[l2_id]) {
+  // Phase 7 migration guard: if canonical interior_key is missing from world.sites, check legacy
+  // key formats and re-key to canonical before use. Prevents duplicate generation for old sessions.
+  state.world.sites = state.world.sites || {};
+  if (!state.world.sites[interior_key]) {
     // Legacy format 1: Phase-6 recordSiteToCell keyed by site_id directly
     const legacyKey6 = sid;
     // Legacy format 2: old subtype-based key M{mx}x{my}/L1_{lx}_{ly}_{identity}
@@ -669,20 +669,23 @@ function enterSite(state, { cell_key, site_id }) {
       ? `M${parts[1]}x${parts[2]}/L1_${parts[3]}_${parts[4]}_${identity}`
       : null;
 
-    const found = state.world.settlements[legacyKey6]
-      || (legacyKeySubtype && state.world.settlements[legacyKeySubtype])
+    const found = state.world.sites[interior_key]
+      || state.world.sites[legacyKey6]
+      || (legacyKeySubtype && state.world.sites[legacyKeySubtype])
+      // Also check legacy world.settlements for saves that predate Phase 10 Phase 2
+      || (state.world.settlements && (state.world.settlements[interior_key] || state.world.settlements[legacyKey6]))
       || null;
 
     if (found) {
-      // Re-key to canonical format; remove old key to avoid duplication
-      state.world.settlements[l2_id] = found;
-      if (state.world.settlements[legacyKey6] && legacyKey6 !== l2_id) delete state.world.settlements[legacyKey6];
-      if (legacyKeySubtype && state.world.settlements[legacyKeySubtype]) delete state.world.settlements[legacyKeySubtype];
-      console.log(`[Phase7-MIGRATE] Re-keyed settlement to canonical l2_id=${l2_id}`);
+      // Re-key to canonical format; remove old keys to avoid duplication
+      state.world.sites[interior_key] = found;
+      if (state.world.sites[legacyKey6] && legacyKey6 !== interior_key) delete state.world.sites[legacyKey6];
+      if (legacyKeySubtype && state.world.sites[legacyKeySubtype]) delete state.world.sites[legacyKeySubtype];
+      console.log(`[Phase10-MIGRATE] Re-keyed site to canonical interior_key=${interior_key}`);
     }
   }
 
-  let settlement = state.world.settlements[l2_id];
+  let settlement = state.world.sites[interior_key];
   const NPCs = require('./NPCs');
 
   if (settlement && !settlement.is_stub) {
@@ -691,71 +694,71 @@ function enterSite(state, { cell_key, site_id }) {
 
   } else if (settlement && settlement.is_stub) {
     // Complete stub: generate NPCs and upgrade the existing stub object in-place.
-    // world.settlements[l2_id] is mutated directly so stored object == active object.
-    console.log(`[ENGINE] Completing stub settlement for l2_id=${l2_id}, identity=${identity}`);
+    // world.sites[interior_key] is mutated directly so stored object == active object.
+    console.log(`[ENGINE] Completing stub for interior_key=${interior_key}, identity=${identity}`);
 
     const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
-    if (logger) logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+    if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
-    const npcs_here = WorldGen.generateL2NPCs(l2_id, identity, state.rng_seed, NPCs);
+    const npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
 
     if (logger) {
-      if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(l2_id, npcs_here.length);
-      else logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
+      if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(interior_key, npcs_here.length);
+      else logger.npc_spawn_failed(interior_key, 'no_npcs_generated');
     }
 
-    assignQuestGiverFlags(npcs_here, state.rng_seed, l2_id);
+    assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
-    // Upgrade stub in-place — same reference stays in world.settlements[l2_id]
+    // Upgrade stub in-place — same reference stays in world.sites[interior_key]
     settlement.npcs = npcs_here;
     settlement.is_stub = false;
     settlement.type = settlement.type || identity;
 
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
-      logger.settlement_registered(l2_id, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
+      logger.settlement_registered(interior_key, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
     }
 
     console.log(`[ENGINE] Completed stub: ${settlement.name}, ${npcs_here.length} NPCs`);
 
-    if (!state.quests.allQuestsSeeded[l2_id]) {
-      const quests = generateSettlementQuests(state, l2_id, settlement, npcs_here);
-      state.quests.allQuestsSeeded[l2_id] = quests;
+    if (!state.quests.allQuestsSeeded[interior_key]) {
+      const quests = generateSettlementQuests(state, interior_key, settlement, npcs_here);
+      state.quests.allQuestsSeeded[interior_key] = quests;
       console.log(`[ENGINE] Generated ${quests.length} quests for ${settlement.name}`);
     }
 
     site.entered = true;
 
   } else {
-    // Fresh: no settlement record — generate and store. Exactly one generateL2Settlement call.
+    // Fresh: no site record — generate and store. Exactly one generateL2Settlement call.
     const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
-    if (logger) logger.npc_spawn_attempted(l2_id, expectedNpcCount);
+    if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
-    const npcs_here = WorldGen.generateL2NPCs(l2_id, identity, state.rng_seed, NPCs);
+    const npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
 
     if (logger) {
-      if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(l2_id, npcs_here.length);
-      else logger.npc_spawn_failed(l2_id, 'no_npcs_generated');
+      if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(interior_key, npcs_here.length);
+      else logger.npc_spawn_failed(interior_key, 'no_npcs_generated');
     }
 
-    assignQuestGiverFlags(npcs_here, state.rng_seed, l2_id);
+    assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
-    settlement = WorldGen.generateL2Settlement(l2_id, identity, npcs_here);
-    state.world.settlements[l2_id] = settlement;
+    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here);
+    state.world.sites[interior_key] = settlement;
 
-    const totalSettlements = Object.keys(state.world.settlements).length;
-    console.log(`[Phase7-STORE] Settlement stored: l2_id=${l2_id}, name=${settlement.name}, type=${settlement.type}, totalCount=${totalSettlements}`);
+    const totalSites = Object.keys(state.world.sites).length;
+    console.log(`[Phase10-STORE] Site stored: interior_key=${interior_key}, name=${settlement.name}, type=${settlement.type}, totalCount=${totalSites}`);
 
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
-      logger.settlement_registered(l2_id, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
+      logger.settlement_registered(interior_key, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
     }
 
-    console.log(`[ENGINE] Created new settlement: ${settlement.name} with ${npcs_here.length} NPCs`);
+    console.log(`[ENGINE] Created new site: ${settlement.name} with ${npcs_here.length} NPCs`);
 
-    if (!state.quests.allQuestsSeeded[l2_id]) {
-      const quests = generateSettlementQuests(state, l2_id, settlement, npcs_here);
-      state.quests.allQuestsSeeded[l2_id] = quests;
+    if (!state.quests.allQuestsSeeded[interior_key]) {
+      const quests = generateSettlementQuests(state, interior_key, settlement, npcs_here);
+      state.quests.allQuestsSeeded[interior_key] = quests;
       console.log(`[ENGINE] Generated ${quests.length} quests for ${settlement.name}`);
     }
 
@@ -763,7 +766,7 @@ function enterSite(state, { cell_key, site_id }) {
   }
 
   // Stored object IS the active object — no secondary generation, no split references.
-  state.world.active_site = state.world.settlements[l2_id];
+  state.world.active_site = state.world.sites[interior_key];
   state.world.active_building = null;
   state.world.current_depth = 2;
   if (!state.player) state.player = {};

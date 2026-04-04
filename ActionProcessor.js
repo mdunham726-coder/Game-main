@@ -336,7 +336,7 @@ function updateNPCQuestState(action, state, deltas, flags){
   }
   
   const { settlementId, questId, npc, activeQuest } = validation.newState;
-  const settlement = state.world.settlements[settlementId];
+  const settlement = (state.world.sites || state.world.settlements || {})[settlementId];
   
   if (!settlement){
     console.log(`[QUEST] Settlement ${settlementId} not found`);

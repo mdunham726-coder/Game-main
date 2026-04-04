@@ -479,8 +479,8 @@
         ? Math.min(...regionEntries.map(([k]) => { const p = parseL1Key(k); return p ? p.ly : Infinity; }))
         : 0;
 
-      // Settlements lookup
-      const settlements = (state.world && state.world.settlements) || null;
+      // Sites interior registry lookup
+      const settlements = (state.world && (state.world.sites || state.world.settlements)) || null;
 
       // Render grid
       const container = document.getElementById('grid-container');

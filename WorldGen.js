@@ -681,8 +681,7 @@ Output ONLY valid JSON. No explanation, no markdown fences, no extra fields.`
 //
 // DENSITY_WEIGHTS maps world_bias density strings to numeric probability tiers.
 // BIAS_LEVEL maps density strings to a 0–1 modifier used in budget calculation.
-// CATEGORY_AFFINITIES maps broad terrain groups to weighted category arrays.
-// VISIBLE_DEFAULTS gives the initial visible_from_l0 value per category.
+// CATEGORY_AFFINITIES maps broad terrain groups to weighted category arrays (with enterable bool).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DENSITY_WEIGHTS    = { low: 0.25, medium: 0.55, high: 0.85 };
@@ -713,26 +712,19 @@ const TERRAIN_GROUP_MAP = {
 // Per-group category affinity tables.
 // Each entry: [category, baseWeight]
 // Weights are relative — they are normalised during selection.
+// Third element of each tuple is the literal `enterable` bool for that category.
+// This is a write-time source only — read once during site creation and stamped
+// onto the site record as site.enterable. Runtime must use site.enterable exclusively.
 const CATEGORY_AFFINITIES = {
-  open:     [ ['settlement', 40], ['building', 30], ['landmark', 20], ['passage', 5], ['vessel', 5] ],
-  forest:   [ ['landmark', 35],   ['building', 25], ['passage', 25],  ['settlement', 10], ['vessel', 5] ],
-  rugged:   [ ['landmark', 40],   ['passage', 35],  ['building', 15], ['settlement', 8],  ['vessel', 2] ],
-  arid:     [ ['landmark', 45],   ['passage', 25],  ['building', 20], ['settlement', 8],  ['vessel', 2] ],
-  cold:     [ ['landmark', 35],   ['passage', 30],  ['building', 20], ['settlement', 12], ['vessel', 3] ],
-  wetland:  [ ['landmark', 30],   ['passage', 25],  ['building', 20], ['settlement', 15], ['vessel', 10] ],
-  water:    [ ['vessel', 35],     ['landmark', 30], ['building', 20], ['passage', 10],    ['settlement', 5] ],
-  coast:    [ ['settlement', 30], ['vessel', 30],   ['building', 20], ['landmark', 15],   ['passage', 5] ],
-  wilderness: [ ['landmark', 40], ['passage', 30],  ['building', 20], ['settlement', 8],  ['vessel', 2] ],
-};
-
-// visible_from_l0 heuristic defaults per category.
-// Acknowledged as tunable — these are initial values only.
-const VISIBLE_DEFAULTS = {
-  settlement: true,
-  building:   true,
-  landmark:   false,   // many landmarks are hidden until discovered
-  passage:    false,
-  vessel:     true,
+  open:     [ ['settlement', 40, true],  ['building', 30, true],  ['landmark', 20, false], ['passage', 5, true],  ['vessel', 5, true]  ],
+  forest:   [ ['landmark', 35, false],   ['building', 25, true],  ['passage', 25, true],   ['settlement', 10, true],  ['vessel', 5, true]  ],
+  rugged:   [ ['landmark', 40, false],   ['passage', 35, true],   ['building', 15, true],  ['settlement', 8, true],   ['vessel', 2, true]  ],
+  arid:     [ ['landmark', 45, false],   ['passage', 25, true],   ['building', 20, true],  ['settlement', 8, true],   ['vessel', 2, true]  ],
+  cold:     [ ['landmark', 35, false],   ['passage', 30, true],   ['building', 20, true],  ['settlement', 12, true],  ['vessel', 3, true]  ],
+  wetland:  [ ['landmark', 30, false],   ['passage', 25, true],   ['building', 20, true],  ['settlement', 15, true],  ['vessel', 10, true] ],
+  water:    [ ['vessel', 35, true],      ['landmark', 30, false],  ['building', 20, true],  ['passage', 10, true],     ['settlement', 5, true] ],
+  coast:    [ ['settlement', 30, true],  ['vessel', 30, true],    ['building', 20, true],  ['landmark', 15, false],   ['passage', 5, true] ],
+  wilderness: [ ['landmark', 40, false], ['passage', 30, true],   ['building', 20, true],  ['settlement', 8, true],   ['vessel', 2, true]  ],
 };
 
 /**
@@ -861,6 +853,8 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
     if (available.length === 0) break;
 
     const category = weightedPick(available, rng);
+    const _pickedEntry = available.find(([cat]) => cat === category);
+    const enterable = _pickedEntry ? (_pickedEntry[2] ?? false) : false;
     usedCategories.add(category);
 
     // Derive position from cellKey: parse "LOC:mx,my:lx,ly"
@@ -876,11 +870,12 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
       site_id,
       l0_ref:          { mx, my, lx, ly },
       category,
-      visible_from_l0: VISIBLE_DEFAULTS[category] ?? false,
+      enterable,
+      site_name:       null,
+      site_tier:       null,
       name:            null,
-      identity:        null,
       entered:         false,
-      l2_id:           null,
+      interior_key:    null,
     });
   }
 
