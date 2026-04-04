@@ -727,6 +727,8 @@ function enterSite(state, { cell_key, site_id }) {
 
     console.log(`[ENGINE] Completed stub: ${settlement.name}, ${npcs_here.length} NPCs`);
 
+    if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSettlement: 5 } };
+    if (!state.quests.allQuestsSeeded) state.quests.allQuestsSeeded = {};
     if (!state.quests.allQuestsSeeded[interior_key]) {
       const quests = generateSettlementQuests(state, interior_key, settlement, npcs_here);
       state.quests.allQuestsSeeded[interior_key] = quests;
@@ -762,6 +764,8 @@ function enterSite(state, { cell_key, site_id }) {
 
     console.log(`[ENGINE] Created new site: ${settlement.name} with ${npcs_here.length} NPCs`);
 
+    if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSettlement: 5 } };
+    if (!state.quests.allQuestsSeeded) state.quests.allQuestsSeeded = {};
     if (!state.quests.allQuestsSeeded[interior_key]) {
       const quests = generateSettlementQuests(state, interior_key, settlement, npcs_here);
       state.quests.allQuestsSeeded[interior_key] = quests;

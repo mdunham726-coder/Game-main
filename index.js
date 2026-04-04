@@ -965,6 +965,7 @@ app.post('/narrate', async (req, res) => {
           
           // POPULATE PLAYER_INTENT FIELDS BEFORE DIAGNOSTIC LOG (data integrity fix)
           mapped.player_intent.action = queuedAction.action;
+          if (queuedAction.target) mapped.player_intent.target = queuedAction.target;
           
           if (queuedAction.action === 'move' && queuedAction.dir) {
             // Pass direction through unchanged as long-form (north/south/east/west)
@@ -1020,10 +1021,12 @@ app.post('/narrate', async (req, res) => {
       }
     } catch (err) {
       console.error('Engine error:', err.message);
+      console.error('Engine error stack:', err.stack);
       return res.json({ 
         sessionId: resolvedSessionId,
-        error: `engine_failed: ${err.message}`, 
-        narrative: "The engine encountered an error processing your action.",
+        error: `engine_failed: ${err.message}`,
+        error_stack: err.stack,
+        narrative: `The engine encountered an error: ${err.message}`,
         state: gameState,
         debug
       });

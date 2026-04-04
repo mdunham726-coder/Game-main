@@ -1079,6 +1079,8 @@ async function generateWorldFromDescription(desc, worldSeed) {
 // --- LOC: site placement (same) ---
 function worldGenStep(world) {
   if (!world || !world.cells) return world;
+  // Do not run L0 site-seeding when player is inside a site (depth >= 2).
+  if ((world.current_depth ?? 1) >= 2) return world;
   const l0s = world.l0_size || DEFAULTS.L0_SIZE;
   const macroCells = world.cells || {};
   const sites = world.sites || {};
