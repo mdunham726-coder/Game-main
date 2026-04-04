@@ -854,10 +854,10 @@ app.post('/narrate', async (req, res) => {
           console.log('[WORLD] [Phase6B] Start cell type preserved as geographic:', gameState.world.cells[startingLocationCellKey].type, '| locationType:', worldData.startingLocationType);
 
           // Ensure the starting place has a site record in cell.sites (authoritative).
-          // evaluateCellForSites may have already placed one — only inject if none with category 'settlement' exists.
+          // evaluateCellForSites may have already placed one — only inject if none with enterable===true exists.
           const _startCellSites = Object.values(gameState.world.cells[startingLocationCellKey].sites);
-          const _hasSettlementSite = _startCellSites.some(s => s.category === 'settlement');
-          if (!_hasSettlementSite) {
+          const _hasEnterableSite = _startCellSites.some(s => s.enterable === true && s.interior_key);
+          if (!_hasEnterableSite) {
             const _startSiteId = `M${startPos.mx}x${startPos.my}:site_start`;
             Engine.recordSiteToCell(gameState, startingLocationCellKey, {
               site_id:          _startSiteId,

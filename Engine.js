@@ -243,18 +243,18 @@ function recordSiteToCell(state, cellKey, site) {
   const cell = state.world.cells[cellKey];
   if (!cell) return;
 
-  // Phase 7: Reserve canonical interior_key on settlement sites at registration time.
+  // Phase 10: Reserve canonical interior_key on enterable sites at registration time.
   // This is identity reservation only — no L2 content is generated here.
-  if (site.category === 'settlement' && !site.interior_key) {
+  if (site.enterable === true && !site.interior_key) {
     site.interior_key = `${site.site_id}/l2`;
   }
 
   cell.sites = cell.sites || {};
   cell.sites[site.site_id] = site;
 
-  // Mirror settlement-category sites into world.sites as stubs (keyed by canonical interior_key).
+  // Mirror enterable sites into world.sites as stubs (keyed by canonical interior_key).
   // Actual site interior is generated lazily on first entry via enterSite().
-  if (site.category === 'settlement') {
+  if (site.enterable === true) {
     state.world.sites = state.world.sites || {};
     state.world.sites[site.interior_key] = {
       name:    site.name ?? null,
@@ -448,13 +448,19 @@ function buildOutput(prevState, inputObj, logger) {
     if (targetName) {
       targetSite = enterSites.find(s => s.name && s.name.toLowerCase().includes(targetName));
     }
-    if (!targetSite) targetSite = enterSites.find(s => s.category === 'settlement');
-    if (!targetSite) targetSite = enterSites.find(s => s.category === 'poi');
+    if (!targetSite) targetSite = enterSites.find(s => s.enterable === true);
 
     if (targetSite) {
       enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id });
     } else {
-      console.log('[Phase7-ENTER] No enterable site found at', enterCellKey);
+      console.log('[Phase10-ENTER] No enterable site found at', enterCellKey);
+    }
+  }
+
+  // Phase 10: Handle 'exit' action — site exit.
+  if (actions.action === 'exit') {
+    if (state.world.current_depth >= 2) {
+      exitSite(state);
     }
   }
 
