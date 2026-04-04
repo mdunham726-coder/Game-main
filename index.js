@@ -1175,7 +1175,7 @@ app.post('/narrate', async (req, res) => {
     const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites) : [];
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
-        .map(s => `- site_id: ${s.site_id} | category: ${s.category} | name: ${s.name ?? '(unnamed)'}`)
+        .map(s => `- site_id: ${s.site_id} | category: ${s.category} | site_tier: ${s.site_tier ?? '(none)'} | name: ${s.name ?? '(unnamed)'}`)
         .join('\n');
       const _hasNamed   = _narCellSites.some(s => s.name != null);
       const _hasUnnamed = _narCellSites.some(s => s.name == null);
@@ -1191,6 +1191,8 @@ app.post('/narrate', async (req, res) => {
         // All unnamed: invitation only
         _instructionLines = '\nAll sites above are unnamed. You may introduce names for them via a site_updates block.';
       }
+      // Phase 10: Tier constraint — always append so the model cannot interpret site_tier through tone/biome alone.
+      _instructionLines += '\nA site\'s site_tier defines its settlement scale — town must resolve to a settlement-scale location, not a road, path, threshold, or edge space.';
       _siteContextBlock = `\n\nSITES AT CURRENT LOCATION:\n${_siteLines}${_instructionLines}`;
     }
 
@@ -1277,7 +1279,7 @@ The player has already moved. They are now in the location described above.
         // Always strip the block from narrative regardless of parse outcome
         narrative = (narrative.slice(0, _suMatch.index) + narrative.slice(_suMatch.index + _suMatch[0].length)).trim();
         // Build capture tracking record
-        const _cr = { detected: true, parseSuccess: false, updatesApplied: 0, skipped: 0, capturedNames: [] };
+        const _cr = { detected: true, parseSuccess: false, updatesApplied: 0, skipped: 0, capturedNames: [], changes: [] };
         try {
           const _updates = JSON.parse(_suMatch[1]);
           _cr.parseSuccess = true;
@@ -1292,6 +1294,7 @@ The player has already moved. They are now in the location described above.
                 if (_upd[_field] != null && _tgt[_field] == null) {
                   _tgt[_field] = _upd[_field];
                   _cr.updatesApplied++;
+                  _cr.changes.push({ site_id: _upd.site_id, field: _field, old: null, new: _upd[_field] });
                   if (_field === 'name') _cr.capturedNames.push({ site_id: _upd.site_id, value: _upd[_field] });
                   console.log(`[SITE_CAPTURE] site ${_upd.site_id} ${_field} set to "${_upd[_field]}"`);
                   // Phase 5E: legacy mirror — name only
@@ -1856,6 +1859,9 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   context += `Cell Subtype: ${currentCell?.subtype || "unknown"}\n`;
   context += `Cell Biome: ${currentCell?.biome || "unknown"}\n`;
   context += `Description: ${currentCell?.description || ""}\n`;
+  const _ctxDepth = gameState.world.current_depth ?? 1;
+  const _ctxLayer = { 1: 'L0 (overworld)', 2: 'L2 (site interior)', 3: 'L3 (building)' }[_ctxDepth] || `L? (depth ${_ctxDepth})`;
+  context += `Current Layer   : ${_ctxLayer}\n`;
 
   context += `\n=== NEARBY NPCS ===\n`;
   if (gameState.world.npcs && gameState.world.npcs.length > 0) {
@@ -1875,8 +1881,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `Biome               : ${gameState.world.macro_biome || "not detected"}\n`;
     context += `World Tone          : ${gameState.world.world_tone || "not detected"}\n`;
     context += `Starting Loc Type   : ${gameState.world.starting_location_type || "not detected"}\n`;
-    context += `Phase3 Seed         : ${gameState.world.phase3_seed ?? "(not set)"}\n`;
-    context += `World Seed          : ${gameState.world.seed ?? gameState.rng_seed ?? 0} (legacy / unused)\n`;
+    context += `World Seed          : ${gameState.world.phase3_seed ?? "(not set)"}\n`;
     context += `Turn Counter        : ${gameState.turn_counter ?? 0}\n`;
 
     context += `\n=== CURRENT CELL SITES (authoritative) ===\n`;
@@ -1901,25 +1906,34 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       context += `site_updates detected : yes\n`;
       context += `parse result          : ${_dbgCap.parseSuccess ? 'success' : 'FAILED'}\n`;
       context += `updates applied       : ${_dbgCap.updatesApplied}\n`;
+      if (_dbgCap.changes?.length > 0) {
+        _dbgCap.changes.forEach(c => { context += `  ${c.site_id}.${c.field}: ${c.old === null ? 'null' : `"${c.old}"`} → "${c.new}"\n`; });
+      }
       context += `skipped               : ${_dbgCap.skipped}\n`;
       if (_dbgCap.capturedNames?.length > 0) {
         _dbgCap.capturedNames.forEach(n => { context += `names captured        : ${n.site_id} → "${n.value}"\n`; });
       }
     }
 
-    context += `\n=== SITES (interior registry) ===\n`;
+    context += `\n=== SITE INTERIOR REGISTRY ===\n`;
     const settlementKeys = Object.keys(gameState.world.sites || {});
     context += `Total entries: ${settlementKeys.length}\n`;
     if (settlementKeys.length > 0) {
-      settlementKeys.slice(0, 3).forEach(k => {
-        const settlement = gameState.world.sites[k];
-        context += `- ${settlement.name || "(unnamed)"} (type: ${settlement.type || "unknown"}, ${(settlement.npcs || []).length} NPCs)\n`;
+      settlementKeys.slice(0, 5).forEach(k => {
+        const _sr = gameState.world.sites[k];
+        const _srParent = k.includes('/l2') ? k.split('/l2')[0] : k;
+        const _srCell = (_sr.mx !== undefined && _sr.lx !== undefined)
+          ? `LOC:${_sr.mx},${_sr.my}:${_sr.lx},${_sr.ly}` : '(unknown)';
+        const _srActive = gameState.world.active_site === k;
+        context += `key: ${k}\n`;
+        context += `  parent: ${_srParent}  |  cell: ${_srCell}\n`;
+        context += `  type: ${_sr.type || 'unknown'}  |  NPCs: ${(_sr.npcs || []).length}  |  stub: ${!!_sr.is_stub}  |  active: ${_srActive ? 'YES' : 'no'}\n`;
       });
-      if (settlementKeys.length > 3) {
-        context += `... and ${settlementKeys.length - 3} more\n`;
+      if (settlementKeys.length > 5) {
+        context += `... and ${settlementKeys.length - 5} more\n`;
       }
     } else {
-      context += `(No legacy mirror entries)\n`;
+      context += `(none)\n`;
     }
 
     context += `\n=== VISIBLE CELLS (Sample) ===\n`;
@@ -2087,7 +2101,7 @@ app.post('/ask-deepseek', async (req, res) => {
         model: "deepseek-chat",
         messages,
         temperature: 0.7,
-        max_tokens: 800
+        max_tokens: 2000
       },
       {
         headers: {

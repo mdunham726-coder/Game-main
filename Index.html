@@ -227,10 +227,14 @@ if (!_lsc || !_lsc.detected) {
   const namesHtml = (_lsc.capturedNames || []).length > 0
     ? _lsc.capturedNames.map(n => `<div style="margin-left:8px">names captured&nbsp;&nbsp;&nbsp;: ${n.site_id} → "${n.value}"</div>`).join('')
     : '';
+  const _changesHtml = (_lsc.changes || []).length > 0
+    ? (_lsc.changes || []).map(c => `<div style="margin-left:16px;color:#aaa">${c.site_id}.${c.field}: ${c.old === null ? 'null' : '"' + c.old + '"'} \u2192 "${c.new}"</div>`).join('')
+    : '';
   _captureHtml = `
     <div style="margin-left:8px">site_updates detected : yes</div>
     <div style="margin-left:8px">parse result&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:${parseColor}">${_lsc.parseSuccess ? 'success' : 'FAILED'}</span></div>
     <div style="margin-left:8px">updates applied&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${_lsc.updatesApplied}</div>
+    ${_changesHtml}
     <div style="margin-left:8px">skipped&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${_lsc.skipped}</div>
     ${namesHtml}`;
 }
@@ -272,7 +276,7 @@ diagLog.innerHTML = `
   ${_sitesHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; PHASE 5 CAPTURE (last turn)</div>
   ${_captureHtml}
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; SITES MIRROR (world.sites / current cell)</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; SITE INTERIOR LINK STATUS (world.sites vs cell.sites)</div>
   ${_mirrorHtml}
 `;
 
@@ -842,7 +846,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🏘️  Settlement Count : ${authState.settlement_count || 0}
 🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
 ── INIT-TIME WORLD GENERATION INPUTS (frozen) ──
-🌱 Phase3 Seed   : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
+🌱 World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
 ⚙️  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
 🏙️  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
 📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
@@ -869,7 +873,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             } else {
               const _sParse = _sLsc.parseSuccess ? 'success' : 'FAILED';
               const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' \u2192 "' + n.value + '"').join('\n');
-              _sCaptureTxt = '  detected : yes | parse : ' + _sParse + ' | applied : ' + _sLsc.updatesApplied + ' | skipped : ' + _sLsc.skipped + (_sNames ? '\n' + _sNames : '');
+              const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' \u2192 "' + c.new + '"').join('');
+              _sCaptureTxt = '  detected : yes | parse : ' + _sParse + ' | applied : ' + _sLsc.updatesApplied + _sChanges + '\n  skipped : ' + _sLsc.skipped + (_sNames ? '\n' + _sNames : '');
             }
             let _sMirrorTxt = '';
             if (_sCellSites.length > 0) {
@@ -884,7 +889,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             }
             stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
               + '\n\u2500\u2500 PHASE 5 CAPTURE (last turn) \u2500\u2500\n' + _sCaptureTxt
-              + '\n\u2500\u2500 LEGACY MIRROR CHECK (current cell) \u2500\u2500\n' + _sMirrorTxt;
+              + '\n\u2500\u2500 SITE INTERIOR LINK STATUS (world.sites vs cell.sites) \u2500\u2500\n' + _sMirrorTxt;
 
             // 11. Build settlement block with clarified labels
             let settlementSection = '';
@@ -1197,7 +1202,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 🏘️  Settlement Count : ${authState.settlement_count || 0}
 🗺️  World Cells   : ${_wTotal} total · ${_wRegionCount} in region (${_wMx},${_wMy}) · ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
 ── INIT-TIME WORLD GENERATION INPUTS (frozen) ──
-🌱 Phase3 Seed   : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
+🌱 World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
 ⚙️  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
 🏙️  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
 📜 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
@@ -1224,7 +1229,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           } else {
             const _sParse = _sLsc.parseSuccess ? 'success' : 'FAILED';
             const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' \u2192 "' + n.value + '"').join('\n');
-            _sCaptureTxt = '  detected : yes | parse : ' + _sParse + ' | applied : ' + _sLsc.updatesApplied + ' | skipped : ' + _sLsc.skipped + (_sNames ? '\n' + _sNames : '');
+            const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' \u2192 "' + c.new + '"').join('');
+            _sCaptureTxt = '  detected : yes | parse : ' + _sParse + ' | applied : ' + _sLsc.updatesApplied + _sChanges + '\n  skipped : ' + _sLsc.skipped + (_sNames ? '\n' + _sNames : '');
           }
           let _sMirrorTxt = '';
           if (_sCellSites.length > 0) {
@@ -1239,7 +1245,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           }
           stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
             + '\n\u2500\u2500 PHASE 5 CAPTURE (last turn) \u2500\u2500\n' + _sCaptureTxt
-            + '\n\u2500\u2500 LEGACY MIRROR CHECK (current cell) \u2500\u2500\n' + _sMirrorTxt;
+            + '\n\u2500\u2500 SITE INTERIOR LINK STATUS (world.sites vs cell.sites) \u2500\u2500\n' + _sMirrorTxt;
 
           // Settlement block with clarified labels
           let settlementSection = '';
