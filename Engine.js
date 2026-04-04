@@ -692,7 +692,12 @@ function enterSite(state, { cell_key, site_id }) {
   }
 
   let settlement = state.world.sites[interior_key];
-  const NPCs = require('./NPCs');
+  let NPCs = null;
+  try {
+    NPCs = require('./NPCs');
+  } catch (npcLoadErr) {
+    console.warn(`[ENGINE] NPCs module failed to load: ${npcLoadErr.message} — site will load without NPCs`);
+  }
 
   if (settlement && !settlement.is_stub) {
     // Reuse: full settlement already exists — no generation needed
@@ -706,7 +711,14 @@ function enterSite(state, { cell_key, site_id }) {
     const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
     if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
-    const npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
+    let npcs_here = [];
+    if (NPCs) {
+      try {
+        npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
+      } catch (npcGenErr) {
+        console.warn(`[ENGINE] NPC generation failed for stub ${interior_key}: ${npcGenErr.message} — site loads empty`);
+      }
+    }
 
     if (logger) {
       if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(interior_key, npcs_here.length);
@@ -742,7 +754,14 @@ function enterSite(state, { cell_key, site_id }) {
     const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
     if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
-    const npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
+    let npcs_here = [];
+    if (NPCs) {
+      try {
+        npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
+      } catch (npcGenErr) {
+        console.warn(`[ENGINE] NPC generation failed for fresh ${interior_key}: ${npcGenErr.message} — site loads empty`);
+      }
+    }
 
     if (logger) {
       if (npcs_here && npcs_here.length > 0) logger.npc_spawn_succeeded(interior_key, npcs_here.length);

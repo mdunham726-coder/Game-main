@@ -155,7 +155,7 @@ const TRAITS_CATALOG = [].concat(
 })();
 
 
-/** Job categories by tier: exactly 65 jobs */
+/** Job categories by tier: exactly 72 jobs */
 const JOB_CATEGORIES_BY_TIER = {
   1: [{"name": "governor", "criminal_weight": 0.1, "min_age": 30}, {"name": "commander", "criminal_weight": 0.15, "min_age": 28}, {"name": "judge", "criminal_weight": 0.05, "min_age": 40}, {"name": "high_priest", "criminal_weight": 0.05, "min_age": 35}, {"name": "merchant_prince", "criminal_weight": 0.2, "min_age": 35}, {"name": "bureaucrat", "criminal_weight": 0.15, "min_age": 30}, {"name": "diplomat", "criminal_weight": 0.1, "min_age": 35}, {"name": "spymaster", "criminal_weight": 0.5, "min_age": 35}, {"name": "warlord", "criminal_weight": 0.3, "min_age": 30}, {"name": "nobleman", "criminal_weight": 0.2, "min_age": 25}, {"name": "council_member", "criminal_weight": 0.15, "min_age": 40}],
   2: [{"name": "merchant", "criminal_weight": 0.3, "min_age": 20}, {"name": "scholar", "criminal_weight": 0.05, "min_age": 20}, {"name": "healer", "criminal_weight": 0.05, "min_age": 22}, {"name": "engineer", "criminal_weight": 0.05, "min_age": 20}, {"name": "craftmaster", "criminal_weight": 0.1, "min_age": 25}, {"name": "captain", "criminal_weight": 0.2, "min_age": 25}, {"name": "navigator", "criminal_weight": 0.1, "min_age": 20}, {"name": "architect", "criminal_weight": 0.05, "min_age": 25}, {"name": "cartographer", "criminal_weight": 0.05, "min_age": 25}, {"name": "researcher", "criminal_weight": 0.05, "min_age": 22}, {"name": "alchemist", "criminal_weight": 0.15, "min_age": 25}, {"name": "scribe", "criminal_weight": 0.05, "min_age": 18}, {"name": "philosopher", "criminal_weight": 0.05, "min_age": 28}, {"name": "performer", "criminal_weight": 0.1, "min_age": 16}, {"name": "poet", "criminal_weight": 0.1, "min_age": 18}, {"name": "artist", "criminal_weight": 0.05, "min_age": 16}, {"name": "blacksmith", "criminal_weight": 0.1, "min_age": 18}, {"name": "mason", "criminal_weight": 0.08, "min_age": 18}, {"name": "naturalist", "criminal_weight": 0.05, "min_age": 20}, {"name": "astronomer", "criminal_weight": 0.05, "min_age": 22}, {"name": "librarian", "criminal_weight": 0.05, "min_age": 20}, {"name": "weaponsmith", "criminal_weight": 0.15, "min_age": 20}],
@@ -168,7 +168,7 @@ const JOB_CATEGORIES_BY_TIER = {
   const counts = [JOB_CATEGORIES_BY_TIER[1].length, JOB_CATEGORIES_BY_TIER[2].length, JOB_CATEGORIES_BY_TIER[3].length, JOB_CATEGORIES_BY_TIER[4].length];
   const total = counts.reduce((a,b)=>a+b,0);
   if (counts[0] !== 11 || counts[1] !== 22 || counts[2] !== 27 || counts[3] !== 12) throw new Error("JOB_CATEGORIES_BY_TIER per-tier counts must be 11/22/27/12");
-  if (total !== 65) throw new Error("JOB_CATEGORIES_BY_TIER total must be 65");
+  if (total !== 72) throw new Error("JOB_CATEGORIES_BY_TIER total must be 72");
   for (const t of [1,2,3,4]){
     for (const j of JOB_CATEGORIES_BY_TIER[t]){
       if (!j || typeof j !== 'object') throw new Error("Invalid job object in tier "+t);
