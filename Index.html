@@ -200,7 +200,7 @@ const _pos = data.state?.world?.position;
 const _curKey = _pos ? `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}` : null;
 const _curSites = _curKey && data.state?.world?.cells?.[_curKey]?.sites
   ? Object.values(data.state.world.cells[_curKey].sites) : [];
-const _settlements = data.state?.world?.sites || {};
+const _sites = data.state?.world?.sites || {};
 
 // Build current cell sites HTML
 let _sitesHtml = '';
@@ -244,13 +244,13 @@ if (!_lsc || !_lsc.detected) {
 let _mirrorHtml = '';
 if (_curSites.length > 0) {
   _mirrorHtml = _curSites.map(s => {
-    const mirror = s.interior_key ? _settlements[s.interior_key] : null;
+    const mirror = s.interior_key ? _sites[s.interior_key] : null;
     if (!mirror) return `<div style="margin-left:8px;color:#444">• ${s.site_id} → (no mirror entry)</div>`;
     const mismatch = s.name != null && mirror.name !== s.name;
     if (mismatch) {
       return `<div style="margin-left:8px;color:#f80">⚠ ${s.site_id} mismatch: site.name="${s.name}" vs mirror="${mirror.name}"</div>`;
     }
-    return `<div style="margin-left:8px;color:#0a0">• ${s.site_id} → settlements.name=${mirror.name ?? '(unnamed)'}</div>`;
+    return `<div style="margin-left:8px;color:#0a0">• ${s.site_id} → site.name=${mirror.name ?? '(unnamed)'}</div>`;
   }).join('');
 } else {
   _mirrorHtml = '<div style="color:#555;margin-left:8px">no authoritative sites present — cell.sites is empty</div>';
@@ -856,7 +856,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             // Site diagnostic addendum
             const _sCellKey = authState.cell_key || null;
             const _sCellSites = _vis?.sites || [];
-            const _sSettlements = lastGameResponse?.state?.world?.sites || {};
+            const _sSites = lastGameResponse?.state?.world?.sites || {};
             const _sLsc = _vis?.last_site_capture || null;
             let _sSitesTxt = '';
             if (_sCellSites.length > 0) {
@@ -880,7 +880,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             let _sMirrorTxt = '';
             if (_sCellSites.length > 0) {
               _sMirrorTxt = _sCellSites.map(s => {
-                const _sm = s.interior_key ? _sSettlements[s.interior_key] : null;
+                const _sm = s.interior_key ? _sSites[s.interior_key] : null;
                 if (!_sm) return '  \u2022 ' + s.site_id + ' \u2192 (no mirror entry)';
                 const _smm = (s.name != null && _sm.name !== s.name) ? '\u26a0 MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '\u2713 ' + (_sm.name ?? '(unnamed)');
                 return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;
@@ -1212,7 +1212,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           // Site diagnostic addendum
           const _sCellKey = authState.cell_key || null;
           const _sCellSites = _vis?.sites || [];
-          const _sSettlements = lastGameResponse?.state?.world?.sites || {};
+          const _sSites = lastGameResponse?.state?.world?.sites || {};
           const _sLsc = _vis?.last_site_capture || null;
           let _sSitesTxt = '';
           if (_sCellSites.length > 0) {
@@ -1236,7 +1236,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           let _sMirrorTxt = '';
           if (_sCellSites.length > 0) {
             _sMirrorTxt = _sCellSites.map(s => {
-              const _sm = s.interior_key ? _sSettlements[s.interior_key] : null;
+              const _sm = s.interior_key ? _sSites[s.interior_key] : null;
               if (!_sm) return '  \u2022 ' + s.site_id + ' \u2192 (no mirror entry)';
               const _smm = (s.name != null && _sm.name !== s.name) ? '\u26a0 MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '\u2713 ' + (_sm.name ?? '(unnamed)');
               return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;

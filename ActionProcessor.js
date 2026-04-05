@@ -260,7 +260,7 @@ function computeInventoryDigestHex(state){
 
 // === PHASE 3C: Settlement NPC lookup (persistent NPCs, not current cell) ===
 function getNPCInSettlement(state, settlementId, npcId){
-  const settlement = ((state?.world?.settlements)||{})[settlementId];
+  const settlement = (state?.world?.sites || {})[settlementId];
   if (!settlement || !Array.isArray(settlement.npcs)) return null;
   return settlement.npcs.find(n => n?.id === npcId) || null;
 }
@@ -429,7 +429,7 @@ function updateNPCQuestState(action, state, deltas, flags){
         
         deltas.push({
           op: 'set',
-          path: `/world/settlements/${settlementId}/npcs`,
+          path: `/world/sites/${settlementId}/npcs`,
           value: settlement.npcs
         });
         
