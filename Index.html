@@ -198,7 +198,7 @@ const _pos = data.state?.world?.position;
 const _curKey = _pos ? `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}` : null;
 const _curSites = _curKey && data.state?.world?.cells?.[_curKey]?.sites
   ? Object.values(data.state.world.cells[_curKey].sites) : [];
-const _settlements = data.state?.world?.settlements || {};
+const _settlements = data.state?.world?.sites || {};
 
 // Build current cell sites HTML
 let _sitesHtml = '';
@@ -208,7 +208,6 @@ if (_curSites.length > 0) {
     const descStr  = s.description != null ? s.description : '<span style="color:#444">(null)</span>';
     return `<div style="margin-left:8px">• <strong>${s.site_id}</strong> | ${s.category}<br>
       &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
-      &nbsp;&nbsp;site_name: ${s.site_name != null ? s.site_name : '<span style="color:#444">(null)</span>'}<br>
       &nbsp;&nbsp;site_tier: ${s.site_tier != null ? s.site_tier : '<span style="color:#444">(null)</span>'}<br>
       &nbsp;&nbsp;desc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${descStr}<br>
       &nbsp;&nbsp;enterable: ${s.enterable ?? false} &nbsp;|&nbsp; entered : ${s.entered ?? false}
@@ -243,7 +242,7 @@ if (!_lsc || !_lsc.detected) {
 let _mirrorHtml = '';
 if (_curSites.length > 0) {
   _mirrorHtml = _curSites.map(s => {
-    const mirror = _settlements[s.site_id];
+    const mirror = s.interior_key ? _settlements[s.interior_key] : null;
     if (!mirror) return `<div style="margin-left:8px;color:#444">• ${s.site_id} → (no mirror entry)</div>`;
     const mismatch = s.name != null && mirror.name !== s.name;
     if (mismatch) {
@@ -840,7 +839,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 📝 Description   : ${authState.cell_description || '(unknown)'}
 🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 🔑 Grid Key      : ${authState.cell_key || 'unknown'}
-🗂️  Layer          : ${{ 1: 'overworld', 2: 'site', 3: 'building' }[authState.current_depth] || 'overworld'}
+🗂️  Layer          : ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0'}
+🏠 Active Container: ${lastGameResponse?.state?.world?.active_site?.name || '(none)'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}
@@ -854,15 +854,14 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             // Site diagnostic addendum
             const _sCellKey = authState.cell_key || null;
             const _sCellSites = _vis?.sites || [];
-            const _sSettlements = lastGameResponse?.state?.world?.settlements || {};
+            const _sSettlements = lastGameResponse?.state?.world?.sites || {};
             const _sLsc = _vis?.last_site_capture || null;
             let _sSitesTxt = '';
             if (_sCellSites.length > 0) {
               _sSitesTxt = _sCellSites.map(s => {
                 const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
-                const sn = s.site_name != null ? '"' + s.site_name + '"' : '(null)';
                 const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
-                return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_name=' + sn + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
+                return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
               }).join('\n');
             } else {
               _sSitesTxt = '  \u2022 none';
@@ -879,7 +878,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             let _sMirrorTxt = '';
             if (_sCellSites.length > 0) {
               _sMirrorTxt = _sCellSites.map(s => {
-                const _sm = _sSettlements[s.site_id];
+                const _sm = s.interior_key ? _sSettlements[s.interior_key] : null;
                 if (!_sm) return '  \u2022 ' + s.site_id + ' \u2192 (no mirror entry)';
                 const _smm = (s.name != null && _sm.name !== s.name) ? '\u26a0 MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '\u2713 ' + (_sm.name ?? '(unnamed)');
                 return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;
@@ -1196,7 +1195,8 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
 📝 Description   : ${authState.cell_description || '(unknown)'}
 🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 🔑 Grid Key      : ${authState.cell_key || 'unknown'}
-🗂️  Layer          : ${{ 1: 'overworld', 2: 'site', 3: 'building' }[authState.current_depth] || 'overworld'}
+🗂️  Layer          : ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0'}
+🏠 Active Container: ${lastGameResponse?.state?.world?.active_site?.name || '(none)'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}
@@ -1210,15 +1210,14 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           // Site diagnostic addendum
           const _sCellKey = authState.cell_key || null;
           const _sCellSites = _vis?.sites || [];
-          const _sSettlements = lastGameResponse?.state?.world?.settlements || {};
+          const _sSettlements = lastGameResponse?.state?.world?.sites || {};
           const _sLsc = _vis?.last_site_capture || null;
           let _sSitesTxt = '';
           if (_sCellSites.length > 0) {
             _sSitesTxt = _sCellSites.map(s => {
               const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
-              const sn = s.site_name != null ? '"' + s.site_name + '"' : '(null)';
               const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
-              return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_name=' + sn + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
+              return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
             }).join('\n');
           } else {
             _sSitesTxt = '  \u2022 none';
@@ -1235,7 +1234,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           let _sMirrorTxt = '';
           if (_sCellSites.length > 0) {
             _sMirrorTxt = _sCellSites.map(s => {
-              const _sm = _sSettlements[s.site_id];
+              const _sm = s.interior_key ? _sSettlements[s.interior_key] : null;
               if (!_sm) return '  \u2022 ' + s.site_id + ' \u2192 (no mirror entry)';
               const _smm = (s.name != null && _sm.name !== s.name) ? '\u26a0 MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '\u2713 ' + (_sm.name ?? '(unnamed)');
               return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;

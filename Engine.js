@@ -440,11 +440,11 @@ function buildOutput(prevState, inputObj, logger) {
     const enterCell = state.world.cells && state.world.cells[enterCellKey];
     const enterSites = enterCell ? Object.values(enterCell.sites || {}) : [];
 
-    // Backward-compat: real settlement sites from old sessions may have enterable !== true
+    // Backward-compat: real enterable sites from old sessions may have enterable !== true
     // (evaluateCellForSites post-fix always sets it, but persisted state may predate the fix).
     // Repair in-place so they participate correctly in entry selection.
     for (const s of enterSites) {
-      if (s.category === 'settlement' && !s.is_starting_location && s.enterable !== true) {
+      if (!s.is_starting_location && s.category !== 'landmark' && s.enterable !== true) {
         s.enterable = true;
         if (!s.interior_key) s.interior_key = `${s.site_id}/l2`;
         state.world.sites = state.world.sites || {};
@@ -453,7 +453,7 @@ function buildOutput(prevState, inputObj, logger) {
             name: s.name ?? null, type: s.site_tier || 'settlement', npcs: [], is_stub: true
           };
         }
-        console.log(`[ENGINE] [COMPAT] Lazy-fixed enterable on real settlement ${s.site_id} (${s.name || '(unnamed)'})`);
+        console.log(`[ENGINE] [COMPAT] Lazy-fixed enterable on ${s.category} site ${s.site_id} (${s.name || '(unnamed)'})`);
       }
     }
 
@@ -469,14 +469,30 @@ function buildOutput(prevState, inputObj, logger) {
     let targetSite = null;
     const targetName = (actions.target || '').toLowerCase().trim();
     if (targetName) {
-      targetSite = enterSites.find(s =>
+      // Step 1: find a site whose name, tier, or category matches the target string.
+      const namedMatch = enterSites.find(s =>
         (s.name && s.name.toLowerCase().includes(targetName)) ||
-        (s.site_tier && s.site_tier.toLowerCase().includes(targetName))
+        (s.site_tier && s.site_tier.toLowerCase().includes(targetName)) ||
+        (s.category && s.category.toLowerCase().includes(targetName))
       );
+      if (namedMatch) {
+        if (namedMatch.enterable === true) {
+          // Named target found and is enterable — use it.
+          targetSite = namedMatch;
+        } else {
+          // Named target found but NOT enterable — reject rather than silently redirecting.
+          console.log(`[Phase10-ENTER] Named target "${targetName}" resolved to ${namedMatch.site_id} but enterable !== true — rejecting.`);
+          targetSite = null;
+        }
+      }
+      // If namedMatch is null, fall through to default selection below.
     }
-    if (!targetSite) targetSite =
-      enterSites.find(s => s.enterable === true && !s.is_starting_location) ||
-      enterSites.find(s => s.enterable === true);
+    if (!targetSite && !targetName) {
+      // No explicit target — default to first real enterable site, skipping bootstrap placeholder.
+      targetSite =
+        enterSites.find(s => s.enterable === true && !s.is_starting_location) ||
+        enterSites.find(s => s.enterable === true);
+    }
 
     if (targetSite) {
       enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id }, logger);

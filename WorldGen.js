@@ -871,7 +871,6 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
       l0_ref:          { mx, my, lx, ly },
       category,
       enterable,
-      site_name:       null,
       site_tier:       null,
       name:            null,
       entered:         false,

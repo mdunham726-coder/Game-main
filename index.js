@@ -858,12 +858,13 @@ app.post('/narrate', async (req, res) => {
           const _startCellSites = Object.values(gameState.world.cells[startingLocationCellKey].sites);
           const _hasEnterableSite = _startCellSites.some(s => s.enterable === true && s.interior_key);
           if (!_hasEnterableSite) {
+            const _validStartTiers = { village: 'village', town: 'town', city: 'city', outpost: 'outpost', fortress: 'fortress', hamlet: 'hamlet' };
+            const _startTier = _validStartTiers[worldData.startingLocationType] || 'village';
             const _startSiteId = `M${startPos.mx}x${startPos.my}:site_start`;
             Engine.recordSiteToCell(gameState, startingLocationCellKey, {
               site_id:          _startSiteId,
               category:         'settlement',
-              site_name:        null,
-              site_tier:        worldData.startingLocationType,  // e.g. "village", "outpost" — migration scaffolding
+              site_tier:        _startTier,
               enterable:        true,
               name:             null,                            // filled by Phase 5 site_updates on first narration
               description:      null,
@@ -1364,6 +1365,10 @@ The player has already moved. They are now in the location described above.
         currentSettlement = gameState.world.sites[_settlementSite.interior_key]
           || gameState.world.sites[_settlementSite.site_id]
           || null;
+        // B4: prefer live name from cell.sites over potentially stale stub name in world.sites
+        if (currentSettlement && _settlementSite.name != null) {
+          currentSettlement = { ...currentSettlement, name: _settlementSite.name };
+        }
       }
     }
     
@@ -1375,7 +1380,7 @@ The player has already moved. They are now in the location described above.
       cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
-      settlement_count: Object.keys(gameState.world.sites || {}).length,
+      settlement_count: Object.values(gameState.world.sites || {}).filter(s => !s.is_stub).length,
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1
     };
@@ -1383,7 +1388,7 @@ The player has already moved. They are now in the location described above.
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
     {
       const _vpDepth = gameState.world.current_depth || 1;
-      const _vpDepthLabels = { 1: 'overworld', 2: 'site', 3: 'building', 4: 'subspace' };
+      const _vpDepthLabels = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' };
       const _vpSettlements = gameState.world.sites || {};
       const _vpActiveBuilding = gameState.world.active_building || null;
       const _vpAllCells = gameState.world.cells || {};
@@ -1413,7 +1418,6 @@ The player has already moved. They are now in the location described above.
           site_id: _s.site_id,
           category: _s.category || null,
           name: _s.name || null,
-          site_name: _s.site_name || null,
           site_tier: _s.site_tier || null,
           enterable: _s.enterable ?? false,
           entered: _s.entered ?? false,
@@ -1424,9 +1428,10 @@ The player has already moved. They are now in the location described above.
         };
       });
       visibilityPayload = {
-        layer: _vpDepthLabels[_vpDepth] || 'overworld',
+        layer: _vpDepthLabels[_vpDepth] || 'L0',
         current_depth: _vpDepth,
         entered_site: _vpDepth >= 2,
+        inside_site: _vpDepth >= 2,
         entered_building: _vpDepth >= 3,
         container: {
           kind: 'cell',
@@ -1884,7 +1889,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   context += `Cell Biome: ${currentCell?.biome || "unknown"}\n`;
   context += `Description: ${currentCell?.description || ""}\n`;
   const _ctxDepth = gameState.world.current_depth ?? 1;
-  const _ctxLayer = { 1: 'L0 (overworld)', 2: 'L2 (site interior)', 3: 'L3 (building)' }[_ctxDepth] || `L? (depth ${_ctxDepth})`;
+  const _ctxLayer = { 1: 'L0 (overworld)', 2: 'L1 (site)', 3: 'L2 (building)', 4: 'L3 (subspace)' }[_ctxDepth] || `L? (depth ${_ctxDepth})`;
   context += `Current Layer   : ${_ctxLayer}\n`;
 
   context += `\n=== NEARBY NPCS ===\n`;
@@ -1914,7 +1919,6 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     if (_dbgSites.length > 0) {
       _dbgSites.forEach(s => {
         context += `- ${s.site_id} | ${s.category} | name: ${s.name ?? '(unnamed)'}\n`;
-        if (s.site_name != null) context += `  site_name : ${s.site_name}\n`;
         if (s.site_tier != null) context += `  site_tier : ${s.site_tier}\n`;
         if (s.description != null) context += `  desc      : ${s.description}\n`;
       });
