@@ -1437,7 +1437,7 @@ ${_phase5Instruction}`;
       cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
-      settlement_count: Object.keys(gameState.world.sites || {}).filter(k => k !== 'null').length,
+      settlement_count: Object.values(currentCell?.sites || {}).length,
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1,
       active_site_name: gameState.world.active_site?.name || null
@@ -1534,7 +1534,7 @@ ${_phase5Instruction}`;
         region_cell_count: Object.keys(_vpAllCells).filter(k => k.startsWith(`LOC:${currentPosition.mx},${currentPosition.my}:`)).length,
         regions_explored: _vpRegionKeys.size,
         turn_counter: gameState.turn_counter || 0,
-        settlement_count: Object.keys(_vpSettlements).filter(k => k !== 'null').length,
+        settlement_count: Object.values(currentCell?.sites || {}).length,
         last_site_capture: gameState.world._lastSiteCapture || null
       };
     }
@@ -1681,8 +1681,8 @@ ${_phase5Instruction}`;
     }
     
     // 1. Check: narration_mismatch (using QA-1 scoring logic)
-    if (!turnNumber || turnNumber === 1) {
-      // Skip diagnostics on initialization turn
+    if (!turnNumber || turnNumber === 1 || authoritativeState.current_depth > 1) {
+      // Skip diagnostics on initialization turn or when inside a site
     } else {
       const cellType = authoritativeState.cell_type || '';
       const cellCategory = classifyCellCategory(cellType);

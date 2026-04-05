@@ -272,6 +272,7 @@ function recordSiteToCell(state, cellKey, site) {
       return;
     }
     state.world.sites[site.interior_key] = {
+      id:       site.interior_key,
       name:     site.name ?? null,
       type:     site.site_tier || site.identity || site.subtype,
       category: site.category || null,  // propagated from cell.sites for count filtering
@@ -522,10 +523,10 @@ function buildOutput(prevState, inputObj, logger) {
       if (!namedMatch) {
         // No match at all — prefer settlements explicitly; never pick buildings/landmarks/pois.
         const _settlementCandidates = enterSites.filter(
-          s => s.enterable === true && !s.is_starting_location && s.category === 'settlement'
+          s => s.enterable === true && s.category === 'settlement'
         );
         const _anyCandidates = enterSites.filter(
-          s => s.enterable === true && !s.is_starting_location
+          s => s.enterable === true
         );
         const _genericCandidates = _settlementCandidates.length > 0 ? _settlementCandidates : _anyCandidates;
         if (_genericCandidates.length === 1) {
