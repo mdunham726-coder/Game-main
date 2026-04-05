@@ -440,6 +440,29 @@ function buildOutput(prevState, inputObj, logger) {
     const enterCell = state.world.cells && state.world.cells[enterCellKey];
     const enterSites = enterCell ? Object.values(enterCell.sites || {}) : [];
 
+    // Backward-compat: real settlement sites from old sessions may have enterable !== true
+    // (evaluateCellForSites post-fix always sets it, but persisted state may predate the fix).
+    // Repair in-place so they participate correctly in entry selection.
+    for (const s of enterSites) {
+      if (s.category === 'settlement' && !s.is_starting_location && s.enterable !== true) {
+        s.enterable = true;
+        if (!s.interior_key) s.interior_key = `${s.site_id}/l2`;
+        state.world.sites = state.world.sites || {};
+        if (!state.world.sites[s.interior_key]) {
+          state.world.sites[s.interior_key] = {
+            name: s.name ?? null, type: s.site_tier || 'settlement', npcs: [], is_stub: true
+          };
+        }
+        console.log(`[ENGINE] [COMPAT] Lazy-fixed enterable on real settlement ${s.site_id} (${s.name || '(unnamed)'})`);
+      }
+    }
+
+    // Suppress bootstrap site_start once a real enterable settlement exists in this cell.
+    const _hasRealSettlement = enterSites.some(s => s.category === 'settlement' && !s.is_starting_location && s.enterable === true);
+    if (_hasRealSettlement) {
+      enterSites.filter(s => s.is_starting_location).forEach(s => { s.enterable = false; });
+    }
+
     // Phase 7 temporary scaffolding: minimal site resolution.
     // Priority: explicit name match → first settlement site → first poi site.
     // Multi-site disambiguation and clarification prompts are deferred to a later phase.
