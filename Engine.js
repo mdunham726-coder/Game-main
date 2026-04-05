@@ -451,7 +451,7 @@ function buildOutput(prevState, inputObj, logger) {
     if (!targetSite) targetSite = enterSites.find(s => s.enterable === true);
 
     if (targetSite) {
-      enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id });
+      enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id }, logger);
     } else {
       console.log('[Phase10-ENTER] No enterable site found at', enterCellKey);
     }
@@ -643,7 +643,7 @@ if (require.main === module) main();
  * Phase 7: Site-driven entry — l2_id derived from site.site_id, not cell subtype.
  * Input: { cell_key, site_id } — caller resolves target site before calling.
  */
-function enterSite(state, { cell_key, site_id }) {
+function enterSite(state, { cell_key, site_id }, logger) {
   if (!state || !state.world) return null;
 
   // Resolve site from cell.sites
