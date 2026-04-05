@@ -1115,7 +1115,8 @@ function worldGenStep(world) {
     mx, my,
     center_lx, center_ly,
     footprint: fp,
-    biome: macro.biome
+    biome: macro.biome,
+    is_stub: true   // worldGenStep entries are L0-concept placeholders, not entered sites
   };
 
   return { ...world, sites };

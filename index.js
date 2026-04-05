@@ -1247,6 +1247,11 @@ Biome: ${_narBiome || '(unknown)'}
 Civilization Presence: ${_narCivPresence || '(unknown)'}
 Environment Tone: ${_narEnvTone || '(unknown)'}
 
+LAYER CONSTRAINT [MANDATORY]:
+${_narDepth >= 2
+  ? `You are inside a site (Layer L${_narDepth - 1}). Describe the interior of the current site as indicated below.`
+  : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, settlement, or building. The player is outdoors in open terrain. Any settlements listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
+
 CORE INSTRUCTIONS:
 - Let the world tone guide your descriptions and atmosphere
 - Expand on the location description with vivid sensory details matching the tone

@@ -249,6 +249,14 @@ function recordSiteToCell(state, cellKey, site) {
     site.interior_key = `${site.site_id}/l2`;
   }
 
+  // Settlements are always enterable by definition. Enforce at registration time so
+  // persisted sessions and any upstream generation path cannot produce a stuck false.
+  // is_starting_location suppression is handled separately in the enter handler.
+  if (site.category === 'settlement' && site.enterable !== true) {
+    site.enterable = true;
+    console.log(`[ENGINE] [REGISTRATION] Forced enterable=true on settlement ${site.site_id}`);
+  }
+
   cell.sites = cell.sites || {};
   cell.sites[site.site_id] = site;
 
@@ -494,31 +502,37 @@ function buildOutput(prevState, inputObj, logger) {
       }
       // If namedMatch is null, fall through to default selection below.
     }
-    // Generic settlement term fallback: if the player typed a general category word (e.g. "enter town")
-    // that didn't match any specific site name/tier/category, and there was NO match at all (not a
-    // found-but-non-enterable case), resolve to the single enterable settlement at this cell.
-    // Only fires when targetName is set and namedMatch was undefined — not when a non-enterable target
-    // was explicitly found and rejected.
+    // Generic settlement term fallback: if the player typed a general category word (e.g. "enter town"
+    // or "enter the town"), strip leading articles then check against known generic terms.
+    // Settlement priority: always select a settlement over any other site type.
+    // Only fires when targetName had NO match at all (not a found-but-non-enterable case).
     const _GENERIC_ENTRY_TERMS = new Set([
       'town', 'city', 'village', 'hamlet', 'settlement', 'outpost',
       'fortress', 'camp', 'keep', 'dungeon', 'ruins', 'cave', 'tower'
     ]);
-    if (!targetSite && targetName && _GENERIC_ENTRY_TERMS.has(targetName)) {
+    const _normalizedTarget = targetName.replace(/^(the|a|an)\s+/, '');
+    if (!targetSite && targetName && _GENERIC_ENTRY_TERMS.has(_normalizedTarget)) {
       const namedMatch = enterSites.find(s =>
-        (s.name && s.name.toLowerCase().includes(targetName)) ||
-        (s.site_tier && s.site_tier.toLowerCase().includes(targetName)) ||
-        (s.category && s.category.toLowerCase().includes(targetName))
+        (s.name && s.name.toLowerCase().includes(_normalizedTarget)) ||
+        (s.site_tier && s.site_tier.toLowerCase().includes(_normalizedTarget)) ||
+        (s.category && s.category.toLowerCase().includes(_normalizedTarget))
       );
       if (!namedMatch) {
-        // No match at all — try generic fallback to sole enterable settlement
-        const _genericCandidates = enterSites.filter(s => s.enterable === true && !s.is_starting_location);
+        // No match at all — prefer settlements explicitly; never pick buildings/landmarks/pois.
+        const _settlementCandidates = enterSites.filter(
+          s => s.enterable === true && !s.is_starting_location && s.category === 'settlement'
+        );
+        const _anyCandidates = enterSites.filter(
+          s => s.enterable === true && !s.is_starting_location
+        );
+        const _genericCandidates = _settlementCandidates.length > 0 ? _settlementCandidates : _anyCandidates;
         if (_genericCandidates.length === 1) {
           targetSite = _genericCandidates[0];
-          console.log(`[Phase10-ENTER] Generic term "${targetName}" matched single enterable site ${targetSite.site_id} (${targetSite.site_tier || targetSite.category})`);
+          console.log(`[Phase10-ENTER] Generic term "${targetName}" (normalized: "${_normalizedTarget}") matched single site ${targetSite.site_id} (${targetSite.category})`);
         } else if (_genericCandidates.length > 1) {
-          // Ambiguous — use first, log warning
+          // Ambiguous — use first settlement, log warning
           targetSite = _genericCandidates[0];
-          console.log(`[Phase10-ENTER] Generic term "${targetName}" ambiguous (${_genericCandidates.length} candidates) — using first: ${targetSite.site_id}`);
+          console.log(`[Phase10-ENTER] Generic term "${targetName}" ambiguous (${_genericCandidates.length} candidates) — using first settlement: ${targetSite.site_id}`);
         }
         // Zero candidates: fall through to explicit rejection below
       }
@@ -825,12 +839,15 @@ function enterSite(state, { cell_key, site_id }, logger) {
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
     // Replace stub with a fully generated settlement object.
-    // Stub-complete previously mutated in-place, leaving settlement.name = null.
-    // generateL2Settlement produces the canonical record (id, name, type, buildings, grid, etc.).
-    // Spatial metadata (mx/my/lx/ly) is preserved from the stub since WorldGen doesn't set those.
+    // Identity chain: site_id → site.name → container → mirror → UI.
+    // Priority: Phase-5E LLM name (written by site_updates on a prior turn) > generated fallback.
+    // Spatial metadata (mx/my/lx/ly) preserved from stub since WorldGen doesn't set those.
+    const _stubName = settlement.name || null;  // Phase-5E name if already written
     const _stubMx = settlement.mx, _stubMy = settlement.my;
     const _stubLx = settlement.lx, _stubLy = settlement.ly;
-    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here);
+    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here, state.rng_seed);
+    // Restore authoritative name: Phase-5E value takes precedence over generated fallback.
+    if (_stubName) settlement.name = _stubName;
     settlement.mx = _stubMx; settlement.my = _stubMy;
     settlement.lx = _stubLx; settlement.ly = _stubLy;
     state.world.sites[interior_key] = settlement;
@@ -840,7 +857,7 @@ function enterSite(state, { cell_key, site_id }, logger) {
       logger.settlement_registered(interior_key, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
     }
 
-    console.log(`[ENGINE] Completed stub: ${settlement.name}, ${npcs_here.length} NPCs`);
+    console.log(`[ENGINE] Completed stub (name=${settlement.name}, source=${_stubName ? 'phase5e' : 'generated'}): ${npcs_here.length} NPCs`);
 
     if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSettlement: 5 } };
     if (!state.quests.allQuestsSeeded) state.quests.allQuestsSeeded = {};
@@ -873,7 +890,7 @@ function enterSite(state, { cell_key, site_id }, logger) {
 
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
-    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here);
+    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here, state.rng_seed);
     state.world.sites[interior_key] = settlement;
 
     const totalSites = Object.keys(state.world.sites).length;
