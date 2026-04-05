@@ -137,7 +137,14 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     if (newLx >= l1w) { newMx += 1; newLx = 0; }
     if (newLy < 0) { newMy -= 1; newLy = l1h - 1; }
     if (newLy >= l1h) { newMy += 1; newLy = 0; }
-    
+
+    // Apply L0 toroidal wrap so macro coordinates stay within the 8×8 grid.
+    // streamL1Cells applies identical arithmetic — position and cell keys must agree.
+    const l0w = state?.world?.l0_size?.w || 8;
+    const l0h = state?.world?.l0_size?.h || 8;
+    newMx = ((newMx % l0w) + l0w) % l0w;
+    newMy = ((newMy % l0h) + l0h) % l0h;
+
     // Log movement attempt with full context
     if (logger) {
       logger.player_move_attempted(

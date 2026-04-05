@@ -271,14 +271,15 @@ function recordSiteToCell(state, cellKey, site) {
       return;
     }
     state.world.sites[site.interior_key] = {
-      name:    site.name ?? null,
-      type:    site.site_tier || site.identity || site.subtype,
-      npcs:    [],
-      is_stub: true,
-      mx:      cell.mx,
-      my:      cell.my,
-      lx:      cell.lx,
-      ly:      cell.ly,
+      name:     site.name ?? null,
+      type:     site.site_tier || site.identity || site.subtype,
+      category: site.category || null,  // propagated from cell.sites for count filtering
+      npcs:     [],
+      is_stub:  true,
+      mx:       cell.mx,
+      my:       cell.my,
+      lx:       cell.lx,
+      ly:       cell.ly,
     };
   }
 }
@@ -850,6 +851,7 @@ function enterSite(state, { cell_key, site_id }, logger) {
     if (_stubName) settlement.name = _stubName;
     settlement.mx = _stubMx; settlement.my = _stubMy;
     settlement.lx = _stubLx; settlement.ly = _stubLy;
+    settlement.category = site.category || null;  // carry category from cell.sites for count filtering
     state.world.sites[interior_key] = settlement;
 
     if (logger) {
@@ -891,6 +893,7 @@ function enterSite(state, { cell_key, site_id }, logger) {
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
     settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here, state.rng_seed);
+    settlement.category = site.category || null;  // carry category from cell.sites for count filtering
     state.world.sites[interior_key] = settlement;
 
     const totalSites = Object.keys(state.world.sites).length;

@@ -220,6 +220,22 @@ async function performLoad(sessionId, saveName) {
       console.log('[LOAD] Migrated world.settlements → world.sites on loaded save.');
     }
 
+    // Migration: repair enterable flag for old sessions that predate Phase E enforcement
+    if (_gs.world && _gs.world.cells) {
+      let _enterableRepairs = 0;
+      for (const _cell of Object.values(_gs.world.cells)) {
+        if (_cell && _cell.sites) {
+          for (const _s of Object.values(_cell.sites)) {
+            if (_s.category === 'settlement' && _s.enterable !== true) {
+              _s.enterable = true;
+              _enterableRepairs++;
+            }
+          }
+        }
+      }
+      if (_enterableRepairs > 0) console.log(`[LOAD] Repaired enterable=true on ${_enterableRepairs} settlement site(s).`);
+    }
+
     return {
       success: true,
       gameState: saveData.gameState,
@@ -1399,7 +1415,7 @@ The player has already moved. They are now in the location described above.
       cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
-      settlement_count: Object.values(gameState.world.sites || {}).filter(s => !s.is_stub).length,
+      settlement_count: Object.values(gameState.world.sites || {}).filter(s => s.category === 'settlement').length,
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1,
       active_site_name: gameState.world.active_site?.name || null
@@ -1496,7 +1512,7 @@ The player has already moved. They are now in the location described above.
         region_cell_count: Object.keys(_vpAllCells).filter(k => k.startsWith(`LOC:${currentPosition.mx},${currentPosition.my}:`)).length,
         regions_explored: _vpRegionKeys.size,
         turn_counter: gameState.turn_counter || 0,
-        settlement_count: Object.values(_vpSettlements).filter(s => !s.is_stub).length,
+        settlement_count: Object.values(_vpSettlements).filter(s => s.category === 'settlement').length,
         last_site_capture: gameState.world._lastSiteCapture || null
       };
     }
