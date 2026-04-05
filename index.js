@@ -1193,12 +1193,12 @@ app.post('/narrate', async (req, res) => {
     // Phase 5B: Build site context block from current cell's sites
     let _siteContextBlock = '';
     const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites) : [];
+    const _hasNamed   = _narCellSites.some(s => s.name != null);
+    const _hasUnnamed = _narCellSites.some(s => s.name == null);
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
         .map(s => `- site_id: ${s.site_id} | category: ${s.category} | site_tier: ${s.site_tier ?? '(none)'} | name: ${s.name ?? '(unnamed)'}`)
         .join('\n');
-      const _hasNamed   = _narCellSites.some(s => s.name != null);
-      const _hasUnnamed = _narCellSites.some(s => s.name == null);
       let _instructionLines = '';
       if (_hasNamed && _hasUnnamed) {
         // Mixed: scope each instruction explicitly
