@@ -1203,6 +1203,9 @@ app.post('/narrate', async (req, res) => {
     // Phase 10: Override scene description and site context when player is inside a site
     const _narDepth = gameState?.world?.current_depth || 1;
     const _narActiveSite = gameState?.world?.active_site || null;
+    // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
+    const _engineMsg = gameState?.world?._engineMessage || null;
+    if (_engineMsg) gameState.world._engineMessage = null;
     let _narSceneDesc = scene.currentCell?.description || 'An empty space';
     let _narSceneType = scene.currentCell?.type || 'void';
     if (_narDepth >= 2 && _narActiveSite) {
@@ -1224,6 +1227,15 @@ app.post('/narrate', async (req, res) => {
     const _narBiome = gameState?.world?.macro_biome || null;
     const _narCivPresence = gameState?.world?.world_bias?.civilization_presence || null;
     const _narEnvTone = gameState?.world?.world_bias?.environment_tone || null;
+
+    // Build optional engine message block (failed enter, failed exit, etc.)
+    const _engineMsgBlock = _engineMsg ? `\nSYSTEM NOTE: ${_engineMsg}\n` : '';
+
+    // Fix 6: When player moved (action === 'move') and is at L0, clarify new cell context.
+    const _actionType = engineOutput?.actions?.action || '';
+    const _movedNote = (_actionType === 'move' && _narDepth === 1)
+      ? '\nNOTE: Player moved to a new overworld cell. Any sites visible here belong to this cell — they are not changes to the previous location.\n'
+      : '';
 
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
@@ -1251,7 +1263,7 @@ ${_narSceneDesc}
 ${nearbyStr}
 
 INVENTORY: ${invStr}
-NPCs PRESENT: ${npcsStr}${_siteContextBlock}
+NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}
 
 The player has already moved. They are now in the location described above.
 
@@ -1382,7 +1394,8 @@ The player has already moved. They are now in the location described above.
       turn_counter: gameState.turn_counter || 0,
       settlement_count: Object.values(gameState.world.sites || {}).filter(s => !s.is_stub).length,
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
-      current_depth: gameState.world.current_depth || 1
+      current_depth: gameState.world.current_depth || 1,
+      active_site_name: gameState.world.active_site?.name || null
     };
 
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
@@ -1390,6 +1403,7 @@ The player has already moved. They are now in the location described above.
       const _vpDepth = gameState.world.current_depth || 1;
       const _vpDepthLabels = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' };
       const _vpSettlements = gameState.world.sites || {};
+      const _vpActiveSite = gameState.world.active_site || null;
       const _vpActiveBuilding = gameState.world.active_building || null;
       const _vpAllCells = gameState.world.cells || {};
       const _vpWb = gameState.world.world_bias || null;
@@ -1433,7 +1447,23 @@ The player has already moved. They are now in the location described above.
         entered_site: _vpDepth >= 2,
         inside_site: _vpDepth >= 2,
         entered_building: _vpDepth >= 3,
-        container: {
+        active_site_name: _vpActiveSite?.name || null,
+        container: _vpDepth >= 2 && _vpActiveSite ? {
+          kind: 'site',
+          name: _vpActiveSite.name || null,
+          type: _vpActiveSite.type || null,
+          site_id: _vpActiveSite.settlement_id || null,
+          grid_key: cellKey,
+          mac_key: `MAC:${currentPosition.mx},${currentPosition.my}`,
+          mx: currentPosition.mx,
+          my: currentPosition.my,
+          lx: currentPosition.lx,
+          ly: currentPosition.ly,
+          cell_type: currentCell?.type || null,
+          cell_subtype: currentCell?.subtype || null,
+          cell_description: currentCell?.description || null,
+          biome: gameState.world.macro_biome || null
+        } : {
           kind: 'cell',
           grid_key: cellKey,
           mac_key: `MAC:${currentPosition.mx},${currentPosition.my}`,

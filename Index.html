@@ -178,6 +178,8 @@ const diag = data.turn_history && data.turn_history.length > 0
         turn_counter: auth.turn_counter ?? (fallbackDiag.turn_counter ?? 0),
         position_macro: auth.position ? `(${auth.position.mx},${auth.position.my})` : (fallbackDiag.position_macro || 'unknown'),
         position_local: auth.position ? `(${auth.position.lx},${auth.position.ly})` : (fallbackDiag.position_local || 'unknown'),
+        current_depth: auth.current_depth || 1,
+        active_site_name: auth.active_site_name || null,
         cell_type: auth.cell_type || (fallbackDiag.cell_type || 'unknown'),
         cell_subtype: auth.cell_subtype || (fallbackDiag.cell_subtype || 'unknown'),
         macro_biome: auth.biome || (fallbackDiag.macro_biome || 'UNDEFINED'),
@@ -256,7 +258,7 @@ if (_curSites.length > 0) {
 
 diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
-  <div><strong>Position Macro:</strong> ${diag.position_macro || 'unknown'} | <strong>Local:</strong> ${diag.position_local || 'unknown'}</div>
+  <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.active_site_name || '(none)'}</div>
   <div><strong>Current Cell:</strong> Type: ${diag.cell_type || 'unknown'} | Subtype: ${diag.cell_subtype || 'unknown'}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>
   <div><strong>World Initialized:</strong> ${diag.world_initialized ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
@@ -834,13 +836,13 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             const _qWb  = _vis?.world_bias || null;
             const _qWc  = lastGameResponse?.state?.world?.world_context || null;
             const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
+            const _stLayerLabel = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0';
+            const _stContainer = authState.active_site_name || '(none)';
             let stateSection = `
-📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
+📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}
 📝 Description   : ${authState.cell_description || '(unknown)'}
 🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 🔑 Grid Key      : ${authState.cell_key || 'unknown'}
-🗂️  Layer          : ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0'}
-🏠 Active Container: ${lastGameResponse?.state?.world?.active_site?.name || '(none)'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}
@@ -1190,13 +1192,13 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           const _qWb  = _vis?.world_bias || null;
           const _qWc  = lastGameResponse?.state?.world?.world_context || null;
           const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
+          const _stLayerLabel = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0';
+          const _stContainer = authState.active_site_name || '(none)';
           let stateSection = `
-📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly})
+📍 Position      : Macro(${authState.position?.mx},${authState.position?.my}) → Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}
 📝 Description   : ${authState.cell_description || '(unknown)'}
 🧱 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 🔑 Grid Key      : ${authState.cell_key || 'unknown'}
-🗂️  Layer          : ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0'}
-🏠 Active Container: ${lastGameResponse?.state?.world?.active_site?.name || '(none)'}
 🌍 Biome         : ${authState.biome || 'unknown'}
 🔢 Turn Counter  : ${authState.turn_counter || 0}
 🏘️  Settlement Count : ${authState.settlement_count || 0}

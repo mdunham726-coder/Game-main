@@ -435,6 +435,7 @@ function buildOutput(prevState, inputObj, logger) {
   // Phase 7: Handle 'enter' action — site entry.
   // Lives in buildOutput (not ActionProcessor) to avoid circular dependency.
   if (actions.action === 'enter') {
+    state.world._engineMessage = null; // clear any prior message
     const enterPos = state.world.position;
     const enterCellKey = `LOC:${enterPos.mx},${enterPos.my}:${enterPos.lx},${enterPos.ly}`;
     const enterCell = state.world.cells && state.world.cells[enterCellKey];
@@ -497,14 +498,21 @@ function buildOutput(prevState, inputObj, logger) {
     if (targetSite) {
       enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id }, logger);
     } else {
-      console.log('[Phase10-ENTER] No enterable site found at', enterCellKey);
+      const _rejectMsg = targetName
+        ? `No enterable site matching "${targetName}" found here.`
+        : 'There is nothing to enter here.';
+      state.world._engineMessage = _rejectMsg;
+      console.log('[Phase10-ENTER]', _rejectMsg);
     }
   }
 
   // Phase 10: Handle 'exit' action — site exit.
   if (actions.action === 'exit') {
+    state.world._engineMessage = null;
     if (state.world.current_depth >= 2) {
       exitSite(state);
+    } else {
+      state.world._engineMessage = 'You are not inside anything.';
     }
   }
 

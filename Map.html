@@ -326,6 +326,7 @@
 
   <div id="main" style="position: relative;">
     <div id="map-area">
+      <div id="site-banner" style="display:none; padding:6px 10px; margin-bottom:6px; background:#1a2a1a; border:1px solid #2e7d32; color:#81c784; font-size:12px; font-weight:bold; letter-spacing:0.5px;"></div>
       <div id="map-notice" style="display:none;"></div>
       <div id="grid-container"></div>
     </div>
@@ -409,7 +410,23 @@
     }
 
     // ── Rendering ──────────────────────────────────────────────────────────────
-    function render(state) {
+    function render(state, visibility) {
+      // Site banner — show when inside a site (L1+)
+      const _siteBanner = document.getElementById('site-banner');
+      if (visibility && visibility.current_depth >= 2 && visibility.active_site_name) {
+        const _bannerLayer = { 2: 'L1', 3: 'L2', 4: 'L3' }[visibility.current_depth] || `L${visibility.current_depth}`;
+        let _bannerTxt = `▶ INSIDE: ${visibility.active_site_name} (${_bannerLayer})`;
+        // List buildings from the active site if generated
+        const _activeSite = (visibility.sites || []).find(s => s.entered === true);
+        if (_activeSite && _activeSite.buildings && _activeSite.buildings.length > 0) {
+          const _bldNames = _activeSite.buildings.map(b => b.name || b.bld_id).join(', ');
+          _bannerTxt += `  ·  Places: ${_bldNames}`;
+        }
+        _siteBanner.textContent = _bannerTxt;
+        _siteBanner.style.display = 'block';
+      } else {
+        _siteBanner.style.display = 'none';
+      }
       const pos = state.world && state.world.position;
       if (!pos) {
         showError('State Error', 'world.position is absent in game state.');
@@ -753,7 +770,7 @@
         '<span class="inspector-empty">Click a generated cell to inspect.</span>';
 
       try {
-        render(state);
+        render(state, result.visibility);
         renderTree(result.visibility);
       } catch (e) {
         showError('Render Error', e.message || 'Unknown render error.');
