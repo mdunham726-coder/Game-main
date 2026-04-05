@@ -446,9 +446,14 @@ function buildOutput(prevState, inputObj, logger) {
     let targetSite = null;
     const targetName = (actions.target || '').toLowerCase().trim();
     if (targetName) {
-      targetSite = enterSites.find(s => s.name && s.name.toLowerCase().includes(targetName));
+      targetSite = enterSites.find(s =>
+        (s.name && s.name.toLowerCase().includes(targetName)) ||
+        (s.site_tier && s.site_tier.toLowerCase().includes(targetName))
+      );
     }
-    if (!targetSite) targetSite = enterSites.find(s => s.enterable === true);
+    if (!targetSite) targetSite =
+      enterSites.find(s => s.enterable === true && !s.is_starting_location) ||
+      enterSites.find(s => s.enterable === true);
 
     if (targetSite) {
       enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id }, logger);
@@ -702,6 +707,7 @@ function enterSite(state, { cell_key, site_id }, logger) {
   if (settlement && !settlement.is_stub) {
     // Reuse: full settlement already exists — no generation needed
     console.log(`[ENGINE] Reusing persistent settlement: ${settlement.name} with ${(settlement.npcs || []).length} NPCs`);
+    site.entered = true;
 
   } else if (settlement && settlement.is_stub) {
     // Complete stub: generate NPCs and upgrade the existing stub object in-place.

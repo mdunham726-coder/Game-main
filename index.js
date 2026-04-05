@@ -1199,6 +1199,20 @@ app.post('/narrate', async (req, res) => {
       _siteContextBlock = `\n\nSITES AT CURRENT LOCATION:\n${_siteLines}${_instructionLines}`;
     }
 
+    // Phase 10: Override scene description and site context when player is inside a site
+    const _narDepth = gameState?.world?.current_depth || 1;
+    const _narActiveSite = gameState?.world?.active_site || null;
+    let _narSceneDesc = scene.currentCell?.description || 'An empty space';
+    let _narSceneType = scene.currentCell?.type || 'void';
+    if (_narDepth >= 2 && _narActiveSite) {
+      _narSceneDesc = _narActiveSite.description ||
+        `The ${_narActiveSite.type || 'settlement'} of ${_narActiveSite.name || 'the settlement'}, with streets, buildings, and residents.`;
+      _narSceneType = _narActiveSite.type || 'settlement_interior';
+      const _siteNpcNames = (_narActiveSite.npcs || []).slice(0, 5)
+        .map(n => n.name || n.id).filter(Boolean).join(', ') || 'none visible';
+      _siteContextBlock = `\n\nCURRENT SITE (you are inside this location):\nName: ${_narActiveSite.name || '(unnamed)'}\nType: ${_narActiveSite.type || 'settlement'}\nPopulation: ${_narActiveSite.population || 0}\nNPCs nearby: ${_siteNpcNames}`;
+    }
+
     // Phase 9: Approved additive context — biome/civ/env enrichment only
     const _narBiome = gameState?.world?.macro_biome || null;
     const _narCivPresence = gameState?.world?.world_bias?.civilization_presence || null;
@@ -1222,8 +1236,8 @@ CORE INSTRUCTIONS:
 
 ---
 
-${scene.currentCell?.description || 'An empty space'}
-(Terrain: ${scene.currentCell?.type || 'void'})
+${_narSceneDesc}
+(Terrain: ${_narSceneType})
 
 ---
 
