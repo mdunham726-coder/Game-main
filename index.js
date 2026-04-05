@@ -1265,6 +1265,10 @@ app.post('/narrate', async (req, res) => {
       ? '\nNOTE: Player moved to a new overworld cell. Any sites visible here belong to this cell — they are not changes to the previous location.\n'
       : '';
 
+    const _phase5Instruction = _hasUnnamed
+      ? `- Phase 5: You MUST append a site_updates block after your narration paragraph for every unnamed site in SITES AT CURRENT LOCATION. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them — a named but otherwise uninitialized site is undesirable. Only reference site_ids from SITES AT CURRENT LOCATION.`
+      : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
+
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
 WORLD TONE & CHARACTER:
@@ -1310,7 +1314,7 @@ The player has already moved. They are now in the location described above.
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. If NPCs PRESENT is '(None visible)', the immediate area contains no visible persons — describe it accordingly.
-- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
+${_phase5Instruction}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
