@@ -1335,8 +1335,10 @@ The player has already moved. They are now in the location described above.
                   if (_field === 'name') _cr.capturedNames.push({ site_id: _upd.site_id, value: _upd[_field] });
                   console.log(`[SITE_CAPTURE] site ${_upd.site_id} ${_field} set to "${_upd[_field]}"`);
                   // Phase 5E: legacy mirror — name only
-                  if (_field === 'name' && gameState.world.sites?.[_upd.site_id]) {
-                    gameState.world.sites[_upd.site_id].name = _upd[_field];
+                  // world.sites is keyed by interior_key (= site_id + '/l2'), not by site_id directly.
+                  const _ik5e = _upd.site_id ? _upd.site_id + '/l2' : null;
+                  if (_field === 'name' && _ik5e && gameState.world.sites?.[_ik5e]) {
+                    gameState.world.sites[_ik5e].name = _upd[_field];
                   }
                 } else if (_upd[_field] != null && _tgt[_field] != null) {
                   _cr.skipped++;
@@ -1489,7 +1491,7 @@ The player has already moved. They are now in the location described above.
         region_cell_count: Object.keys(_vpAllCells).filter(k => k.startsWith(`LOC:${currentPosition.mx},${currentPosition.my}:`)).length,
         regions_explored: _vpRegionKeys.size,
         turn_counter: gameState.turn_counter || 0,
-        settlement_count: Object.keys(_vpSettlements).length,
+        settlement_count: Object.values(_vpSettlements).filter(s => !s.is_stub).length,
         last_site_capture: gameState.world._lastSiteCapture || null
       };
     }

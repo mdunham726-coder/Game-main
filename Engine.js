@@ -256,6 +256,12 @@ function recordSiteToCell(state, cellKey, site) {
   // Actual site interior is generated lazily on first entry via enterSite().
   if (site.enterable === true) {
     state.world.sites = state.world.sites || {};
+    // Dedup guard: never overwrite a fully generated (non-stub) site record.
+    // streamL1Cells already skips existing cells, but this defensive check prevents
+    // any future call path from clobbering an entered site with a fresh stub.
+    if (state.world.sites[site.interior_key] && !state.world.sites[site.interior_key].is_stub) {
+      return;
+    }
     state.world.sites[site.interior_key] = {
       name:    site.name ?? null,
       type:    site.site_tier || site.identity || site.subtype,
@@ -487,6 +493,35 @@ function buildOutput(prevState, inputObj, logger) {
         }
       }
       // If namedMatch is null, fall through to default selection below.
+    }
+    // Generic settlement term fallback: if the player typed a general category word (e.g. "enter town")
+    // that didn't match any specific site name/tier/category, and there was NO match at all (not a
+    // found-but-non-enterable case), resolve to the single enterable settlement at this cell.
+    // Only fires when targetName is set and namedMatch was undefined — not when a non-enterable target
+    // was explicitly found and rejected.
+    const _GENERIC_ENTRY_TERMS = new Set([
+      'town', 'city', 'village', 'hamlet', 'settlement', 'outpost',
+      'fortress', 'camp', 'keep', 'dungeon', 'ruins', 'cave', 'tower'
+    ]);
+    if (!targetSite && targetName && _GENERIC_ENTRY_TERMS.has(targetName)) {
+      const namedMatch = enterSites.find(s =>
+        (s.name && s.name.toLowerCase().includes(targetName)) ||
+        (s.site_tier && s.site_tier.toLowerCase().includes(targetName)) ||
+        (s.category && s.category.toLowerCase().includes(targetName))
+      );
+      if (!namedMatch) {
+        // No match at all — try generic fallback to sole enterable settlement
+        const _genericCandidates = enterSites.filter(s => s.enterable === true && !s.is_starting_location);
+        if (_genericCandidates.length === 1) {
+          targetSite = _genericCandidates[0];
+          console.log(`[Phase10-ENTER] Generic term "${targetName}" matched single enterable site ${targetSite.site_id} (${targetSite.site_tier || targetSite.category})`);
+        } else if (_genericCandidates.length > 1) {
+          // Ambiguous — use first, log warning
+          targetSite = _genericCandidates[0];
+          console.log(`[Phase10-ENTER] Generic term "${targetName}" ambiguous (${_genericCandidates.length} candidates) — using first: ${targetSite.site_id}`);
+        }
+        // Zero candidates: fall through to explicit rejection below
+      }
     }
     if (!targetSite && !targetName) {
       // No explicit target — default to first real enterable site, skipping bootstrap placeholder.
@@ -789,10 +824,16 @@ function enterSite(state, { cell_key, site_id }, logger) {
 
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
-    // Upgrade stub in-place — same reference stays in world.sites[interior_key]
-    settlement.npcs = npcs_here;
-    settlement.is_stub = false;
-    settlement.type = settlement.type || identity;
+    // Replace stub with a fully generated settlement object.
+    // Stub-complete previously mutated in-place, leaving settlement.name = null.
+    // generateL2Settlement produces the canonical record (id, name, type, buildings, grid, etc.).
+    // Spatial metadata (mx/my/lx/ly) is preserved from the stub since WorldGen doesn't set those.
+    const _stubMx = settlement.mx, _stubMy = settlement.my;
+    const _stubLx = settlement.lx, _stubLy = settlement.ly;
+    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here);
+    settlement.mx = _stubMx; settlement.my = _stubMy;
+    settlement.lx = _stubLx; settlement.ly = _stubLy;
+    state.world.sites[interior_key] = settlement;
 
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
