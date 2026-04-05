@@ -1237,6 +1237,18 @@ app.post('/narrate', async (req, res) => {
         npcsStr = '(None visible)';
       }
       _siteContextBlock = `\n\nCURRENT SITE (you are inside this location):\nName: ${_narActiveSite.name || '(unnamed)'}\nType: ${_narActiveSite.type || 'settlement'}\nPopulation: ${_narActiveSite.population || 0}\nNPCs nearby: ${_siteNpcNames}`;
+      const _sp = gameState?.player?.position;
+      if (_sp && _narActiveSite.grid) {
+        const _gridCell = _narActiveSite.grid[_sp.y]?.[_sp.x] ?? null;
+        const _cellType = _gridCell?.type || 'open_area';
+        const _cellNpcIds = _gridCell?.npc_ids || [];
+        const _cellNpcs = (_narActiveSite.npcs || []).filter(n => _cellNpcIds.includes(n.id)).map(n => n.name || n.id);
+        const _bldInfo = _gridCell?.type === 'building' && _narActiveSite.buildings?.[_gridCell.building_id]
+          ? ` (${_narActiveSite.buildings[_gridCell.building_id].purpose}: ${_narActiveSite.buildings[_gridCell.building_id].name})`
+          : '';
+        _siteContextBlock += `\nYour position in site: (${_sp.x},${_sp.y}) — ${_cellType}${_bldInfo}`;
+        if (_cellNpcs.length > 0) _siteContextBlock += `\nNPCs at your location: ${_cellNpcs.join(', ')}`;
+      }
     }
 
     // Phase 9: Approved additive context — biome/civ/env enrichment only

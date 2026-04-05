@@ -125,7 +125,29 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       console.log('[POINT-D-EXECUTE] INVALID DIRECTION - returning early');
       return; // Invalid direction
     }
-    
+
+    // L1 site movement — depth≥2 uses site-local player.position, not world.position
+    if (state.world.current_depth >= 2 && state.world.active_site) {
+      const _site = state.world.active_site;
+      const _siteW = _site.width || 7;
+      const _siteH = _site.height || 7;
+      const _sp = state.player?.position || { x: Math.floor(_siteW / 2), y: Math.floor(_siteH / 2) };
+      const _nx = _sp.x + delta.dx;
+      const _ny = _sp.y + delta.dy;
+      if (_nx < 0 || _nx >= _siteW || _ny < 0 || _ny >= _siteH) {
+        // Edge — exit to L0
+        state.world.active_site = null;
+        state.world.current_depth = 1;
+        if (!state.player) state.player = {};
+        state.player.depth = 1;
+        console.log(`[ACTIONS] L1 edge exit: exited ${_site.name || 'site'} back to L0`);
+      } else {
+        state.player.position = { x: _nx, y: _ny };
+        console.log(`[ACTIONS] L1 move ${dir}: site pos (${_nx},${_ny})`);
+      }
+      return;
+    }
+
     // Calculate new position
     let newLx = pos.lx + delta.dx;
     let newLy = pos.ly + delta.dy;

@@ -924,7 +924,9 @@ function enterSite(state, { cell_key, site_id }, logger) {
   state.world.current_depth = 2;
   if (!state.player) state.player = {};
   state.player.depth = 2;
-  state.player.position = { x: 0, y: 0 };
+  const _aw = state.world.active_site.width || 7;
+  const _ah = state.world.active_site.height || 7;
+  state.player.position = { x: Math.floor(_aw / 2), y: Math.floor(_ah / 2) };
   return state.world.active_site;
 }
 
