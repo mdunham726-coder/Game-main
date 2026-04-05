@@ -254,6 +254,7 @@ function recordSiteToCell(state, cellKey, site) {
   // is_starting_location suppression is handled separately in the enter handler.
   if (site.category === 'settlement' && site.enterable !== true) {
     site.enterable = true;
+    if (!site.interior_key) site.interior_key = `${site.site_id}/l2`;
     console.log(`[ENGINE] [REGISTRATION] Forced enterable=true on settlement ${site.site_id}`);
   }
 

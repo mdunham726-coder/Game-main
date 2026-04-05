@@ -219,6 +219,11 @@ async function performLoad(sessionId, saveName) {
       delete _gs.world.settlements;
       console.log('[LOAD] Migrated world.settlements → world.sites on loaded save.');
     }
+    // Guard: remove null-keyed junk entries that may exist in older saves
+    if (_gs.world && _gs.world.sites) {
+      delete _gs.world.sites['null'];
+      delete _gs.world.sites[null];
+    }
 
     // Migration: repair enterable flag for old sessions that predate Phase E enforcement
     if (_gs.world && _gs.world.cells) {
@@ -1205,8 +1210,9 @@ app.post('/narrate', async (req, res) => {
         _instructionLines = '\nSites that already have a name must keep that exact name — do not change or replace it.' +
                             '\nSites marked (unnamed) may receive a first-fill name via a site_updates block.';
       } else if (_hasNamed) {
-        // All named: lock only
-        _instructionLines = '\nAll sites above have stored names. Use them exactly as written — do not invent alternatives.';
+        // All named: lock only + narration usage
+        _instructionLines = '\nAll sites above have stored names. Use them exactly as written — do not invent alternatives.' +
+                            '\nWhen narrating the overworld, refer to any named site by its proper name rather than a generic description (e.g. use the site name, not "the settlement" or "a small village").';
       } else {
         // All unnamed: invitation only
         _instructionLines = '\nAll sites above are unnamed. You may introduce names for them via a site_updates block.';
@@ -1431,7 +1437,7 @@ ${_phase5Instruction}`;
       cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
-      settlement_count: Object.values(gameState.world.sites || {}).filter(s => s.category === 'settlement').length,
+      settlement_count: Object.keys(gameState.world.sites || {}).filter(k => k !== 'null').length,
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1,
       active_site_name: gameState.world.active_site?.name || null
@@ -1528,7 +1534,7 @@ ${_phase5Instruction}`;
         region_cell_count: Object.keys(_vpAllCells).filter(k => k.startsWith(`LOC:${currentPosition.mx},${currentPosition.my}:`)).length,
         regions_explored: _vpRegionKeys.size,
         turn_counter: gameState.turn_counter || 0,
-        settlement_count: Object.values(_vpSettlements).filter(s => s.category === 'settlement').length,
+        settlement_count: Object.keys(_vpSettlements).filter(k => k !== 'null').length,
         last_site_capture: gameState.world._lastSiteCapture || null
       };
     }
