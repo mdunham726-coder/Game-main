@@ -506,6 +506,15 @@ if (wg) {
   // Track location change
   const newPosition = state.world.position;
   const positionChanged = oldPosition && (oldPosition.mx !== newPosition.mx || oldPosition.my !== newPosition.my || oldPosition.lx !== newPosition.lx || oldPosition.ly !== newPosition.ly);
+
+  // Auto-exit: if player moved away from the cell that contains the active site, reset depth.
+  if (positionChanged && state.world.current_depth >= 2 && state.world.active_site?._source_cell_key) {
+    const _newCellKey = `LOC:${newPosition.mx},${newPosition.my}:${newPosition.lx},${newPosition.ly}`;
+    if (_newCellKey !== state.world.active_site._source_cell_key) {
+      exitSite(state);
+      console.log('[ENGINE] Auto-exit: player moved away from active site cell');
+    }
+  }
   
   // L1 CELL STREAMING: Generate terrain cells around player
   streamL1Cells(state);
@@ -825,6 +834,7 @@ function enterSite(state, { cell_key, site_id }, logger) {
 
   // Stored object IS the active object — no secondary generation, no split references.
   state.world.active_site = state.world.sites[interior_key];
+  state.world.active_site._source_cell_key = cell_key;  // used by auto-exit guard
   state.world.active_building = null;
   state.world.current_depth = 2;
   if (!state.player) state.player = {};

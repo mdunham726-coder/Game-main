@@ -1206,10 +1206,16 @@ app.post('/narrate', async (req, res) => {
     let _narSceneType = scene.currentCell?.type || 'void';
     if (_narDepth >= 2 && _narActiveSite) {
       _narSceneDesc = _narActiveSite.description ||
-        `The ${_narActiveSite.type || 'settlement'} of ${_narActiveSite.name || 'the settlement'}, with streets, buildings, and residents.`;
+        `The ${_narActiveSite.type || 'settlement'} of ${_narActiveSite.name || 'the settlement'}. Streets and buildings fill the area.`;
       _narSceneType = _narActiveSite.type || 'settlement_interior';
-      const _siteNpcNames = (_narActiveSite.npcs || []).slice(0, 5)
-        .map(n => n.name || n.id).filter(Boolean).join(', ') || 'none visible';
+      const _siteNpcs = (_narActiveSite.npcs || []).slice(0, 5);
+      const _siteNpcNames = _siteNpcs.map(n => n.name || n.id).filter(Boolean).join(', ') || 'none visible';
+      // Sync npcsStr with actual site NPCs so NPCs PRESENT is the single source of truth
+      if (_siteNpcs.length > 0) {
+        npcsStr = JSON.stringify(_siteNpcs.map(n => ({ id: n.id, name: n.name, job: n.job })));
+      } else {
+        npcsStr = '(None visible)';
+      }
       _siteContextBlock = `\n\nCURRENT SITE (you are inside this location):\nName: ${_narActiveSite.name || '(unnamed)'}\nType: ${_narActiveSite.type || 'settlement'}\nPopulation: ${_narActiveSite.population || 0}\nNPCs nearby: ${_siteNpcNames}`;
     }
 
@@ -1257,6 +1263,7 @@ The player has already moved. They are now in the location described above.
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
+- Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. If NPCs PRESENT is '(None visible)', the immediate area contains no visible persons — describe it accordingly.
 - Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
