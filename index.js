@@ -1000,6 +1000,7 @@ app.post('/narrate', async (req, res) => {
           console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
           
           const result = await Engine.buildOutput(gameState, mapped, logger);
+          inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
           if (result && result.state) {
             gameState = result.state;
@@ -1276,7 +1277,7 @@ app.post('/narrate', async (req, res) => {
       : '';
 
     const _phase5Instruction = _hasUnnamed
-      ? `- Phase 5: Unnamed sites are present. BEFORE writing your narration paragraph, decide on a name for each unnamed site. Use that chosen name throughout your narration — do NOT refer to any site as "unnamed", "a village", or a generic type after you have decided its name. After your narration paragraph, you MUST append a site_updates block. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them. Only reference site_ids from SITES AT CURRENT LOCATION.`
+      ? `- Phase 5: Unnamed sites are present. Decide on a name for each unnamed site (internal decision only — do NOT output any reasoning, headers, or pre-narration text for this step). Use the chosen name throughout your narration — do NOT refer to any site as "unnamed", "a village", or a generic type after you have decided its name. After your narration paragraph, you MUST append a site_updates block. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them. Only reference site_ids from SITES AT CURRENT LOCATION.`
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
@@ -1368,7 +1369,7 @@ ${_freeformBlock}${_phase5Instruction}`;
 
     // Phase 5D+E: Extract [site_updates: [...]] block, first-fill capture, legacy mirror sync
     {
-      const _suMatch = narrative.match(/\[site_updates:\s*([\s\S]*?\])\s*\n?/);
+      const _suMatch = narrative.match(/\[site_updates:\s*([\s\S]*)\]\s*\n?/);
       if (_suMatch) {
         // Always strip the block from narrative regardless of parse outcome
         narrative = (narrative.slice(0, _suMatch.index) + narrative.slice(_suMatch.index + _suMatch[0].length)).trim();
