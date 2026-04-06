@@ -1275,8 +1275,17 @@ app.post('/narrate', async (req, res) => {
       : '';
 
     const _phase5Instruction = _hasUnnamed
-      ? `- Phase 5: You MUST append a site_updates block after your narration paragraph for every unnamed site in SITES AT CURRENT LOCATION. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them — a named but otherwise uninitialized site is undesirable. Only reference site_ids from SITES AT CURRENT LOCATION.`
+      ? `- Phase 5: Unnamed sites are present. BEFORE writing your narration paragraph, decide on a name for each unnamed site. Use that chosen name throughout your narration — do NOT refer to any site as "unnamed", "a village", or a generic type after you have decided its name. After your narration paragraph, you MUST append a site_updates block. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them. Only reference site_ids from SITES AT CURRENT LOCATION.`
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
+
+    // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
+    const _parsedAction = parsedIntent?.parsed_action || engineOutput?.actions?.action || '';
+    const _rawInput = (action || '').trim();
+    const _isFreeform = (inputObj?.player_intent?.kind === 'FREEFORM') ||
+      (_parsedAction === 'wait' && _rawInput.toLowerCase() !== 'wait' && _rawInput !== '');
+    const _freeformBlock = _isFreeform
+      ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`
+      : '';
 
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
@@ -1323,7 +1332,7 @@ The player has already moved. They are now in the location described above.
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. If NPCs PRESENT is '(None visible)', the immediate area contains no visible persons — describe it accordingly.
-${_phase5Instruction}`;
+${_freeformBlock}${_phase5Instruction}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
