@@ -548,7 +548,7 @@ function buildOutput(prevState, inputObj, logger) {
     }
 
     if (targetSite) {
-      enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id }, logger);
+      enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id, entry_dir: actions.dir || null }, logger);
     } else {
       const _rejectMsg = targetName
         ? `No enterable site matching "${targetName}" found here.`
@@ -756,7 +756,7 @@ if (require.main === module) main();
  * Phase 7: Site-driven entry — l2_id derived from site.site_id, not cell subtype.
  * Input: { cell_key, site_id } — caller resolves target site before calling.
  */
-function enterSite(state, { cell_key, site_id }, logger) {
+function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
   if (!state || !state.world) return null;
 
   // Resolve site from cell.sites
@@ -928,7 +928,10 @@ function enterSite(state, { cell_key, site_id }, logger) {
   state.player.depth = 2;
   const _aw = state.world.active_site.width || 7;
   const _ah = state.world.active_site.height || 7;
-  state.player.position = { x: Math.floor(_aw / 2), y: Math.floor(_ah / 2) };
+  const _cx = Math.floor(_aw / 2);
+  const _cy = Math.floor(_ah / 2);
+  const _edgeMap = { north: { x: _cx, y: 0 }, south: { x: _cx, y: _ah - 1 }, east: { x: 0, y: _cy }, west: { x: _aw - 1, y: _cy } };
+  state.player.position = _edgeMap[entry_dir] || { x: _cx, y: _ah - 1 };
   return state.world.active_site;
 }
 

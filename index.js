@@ -1252,7 +1252,10 @@ app.post('/narrate', async (req, res) => {
         const _bldInfo = _gridCell?.type === 'building' && _narActiveSite.buildings?.[_gridCell.building_id]
           ? ` (${_narActiveSite.buildings[_gridCell.building_id].purpose}: ${_narActiveSite.buildings[_gridCell.building_id].name})`
           : '';
-        _siteContextBlock += `\nYour position in site: (${_sp.x},${_sp.y}) — ${_cellType}${_bldInfo}`;
+        const _tileDesc = _cellType === 'building'
+          ? `building exterior${_bldInfo}. You are OUTSIDE this building. Describe the façade, entrance, and surroundings only. Do NOT describe or infer any interior.`
+          : `${_cellType}${_bldInfo}`;
+        _siteContextBlock += `\nYour position in site: (${_sp.x},${_sp.y}) — ${_tileDesc}`;
         if (_cellNpcs.length > 0) _siteContextBlock += `\nNPCs at your location: ${_cellNpcs.join(', ')}`;
       }
     }
@@ -1728,7 +1731,9 @@ ${_phase5Instruction}`;
     // 3. Check: movement_inconsistency (contradictions only)
     // Only flag contradictions between logs/state, not mere failures
     // Skip at L1+ — L1 logs carry {x,y} which is incompatible with L0 {mx,my,lx,ly} comparison
-    if (movement && movement.success === true && authoritativeState.current_depth <= 1) {
+    if (movement && movement.success === true
+        && authoritativeState.current_depth <= 1
+        && !movement.to?.exited) {
       // Movement succeeded; verify final position matches expectation
       const finalPos = movement.to;
       const authoritative = authoritativeState.position;
