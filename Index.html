@@ -1006,7 +1006,8 @@ Total Turns Included: ${turnHistory.length}
           // QA-016: Enhanced turn rendering via shared buildTurnBlock
           let turnsBlock = turnHistory.map((turn, idx) => buildTurnBlock(turn, 'running', idx + 1))
             .join('\n\n------------------------------------------------------------------------\n\n');
-            
+
+          if (false) { // [SUPERSEDED dead code below - neutralized]
             // QA-016 follow-up: Strengthen mismatch detection heuristic
             let hasMismatch = false;
             let mismatchInfo = '';
@@ -1356,7 +1357,7 @@ ${turn.narrative || '(no narrative)'}`;
             
             // 16. Assemble complete turn block with visual separators (QA-017 diagnostics FIRST)
             return `${turnHeader}${diagnosticsSection}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${siteSection}${npcSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
-          }).join('\n\n------------------------------------------------------------------------\n\n');
+          } // end superseded dead code
 
           const fullRunLog = `${sessionHeader}
 
