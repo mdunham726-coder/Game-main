@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -22,7 +22,7 @@
 <!-- Diagnostic Panel -->
 <div id="diagnostics" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #333; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #0f0;">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-    <h3 style="margin: 0;">?? DIAGNOSTICS</h3>
+    <h3 style="margin: 0;">DIAGNOSTICS</h3>
     <button onclick="navigator.clipboard.writeText(document.getElementById('diagnostic-log').innerText)" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Diagnostics</button>
   </div>
   <div id="diagnostic-log"></div>
@@ -30,7 +30,7 @@
 
 <!-- DeepSeek Debug Console -->
 <div id="debugConsole" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #4a90e2; border-radius: 4px;">
-  <h3 style="margin: 0 0 10px 0; color: #4a90e2;">?? ASK DEEPSEEK</h3>
+  <h3 style="margin: 0 0 10px 0; color: #4a90e2;">ASK DEEPSEEK</h3>
   <p style="font-size: 12px; color: #888; margin: 0 0 10px 0;">Ask the AI about the world, locations, generation, or debug info. Turn will NOT advance.</p>
   <div style="margin-bottom: 10px;">
     <input type="text" id="debugQuestion" placeholder="e.g., Why are there no people here? Tell me about this biome..." style="width: 70%; padding: 10px; font-size: 14px; background: #333; color: #e0e0e0; border: 1px solid #666; margin-right: 10px;">
@@ -53,20 +53,20 @@
 
 <!-- Logs Panel -->
 <div id="logsPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #2ecc71; border-radius: 4px;">
-  <h3 style="margin: 0 0 10px 0; color: #2ecc71;">?? SESSION LOGS (Phase A)</h3>
+  <h3 style="margin: 0 0 10px 0; color: #2ecc71;">SESSION LOGS (Phase A)</h3>
   <p style="font-size: 12px; color: #888; margin: 0 0 10px 0;">Structured event logging | Real-time console + file persistence</p>
   <div style="margin-bottom: 10px;">
-    <button onclick="flushLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #2ecc71; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">?? Flush</button>
-    <button onclick="downloadLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #e74c3c; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">?? Download</button>
-    <button onclick="listLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #3498db; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">?? List</button>
-    <button onclick="readCurrentLog()" style="width: 24%; padding: 10px; font-size: 14px; background: #f39c12; color: white; border: none; cursor: pointer; border-radius: 3px;">??? View</button>
+    <button onclick="flushLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #2ecc71; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">Flush</button>
+    <button onclick="downloadLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #e74c3c; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">Download</button>
+    <button onclick="listLogs()" style="width: 24%; padding: 10px; font-size: 14px; background: #3498db; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 1%;">List</button>
+    <button onclick="readCurrentLog()" style="width: 24%; padding: 10px; font-size: 14px; background: #f39c12; color: white; border: none; cursor: pointer; border-radius: 3px;">View</button>
   </div>
   <div style="margin-bottom: 10px; display: flex; gap: 10px;">
-    <button onclick="exportQASnapshot('snapshot')" style="flex: 1; padding: 10px; font-size: 14px; background: #9b59b6; color: white; border: none; cursor: pointer; border-radius: 3px;">?? Snapshot (Current Turn)</button>
-    <button onclick="exportQASnapshot('running')" style="flex: 1; padding: 10px; font-size: 14px; background: #16a085; color: white; border: none; cursor: pointer; border-radius: 3px;">?? Log (Running Record)</button>
+    <button onclick="exportQASnapshot('snapshot')" style="flex: 1; padding: 10px; font-size: 14px; background: #9b59b6; color: white; border: none; cursor: pointer; border-radius: 3px;">Snapshot (Current Turn)</button>
+    <button onclick="exportQASnapshot('running')" style="flex: 1; padding: 10px; font-size: 14px; background: #16a085; color: white; border: none; cursor: pointer; border-radius: 3px;">Log (Running Record)</button>
   </div>
   <div style="margin-bottom: 10px;">
-    <button onclick="window.open('Map.html', 'GameMap')" style="width: 100%; padding: 10px; font-size: 14px; background: #8e44ad; color: white; border: none; cursor: pointer; border-radius: 3px;">??? Open Map</button>
+    <button onclick="window.open('Map.html', 'GameMap')" style="width: 100%; padding: 10px; font-size: 14px; background: #8e44ad; color: white; border: none; cursor: pointer; border-radius: 3px;">Open Map</button>
   </div>
   <div id="logsLoading" style="display: none; color: #2ecc71; margin-top: 10px; font-size: 12px;">Processing logs...</div>
   <div id="logsResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #2ecc71; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.4; max-height: 500px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word; font-family: monospace;"></div>
@@ -337,20 +337,20 @@ diagLog.innerHTML = `
           debugResponse.innerHTML = `<strong style="color: #ff6b6b;">? ${data.error}:</strong><br>${errorMsg}`;
         } else if (data.response) {
           debugResponse.innerHTML = `
-            <div style="margin-bottom: 10px; color: #4a90e2;"><strong>?? DeepSeek Response:</strong></div>
+            <div style="margin-bottom: 10px; color: #4a90e2;"><strong>DeepSeek Response:</strong></div>
             <div>${(data.response || '').replace(/\n/g, '<br>')}</div>
             <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #333; font-size: 11px; color: #666;">
               Debug Level: ${data.debugLevel} | Context: ${data.contextLength || 0} chars | ${data.timestamp}
             </div>
           `;
         } else {
-          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">?? Unexpected response format</strong><br><pre style="font-size: 11px; overflow-x: auto;">${JSON.stringify(data, null, 2)}</pre>`;
+          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">[Unexpected response format]</strong><br><pre style="font-size: 11px; overflow-x: auto;">${JSON.stringify(data, null, 2)}</pre>`;
         }
         
         debugResponse.style.display = 'block';
       } catch (err) {
         console.error('[FRONTEND] Fetch error:', err);
-        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">?? Network Error:</strong><br>${err.message}<br><br><small>Check browser console (F12) for details. DeepSeek API may be temporarily unavailable.</small>`;
+        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">[Network Error]</strong><br>${err.message}<br><br><small>Check browser console (F12) for details. DeepSeek API may be temporarily unavailable.</small>`;
         debugResponse.style.display = 'block';
       } finally {
         debugLoading.style.display = 'none';
@@ -395,10 +395,10 @@ diagLog.innerHTML = `
         console.log('[FRONTEND] Context test response:', data);
 
         if (data.error) {
-          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">? ${data.error}:</strong><br>${data.message}`;
+          debugResponse.innerHTML = `<strong style="color: #ff6b6b;">[ERROR] ${data.error}:</strong><br>${data.message}`;
         } else if (data.success) {
           debugResponse.innerHTML = `
-            <div style="color: #4ade80;"><strong>? Context Built Successfully!</strong></div>
+            <div style="color: #4ade80;"><strong>[OK] Context Built Successfully!</strong></div>
             <div style="margin-top: 10px; font-size: 12px; color: #aaa;">
               <div><strong>Debug Level:</strong> ${data.debugLevel}</div>
               <div><strong>Context Size:</strong> ${data.contextLength} characters</div>
@@ -412,7 +412,7 @@ diagLog.innerHTML = `
         debugResponse.style.display = 'block';
       } catch (err) {
         console.error('[FRONTEND] Context test error:', err);
-        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">?? Network Error:</strong><br>${err.message}<br><br><small>DeepSeek API endpoint may be unavailable.</small>`;
+        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">[Network Error]</strong><br>${err.message}<br><br><small>DeepSeek API endpoint may be unavailable.</small>`;
         debugResponse.style.display = 'block';
       } finally {
         debugLoading.style.display = 'none';
@@ -445,16 +445,16 @@ diagLog.innerHTML = `
         const data = await response.json();
 
         if (data.success) {
-          logsResponse.innerHTML = `? Logs flushed successfully!\n\nSession: ${data.sessionId}\nFile: ${data.logFile}\n\nYou can now download or view the log.`;
+          logsResponse.innerHTML = `[OK] Logs flushed successfully!\n\nSession: ${data.sessionId}\nFile: ${data.logFile}\n\nYou can now download or view the log.`;
           logsResponse.style.color = '#2ecc71';
         } else {
-          logsResponse.innerHTML = `? Error: ${data.error}\n${data.message}`;
+          logsResponse.innerHTML = `[ERROR] ${data.error}\n${data.message}`;
           logsResponse.style.color = '#e74c3c';
         }
         
         logsResponse.style.display = 'block';
       } catch (err) {
-        logsResponse.innerHTML = `?? Network Error:\n${err.message}`;
+        logsResponse.innerHTML = `[Network Error]\n${err.message}`;
         logsResponse.style.color = '#e74c3c';
         logsResponse.style.display = 'block';
       } finally {
@@ -499,12 +499,12 @@ diagLog.innerHTML = `
         document.body.removeChild(a);
 
         const logsResponse = document.getElementById('logsResponse');
-        logsResponse.innerHTML = `? Log file downloaded!\nFilename: ${filename}`;
+        logsResponse.innerHTML = `[OK] Log file downloaded!\nFilename: ${filename}`;
         logsResponse.style.color = '#2ecc71';
         logsResponse.style.display = 'block';
       } catch (err) {
         const logsResponse = document.getElementById('logsResponse');
-        logsResponse.innerHTML = `?? Download Error:\n${err.message}`;
+        logsResponse.innerHTML = `[Download Error]\n${err.message}`;
         logsResponse.style.color = '#e74c3c';
         logsResponse.style.display = 'block';
       }
@@ -527,7 +527,7 @@ diagLog.innerHTML = `
         const data = await response.json();
 
         if (data.success) {
-          let output = `?? Total Saved Logs: ${data.logCount}\n`;
+          let output = `Total Saved Logs: ${data.logCount}\n`;
           output += `Directory: ${data.logsDirectory}\n\n`;
           
           if (data.logs.length === 0) {
@@ -545,13 +545,13 @@ diagLog.innerHTML = `
           logsResponse.innerHTML = output;
           logsResponse.style.color = '#2ecc71';
         } else {
-          logsResponse.innerHTML = `? Error: ${data.error}\n${data.message}`;
+          logsResponse.innerHTML = `[ERROR] ${data.error}\n${data.message}`;
           logsResponse.style.color = '#e74c3c';
         }
         
         logsResponse.style.display = 'block';
       } catch (err) {
-        logsResponse.innerHTML = `?? Network Error:\n${err.message}`;
+        logsResponse.innerHTML = `[Network Error]\n${err.message}`;
         logsResponse.style.color = '#e74c3c';
         logsResponse.style.display = 'block';
       } finally {
@@ -582,7 +582,7 @@ diagLog.innerHTML = `
 
         if (data.success && data.data) {
           const log = data.data;
-          let output = `?? Session Log: ${log.sessionId}\n`;
+          let output = `Session Log: ${log.sessionId}\n`;
           output += `Generated: ${log.generatedAt}\n`;
           output += `Total Events: ${log.eventCount}\n`;
           output += '\n' + '='.repeat(70) + '\n';
@@ -597,16 +597,16 @@ diagLog.innerHTML = `
           logsResponse.innerHTML = output;
           logsResponse.style.color = '#2ecc71';
         } else if (data.error) {
-          logsResponse.innerHTML = `? Error: ${data.error}\n${data.message}`;
+          logsResponse.innerHTML = `[ERROR] ${data.error}\n${data.message}`;
           logsResponse.style.color = '#e74c3c';
         } else {
-          logsResponse.innerHTML = `? Unexpected response:\n${JSON.stringify(data, null, 2)}`;
+          logsResponse.innerHTML = `[Unexpected response]:\n${JSON.stringify(data, null, 2)}`;
           logsResponse.style.color = '#e74c3c';
         }
         
         logsResponse.style.display = 'block';
       } catch (err) {
-        logsResponse.innerHTML = `?? Network Error:\n${err.message}`;
+        logsResponse.innerHTML = `[Network Error]\n${err.message}`;
         logsResponse.style.color = '#e74c3c';
         logsResponse.style.display = 'block';
       } finally {
@@ -665,8 +665,8 @@ Total Turns Included: ${turnHistory.length}
             const isInitialization = turn.is_initialization === true;
             
             // 6. Turn header with emoji
-            const turnHeader = `?????????? ?? TURN ${turnNum} ??????????
-?? ${new Date(turnTimestamp).toLocaleString()}`;
+            const turnHeader = `== TURN ${turnNum} ==
+${new Date(turnTimestamp).toLocaleString()}`;
             
             // QA-016 follow-up: Strengthen mismatch detection heuristic
             let hasMismatch = false;
@@ -788,20 +788,20 @@ Total Turns Included: ${turnHistory.length}
             let summaryLine = '';
             if (isInitialization) {
               summaryLine = `
-?? SUMMARY
+-- SUMMARY
 Action     : world initialization
-Intent     : (N/A � system setup)
+Intent     : (N/A - system setup)
 Confidence : (N/A)
 State      : ${cellType}`;
             } else {
               const parsedWithDirection = parsedIntent.parsed_action && parsedIntent.direction ? `${parsedIntent.parsed_action} ${parsedIntent.direction}` : parsedIntent.parsed_action || 'unknown';
               const confidence = parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?';
               summaryLine = `
-?? SUMMARY
+-- SUMMARY
 Action     : ${parsedWithDirection}
 Confidence : ${confidence}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}
 State      : ${cellType}
-Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ?' : ' ?'}`;
+Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' [MISMATCH]' : ' [OK]'}`;
             }
             
             // 8. Build movement block
@@ -816,12 +816,12 @@ Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ?' : ' ?'}`;
                   ? `(${movement.to.x},${movement.to.y}) [L1]`
                   : `(${movement.to?.mx||0},${movement.to?.my||0})\u2192(${movement.to?.lx||0},${movement.to?.ly||0})`;
               movementSection = `
-?? Movement
+-- Movement
 From : ${fromCoord} ${movement.from_cell_type || '?'}
 To   : ${toCoord} ${movement.to_cell_type || '?'}`;
             } else {
               movementSection = `
-?? Movement
+-- Movement
 (No movement this turn)`;
             }
             
@@ -829,7 +829,7 @@ To   : ${toCoord} ${movement.to_cell_type || '?'}`;
             let mismatchWarning = '';
             if (hasMismatch) {
               mismatchWarning = `
-??  MISMATCH DETECTED
+*** MISMATCH DETECTED
 State      : ${cellType}
 Narrative  : ${mismatchInfo} (narrative cue)`;
             }
@@ -847,20 +847,21 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             const _stLayerLabel = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0';
             const _stContainer = authState.active_site_name || '(none)';
             let stateSection = `
-?? Position      : Macro(${authState.position?.mx},${authState.position?.my}) ? Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\n?? L1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
-?? Description   : ${authState.cell_description || '(unknown)'}
-?? Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
-?? Grid Key      : ${authState.cell_key || 'unknown'}
-?? Biome         : ${authState.biome || 'unknown'}
-?? Turn Counter  : ${authState.turn_counter || 0}
-???  Site Count      : ${authState.settlement_count || 0}
-???  World Cells   : ${_wTotal} total � ${_wRegionCount} in region (${_wMx},${_wMy}) � ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\nL1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
+Description   : ${authState.cell_description || '(unknown)'}
+Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
+Grid Key      : ${authState.cell_key || 'unknown'}
+Biome         : ${authState.biome || 'unknown'}
+Turn Counter  : ${authState.turn_counter || 0}
+Site Count    : ${authState.settlement_count || 0}
+World Cells   : ${_wTotal} total | ${_wRegionCount} in region (${_wMx},${_wMy}) | ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
 -- INIT-TIME WORLD GENERATION INPUTS (frozen) --
-?? World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
-??  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
-???  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
-?? Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
+World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
+Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
+Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
+Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
             
+            // Site diagnostic addendum� ${_wRegionCount} in region (${_wMx},${_wMy}) � ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
             // Site diagnostic addendum
             const _sCellKey = authState.cell_key || null;
             const _sCellSites = _vis?.sites || [];
@@ -905,13 +906,13 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             if (authState.current_settlement) {
               const settlement = authState.current_settlement;
               siteSection = `
-???  Settlement
+-- Settlement
 Registered Name : ${settlement.name || '(unknown)'}
 Registered Type : ${settlement.type || '(unknown)'}
 NPC Count       : ${settlement.npcs?.length || 0}`;
             } else {
               siteSection = `
-???  Settlement
+-- Settlement
 (Not in a settlement)`;
             }
             
@@ -934,14 +935,14 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
             let nearbyCellsSection = '';
             if (nearbyCells) {
               nearbyCellsSection = `
-?? Nearby Cells
+-- Nearby Cells
 N: ${nearbyCells.North?.type || '?'} (${nearbyCells.North?.subtype || ''})
 S: ${nearbyCells.South?.type || '?'} (${nearbyCells.South?.subtype || ''})
 E: ${nearbyCells.East?.type || '?'} (${nearbyCells.East?.subtype || ''})
 W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
             } else {
               nearbyCellsSection = `
-?? Nearby Cells
+-- Nearby Cells
 (No cell data available)`;
             }
             
@@ -949,8 +950,8 @@ W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
             let intentSection = '';
             if (isInitialization) {
               intentSection = `
-?? Intent
-(N/A � world initialization)`;
+-- Intent
+(N/A - world initialization)`;
             } else {
               const rawInput = parsedIntent.raw_input || '(none)';
               const parsedAction = parsedIntent.parsed_action || 'unknown';
@@ -958,7 +959,7 @@ W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
               const confidence = (parsedIntent.confidence !== null && parsedIntent.confidence !== undefined) ? parsedIntent.confidence.toFixed(2) : '(unknown)';
               const source = parsedIntentSource === 'fallback' ? ' (inferred)' : '';
               intentSection = `
-?? Intent
+-- Intent
 Raw Input  : ${rawInput}
 Parsed     : ${parsedAction}${direction !== '(none)' ? ' ' + direction : ''}
 Confidence : ${confidence}${source}`;
@@ -971,7 +972,7 @@ Confidence : ${confidence}${source}`;
               const mediumCount = turn.diagnostics.filter(d => d.severity === 'medium').length;
               const lowCount = turn.diagnostics.filter(d => d.severity === 'low').length;
               
-              const marker = highCount > 0 ? '??' : mediumCount > 0 ? '??' : '�';
+              const marker = highCount > 0 ? '[HIGH]' : mediumCount > 0 ? '[MED]' : '[OK]';
               const countParts = [];
               if (highCount > 0) countParts.push(`${highCount} HIGH`);
               if (mediumCount > 0) countParts.push(`${mediumCount} MEDIUM`);
@@ -979,18 +980,18 @@ Confidence : ${confidence}${source}`;
               const countStr = countParts.join(', ');
               
               diagnosticsSection = `
-?- ${marker} QA-017 DIAGNOSTICS (${turn.diagnostics.length} flag${turn.diagnostics.length !== 1 ? 's' : ''} � ${countStr})`;
+-- ${marker} QA-017 DIAGNOSTICS (${turn.diagnostics.length} flag${turn.diagnostics.length !== 1 ? 's' : ''} | ${countStr})`;
               diagnosticsSection += '\n' + turn.diagnostics.map(diag => {
-                const icon = diag.severity === 'high' ? '??' : diag.severity === 'medium' ? '??' : '�';
-                return `� ${icon} ${diag.type} [${diag.severity.toUpperCase()}]\n�   ? ${diag.detail}`;
+                const icon = diag.severity === 'high' ? '[HIGH]' : diag.severity === 'medium' ? '[MED]' : '[OK]';
+                return `  ${icon} ${diag.type} [${diag.severity.toUpperCase()}]\n    -> ${diag.detail}`;
               }).join('\n');
-              diagnosticsSection += '\n?-----------------------------------------';
+              diagnosticsSection += '\n-----------------------------------------';
             }
             
             // 15. Annotate narrative and logs sections
             const narrativeSection = `
-?? NARRATIVE
-${turn.narrative || '(no narrative)'}`;
+-- NARRATIVE
+${turn.narrative || '(no narrative)'}`;  
             
             // Filter diagnostic-only logs: exclude visible_cell dumps
             let diagnosticLogs = [];
@@ -1005,7 +1006,7 @@ ${turn.narrative || '(no narrative)'}`;
             }
             
             let logsSection = `
-?? TURN LOGS (${diagnosticLogs.length} events)`;
+-- TURN LOGS (${diagnosticLogs.length} events)`;
             if (diagnosticLogs.length > 0) {
               logsSection += '\n' + diagnosticLogs.map(log => 
                 `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`
@@ -1016,7 +1017,7 @@ ${turn.narrative || '(no narrative)'}`;
             
             // 16. Assemble complete turn block with visual separators (QA-017 diagnostics FIRST)
             return `${turnHeader}${diagnosticsSection}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${siteSection}${npcSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
-          }).join('\n\n????????????????????????????????????????????????????????????????????????\n\n');
+          }).join('\n\n------------------------------------------------------------------------\n\n');
 
           const fullRunLog = `${sessionHeader}
 
@@ -1027,7 +1028,7 @@ ${turnsBlock}
 
           await navigator.clipboard.writeText(fullRunLog);
           const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = `? QA running log copied to clipboard (enhanced)!\n\nTotal turns: ${turnHistory.length}\nSession started: ${new Date(firstSessionTimestamp).toLocaleTimeString()}`;
+          logsResponse.innerHTML = `QA running log copied to clipboard!\n\nTotal turns: ${turnHistory.length}\nSession started: ${new Date(firstSessionTimestamp).toLocaleTimeString()}`;
           logsResponse.style.display = 'block';
           logsResponse.style.color = '#2ecc71';
 
@@ -1158,27 +1159,27 @@ ${turnsBlock}
           // Build turn header
           const turnNum = lastTurn.turn_number || turnHistory.length;
           const turnTimestamp = lastTurn.timestamp || new Date().toISOString();
-          const turnHeader = `?????????? ?? TURN ${turnNum} ??????????
-?? ${new Date(turnTimestamp).toLocaleString()}`;
+          const turnHeader = `== TURN ${turnNum} ==
+${new Date(turnTimestamp).toLocaleString()}`;
           
           // Build summary (special case for Turn 1)
           let summaryLine = '';
           if (isInitialization) {
             summaryLine = `
-?? SUMMARY
+-- SUMMARY
 Action     : world initialization
-Intent     : (N/A � system setup)
+Intent     : (N/A - system setup)
 Confidence : (N/A)
 State      : ${cellType}`;
           } else {
             const parsedWithDirection = parsedIntent.parsed_action && parsedIntent.direction ? `${parsedIntent.parsed_action} ${parsedIntent.direction}` : parsedIntent.parsed_action || 'unknown';
             const confidence = parsedIntent.confidence ? parsedIntent.confidence.toFixed(2) : '?';
             summaryLine = `
-?? SUMMARY
+-- SUMMARY
 Action     : ${parsedWithDirection}
 Confidence : ${confidence}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}
 State      : ${cellType}
-Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ?' : ' ?'}`;
+Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' [MISMATCH]' : ' [OK]'}`;
           }
           
           // Build movement block
@@ -1193,12 +1194,12 @@ Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' ?' : ' ?'}`;
                 ? `(${movement.to.x},${movement.to.y}) [L1]`
                 : `(${movement.to?.mx||0},${movement.to?.my||0})\u2192(${movement.to?.lx||0},${movement.to?.ly||0})`;
             movementSection = `
-?? Movement
+-- Movement
 From : ${fromCoord} ${movement.from_cell_type || '?'}
 To   : ${toCoord} ${movement.to_cell_type || '?'}`;
           } else {
             movementSection = `
-?? Movement
+-- Movement
 (No movement this turn)`;
           }
           
@@ -1206,7 +1207,7 @@ To   : ${toCoord} ${movement.to_cell_type || '?'}`;
           let mismatchWarning = '';
           if (hasMismatch) {
             mismatchWarning = `
-??  MISMATCH DETECTED
+*** MISMATCH DETECTED
 State      : ${cellType}
 Narrative  : ${mismatchInfo} (narrative cue)`;
           }
@@ -1224,19 +1225,20 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           const _stLayerLabel = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0';
           const _stContainer = authState.active_site_name || '(none)';
           let stateSection = `
-?? Position      : Macro(${authState.position?.mx},${authState.position?.my}) ? Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\n?? L1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
-?? Description   : ${authState.cell_description || '(unknown)'}
-?? Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
-?? Grid Key      : ${authState.cell_key || 'unknown'}
-?? Biome         : ${authState.biome || 'unknown'}
-?? Turn Counter  : ${authState.turn_counter || 0}
-???  Site Count      : ${authState.settlement_count || 0}
-???  World Cells   : ${_wTotal} total � ${_wRegionCount} in region (${_wMx},${_wMy}) � ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\nL1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
+Description   : ${authState.cell_description || '(unknown)'}
+Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
+Grid Key      : ${authState.cell_key || 'unknown'}
+Biome         : ${authState.biome || 'unknown'}
+Turn Counter  : ${authState.turn_counter || 0}
+Site Count    : ${authState.settlement_count || 0}
+World Cells   : ${_wTotal} total � ${_wRegionCount} in region (${_wMx},${_wMy}) � ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
 -- INIT-TIME WORLD GENERATION INPUTS (frozen) --
-?? World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
-??  Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
-???  Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
-?? Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
+World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
+Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
+Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
+Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
+          stateSection = stateSection.replace(/World Cells[^\n]*/u, `World Cells   : ${_wTotal} total | ${_wRegionCount} in region (${_wMx},${_wMy}) | ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored`);
           
           // Site diagnostic addendum
           const _sCellKey = authState.cell_key || null;
@@ -1282,13 +1284,13 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           if (authState.current_settlement) {
             const settlement = authState.current_settlement;
             siteSection = `
-???  Settlement
+-- Settlement
 Registered Name : ${settlement.name || '(unknown)'}
 Registered Type : ${settlement.type || '(unknown)'}
 NPC Count       : ${settlement.npcs?.length || 0}`;
           } else {
             siteSection = `
-???  Settlement
+-- Settlement
 (Not in a settlement)`;
           }
           
@@ -1311,14 +1313,14 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
           let nearbyCellsSection = '';
           if (nearbyCells) {
             nearbyCellsSection = `
-?? Nearby Cells
+-- Nearby Cells
 N: ${nearbyCells.North?.type || '?'} (${nearbyCells.North?.subtype || ''})
 S: ${nearbyCells.South?.type || '?'} (${nearbyCells.South?.subtype || ''})
 E: ${nearbyCells.East?.type || '?'} (${nearbyCells.East?.subtype || ''})
 W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
           } else {
             nearbyCellsSection = `
-?? Nearby Cells
+-- Nearby Cells
 (No cell data available)`;
           }
           
@@ -1326,8 +1328,8 @@ W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
           let intentSection = '';
           if (isInitialization) {
             intentSection = `
-?? Intent
-(N/A � world initialization)`;
+-- Intent
+(N/A - world initialization)`;
           } else {
             const rawInput = parsedIntent.raw_input || '(none)';
             const parsedAction = parsedIntent.parsed_action || 'unknown';
@@ -1335,7 +1337,7 @@ W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
             const confidence = (parsedIntent.confidence !== null && parsedIntent.confidence !== undefined) ? parsedIntent.confidence.toFixed(2) : '(unknown)';
             const source = parsedIntentSource === 'fallback' ? ' (inferred)' : '';
             intentSection = `
-?? Intent
+-- Intent
 Raw Input  : ${rawInput}
 Parsed     : ${parsedAction}${direction !== '(none)' ? ' ' + direction : ''}
 Confidence : ${confidence}${source}`;
@@ -1343,7 +1345,7 @@ Confidence : ${confidence}${source}`;
           
           // Narrative section
           const narrativeSection = `
-?? NARRATIVE
+-- NARRATIVE
 ${lastTurn.narrative || '(no narrative)'}`;
           
           // Filter diagnostic logs
@@ -1359,7 +1361,7 @@ ${lastTurn.narrative || '(no narrative)'}`;
           }
           
           let logsSection = `
-?? TURN LOGS (${diagnosticLogs.length} events)`;
+-- TURN LOGS (${diagnosticLogs.length} events)`;
           if (diagnosticLogs.length > 0) {
             logsSection += '\n' + diagnosticLogs.map(log => 
               `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`
@@ -1384,14 +1386,14 @@ ${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${
 
           await navigator.clipboard.writeText(snapshotBundle);
           const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = '? QA snapshot copied to clipboard (enhanced)!\n\nBundle includes:\n- Parsed intent\n- Movement before/after\n- Authoritative state\n- Settlement info\n- Nearby cells\n- Narrative + turn logs';
+          logsResponse.innerHTML = 'QA snapshot copied to clipboard!\n\nBundle includes:\n- Parsed intent\n- Movement before/after\n- Authoritative state\n- Settlement info\n- Nearby cells\n- Narrative + turn logs';
           logsResponse.style.display = 'block';
           logsResponse.style.color = '#2ecc71';
 
         } else {
           // Fallback when no turn_history available
           const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = '?? No turn history available. Start a game and try again.';
+          logsResponse.innerHTML = '[!] No turn history available. Start a game and try again.';
           logsResponse.style.display = 'block';
           logsResponse.style.color = '#f39c12';
         }
@@ -1399,7 +1401,7 @@ ${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${
       } catch (err) {
         console.error('[QA-EXPORT] Error:', err);
         const logsResponse = document.getElementById('logsResponse');
-        logsResponse.innerHTML = `? Export failed: ${err.message}`;
+        logsResponse.innerHTML = `[ERROR] Export failed: ${err.message}`;
         logsResponse.style.display = 'block';
         logsResponse.style.color = '#e74c3c';
       }
