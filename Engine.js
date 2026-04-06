@@ -482,12 +482,22 @@ function buildOutput(prevState, inputObj, logger) {
     }
 
     // Phase 7 temporary scaffolding: minimal site resolution.
-    // Priority: explicit name match → first settlement site → first poi site.
+    // Priority: exact/substring match → generic term → fuzzy match → single-site fallback.
     // Multi-site disambiguation and clarification prompts are deferred to a later phase.
+
+    // Inline levenshtein — used for typo-tolerant site name matching only.
+    function _lev(a, b) {
+      const m = a.length, n = b.length;
+      const d = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
+      for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+        d[i][j] = a[i-1] === b[j-1] ? d[i-1][j-1] : 1 + Math.min(d[i-1][j], d[i][j-1], d[i-1][j-1]);
+      return d[m][n];
+    }
+
     let targetSite = null;
     const targetName = (actions.target || '').toLowerCase().trim();
     if (targetName) {
-      // Step 1: find a site whose name, tier, or category matches the target string.
+      // Step 1: exact / substring match on name, tier, or category.
       const namedMatch = enterSites.find(s =>
         (s.name && s.name.toLowerCase().includes(targetName)) ||
         (s.site_tier && s.site_tier.toLowerCase().includes(targetName)) ||
@@ -495,15 +505,26 @@ function buildOutput(prevState, inputObj, logger) {
       );
       if (namedMatch) {
         if (namedMatch.enterable === true) {
-          // Named target found and is enterable — use it.
           targetSite = namedMatch;
         } else {
-          // Named target found but NOT enterable — reject rather than silently redirecting.
           console.log(`[Phase10-ENTER] Named target "${targetName}" resolved to ${namedMatch.site_id} but enterable !== true — rejecting.`);
           targetSite = null;
         }
       }
-      // If namedMatch is null, fall through to default selection below.
+      // Step 3: fuzzy match (levenshtein ≤ 2) — only runs if exact/substring failed.
+      if (!targetSite) {
+        const fuzzyMatch = enterSites
+          .filter(s => s.enterable === true)
+          .find(s => {
+            const candidates = [s.name, s.site_tier, s.category].filter(Boolean).map(v => v.toLowerCase());
+            return candidates.some(v => _lev(targetName, v) <= 2 || _lev(targetName, v.replace(/^(the|a|an)\s+/, '')) <= 2);
+          });
+        if (fuzzyMatch) {
+          targetSite = fuzzyMatch;
+          console.log(`[Phase10-ENTER] Fuzzy match: "${targetName}" → ${fuzzyMatch.site_id} (${fuzzyMatch.name || fuzzyMatch.category})`);
+        }
+      }
+      // If still no match, fall through to generic term and single-site fallback below.
     }
     // Generic settlement term fallback: if the player typed a general category word (e.g. "enter town"
     // or "enter the town"), strip leading articles then check against known generic terms.
@@ -538,6 +559,15 @@ function buildOutput(prevState, inputObj, logger) {
           console.log(`[Phase10-ENTER] Generic term "${targetName}" ambiguous (${_genericCandidates.length} candidates) — using first settlement: ${targetSite.site_id}`);
         }
         // Zero candidates: fall through to explicit rejection below
+      }
+    }
+    // Single-site fallback: if target was specified but nothing matched at all,
+    // and exactly one enterable (non-bootstrap) site exists — use it.
+    if (!targetSite && targetName) {
+      const _entryCandidates = enterSites.filter(s => s.enterable === true && !s.is_starting_location);
+      if (_entryCandidates.length === 1) {
+        targetSite = _entryCandidates[0];
+        console.log(`[Phase10-ENTER] Single-site fallback: "${targetName}" → ${targetSite.site_id} (${targetSite.name || targetSite.category})`);
       }
     }
     if (!targetSite && !targetName) {
