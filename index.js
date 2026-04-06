@@ -793,10 +793,11 @@ app.post('/narrate', async (req, res) => {
 
   // First turn: seed world using WORLD_PROMPT through Engine
   let engineOutput = null;
+  let inputObj = null; // Declared in outer scope — assigned in if/else branches below
   if (isFirstTurn === true) {
     isFirstTurn = false;
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
-    const inputObj = mapActionToInput(action, "WORLD_PROMPT");
+    inputObj = mapActionToInput(action, "WORLD_PROMPT");
     
     if (logger) logger.worldPromptReceived(inputObj.WORLD_PROMPT);
     
@@ -934,7 +935,7 @@ app.post('/narrate', async (req, res) => {
         });
       }
 
-      let inputObj = null;
+      inputObj = null;
 
       // PHASE 1: ROUTING INSTRUMENTATION - Debug the routing decision
       if (parseResult) {
