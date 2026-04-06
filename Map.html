@@ -427,6 +427,68 @@
       } else {
         _siteBanner.style.display = 'none';
       }
+      // ── L1 site grid branch ────────────────────────────────────────────────
+      // When inside a site (depth ≥ 2), render the site interior grid instead of
+      // the L0 world grid. Falls back to explicit error — never silently shows L0.
+      if (visibility && visibility.current_depth >= 2) {
+        const _activeSiteData = state.world && state.world.active_site;
+        const _sitePos = visibility.site_position;
+
+        if (!_activeSiteData || !_activeSiteData.grid || !Array.isArray(_activeSiteData.grid) || _activeSiteData.grid.length === 0) {
+          showError('L1 Grid Unavailable', 'Site interior grid has not been generated yet. Enter the site first.');
+          return;
+        }
+        if (!_sitePos || typeof _sitePos.x !== 'number' || typeof _sitePos.y !== 'number') {
+          showError('L1 Grid Unavailable', 'Site-local player position is missing from state.');
+          return;
+        }
+
+        const _siteGrid = _activeSiteData.grid;
+        const _siteH = _activeSiteData.height || _siteGrid.length;
+        const _siteW = _activeSiteData.width || (_siteGrid[0] ? _siteGrid[0].length : 7);
+
+        document.getElementById('map-notice').style.display = 'none';
+        hideOverlay();
+
+        const container = document.getElementById('grid-container');
+        container.innerHTML = '';
+
+        for (let row = 0; row < _siteH; row++) {
+          const rowEl = document.createElement('div');
+          rowEl.className = 'grid-row';
+          for (let col = 0; col < _siteW; col++) {
+            const tile = (_siteGrid[row] && _siteGrid[row][col]) || null;
+            const isPlayer = (col === _sitePos.x && row === _sitePos.y);
+            const el = document.createElement('div');
+            el.className = 'cell generated';
+            if (isPlayer) el.classList.add('player-pos');
+            const typeLabel = tile?.type || 'space';
+            el.innerHTML = `
+              ${isPlayer ? '<div class="player-marker">◉</div>' : ''}
+              <div class="cell-type">${escapeHtml(typeLabel)}</div>
+              <div class="cell-biome">${escapeHtml(String(col) + ',' + String(row))}</div>
+            `;
+            el.addEventListener('click', () => {
+              if (selectedCell) selectedCell.classList.remove('selected');
+              el.classList.add('selected');
+              selectedCell = el;
+              // Minimal tile inspector at L1
+              const content = document.getElementById('inspector-content');
+              content.innerHTML = `<div class="inspector-row"><span class="inspector-label">Type</span><span class="inspector-value">${escapeHtml(typeLabel)}</span></div>` +
+                `<div class="inspector-row"><span class="inspector-label">x</span><span class="inspector-value">${col}</span></div>` +
+                `<div class="inspector-row"><span class="inspector-label">y</span><span class="inspector-value">${row}</span></div>`;
+              document.getElementById('inspector-panel').style.display = 'block';
+            });
+            rowEl.appendChild(el);
+          }
+          container.appendChild(rowEl);
+        }
+
+        setStatus(`Site: ${_activeSiteData.name || '(unnamed)'} · L1 grid ${_siteW}×${_siteH} · pos (${_sitePos.x},${_sitePos.y})`);
+        return;
+      }
+      // ── end L1 branch — L0 path continues below ────────────────────────────
+
       const pos = state.world && state.world.position;
       if (!pos) {
         showError('State Error', 'world.position is absent in game state.');

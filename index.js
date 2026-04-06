@@ -1440,7 +1440,8 @@ ${_phase5Instruction}`;
       settlement_count: Object.values(currentCell?.sites || {}).length,
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1,
-      active_site_name: gameState.world.active_site?.name || null
+      active_site_name: gameState.world.active_site?.name || null,
+      site_position: (gameState.world.current_depth || 1) >= 2 ? (gameState.player?.position || null) : null
     };
 
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
@@ -1535,6 +1536,7 @@ ${_phase5Instruction}`;
         regions_explored: _vpRegionKeys.size,
         turn_counter: gameState.turn_counter || 0,
         settlement_count: Object.values(currentCell?.sites || {}).length,
+        site_position: _vpDepth >= 2 ? (gameState.player?.position || null) : null,
         last_site_capture: gameState.world._lastSiteCapture || null
       };
     }
@@ -1725,7 +1727,8 @@ ${_phase5Instruction}`;
     
     // 3. Check: movement_inconsistency (contradictions only)
     // Only flag contradictions between logs/state, not mere failures
-    if (movement && movement.success === true) {
+    // Skip at L1+ — L1 logs carry {x,y} which is incompatible with L0 {mx,my,lx,ly} comparison
+    if (movement && movement.success === true && authoritativeState.current_depth <= 1) {
       // Movement succeeded; verify final position matches expectation
       const finalPos = movement.to;
       const authoritative = authoritativeState.position;

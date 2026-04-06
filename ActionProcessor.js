@@ -136,13 +136,27 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       const _ny = _sp.y + delta.dy;
       if (_nx < 0 || _nx >= _siteW || _ny < 0 || _ny >= _siteH) {
         // Edge — exit to L0
+        if (logger) {
+          logger.player_move_attempted(dir, { layer: 'L1', x: _sp.x, y: _sp.y }, { layer: 'L0', exited: true });
+        }
         state.world.active_site = null;
         state.world.current_depth = 1;
         if (!state.player) state.player = {};
         state.player.depth = 1;
+        if (logger) {
+          logger.player_move_resolved(true, 'site_exit', { layer: 'L0', exited: true });
+          logger.action_resolved('move', true, `exited site via ${dir} edge`);
+        }
         console.log(`[ACTIONS] L1 edge exit: exited ${_site.name || 'site'} back to L0`);
       } else {
+        if (logger) {
+          logger.player_move_attempted(dir, { layer: 'L1', x: _sp.x, y: _sp.y }, { layer: 'L1', x: _nx, y: _ny });
+        }
         state.player.position = { x: _nx, y: _ny };
+        if (logger) {
+          logger.player_move_resolved(true, 'success', { layer: 'L1', x: _nx, y: _ny });
+          logger.action_resolved('move', true, `moved ${dir} to site pos (${_nx},${_ny})`);
+        }
         console.log(`[ACTIONS] L1 move ${dir}: site pos (${_nx},${_ny})`);
       }
       return;
