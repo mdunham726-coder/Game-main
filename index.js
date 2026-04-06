@@ -1279,7 +1279,8 @@ app.post('/narrate', async (req, res) => {
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
-    const _parsedAction = parsedIntent?.parsed_action || engineOutput?.actions?.action || '';
+    // parsedIntent is populated AFTER narration — do not reference here.
+    const _parsedAction = engineOutput?.actions?.action || '';
     const _rawInput = (action || '').trim();
     const _isFreeform = (inputObj?.player_intent?.kind === 'FREEFORM') ||
       (_parsedAction === 'wait' && _rawInput.toLowerCase() !== 'wait' && _rawInput !== '');
