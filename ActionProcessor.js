@@ -252,7 +252,33 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     }
     return; 
   }
-  
+
+  if (act === 'talk') {
+    const target = String(actions?.target || '').trim();
+    const depth = state?.world?.current_depth ?? 1;
+    if (depth >= 2) {
+      const { matches } = resolveNPCTargetFromVisible(state, target);
+      if (matches.length === 0) {
+        state.world._npcTalkResult = { outcome: 'not_found', target };
+        if (logger) logger.action_resolved('talk', false, `no visible NPC matching "${target}"`);
+        console.log(`[ACTIONS] talk: no visible NPC matching "${target}" at L1`);
+      } else if (matches.length > 1) {
+        state.world._npcTalkResult = { outcome: 'ambiguous', role: target, count: matches.length };
+        if (logger) logger.action_resolved('talk', false, `ambiguous: ${matches.length} NPCs match "${target}"`);
+        console.log(`[ACTIONS] talk: ambiguous — ${matches.length} NPCs match "${target}"`);
+      } else {
+        state.world._npcTalkResult = { outcome: 'matched', npc: { id: matches[0].id, job: matches[0].job_category } };
+        if (logger) logger.action_resolved('talk', true, `talking to ${matches[0].id} (${matches[0].job_category})`);
+        console.log(`[ACTIONS] talk: matched ${matches[0].id} (${matches[0].job_category})`);
+      }
+    } else {
+      state.world._npcTalkResult = { outcome: 'not_in_site' };
+      if (logger) logger.action_resolved('talk', false, `not inside a site (depth ${depth})`);
+      console.log(`[ACTIONS] talk: player not inside a site (depth ${depth})`);
+    }
+    return;
+  }
+
   // === PHASE 3C: Quest action execution ===
   if (['accept_quest', 'complete_quest'].includes(act)){
     const questSucceeded = updateNPCQuestState(actions, state, deltas, flags);
@@ -503,9 +529,41 @@ function hasInventoryItem(state, name){
   return !!findByNameCaseInsensitive(inv, 'name', name);
 }
 
-function isNPCPresent(state, name){
+function isNPCPresent(state, nameOrRole){
+  const depth = state?.world?.current_depth ?? 1;
+  if (depth >= 2) {
+    // L1: match against visible set by job_category or exact id
+    const visible = state?.world?.active_site?._visible_npcs || [];
+    if (visible.length > 0) {
+      const q = String(nameOrRole || '').trim().toLowerCase();
+      return visible.some(n =>
+        String(n?.job_category || '').toLowerCase() === q ||
+        String(n?.id || '').toLowerCase() === q
+      );
+    }
+    // _visible_npcs not yet computed — any NPC in site counts as present
+    return (state?.world?.active_site?.npcs || []).length > 0;
+  }
   const { npcs } = getCellEntities(state);
-  return !!findByNameCaseInsensitive(npcs, 'name', name);
+  return !!findByNameCaseInsensitive(npcs, 'name', nameOrRole);
+}
+
+/**
+ * Resolve an NPC target from the current visible set at L1.
+ * Returns all matches by job_category or id (case-insensitive).
+ * Callers should check matches.length: 0=not found, 1=matched, >1=ambiguous.
+ */
+function resolveNPCTargetFromVisible(state, target) {
+  const depth = state?.world?.current_depth ?? 1;
+  if (depth < 2) return { matches: [] };
+  const visible = state?.world?.active_site?._visible_npcs || [];
+  const q = String(target || '').trim().toLowerCase();
+  if (!q) return { matches: visible }; // empty target = all visible
+  const matches = visible.filter(n =>
+    String(n?.job_category || '').toLowerCase() === q ||
+    String(n?.id || '').toLowerCase() === q
+  );
+  return { matches };
 }
 /**
  * validateAndQueueIntent(gameState, normalizedIntent)
@@ -603,7 +661,7 @@ function validateAndQueueIntent(state, normalizedIntent){
 /**
  * Compute which NPCs are visible at the player's current L1 position.
  * Derived runtime field only — not authoritative, not persisted.
- * Reads grid tile npc_ids within Chebyshev radius 1 and resolves against site.npcs.
+ * Reads only the exact grid tile the player occupies (no adjacency).
  * @param {object} site - active_site object (must have grid, npcs, width, height)
  * @param {object} playerPos - { x, y } site-local position
  * @returns {Array} resolved NPC objects (max MAX_VISIBLE_NPCS, deduplicated, same-site only)
@@ -611,17 +669,11 @@ function validateAndQueueIntent(state, normalizedIntent){
 function computeVisibleNpcs(site, playerPos) {
   const MAX_VISIBLE_NPCS = 5; // tunable — not a simulation rule
   if (!site || !playerPos) return [];
-  const { grid = [], npcs = [], width = 7, height = 7, settlement_id } = site;
+  const { grid = [], npcs = [], settlement_id } = site;
   const { x, y } = playerPos;
   const idSet = new Set();
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      const ty = y + dy, tx = x + dx;
-      if (ty >= 0 && ty < height && tx >= 0 && tx < width) {
-        (grid[ty]?.[tx]?.npc_ids || []).forEach(id => idSet.add(id));
-      }
-    }
-  }
+  // Exact tile only — no adjacency radius
+  (grid[y]?.[x]?.npc_ids || []).forEach(id => idSet.add(id));
   const resolved = [...idSet]
     .map(id => npcs.find(n => n.id === id && (!settlement_id || n.settlement_id === settlement_id)))
     .filter(Boolean)
@@ -645,6 +697,7 @@ module.exports = {
   resolveCellItemByName,
   hasInventoryItem,
   isNPCPresent,
+  resolveNPCTargetFromVisible,
   // New exports to prevent crashes and improve utility access
   merchantRegenOnTurn,
   aliasScore,

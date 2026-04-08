@@ -683,6 +683,26 @@
           </div>`;
       }
 
+      // NPC Records — authoritative count from sites registry
+      if (settlements !== null && cell.sites) {
+        let totalNpcs = 0;
+        let siteFound = false;
+        for (const siteRef of Object.values(cell.sites)) {
+          if (!siteRef || !siteRef.interior_key) continue;
+          const fullSite = settlements[siteRef.interior_key];
+          if (!fullSite) continue;
+          siteFound = true;
+          totalNpcs += Array.isArray(fullSite.npcs) ? fullSite.npcs.length : 0;
+        }
+        if (siteFound) {
+          html += `
+          <div class="inspector-field">
+            <div class="inspector-label">NPC Records</div>
+            <div class="inspector-value">${totalNpcs}</div>
+          </div>`;
+        }
+      }
+
       // Description (supplemental)
       if (cell.description) {
         html += `<hr class="inspector-divider">

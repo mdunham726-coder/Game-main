@@ -1227,9 +1227,16 @@ app.post('/narrate', async (req, res) => {
     // Phase 10: Override scene description and site context when player is inside a site
     const _narDepth = gameState?.world?.current_depth || 1;
     const _narActiveSite = gameState?.world?.active_site || null;
+    // Freshness guarantee: recompute visible NPCs before narration payload assembly
+    if (_narDepth >= 2 && _narActiveSite && gameState?.player?.position) {
+      _narActiveSite._visible_npcs = Actions.computeVisibleNpcs(_narActiveSite, gameState.player.position);
+    }
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
     const _engineMsg = gameState?.world?._engineMessage || null;
     if (_engineMsg) gameState.world._engineMessage = null;
+    // Consume _npcTalkResult (transient — clear after capture so it doesn't repeat)
+    const _npcTalkResult = gameState?.world?._npcTalkResult || null;
+    if (_npcTalkResult) gameState.world._npcTalkResult = null;
     let _narSceneDesc = scene.currentCell?.description || 'An empty space';
     let _narSceneType = scene.currentCell?.type || 'void';
     if (_narDepth >= 2 && _narActiveSite) {
@@ -1291,6 +1298,24 @@ app.post('/narrate', async (req, res) => {
       ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`
       : '';
 
+    // NPC talk result instruction block (ambiguity / not-found control)
+    const _npcTalkBlock = (() => {
+      if (!_npcTalkResult) return '';
+      if (_npcTalkResult.outcome === 'ambiguous') {
+        const role = _npcTalkResult.role || 'NPC';
+        const count = _npcTalkResult.count || 2;
+        return `\nSYSTEM: The player attempted to talk to "${role}" but ${count} NPCs with that role are present. Do NOT pick one arbitrarily. Narrate the ambiguity and instruct the player to be more specific — e.g. "There are ${count} ${role}s here. Which one did you mean?"\n`;
+      }
+      if (_npcTalkResult.outcome === 'not_found') {
+        const t = _npcTalkResult.target || 'that person';
+        return `\nSYSTEM: The player attempted to talk to "${t}" but no matching NPC is visible at their current position. Narrate that no such person is here.\n`;
+      }
+      if (_npcTalkResult.outcome === 'not_in_site') {
+        return `\nSYSTEM: The player attempted to talk to someone but is not currently inside a site. Narrate that there is no one here to speak with.\n`;
+      }
+      return '';
+    })();
+
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
 WORLD TONE & CHARACTER:
@@ -1336,7 +1361,7 @@ The player has already moved. They are now in the location described above.
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
-${_freeformBlock}${_phase5Instruction}`;
+${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -1992,15 +2017,44 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   context += `Current Layer   : ${_ctxLayer}\n`;
 
   context += `\n=== NEARBY NPCS ===\n`;
-  if (gameState.world.npcs && gameState.world.npcs.length > 0) {
-    gameState.world.npcs.slice(0, 3).forEach(npc => {
-      context += `- ${npc.name || "Unnamed"} (${npc.archetype || "unknown"})\n`;
-    });
-    if (gameState.world.npcs.length > 3) {
-      context += `... and ${gameState.world.npcs.length - 3} more\n`;
+  const _dbgDepth = gameState.world.current_depth ?? 1;
+  const _dbgActiveSite = gameState.world.active_site || null;
+
+  if (_dbgDepth >= 2 && _dbgActiveSite) {
+    // L1: recompute _visible_npcs fresh (freshness guarantee — never stale)
+    if (gameState.player?.position) {
+      const Actions = require('./ActionProcessor.js');
+      _dbgActiveSite._visible_npcs = Actions.computeVisibleNpcs(_dbgActiveSite, gameState.player.position);
+    }
+    const _dbgVisible = _dbgActiveSite._visible_npcs || [];
+
+    context += `\n=== ACTIVE SITE (L1) ===\n`;
+    context += `Name: ${_dbgActiveSite.name || '(unnamed)'}\n`;
+    context += `Type: ${_dbgActiveSite.type || '(unknown)'}\n`;
+    context += `NPC Records: ${(_dbgActiveSite.npcs || []).length}\n`;
+    context += `Player Position: (${gameState.player?.position?.x ?? '?'},${gameState.player?.position?.y ?? '?'})\n`;
+    context += `\n=== NEARBY NPCS ===\n`;
+
+    // L1: use visible NPCs only — no overworld fallback
+    if (_dbgVisible.length > 0) {
+      _dbgVisible.forEach(npc => {
+        context += `- ${npc.job_category || npc.id || 'Unknown'} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}]\n`;
+      });
+    } else {
+      context += `(None visible at current tile)\n`;
     }
   } else {
-    context += `(None visible)\n`;
+    // L0: use world-level npcs
+    if (gameState.world.npcs && gameState.world.npcs.length > 0) {
+      gameState.world.npcs.slice(0, 3).forEach(npc => {
+        context += `- ${npc.name || "Unnamed"} (${npc.archetype || "unknown"})\n`;
+      });
+      if (gameState.world.npcs.length > 3) {
+        context += `... and ${gameState.world.npcs.length - 3} more\n`;
+      }
+    } else {
+      context += `(None visible)\n`;
+    }
   }
 
   // === DETAILED LEVEL ===
