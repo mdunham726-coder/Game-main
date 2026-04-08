@@ -1236,15 +1236,16 @@ app.post('/narrate', async (req, res) => {
       _narSceneDesc = _narActiveSite.description ||
         `The ${_narActiveSite.type || 'settlement'} of ${_narActiveSite.name || 'the settlement'}. Streets and buildings fill the area.`;
       _narSceneType = _narActiveSite.type || 'settlement_interior';
-      const _siteNpcs = (_narActiveSite.npcs || []).slice(0, 5);
-      const _siteNpcNames = _siteNpcs.map(n => n.name || n.id).filter(Boolean).join(', ') || 'none visible';
-      // Sync npcsStr with actual site NPCs so NPCs PRESENT is the single source of truth
+      // Use engine-computed visible set (derived from grid tile placement at player position)
+      const _siteNpcs = _narActiveSite._visible_npcs || [];
+      const _siteNpcNames = _siteNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
+      // Sync npcsStr with visible NPCs — this is the hard authority boundary for narration
       if (_siteNpcs.length > 0) {
-        npcsStr = JSON.stringify(_siteNpcs.map(n => ({ id: n.id, name: n.name, job: n.job })));
+        npcsStr = JSON.stringify(_siteNpcs.map(n => ({ id: n.id, job: n.job_category, tier: n.tier, gender: n.gender })));
       } else {
         npcsStr = '(None visible)';
       }
-      _siteContextBlock = `\n\nCURRENT SITE (you are inside this location):\nName: ${_narActiveSite.name || '(unnamed)'}\nType: ${_narActiveSite.type || 'settlement'}\nPopulation: ${_narActiveSite.population || 0}\nNPCs nearby: ${_siteNpcNames}`;
+      _siteContextBlock = `\n\nCURRENT SITE (you are inside this location):\nName: ${_narActiveSite.name || '(unnamed)'}\nType: ${_narActiveSite.type || 'settlement'}\nPopulation: ${(_narActiveSite.npcs || []).length}\nNPCs nearby: ${_siteNpcNames}`;
       const _sp = gameState?.player?.position;
       if (_sp && _narActiveSite.grid) {
         const _gridCell = _narActiveSite.grid[_sp.y]?.[_sp.x] ?? null;
@@ -1334,7 +1335,7 @@ The player has already moved. They are now in the location described above.
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
-- Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. If NPCs PRESENT is '(None visible)', the immediate area contains no visible persons — describe it accordingly.
+- Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 ${_freeformBlock}${_phase5Instruction}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
@@ -1456,7 +1457,10 @@ ${_freeformBlock}${_phase5Instruction}`;
       current_settlement: currentSettlement,  // Now populated if player is in a settlement
       current_depth: gameState.world.current_depth || 1,
       active_site_name: gameState.world.active_site?.name || null,
-      site_position: (gameState.world.current_depth || 1) >= 2 ? (gameState.player?.position || null) : null
+      site_position: (gameState.world.current_depth || 1) >= 2 ? (gameState.player?.position || null) : null,
+      visible_npc_count: (gameState.world.active_site?._visible_npcs || []).length,
+      visible_npc_names: (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
+      npc_record_count: (gameState.world.active_site?.npcs || []).length
     };
 
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces

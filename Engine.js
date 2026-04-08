@@ -962,6 +962,8 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
   const _cy = Math.floor(_ah / 2);
   const _edgeMap = { north: { x: _cx, y: 0 }, south: { x: _cx, y: _ah - 1 }, east: { x: 0, y: _cy }, west: { x: _aw - 1, y: _cy } };
   state.player.position = _edgeMap[entry_dir] || { x: _cx, y: _ah - 1 };
+  // Compute visible NPCs at entry position (derived runtime field — recomputed on move, not persisted)
+  state.world.active_site._visible_npcs = Actions.computeVisibleNpcs(state.world.active_site, state.player.position);
   return state.world.active_site;
 }
 

@@ -864,16 +864,12 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
       // -- NPC section (running only) --
       let npcSection = '';
       if (!isSnapshot && authState.current_depth >= 2) {
-        const _sitePos = authState.site_position;
-        const _activeSite = lastGameResponse?.state?.world?.active_site;
-        const _totalNpcs = (_activeSite?.npcs || []).length;
-        const _tileNpcIds = _sitePos && _activeSite?.grid
-          ? (_activeSite.grid[_sitePos.y]?.[_sitePos.x]?.npc_ids || [])
-          : [];
-        const _tileNpcNames = _tileNpcIds.length > 0
-          ? _tileNpcIds.map(id => (_activeSite.npcs || []).find(n => n.id === id)?.name || id).join(', ')
+        const _visCount = authState.visible_npc_count ?? 0;
+        const _visNames = Array.isArray(authState.visible_npc_names) && authState.visible_npc_names.length > 0
+          ? authState.visible_npc_names.join(', ')
           : 'none';
-        npcSection = `\n\u2500\u2500 NPCs (Current Container) \u2500\u2500\nTotal    : ${_totalNpcs}\nAt Tile  : ${_tileNpcNames}`;
+        const _recCount = authState.npc_record_count ?? 0;
+        npcSection = `\n\u2500\u2500 NPCs (Current Container) \u2500\u2500\nRecords  : ${_recCount}\nVisible  : ${_visCount} [${_visNames}]`;
       }
 
       // -- Nearby cells --

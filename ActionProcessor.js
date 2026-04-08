@@ -153,6 +153,8 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           logger.player_move_attempted(dir, { layer: 'L1', x: _sp.x, y: _sp.y }, { layer: 'L1', x: _nx, y: _ny });
         }
         state.player.position = { x: _nx, y: _ny };
+        // Recompute visible NPCs for new position (derived runtime field only — not persisted)
+        state.world.active_site._visible_npcs = computeVisibleNpcs(state.world.active_site, state.player.position);
         if (logger) {
           logger.player_move_resolved(true, 'success', { layer: 'L1', x: _nx, y: _ny });
           logger.action_resolved('move', true, `moved ${dir} to site pos (${_nx},${_ny})`);
@@ -598,6 +600,39 @@ function validateAndQueueIntent(state, normalizedIntent){
   return { valid:true, queue, stateValidation:sv };
 }
 
+/**
+ * Compute which NPCs are visible at the player's current L1 position.
+ * Derived runtime field only — not authoritative, not persisted.
+ * Reads grid tile npc_ids within Chebyshev radius 1 and resolves against site.npcs.
+ * @param {object} site - active_site object (must have grid, npcs, width, height)
+ * @param {object} playerPos - { x, y } site-local position
+ * @returns {Array} resolved NPC objects (max MAX_VISIBLE_NPCS, deduplicated, same-site only)
+ */
+function computeVisibleNpcs(site, playerPos) {
+  const MAX_VISIBLE_NPCS = 5; // tunable — not a simulation rule
+  if (!site || !playerPos) return [];
+  const { grid = [], npcs = [], width = 7, height = 7, settlement_id } = site;
+  const { x, y } = playerPos;
+  const idSet = new Set();
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const ty = y + dy, tx = x + dx;
+      if (ty >= 0 && ty < height && tx >= 0 && tx < width) {
+        (grid[ty]?.[tx]?.npc_ids || []).forEach(id => idSet.add(id));
+      }
+    }
+  }
+  const resolved = [...idSet]
+    .map(id => npcs.find(n => n.id === id && (!settlement_id || n.settlement_id === settlement_id)))
+    .filter(Boolean)
+    .slice(0, MAX_VISIBLE_NPCS);
+  const unresolvedCount = idSet.size - resolved.length;
+  if (unresolvedCount > 0) {
+    console.warn(`[NPC-VISIBILITY] ${unresolvedCount} npc_id(s) not found in site.npcs — orphaned grid placement reference(s)`);
+  }
+  return resolved;
+}
+
 module.exports = {
   validateAndQueueIntent,
   parseIntent,
@@ -620,5 +655,6 @@ module.exports = {
   // === PHASE 3C: Quest system exports ===
   getNPCInSettlement,
   validateQuestAction,
-  updateNPCQuestState
+  updateNPCQuestState,
+  computeVisibleNpcs
 };
