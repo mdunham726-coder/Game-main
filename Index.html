@@ -712,7 +712,7 @@ diagLog.innerHTML = `
           break;
         }
       }
-      if (!isInitialization && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+      if (!isInitialization && (authState.current_depth || 1) <= 1 && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
         hasMismatch = true;
         mismatchInfo = narrativeCue || '(scored category mismatch)';
       }
@@ -1118,8 +1118,8 @@ Total Turns Included: ${turnHistory.length}
             }
             
             // Detect mismatch: cell category vs dominant narrative category
-            // Skip mismatch detection on Turn 1 (world initialization uses different language patterns)
-            if (!isInitialization && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+            // Skip mismatch detection on Turn 1 and when inside a site (L1+)
+            if (!isInitialization && (authState.current_depth || 1) <= 1 && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
               hasMismatch = true;
               mismatchInfo = narrativeCue || '(scored category mismatch)';
             }
@@ -1512,8 +1512,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           }
           
           // Detect mismatch: cell category vs dominant narrative category
-          // Skip mismatch detection on Turn 1 (world initialization uses different language patterns)
-          if (!isInitialization && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
+          // Skip mismatch detection on Turn 1 and when inside a site (L1+)
+          if (!isInitialization && (authState.current_depth || 1) <= 1 && cellCategory && narrativeCategory && cellCategory !== narrativeCategory) {
             hasMismatch = true;
             mismatchInfo = narrativeCue || '(scored category mismatch)';
           }

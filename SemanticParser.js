@@ -71,6 +71,8 @@ function buildPrompt(userInput, contextStr) {
     "Valid actions: move, take, drop, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, help",
     "",
     "Directions: north, south, east, west, up, down",
+    "Only assign action='move' when the player clearly intends to travel to a new location. Do not infer movement from body-part words (e.g., 'right foot', 'left hand') or positional language used in non-travel contexts.",
+    "If the player's input is expressive, theatrical, or physical-performance language with no clear mechanical intent (e.g., dancing, spinning, performing, celebrating), set action to 'wait' and confidence to 0.3.",
     "",
     // === PHASE 3C: Quest-specific parsing context ===
     "Quest actions:",
@@ -185,7 +187,7 @@ async function normalizeUserIntent(userInput, gameContext) {
     setToCache(cacheKey, out);
     return out;
   }
-  if (confidence < 0.5) {
+  if (confidence < 0.7) {
     log("warn", `error=LOW_CONFIDENCE input="${raw}" confidence=${confidence}`);
     const out = { success: false, error: "LOW_CONFIDENCE", intent: null, confidence };
     setToCache(cacheKey, out);
