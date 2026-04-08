@@ -187,7 +187,10 @@ const diag = data.turn_history && data.turn_history.length > 0
         cells_generated: cellsGen,
         region_cells: regionCells,
         site_position: auth.site_position || null,
-        sample_cell_types: sampleCells
+        sample_cell_types: sampleCells,
+        npc_record_count: auth.npc_record_count ?? 0,
+        visible_npc_count: auth.visible_npc_count ?? 0,
+        visible_npc_names: auth.visible_npc_names || []
       };
     })()
   : (data.diagnostics || {});
@@ -267,6 +270,11 @@ diagLog.innerHTML = `
   <div><strong>Cells Generated (all regions):</strong> ${diag.cells_generated}</div>
   <div><strong>Current Region Cells:</strong> ${diag.region_cells !== undefined && diag.region_cells !== null ? diag.region_cells : 'n/a'}</div>
   <div><strong>Sample Terrain:</strong> ${(diag.sample_cell_types || []).join(', ') || 'none'}</div>
+  <div style="margin-top:6px; border:1px solid #444; padding:6px; background:#111;">
+    <div style="color:#888; margin-bottom:4px;">&#x25BC; NPCs (Current Context)</div>
+    <div><strong>Records&nbsp;:</strong> ${diag.npc_record_count}</div>
+    <div><strong>Visible&nbsp;:</strong> ${diag.visible_npc_count} [${diag.visible_npc_names.length > 0 ? diag.visible_npc_names.join(', ') : 'none'}]</div>
+  </div>
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; INIT-TIME WORLD GENERATION INPUTS (frozen)</div>
   <div><strong>phase3_seed:</strong> ${_p3s ?? '<span style="color:#666">(not set)</span>'}</div>
   <div><strong>settlement_density:</strong> ${_wbn(_wb,'settlement_density')} &nbsp;|&nbsp; <strong>landmark_density:</strong> ${_wbn(_wb,'landmark_density')}</div>
@@ -863,13 +871,13 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
 
       // -- NPC section (running only) --
       let npcSection = '';
-      if (!isSnapshot && authState.current_depth >= 2) {
+      if (!isSnapshot) {
         const _visCount = authState.visible_npc_count ?? 0;
         const _visNames = Array.isArray(authState.visible_npc_names) && authState.visible_npc_names.length > 0
           ? authState.visible_npc_names.join(', ')
           : 'none';
         const _recCount = authState.npc_record_count ?? 0;
-        npcSection = `\n\u2500\u2500 NPCs (Current Container) \u2500\u2500\nRecords  : ${_recCount}\nVisible  : ${_visCount} [${_visNames}]`;
+        npcSection = `\n\u2500\u2500 NPCs (Current Context) \u2500\u2500\nNPC Records : ${_recCount}\nVisible NPCs : ${_visCount} [${_visNames}]`;
       }
 
       // -- Nearby cells --
