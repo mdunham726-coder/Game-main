@@ -684,7 +684,12 @@ function computeVisibleNpcs(site, playerPos) {
   const { x, y } = playerPos;
   const idSet = new Set();
   // Exact tile only — no adjacency radius
-  (grid[y]?.[x]?.npc_ids || []).forEach(id => idSet.add(id));
+  // Dual-source: building tiles store NPCs on the building object, not the grid cell
+  const tile = grid[y]?.[x];
+  const tileNpcIds = (tile?.type === 'building' && tile?.building_id)
+    ? (site.buildings?.[tile.building_id]?.npc_ids || [])
+    : (tile?.npc_ids || []);
+  tileNpcIds.forEach(id => idSet.add(id));
   const resolved = [...idSet]
     .map(id => npcs.find(n => n.id === id && (!settlement_id || n.settlement_id === settlement_id)))
     .filter(Boolean)
