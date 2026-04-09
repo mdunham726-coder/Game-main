@@ -196,8 +196,8 @@ function createLogger(config = {}) {
     cellsGenerated: (count, biome) => emit('ENGINE', 'cells_generated', { count, biome }),
     scenesResolved: (cellCount) => emit('ENGINE', 'scene_resolved', { cellCount }),
     
-    // Settlements
-    settlementCreated: (name, type, location) => emit('SETTLEMENT', 'settlement_created', { name, type, location }),
+    // Sites
+    siteCreated: (name, type, location) => emit('SETTLEMENT', 'site_created', { name, type, location }),
     
     // NPCs
     npcSpawnAttempted: (settlementId, count) => emit('NPC', 'npc_spawn_attempted', { settlementId, count }),
@@ -229,19 +229,19 @@ function createLogger(config = {}) {
     action_resolved: (action, succeeded, outcome) => 
       emit('SESSION', 'action_resolved', { action, succeeded, outcome }),
 
-    // Settlement existence
-    settlement_registered: (settlementId, name, type, cellPosition) => 
-      emit('SETTLEMENT', 'settlement_registered', { settlement_id: settlementId, name, type, cell_position: cellPosition }),
+    // Site existence
+    site_registered: (siteId, name, type, cellPosition) => 
+      emit('SETTLEMENT', 'site_registered', { site_id: siteId, name, type, cell_position: cellPosition }),
 
     // NPC spawning
-    npc_spawn_attempted: (settlementId, expectedCount) => 
-      emit('NPC', 'npc_spawn_attempted', { settlement_id: settlementId, expected_count: expectedCount }),
+    npc_spawn_attempted: (siteId, expectedCount) => 
+      emit('NPC', 'npc_spawn_attempted', { site_id: siteId, expected_count: expectedCount }),
     
-    npc_spawn_succeeded: (settlementId, actualCount) => 
-      emit('NPC', 'npc_spawn_succeeded', { settlement_id: settlementId, actual_count: actualCount }),
+    npc_spawn_succeeded: (siteId, actualCount) => 
+      emit('NPC', 'npc_spawn_succeeded', { site_id: siteId, actual_count: actualCount }),
     
-    npc_spawn_failed: (settlementId, reason) => 
-      emit('NPC', 'npc_spawn_failed', { settlement_id: settlementId, reason }, { level: 'WARN' }),
+    npc_spawn_failed: (siteId, reason) => 
+      emit('NPC', 'npc_spawn_failed', { site_id: siteId, reason }, { level: 'WARN' }),
   };
 }
 

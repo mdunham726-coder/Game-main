@@ -828,12 +828,12 @@ app.post('/narrate', async (req, res) => {
             for (const pSite of patchSites) Engine.recordSiteToCell(gameState, patchKey, pSite);
           }
           
-          // Log NPC spawning for all settlements
+          // Log NPC spawning for all site cells
           if (logger && worldData.cells) {
-            const settlementCells = Object.values(worldData.cells).filter(c => c.type === 'settlement');
-            settlementCells.forEach(settlement => {
-              if (settlement.npc_ids && settlement.npc_ids.length > 0) {
-                logger.npcSpawnSucceeded(settlement.id || settlement.subtype, settlement.npc_ids);
+            const siteCells = Object.values(worldData.cells).filter(c => c.type === 'settlement');
+            siteCells.forEach(siteCell => {
+              if (siteCell.npc_ids && siteCell.npc_ids.length > 0) {
+                logger.npcSpawnSucceeded(siteCell.id || siteCell.subtype, siteCell.npc_ids);
               }
             });
           }
@@ -1696,7 +1696,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       if (!cellType) return '';
       const type = cellType.toLowerCase();
       if (type.includes('settlement') || type.includes('village') || type.includes('town') || type.includes('house')) {
-        return 'settlement_residential';
+        return 'residential';
       } else if (type.includes('market') || type.includes('plaza') || type.includes('square') || type.includes('alley')) {
         return 'commerce_public';
       } else if (type.includes('forest') || type.includes('desert') || type.includes('lake') || type.includes('mountain') || 
@@ -1713,12 +1713,12 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     function scoreNarrativeCategory(narrativeText) {
       const locationKeywords = {
         commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
-        settlement_residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
+        residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
         nature_outdoor: ['park', 'forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
         structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
       };
       
-      const scores = { commerce_public: 0, settlement_residential: 0, nature_outdoor: 0, structure_indoor: 0 };
+      const scores = { commerce_public: 0, residential: 0, nature_outdoor: 0, structure_indoor: 0 };
       const textLower = narrativeText.toLowerCase();
       
       // Count unique keyword matches per category
@@ -2128,10 +2128,10 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     }
 
     context += `\n=== SITE INTERIOR REGISTRY ===\n`;
-    const settlementKeys = Object.keys(gameState.world.sites || {});
-    context += `Total entries: ${settlementKeys.length}\n`;
-    if (settlementKeys.length > 0) {
-      settlementKeys.slice(0, 5).forEach(k => {
+    const siteKeys = Object.keys(gameState.world.sites || {});
+    context += `Total entries: ${siteKeys.length}\n`;
+    if (siteKeys.length > 0) {
+      siteKeys.slice(0, 5).forEach(k => {
         const _sr = gameState.world.sites[k];
         const _srParent = k.includes('/l2') ? k.split('/l2')[0] : k;
         const _srCell = (_sr.mx !== undefined && _sr.lx !== undefined)
@@ -2141,8 +2141,8 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         context += `  parent: ${_srParent}  |  cell: ${_srCell}\n`;
         context += `  type: ${_sr.type || 'unknown'}  |  NPCs: ${(_sr.npcs || []).length}  |  stub: ${!!_sr.is_stub}  |  active: ${_srActive ? 'YES' : 'no'}\n`;
       });
-      if (settlementKeys.length > 5) {
-        context += `... and ${settlementKeys.length - 5} more\n`;
+      if (siteKeys.length > 5) {
+        context += `... and ${siteKeys.length - 5} more\n`;
       }
     } else {
       context += `(none)\n`;
