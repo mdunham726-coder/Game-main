@@ -274,7 +274,7 @@
       font-style: italic;
     }
 
-    .inspector-value.settlement-yes {
+    .inspector-value.site-present {
       color: #2ecc71;
       font-weight: bold;
     }
@@ -614,7 +614,7 @@
         : 0;
 
       // Sites interior registry lookup
-      const settlements = (state.world && (state.world.sites || state.world.settlements)) || null;
+      const sites = state.world?.sites || null;
 
       // Render grid
       const container = document.getElementById('grid-container');
@@ -655,7 +655,7 @@
               if (selectedCell) selectedCell.classList.remove('selected');
               el.classList.add('selected');
               selectedCell = el;
-              showInspector(cellData, mx, my, lx, ly, settlements);
+              showInspector(cellData, mx, my, lx, ly, sites);
             });
           } else if (isPlayer) {
             // Player is on an un-generated cell (edge case)
@@ -682,23 +682,22 @@
     }
 
     // ── Inspector ──────────────────────────────────────────────────────────────
-    function showInspector(cell, mx, my, lx, ly, settlements) {
+    function showInspector(cell, mx, my, lx, ly, sites) {
       const content = document.getElementById('inspector-content');
 
-      // Settlement presence: check settlements object for any key containing this cell's coordinates
-      let settlementText = null;
-      if (settlements === null) {
-        settlementText = null; // unavailable
+      // Site presence: check sites object for any key matching this cell's coordinates
+      let siteText = null;
+      if (sites === null) {
+        siteText = null; // unavailable
       } else {
-        // settlements keys are typically settlement names; values are objects with position data
-        // Look for any settlement at this exact mx/my/lx/ly
-        const present = Object.values(settlements).some(s => {
+        // Look for any site at this exact mx/my/lx/ly
+        const present = Object.values(sites).some(s => {
           if (!s) return false;
           // Check position fields (may vary): s.lx, s.ly, s.mx, s.my or s.position.*
           const pos = s.position || s;
           return pos.mx === mx && pos.my === my && pos.lx === lx && pos.ly === ly;
         });
-        settlementText = present ? 'YES' : 'no';
+        siteText = present ? 'YES' : 'no';
       }
 
       const fields = [
@@ -722,29 +721,29 @@
           </div>`;
       }
 
-      // Settlement
-      if (settlementText !== null) {
-        const cls = settlementText === 'YES' ? 'inspector-value settlement-yes' : 'inspector-value';
+      // Site
+      if (siteText !== null) {
+        const cls = siteText === 'YES' ? 'inspector-value site-present' : 'inspector-value';
         html += `
           <div class="inspector-field">
-            <div class="inspector-label">Settlement</div>
-            <div class="${cls}">${settlementText}</div>
+            <div class="inspector-label">Site</div>
+            <div class="${cls}">${siteText}</div>
           </div>`;
       } else {
         html += `
           <div class="inspector-field">
-            <div class="inspector-label">Settlement</div>
+            <div class="inspector-label">Site</div>
             <div class="inspector-value empty">(unavailable)</div>
           </div>`;
       }
 
       // NPC Records — authoritative count from sites registry
-      if (settlements !== null && cell.sites) {
+      if (sites !== null && cell.sites) {
         let totalNpcs = 0;
         let siteFound = false;
         for (const siteRef of Object.values(cell.sites)) {
           if (!siteRef || !siteRef.interior_key) continue;
-          const fullSite = settlements[siteRef.interior_key];
+          const fullSite = sites[siteRef.interior_key];
           if (!fullSite) continue;
           siteFound = true;
           totalNpcs += Array.isArray(fullSite.npcs) ? fullSite.npcs.length : 0;

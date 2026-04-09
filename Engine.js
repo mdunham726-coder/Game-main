@@ -103,7 +103,6 @@ function initState(timestampUTC) {
       stream: { R: DEFAULTS.STREAM.R, P: DEFAULTS.STREAM.P },
       macro: {}, cells: {}, sites: {},
       merchants: [], factions: [], npcs: [],
-      settlements: {}, // PHASE 3C: Persistent settlement storage
       position: { mx: 0, my: 0, lx: Math.floor(l1w/2), ly: Math.floor(l1h/2) }
     },
     ledger: { promotions: [] },
@@ -120,10 +119,10 @@ function initState(timestampUTC) {
     quests: {
       active: [],           // MAX 10 ENFORCED
       completed: [],
-      allQuestsSeeded: {},  // settlementId → [quests]
+      allQuestsSeeded: {},  // siteId → [quests]
       config: {
         maxActiveQuests: 10,
-        maxQuestsPerSettlement: 5
+        maxQuestsPerSite: 5
       }
     },
     reputation: {},
@@ -301,8 +300,8 @@ function createSeededRNG(seed) {
 }
 
 // PHASE 3C: Quest-Giver NPC Assignment
-function assignQuestGiverFlags(npcArray, worldSeed, settlementId) {
-  const rng = createSeededRNG(worldSeed + settlementId);
+function assignQuestGiverFlags(npcArray, worldSeed, siteId) {
+  const rng = createSeededRNG(worldSeed + siteId);
   const population = npcArray.length;
   const baseProbability = Math.max(0.10, 150 / population);
   const maxQuestGivers = Math.ceil(population * 0.30);
@@ -318,23 +317,23 @@ function assignQuestGiverFlags(npcArray, worldSeed, settlementId) {
   });
 }
 
-// PHASE 3C: Settlement Quest Generation
-function generateSettlementQuests(state, settlementId, settlementData, npcArray) {
+// PHASE 3C: Site Quest Generation
+function generateSiteQuests(state, siteId, siteData, npcArray) {
   if (!state.questSystem) {
     state.questSystem = new QuestSystem(state.rng_seed);
   }
   
-  const questSeed = state.rng_seed + settlementId + "quests";
+  const questSeed = state.rng_seed + siteId + "quests";
   const constraints = {
-    settlementType: settlementData.type,
+    siteType: siteData.type,
     playerLevel: state.player.level || 1,
     availableNPCs: npcArray,
-    currentThreats: settlementData.threats || [],
+    currentThreats: siteData.threats || [],
     seed: questSeed
   };
 
   try {
-    const quests = state.questSystem.generateSettlementQuests(constraints);
+    const quests = state.questSystem.generateSiteQuests(constraints);
     
     // Assign quests to quest-giver NPCs
     const questGivers = npcArray.filter(npc => npc.can_give_quests);
@@ -349,14 +348,14 @@ function generateSettlementQuests(state, settlementId, settlementData, npcArray)
         quest.giver_name = "Local Resident";
       }
       
-      // Add settlement metadata
-      quest.settlementId = settlementId;
-      quest.settlementName = settlementData.name;
+      // Add site metadata
+      quest.siteId = siteId;
+      quest.siteName = siteData.name;
       quest.status = "available";
       quest.current_step = 0;
     });
     
-    return quests.slice(0, state.quests.config.maxQuestsPerSettlement);
+    return quests.slice(0, state.quests.config.maxQuestsPerSite);
   } catch (error) {
     console.error('[ENGINE] Quest generation failed:', error);
     return [];
@@ -476,8 +475,8 @@ function buildOutput(prevState, inputObj, logger) {
     }
 
     // Suppress bootstrap site_start once a real enterable settlement exists in this cell.
-    const _hasRealSettlement = enterSites.some(s => s.category === 'settlement' && !s.is_starting_location && s.enterable === true);
-    if (_hasRealSettlement) {
+    const _hasRealSite = enterSites.some(s => s.category === 'settlement' && !s.is_starting_location && s.enterable === true);
+    if (_hasRealSite) {
       enterSites.filter(s => s.is_starting_location).forEach(s => { s.enterable = false; });
     }
 
@@ -543,20 +542,20 @@ function buildOutput(prevState, inputObj, logger) {
       );
       if (!namedMatch) {
         // No match at all — prefer settlements explicitly; never pick buildings/landmarks/pois.
-        const _settlementCandidates = enterSites.filter(
+        const _siteCandidates = enterSites.filter(
           s => s.enterable === true && s.category === 'settlement'
         );
         const _anyCandidates = enterSites.filter(
           s => s.enterable === true
         );
-        const _genericCandidates = _settlementCandidates.length > 0 ? _settlementCandidates : _anyCandidates;
+        const _genericCandidates = _siteCandidates.length > 0 ? _siteCandidates : _anyCandidates;
         if (_genericCandidates.length === 1) {
           targetSite = _genericCandidates[0];
           console.log(`[Phase10-ENTER] Generic term "${targetName}" (normalized: "${_normalizedTarget}") matched single site ${targetSite.site_id} (${targetSite.category})`);
         } else if (_genericCandidates.length > 1) {
-          // Ambiguous — use first settlement, log warning
+          // Ambiguous — use first site, log warning
           targetSite = _genericCandidates[0];
-          console.log(`[Phase10-ENTER] Generic term "${targetName}" ambiguous (${_genericCandidates.length} candidates) — using first settlement: ${targetSite.site_id}`);
+          console.log(`[Phase10-ENTER] Generic term "${targetName}" ambiguous (${_genericCandidates.length} candidates) — using first site: ${targetSite.site_id}`);
         }
         // Zero candidates: fall through to explicit rejection below
       }
@@ -821,8 +820,6 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     const found = state.world.sites[interior_key]
       || state.world.sites[legacyKey6]
       || (legacyKeySubtype && state.world.sites[legacyKeySubtype])
-      // Also check legacy world.settlements for saves that predate Phase 10 Phase 2
-      || (state.world.settlements && (state.world.settlements[interior_key] || state.world.settlements[legacyKey6]))
       || null;
 
     if (found) {
@@ -834,7 +831,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     }
   }
 
-  let settlement = state.world.sites[interior_key];
+  let siteRecord = state.world.sites[interior_key];
   let NPCs = null;
   try {
     NPCs = require('./NPCs');
@@ -842,17 +839,17 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     console.warn(`[ENGINE] NPCs module failed to load: ${npcLoadErr.message} — site will load without NPCs`);
   }
 
-  if (settlement && !settlement.is_stub) {
-    // Reuse: full settlement already exists — no generation needed
-    console.log(`[ENGINE] Reusing persistent settlement: ${settlement.name} with ${(settlement.npcs || []).length} NPCs`);
+  if (siteRecord && !siteRecord.is_stub) {
+    // Reuse: full site already exists — no generation needed
+    console.log(`[ENGINE] Reusing persistent site: ${siteRecord.name} with ${(siteRecord.npcs || []).length} NPCs`);
     site.entered = true;
 
-  } else if (settlement && settlement.is_stub) {
+  } else if (siteRecord && siteRecord.is_stub) {
     // Complete stub: generate NPCs and upgrade the existing stub object in-place.
     // world.sites[interior_key] is mutated directly so stored object == active object.
     console.log(`[ENGINE] Completing stub for interior_key=${interior_key}, identity=${identity}`);
 
-    const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
+    const expectedNpcCount = WorldGen.getNPCCountForSite(identity);
     if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
     let npcs_here = [];
@@ -871,41 +868,41 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
-    // Replace stub with a fully generated settlement object.
+    // Replace stub with a fully generated site object.
     // Identity chain: site_id → site.name → container → mirror → UI.
     // Priority: Phase-5E LLM name (written by site_updates on a prior turn) > generated fallback.
     // Spatial metadata (mx/my/lx/ly) preserved from stub since WorldGen doesn't set those.
-    const _stubName = settlement.name || null;  // Phase-5E name if already written
-    const _stubMx = settlement.mx, _stubMy = settlement.my;
-    const _stubLx = settlement.lx, _stubLy = settlement.ly;
-    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here, state.rng_seed);
+    const _stubName = siteRecord.name || null;  // Phase-5E name if already written
+    const _stubMx = siteRecord.mx, _stubMy = siteRecord.my;
+    const _stubLx = siteRecord.lx, _stubLy = siteRecord.ly;
+    siteRecord = WorldGen.generateL2Site(interior_key, identity, npcs_here, state.rng_seed);
     // Restore authoritative name: Phase-5E value takes precedence over generated fallback.
-    if (_stubName) settlement.name = _stubName;
-    settlement.mx = _stubMx; settlement.my = _stubMy;
-    settlement.lx = _stubLx; settlement.ly = _stubLy;
-    settlement.category = site.category || null;  // carry category from cell.sites for count filtering
-    state.world.sites[interior_key] = settlement;
+    if (_stubName) siteRecord.name = _stubName;
+    siteRecord.mx = _stubMx; siteRecord.my = _stubMy;
+    siteRecord.lx = _stubLx; siteRecord.ly = _stubLy;
+    siteRecord.category = site.category || null;  // carry category from cell.sites for count filtering
+    state.world.sites[interior_key] = siteRecord;
 
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
-      logger.settlement_registered(interior_key, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
+      logger.site_registered(interior_key, siteRecord.name, siteRecord.type, { mx: pos.mx, my: pos.my });
     }
 
-    console.log(`[ENGINE] Completed stub (name=${settlement.name}, source=${_stubName ? 'phase5e' : 'generated'}): ${npcs_here.length} NPCs`);
+    console.log(`[ENGINE] Completed stub (name=${siteRecord.name}, source=${_stubName ? 'phase5e' : 'generated'}): ${npcs_here.length} NPCs`);
 
-    if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSettlement: 5 } };
+    if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSite: 5 } };
     if (!state.quests.allQuestsSeeded) state.quests.allQuestsSeeded = {};
     if (!state.quests.allQuestsSeeded[interior_key]) {
-      const quests = generateSettlementQuests(state, interior_key, settlement, npcs_here);
+      const quests = generateSiteQuests(state, interior_key, siteRecord, npcs_here);
       state.quests.allQuestsSeeded[interior_key] = quests;
-      console.log(`[ENGINE] Generated ${quests.length} quests for ${settlement.name}`);
+      console.log(`[ENGINE] Generated ${quests.length} quests for ${siteRecord.name}`);
     }
 
     site.entered = true;
 
   } else {
-    // Fresh: no site record — generate and store. Exactly one generateL2Settlement call.
-    const expectedNpcCount = WorldGen.getNPCCountForSettlement(identity);
+    // Fresh: no site record — generate and store. Exactly one generateL2Site call.
+    const expectedNpcCount = WorldGen.getNPCCountForSite(identity);
     if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
     let npcs_here = [];
@@ -924,26 +921,26 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
-    settlement = WorldGen.generateL2Settlement(interior_key, identity, npcs_here, state.rng_seed);
-    settlement.category = site.category || null;  // carry category from cell.sites for count filtering
-    state.world.sites[interior_key] = settlement;
+    siteRecord = WorldGen.generateL2Site(interior_key, identity, npcs_here, state.rng_seed);
+    siteRecord.category = site.category || null;  // carry category from cell.sites for count filtering
+    state.world.sites[interior_key] = siteRecord;
 
     const totalSites = Object.keys(state.world.sites).length;
-    console.log(`[Phase10-STORE] Site stored: interior_key=${interior_key}, name=${settlement.name}, type=${settlement.type}, totalCount=${totalSites}`);
+    console.log(`[Phase10-STORE] Site stored: interior_key=${interior_key}, name=${siteRecord.name}, type=${siteRecord.type}, totalCount=${totalSites}`);
 
     if (logger) {
       const pos = state.world.position || { mx: 0, my: 0 };
-      logger.settlement_registered(interior_key, settlement.name, settlement.type, { mx: pos.mx, my: pos.my });
+      logger.site_registered(interior_key, siteRecord.name, siteRecord.type, { mx: pos.mx, my: pos.my });
     }
 
-    console.log(`[ENGINE] Created new site: ${settlement.name} with ${npcs_here.length} NPCs`);
+    console.log(`[ENGINE] Created new site: ${siteRecord.name} with ${npcs_here.length} NPCs`);
 
-    if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSettlement: 5 } };
+    if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSite: 5 } };
     if (!state.quests.allQuestsSeeded) state.quests.allQuestsSeeded = {};
     if (!state.quests.allQuestsSeeded[interior_key]) {
-      const quests = generateSettlementQuests(state, interior_key, settlement, npcs_here);
+      const quests = generateSiteQuests(state, interior_key, siteRecord, npcs_here);
       state.quests.allQuestsSeeded[interior_key] = quests;
-      console.log(`[ENGINE] Generated ${quests.length} quests for ${settlement.name}`);
+      console.log(`[ENGINE] Generated ${quests.length} quests for ${siteRecord.name}`);
     }
 
     site.entered = true;
@@ -975,7 +972,7 @@ function enterBuilding(state, building_id_short) {
   const site = state.world.active_site;
   const bld = site.buildings[building_id_short];
   if (!bld) return null;
-  const full_id = `${site.settlement_id}_${building_id_short}`;
+  const full_id = `${site.site_id}_${building_id_short}`;
   const interior = WorldGen.generateL3Building(full_id, bld);
   state.world.active_building = interior;
   state.world.current_depth = 3;
@@ -1018,7 +1015,7 @@ module.exports = {
   validateQuestAcceptance,
   validateQuestCompletion,
   applyQuestReward,
-  generateSettlementQuests,
+  generateSiteQuests,
   // Phase 4
   recordSiteToCell,
 };

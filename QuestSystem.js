@@ -19,8 +19,8 @@ const QUEST_CONFIG = {
     deadly: { minGold: 750, maxGold: 2000, weight: 0.05 }
   },
 
-  // Settlement type probabilities for quest availability
-  SETTLEMENT_QUEST_PROBABILITY: {
+  // Site type probabilities for quest availability
+  SITE_QUEST_PROBABILITY: {
     hamlet: { min: 0.10, max: 0.20 },
     village: { min: 0.30, max: 0.40 },
     town: { min: 0.50, max: 0.70 },
@@ -123,12 +123,12 @@ class QuestConstraintEngine {
   /**
    * Roll quest constraints based on settlement and world context
    */
-  rollQuestConstraints(settlementContext, questTier = 'random') {
+  rollQuestConstraints(siteContext, questTier = 'random') {
     const constraints = {
       id: this._generateQuestId(),
       tier: questTier,
       status: 'available',
-      difficulty: this._rollDifficulty(settlementContext),
+      difficulty: this._rollDifficulty(siteContext),
       reward_gold: 0,
       reward_items: this._rollItemRewardCount(),
       enemy_types: [],
@@ -136,8 +136,8 @@ class QuestConstraintEngine {
       complexity: this._rollComplexity(),
       travel_distance: 0,
       forbidden_keywords: [],
-      settlement_type: settlementContext.type,
-      population: settlementContext.population,
+      site_type: siteContext.type,
+      population: siteContext.population,
       created_at: new Date().toISOString()
     };
 
@@ -151,7 +151,7 @@ class QuestConstraintEngine {
     return constraints;
   }
 
-  _rollDifficulty(settlementContext) {
+  _rollDifficulty(siteContext) {
     const baseWeights = Object.entries(QUEST_CONFIG.DIFFICULTY_TIERS)
       .map(([tier, config]) => ({ tier, weight: config.weight }));
     
@@ -162,7 +162,7 @@ class QuestConstraintEngine {
       city: { trivial: 0.05, easy: 0.2, moderate: 0.4, hard: 0.25, deadly: 0.1 }
     };
 
-    const modifier = sizeModifier[settlementContext.type] || sizeModifier.town;
+    const modifier = sizeModifier[siteContext.type] || sizeModifier.town;
     const adjustedWeights = baseWeights.map(({ tier, weight }) => ({
       tier,
       weight: weight * (modifier[tier] || 1.0)
@@ -280,7 +280,7 @@ class DeepSeekIntegration {
     
     let prompt = `You are creating a quest for a text adventure game. Follow these HARD CONSTRAINTS exactly:\n\n`;
     
-    prompt += `SETTLEMENT: ${constraints.settlement_type}, Population: ${constraints.population}\n`;
+    prompt += `SITE: ${constraints.site_type}, Population: ${constraints.population}\n`;
     prompt += `DIFFICULTY: ${constraints.difficulty}\n`;
     prompt += `REWARD: Exactly ${constraints.reward_gold} gold (DO NOT DEVIATE)\n`;
     prompt += `ENEMIES: ${constraints.enemy_count} enemies of type: ${constraints.enemy_types.join(', ')}\n`;
@@ -488,7 +488,7 @@ class FallbackQuestSystem {
     const filled = JSON.parse(JSON.stringify(template));
     
     // Replace all placeholders with actual constraint values
-    let narrative = filled.narrative.replace('${settlement}', constraints.settlement_type);
+    let narrative = filled.narrative.replace('${settlement}', constraints.site_type);
     narrative = narrative.replace('${reward_gold}', constraints.reward_gold);
     filled.narrative = narrative;
     
@@ -555,10 +555,10 @@ class QuestSystem {
   /**
    * Generate complete quest with DeepSeek narrative
    */
-  async generateCompleteQuest(settlementContext, questTier = 'random') {
+  async generateCompleteQuest(siteContext, questTier = 'random') {
     try {
       // Phase 1: Generate quest template with constraints
-      const template = this._generateQuestTemplate(settlementContext, questTier);
+      const template = this._generateQuestTemplate(siteContext, questTier);
       
       // Phase 2: Get DeepSeek narrative
       const narrativeResult = await this._getQuestNarrative(template);
@@ -590,8 +590,8 @@ class QuestSystem {
   /**
    * Generate quest template (moved from separate class for integration)
    */
-  _generateQuestTemplate(settlementContext, questTier) {
-    const constraints = this.constraintEngine.rollQuestConstraints(settlementContext, questTier);
+  _generateQuestTemplate(siteContext, questTier) {
+    const constraints = this.constraintEngine.rollQuestConstraints(siteContext, questTier);
     const structure = this._generateQuestStructure(constraints);
     
     return {
@@ -608,7 +608,7 @@ class QuestSystem {
       complications: null,
       steps: structure.steps,
       current_step: 0,
-      quest_giver: this._generateQuestGiverInfo(settlementContext),
+      quest_giver: this._generateQuestGiverInfo(siteContext),
       active_since: null,
       accepted_by_player: false,
       progress: { steps_completed: 0, objectives_met: {}, failure_conditions_triggered: [] },
@@ -791,7 +791,7 @@ class QuestSystem {
     return conditions;
   }
 
-  _generateQuestGiverInfo(settlementContext) {
+  _generateQuestGiverInfo(siteContext) {
     const npcTypes = {
       hamlet: ['farmer', 'elder', 'healer', 'hunter'],
       village: ['merchant', 'blacksmith', 'priest', 'mayor', 'guard_captain'],
@@ -799,9 +799,9 @@ class QuestSystem {
       city: ['aristocrat', 'archmage', 'general', 'council_member', 'crime_lord']
     };
     
-    const availableTypes = npcTypes[settlementContext.type] || npcTypes.town;
+    const availableTypes = npcTypes[siteContext.type] || npcTypes.town;
     return {
-      settlement_id: settlementContext.id,
+      site_id: siteContext.id,
       npc_type: this.constraintEngine.rng.choice(availableTypes),
       name: null,
       description: null,
@@ -814,8 +814,8 @@ class QuestSystem {
   getQuest(questId) { return this.questRegistry.get(questId); }
   getAllQuests() { return Array.from(this.questRegistry.values()); }
   loadQuests(quests) { quests.forEach(q => this.questRegistry.set(q.id, q)); }
-  checkSettlementQuestAvailability(settlementType) {
-    const range = QUEST_CONFIG.SETTLEMENT_QUEST_PROBABILITY[settlementType];
+  checkSiteQuestAvailability(siteType) {
+    const range = QUEST_CONFIG.SITE_QUEST_PROBABILITY[siteType];
     if (!range) return 0;
     const probability = this.constraintEngine.rng.random() * (range.max - range.min) + range.min;
     return Math.min(1, Math.max(0, probability));

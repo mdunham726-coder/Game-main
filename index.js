@@ -212,14 +212,8 @@ async function performLoad(sessionId, saveName) {
       return { success: false, error: 'INVALID_SAVE_FILE', message: 'Save file is corrupted or invalid' };
     }
 
-    // Phase 10 migration shim: rename world.settlements → world.sites on old saves (one-time).
-    const _gs = saveData.gameState;
-    if (_gs.world && _gs.world.settlements && !_gs.world.sites) {
-      _gs.world.sites = _gs.world.settlements;
-      delete _gs.world.settlements;
-      console.log('[LOAD] Migrated world.settlements → world.sites on loaded save.');
-    }
     // Guard: remove null-keyed junk entries that may exist in older saves
+    const _gs = saveData.gameState;
     if (_gs.world && _gs.world.sites) {
       delete _gs.world.sites['null'];
       delete _gs.world.sites[null];
@@ -301,21 +295,21 @@ async function listSavesData(sessionId) {
 // GET /quest/available - Get available quests for a settlement
 app.get('/quest/available', (req, res) => {
   const sessionId = req.headers['x-session-id'];
-  const { settlementId } = req.query;
+  const { siteId } = req.query;
   
   if (!sessionId) {
     return res.status(400).json({ error: 'MISSING_SESSION_ID', message: 'Session ID is required' });
   }
   
-  if (!settlementId) {
-    return res.status(400).json({ error: 'MISSING_SETTLEMENT_ID', message: 'Settlement ID is required' });
+  if (!siteId) {
+    return res.status(400).json({ error: 'MISSING_SITE_ID', message: 'Site ID is required' });
   }
   
   const { gameState } = getSessionState(sessionId);
   
   try {
-    // Check if quests exist for this settlement
-    const availableQuests = gameState.quests.allQuestsSeeded[settlementId] || [];
+    // Check if quests exist for this site
+    const availableQuests = gameState.quests.allQuestsSeeded[siteId] || [];
     
     // Filter out quests that are already active or completed
     const activeQuestIds = new Set(gameState.quests.active.map(q => q.id));
@@ -327,7 +321,7 @@ app.get('/quest/available', (req, res) => {
     
     return res.json({
       success: true,
-      settlementId,
+      siteId,
       availableQuests: filteredQuests,
       count: filteredQuests.length
     });
@@ -344,7 +338,7 @@ app.get('/quest/available', (req, res) => {
 // POST /quest/accept - Accept a quest
 app.post('/quest/accept', (req, res) => {
   const sessionId = req.headers['x-session-id'];
-  const { questId, settlementId } = req.body;
+  const { questId, siteId } = req.body;
   
   if (!sessionId) {
     return res.status(400).json({ error: 'MISSING_SESSION_ID', message: 'Session ID is required' });
@@ -1492,16 +1486,16 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     
     // Phase 10: Resolve current interior from cell.sites (authoritative).
     // Prefer canonical interior_key; fall back to site_id for sessions loaded but not yet entered.
-    let currentSettlement = null;
+    let currentSite = null;
     {
-      const _settlementSite = Object.values(currentCell?.sites || {}).find(s => s.category === 'settlement');
-      if (_settlementSite && gameState.world.sites) {
-        currentSettlement = gameState.world.sites[_settlementSite.interior_key]
-          || gameState.world.sites[_settlementSite.site_id]
+      const _siteLookup = Object.values(currentCell?.sites || {}).find(s => s.category === 'settlement');
+      if (_siteLookup && gameState.world.sites) {
+        currentSite = gameState.world.sites[_siteLookup.interior_key]
+          || gameState.world.sites[_siteLookup.site_id]
           || null;
         // B4: prefer live name from cell.sites over potentially stale stub name in world.sites
-        if (currentSettlement && _settlementSite.name != null) {
-          currentSettlement = { ...currentSettlement, name: _settlementSite.name };
+        if (currentSite && _siteLookup.name != null) {
+          currentSite = { ...currentSite, name: _siteLookup.name };
         }
       }
     }
@@ -1514,8 +1508,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
-      settlement_count: Object.values(currentCell?.sites || {}).length,
-      current_settlement: currentSettlement,  // Now populated if player is in a settlement
+      site_count: Object.values(currentCell?.sites || {}).length,
+      current_site: currentSite,  // Now populated if player is in a site
       current_depth: gameState.world.current_depth || 1,
       active_site_name: gameState.world.active_site?.name || null,
       site_position: (gameState.world.current_depth || 1) >= 2 ? (gameState.player?.position || null) : null,
@@ -1528,7 +1522,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     {
       const _vpDepth = gameState.world.current_depth || 1;
       const _vpDepthLabels = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' };
-      const _vpSettlements = gameState.world.sites || {};
+      const _vpSites = gameState.world.sites || {};
       const _vpActiveSite = gameState.world.active_site || null;
       const _vpActiveBuilding = gameState.world.active_building || null;
       const _vpAllCells = gameState.world.cells || {};
@@ -1542,11 +1536,11 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       const _vpSites = Object.entries(currentCell?.sites || {}).map(([, _s]) => {
         const _sGenerated = !!(
           _s.interior_key &&
-          _vpSettlements[_s.interior_key] &&
-          !_vpSettlements[_s.interior_key].is_stub
+          _vpSites[_s.interior_key] &&
+          !_vpSites[_s.interior_key].is_stub
         );
         const _vpBuildings = _sGenerated
-          ? Object.entries(_vpSettlements[_s.interior_key].buildings || {}).map(([_bId, _b]) => ({
+          ? Object.entries(_vpSites[_s.interior_key].buildings || {}).map(([_bId, _b]) => ({
               bld_id: _bId,
               name: _b.name || null,
               purpose: _b.purpose || null,
@@ -1607,7 +1601,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         world_seed: gameState.world.phase3_seed || null,
         world_tone: gameState.world.world_tone || null,
         world_bias: {
-          settlement_density: _vpWb?.settlement_density || null,
+          site_density: _vpWb?.site_density || null,
           civilization_presence: _vpWb?.civilization_presence || null,
           environment_tone: _vpWb?.environment_tone || null
         },
@@ -1615,7 +1609,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         region_cell_count: Object.keys(_vpAllCells).filter(k => k.startsWith(`LOC:${currentPosition.mx},${currentPosition.my}:`)).length,
         regions_explored: _vpRegionKeys.size,
         turn_counter: gameState.turn_counter || 0,
-        settlement_count: Object.values(currentCell?.sites || {}).length,
+        site_count: Object.values(currentCell?.sites || {}).length,
         site_position: _vpDepth >= 2 ? (gameState.player?.position || null) : null,
         last_site_capture: gameState.world._lastSiteCapture || null
       };
@@ -1846,32 +1840,32 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       }
     }
     
-    // 4. Check: settlement_presence_mismatch — Phase 6D6: use cell.sites authority, not cell.type
+    // 4. Check: site_presence_mismatch — Phase 6D6: use cell.sites authority, not cell.type
     const _diagCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
     const _diagCellSites = gameState.world.cells?.[_diagCellKey]?.sites;
-    const isSettlementCell = _diagCellSites
+    const isSiteCell = _diagCellSites
       ? Object.values(_diagCellSites).some(s => s.category === 'settlement')
       : false;
     
-    if (isSettlementCell) {
-      // Settlement cell requires consistent settlement state
-      if (!currentSettlement) {
+    if (isSiteCell) {
+      // Site cell requires consistent site state
+      if (!currentSite) {
         diagnostics.push({
-          type: 'settlement_presence_mismatch',
+          type: 'site_presence_mismatch',
           severity: 'high',
-          detail: `cell type is settlement but settlement not found in registry`
+          detail: `cell type is settlement but site not found in registry`
         });
-      } else if (!currentSettlement.name || currentSettlement.name.trim() === '') {
+      } else if (!currentSite.name || currentSite.name.trim() === '') {
         diagnostics.push({
-          type: 'settlement_presence_mismatch',
+          type: 'site_presence_mismatch',
           severity: 'medium',
-          detail: `settlement exists but missing or empty name field`
+          detail: `site exists but missing or empty name field`
         });
-      } else if (!currentSettlement.id) {
+      } else if (!currentSite.id) {
         diagnostics.push({
-          type: 'settlement_presence_mismatch',
+          type: 'site_presence_mismatch',
           severity: 'low',
-          detail: `settlement exists but missing id field`
+          detail: `site exists but missing id field`
         });
       }
     }

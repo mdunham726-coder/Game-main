@@ -120,8 +120,8 @@ const NAME_SUFFIXES = [
  * @param {string} worldSeed - World seed for consistency
  * @returns {string} Generated settlement name
  */
-function generateSettlementName(settlementId, worldSeed) {
-  const combinedSeed = `${worldSeed}|${settlementId}|name`;
+function generateSiteName(siteId, worldSeed) {
+  const combinedSeed = `${worldSeed}|${siteId}|name`;
   const hash = h32(combinedSeed);
   const rng = mulberry32(hash);
   
@@ -130,8 +130,8 @@ function generateSettlementName(settlementId, worldSeed) {
   
   const generatedName = `${prefix}${suffix}`;
   
-  // B3: Settlement naming debug logging
-  console.log(`[B3-NAME] Generated settlement name: id=${settlementId}, worldSeed=${worldSeed}, combinedSeed=${combinedSeed}, hash=${hash}, name=${generatedName}`);
+  // B3: Site naming debug logging
+  console.log(`[B3-NAME] Generated site name: id=${siteId}, worldSeed=${worldSeed}, combinedSeed=${combinedSeed}, hash=${hash}, name=${generatedName}`);
   
   return generatedName;
 }
@@ -145,7 +145,7 @@ function generateSettlementName(settlementId, worldSeed) {
  * @param {string} settlementType - Type of settlement
  * @returns {number} Number of NPCs to generate
  */
-function getNPCCountForSettlement(settlementType) {
+function getNPCCountForSite(siteType) {
   const counts = {
     outpost: 3,
     hamlet: 8,
@@ -154,7 +154,7 @@ function getNPCCountForSettlement(settlementType) {
     city: 60,
     metropolis: 120
   };
-  return counts[settlementType] || 10;
+  return counts[siteType] || 10;
 }
 
 // =============================================================================
@@ -241,20 +241,20 @@ function generateNPCInventory(profession, rng) {
  * @param {object} npcModule - NPCs.js module (for generateNPC, TRAITS_CATALOG)
  * @returns {Array<object>} Array of generated NPCs with metadata
  */
-function generateL2NPCs(settlementId, settlementType, worldSeed, npcModule) {
-  const npcCount = getNPCCountForSettlement(settlementType);
-  const baseSeed = h32(`${worldSeed}|${settlementId}|npcs`);
+function generateL2NPCs(siteId, siteType, worldSeed, npcModule) {
+  const npcCount = getNPCCountForSite(siteType);
+  const baseSeed = h32(`${worldSeed}|${siteId}|npcs`);
   const rng = mulberry32(baseSeed);
   
   // Generate NPCs using NPCs.js
-  const npcs = npcModule.generateNPCPool(settlementId, npcCount, baseSeed);
+  const npcs = npcModule.generateNPCPool(siteId, npcCount, baseSeed);
   
   // Calculate quest-giver probability
   const questGiverProbability = Math.min(0.30, Math.max(0.10, 150 / npcCount));
   
   // Enhance NPCs with persistent IDs, inventory, and quest-giver flags
   return npcs.map((npc, index) => {
-    const persistentId = `npc_${settlementId}_${index}`;
+    const persistentId = `npc_${siteId}_${index}`;
     const isQuestGiver = rng() < questGiverProbability;
     const inventory = generateNPCInventory(npc.job_category, rng);
     
@@ -263,7 +263,7 @@ function generateL2NPCs(settlementId, settlementType, worldSeed, npcModule) {
       id: persistentId,
       is_quest_giver: isQuestGiver,
       inventory: inventory,
-      settlement_id: settlementId
+      site_id: siteId
     };
   });
 }
@@ -522,8 +522,8 @@ What location type should they START in? Choose one: village, town, city, outpos
   }
 }
 
-// --- Settlement footprint + population data ---
-const SETTLEMENT_SIZES = {
+// --- Site footprint + population data ---
+const SITE_SIZES = {
   outpost:    { tier: 0, footprint: 1, width: 3, height: 3, buildings: 2, population_min: 5, population_max: 15 },
   hamlet:     { tier: 1, footprint: 1, width: 5, height: 5, buildings: 4, population_min: 15, population_max: 50 },
   village:    { tier: 2, footprint: 1, width: 7, height: 7, buildings: 8, population_min: 50, population_max: 200 },
@@ -538,7 +538,7 @@ const SETTLEMENT_SIZES = {
 // Both are frozen at world init and never re-derived.
 
 const DEFAULT_WORLD_BIAS = {
-  settlement_density:    'medium',
+  site_density:          'medium',
   landmark_density:      'medium',
   danger_level:          'medium',
   civilization_presence: 'medium',
@@ -561,7 +561,7 @@ function validateWorldBias(raw) {
   const corrections = [];
   const validated = {};
 
-  const densityFields = ['settlement_density', 'landmark_density', 'danger_level', 'civilization_presence'];
+  const densityFields = ['site_density', 'landmark_density', 'danger_level', 'civilization_presence'];
   for (const field of densityFields) {
     const val = typeof raw?.[field] === 'string' ? raw[field].toLowerCase().trim() : null;
     if (VALID_DENSITY_VALUES.includes(val)) {
@@ -616,7 +616,7 @@ async function extractWorldBiasWithDeepSeek(worldPrompt) {
             role: 'system',
             content: `You are a world-properties extractor for a game engine. Given a player's world description, output a JSON object with EXACTLY these fields and no others:
 {
-  "settlement_density": "low" | "medium" | "high",
+  "site_density": "low" | "medium" | "high",
   "landmark_density": "low" | "medium" | "high",
   "danger_level": "low" | "medium" | "high",
   "civilization_presence": "low" | "medium" | "high",
@@ -771,7 +771,7 @@ function terrainGroup(terrainType) {
 const BUDGET_SCALE = 3;
 
 function deriveBudget(worldBias) {
-  const sd = DENSITY_WEIGHTS[worldBias?.settlement_density] ?? DENSITY_WEIGHTS.medium;
+  const sd = DENSITY_WEIGHTS[worldBias?.site_density] ?? DENSITY_WEIGHTS.medium;
   const ld = DENSITY_WEIGHTS[worldBias?.landmark_density]   ?? DENSITY_WEIGHTS.medium;
   const et = ENV_TONE_MODS[worldBias?.environment_tone]     ?? 0;
   const raw = (sd + ld) / 2;
@@ -809,10 +809,10 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
   if (budget <= 0) return [];  // Zero/negative budget → no sites regardless of existence roll
 
   // ── 4. Compute base site-existence probability ───────────────────────────
-  // Base probability = average of settlement_density and landmark_density weights.
+  // Base probability = average of site_density and landmark_density weights.
   // Starting cell receives an additional upward bias from civilization_presence,
   // but terrain constraints are never overridden.
-  const sd = DENSITY_WEIGHTS[worldBias?.settlement_density] ?? DENSITY_WEIGHTS.medium;
+  const sd = DENSITY_WEIGHTS[worldBias?.site_density] ?? DENSITY_WEIGHTS.medium;
   const ld = DENSITY_WEIGHTS[worldBias?.landmark_density]   ?? DENSITY_WEIGHTS.medium;
   const et = ENV_TONE_MODS[worldBias?.environment_tone]     ?? 0;
   let siteProb = (sd + ld) / 2 + et;
@@ -1047,8 +1047,8 @@ async function generateWorldFromDescription(desc, worldSeed) {
     if (!world_bias.civilization_presence || world_bias.civilization_presence !== 'high') {
       world_bias.civilization_presence = 'high';
     }
-    if (!world_bias.settlement_density || world_bias.settlement_density !== 'high') {
-      world_bias.settlement_density = 'high';
+    if (!world_bias.site_density || world_bias.site_density !== 'high') {
+      world_bias.site_density = 'high';
     }
   }
 
@@ -1157,7 +1157,7 @@ function generateL1FeatureDescription(site, worldSeed = "default") {
   const st = site.subtype || "settlement";
   // Use cell ID/coordinates for unique settlement names per location
   const siteId = site.id || `${site.mx || 0},${site.my || 0},${site.lx || 0},${site.ly || 0}`;
-  return `A ${st} called ${generateSettlementName(siteId, worldSeed)}`;
+  return `A ${st} called ${generateSiteName(siteId, worldSeed)}`;
 }
 
 // =============================================================================
@@ -1165,17 +1165,17 @@ function generateL1FeatureDescription(site, worldSeed = "default") {
 // =============================================================================
 
 /**
- * Generate L2 settlement with NPC persistence and metadata
- * @param {string} settlement_id - Settlement identifier
- * @param {string} settlement_type - Type of settlement
+ * Generate L2 site with NPC persistence and metadata
+ * @param {string} siteId - Site identifier
+ * @param {string} siteType - Type of site
  * @param {Array<object>} npc_array - Pre-generated NPC array (optional, for backward compatibility)
  * @param {string} worldSeed - World seed for determinism
  * @param {object} npcModule - NPCs.js module
- * @returns {object} Settlement layout with persistent NPCs and metadata
+ * @returns {object} Site layout with persistent NPCs and metadata
  */
-function generateL2Settlement(settlement_id, settlement_type, npc_array, worldSeed, npcModule) {
-  const st = SETTLEMENT_SIZES[settlement_type] || SETTLEMENT_SIZES["village"];
-  const seed = hashSeedFromLocationID(settlement_id);
+function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
+  const st = SITE_SIZES[siteType] || SITE_SIZES["village"];
+  const seed = hashSeedFromLocationID(siteId);
   const rng = makeLCG(seed);
   const w = st.width, h = st.height;
   const grid = [];
@@ -1244,7 +1244,7 @@ function generateL2Settlement(settlement_id, settlement_type, npc_array, worldSe
     npcs = npc_array;
   } else if (npcModule) {
     // Generate new NPCs with persistence
-    npcs = generateL2NPCs(settlement_id, settlement_type, worldSeed || "default", npcModule);
+    npcs = generateL2NPCs(siteId, siteType, worldSeed || "default", npcModule);
   }
 
   // distribute NPCs
@@ -1274,17 +1274,17 @@ function generateL2Settlement(settlement_id, settlement_type, npc_array, worldSe
     }
   }
 
-  // PHASE 3C: Add settlement metadata
-  const settlementName = generateSettlementName(settlement_id, worldSeed || "default");
+  // PHASE 3C: Add site metadata
+  const siteName = generateSiteName(siteId, worldSeed || "default");
   const populationCount = npcs.length;
   
   // B3: Debug logging at call site
-  console.log(`[B3-CALLER] Settlement name generation called: settlement_id=${settlement_id}, worldSeed=${worldSeed}, result=${settlementName}`);
+  console.log(`[B3-CALLER] Site name generation called: siteId=${siteId}, worldSeed=${worldSeed}, result=${siteName}`);
   
   return {
-    id: settlement_id,
-    name: settlementName,
-    type: settlement_type,
+    id: siteId,
+    name: siteName,
+    type: siteType,
     population: populationCount,
     width: w,
     height: h,
@@ -1331,7 +1331,7 @@ module.exports = {
   worldGenStep, 
   exposeSitesInWindow, 
   generateL1FeatureDescription, 
-  generateL2Settlement, 
+  generateL2Site, 
   generateL2POI, 
   generateL3Building, 
   hashSeedFromLocationID, 
@@ -1339,8 +1339,8 @@ module.exports = {
   detectWorldToneWithDeepSeek,
   detectStartingLocationWithDeepSeek,
   // PHASE 3C: New exports
-  generateSettlementName,
-  getNPCCountForSettlement,
+  generateSiteName,
+  getNPCCountForSite,
   generateNPCTraits,
   generateNPCInventory,
   generateL2NPCs,

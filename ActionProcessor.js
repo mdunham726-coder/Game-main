@@ -300,11 +300,11 @@ function computeInventoryDigestHex(state){
   return sha256Hex(rows);
 }
 
-// === PHASE 3C: Settlement NPC lookup (persistent NPCs, not current cell) ===
-function getNPCInSettlement(state, settlementId, npcId){
-  const settlement = (state?.world?.sites || {})[settlementId];
-  if (!settlement || !Array.isArray(settlement.npcs)) return null;
-  return settlement.npcs.find(n => n?.id === npcId) || null;
+// === PHASE 3C: Site NPC lookup (persistent NPCs, not current cell) ===
+function getNPCInSite(state, siteId, npcId){
+  const site = (state?.world?.sites || {})[siteId];
+  if (!site || !Array.isArray(site.npcs)) return null;
+  return site.npcs.find(n => n?.id === npcId) || null;
 }
 
 // === PHASE 3C: Quest action validation (no state mutation) ===
@@ -317,14 +317,14 @@ function validateQuestAction(action, targetNPC, state){
     return { valid: false, error: 'NO_NPC_TARGET', newState: null };
   }
 
-  // Extract settlementId from NPC ID pattern: npc_${settlementId}_${index}
+  // Extract siteId from NPC ID pattern: npc_${siteId}_${index}
   const match = String(npcId).match(/^npc_([^_]+)_\d+$/);
   if (!match){
     return { valid: false, error: 'INVALID_NPC_ID_FORMAT', newState: null };
   }
-  const settlementId = match[1];
+  const siteId = match[1];
   
-  const npc = getNPCInSettlement(state, settlementId, npcId);
+  const npc = getNPCInSite(state, siteId, npcId);
   if (!npc){
     return { valid: false, error: 'NPC_NOT_FOUND', newState: null };
   }
@@ -338,7 +338,7 @@ function validateQuestAction(action, targetNPC, state){
   
   if (act === 'accept_quest'){
     // Check: Quest available for this NPC
-    const available = (questState.allQuestsSeeded[settlementId] || []).find(q => q.giver_npc_id === npcId);
+    const available = (questState.allQuestsSeeded[siteId] || []).find(q => q.giver_npc_id === npcId);
     if (!available){
       return { valid: false, error: 'NO_QUEST_AVAILABLE', newState: null };
     }
@@ -361,7 +361,7 @@ function validateQuestAction(action, targetNPC, state){
       return { valid: false, error: 'MAX_ACTIVE_QUESTS_REACHED', newState: null };
     }
     
-    return { valid: true, error: null, newState: { settlementId, questId: available.id, npc } };
+    return { valid: true, error: null, newState: { siteId, questId: available.id, npc } };
   }
   
   if (act === 'complete_quest'){
@@ -385,12 +385,12 @@ function validateQuestAction(action, targetNPC, state){
     //   This should check if player has met the quest's completion conditions
     //   before allowing quest completion
     
-    return { valid: true, error: null, newState: { settlementId, questId, npc, activeQuest } };
+    return { valid: true, error: null, newState: { siteId, questId, npc, activeQuest } };
   }
   
   if (act === 'ask_about_quest'){
     // Always valid if NPC is a quest-giver (no state constraints)
-    return { valid: true, error: null, newState: { settlementId, npc } };
+    return { valid: true, error: null, newState: { siteId, npc } };
   }
   
   return { valid: false, error: 'UNKNOWN_QUEST_ACTION', newState: null };
@@ -406,18 +406,18 @@ function updateNPCQuestState(action, state, deltas, flags){
     return;
   }
   
-  const { settlementId, questId, npc, activeQuest } = validation.newState;
-  const settlement = (state.world.sites || state.world.settlements || {})[settlementId];
+  const { siteId, questId, npc, activeQuest } = validation.newState;
+  const siteRecord = (state.world.sites || {})[siteId];
   
-  if (!settlement){
-    console.log(`[QUEST] Settlement ${settlementId} not found`);
+  if (!siteRecord){
+    console.log(`[QUEST] Site ${siteId} not found`);
     return;
   }
   
   if (act === 'accept_quest'){
     // Add quest to active list
     const questState = state.quests || { allQuestsSeeded: {}, active: [], completed: [], config: {} };
-    const questToAccept = (questState.allQuestsSeeded[settlementId] || []).find(q => q.id === questId);
+    const questToAccept = (questState.allQuestsSeeded[siteId] || []).find(q => q.id === questId);
     
     if (questToAccept){
       questState.active.push({
@@ -465,17 +465,17 @@ function updateNPCQuestState(action, state, deltas, flags){
       });
       
       // Decrement NPC quest_giver_rank
-      const npcIdx = settlement.npcs.findIndex(n => n.id === npc.id);
-      if (npcIdx >= 0 && settlement.npcs[npcIdx].quest_giver_rank > 0){
-        settlement.npcs[npcIdx].quest_giver_rank -= 1;
+      const npcIdx = siteRecord.npcs.findIndex(n => n.id === npc.id);
+      if (npcIdx >= 0 && siteRecord.npcs[npcIdx].quest_giver_rank > 0){
+        siteRecord.npcs[npcIdx].quest_giver_rank -= 1;
         
         deltas.push({
           op: 'set',
-          path: `/world/sites/${settlementId}/npcs`,
-          value: settlement.npcs
+          path: `/world/sites/${siteId}/npcs`,
+          value: siteRecord.npcs
         });
         
-        console.log(`[QUEST] Completed quest ${questId}, NPC ${npc.id} rank: ${settlement.npcs[npcIdx].quest_giver_rank}`);
+        console.log(`[QUEST] Completed quest ${questId}, NPC ${npc.id} rank: ${siteRecord.npcs[npcIdx].quest_giver_rank}`);
         flags.quest_completed = true;
       }
     }
@@ -680,7 +680,7 @@ function validateAndQueueIntent(state, normalizedIntent){
 function computeVisibleNpcs(site, playerPos) {
   const MAX_VISIBLE_NPCS = 5; // tunable — not a simulation rule
   if (!site || !playerPos) return [];
-  const { grid = [], npcs = [], settlement_id } = site;
+  const { grid = [], npcs = [], site_id } = site;
   const { x, y } = playerPos;
   const idSet = new Set();
   // Exact tile only — no adjacency radius
@@ -691,7 +691,7 @@ function computeVisibleNpcs(site, playerPos) {
     : (tile?.npc_ids || []);
   tileNpcIds.forEach(id => idSet.add(id));
   const resolved = [...idSet]
-    .map(id => npcs.find(n => n.id === id && (!settlement_id || n.settlement_id === settlement_id)))
+    .map(id => npcs.find(n => n.id === id && (!site_id || n.site_id === site_id)))
     .filter(Boolean)
     .slice(0, MAX_VISIBLE_NPCS);
   const unresolvedCount = idSet.size - resolved.length;
@@ -722,7 +722,7 @@ module.exports = {
   toISO,
   sha256Hex,
   // === PHASE 3C: Quest system exports ===
-  getNPCInSettlement,
+  getNPCInSite,
   validateQuestAction,
   updateNPCQuestState,
   computeVisibleNpcs
