@@ -1522,7 +1522,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     {
       const _vpDepth = gameState.world.current_depth || 1;
       const _vpDepthLabels = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' };
-      const _vpSites = gameState.world.sites || {};
+      const _vpSiteRegistry = gameState.world.sites || {};
       const _vpActiveSite = gameState.world.active_site || null;
       const _vpActiveBuilding = gameState.world.active_building || null;
       const _vpAllCells = gameState.world.cells || {};
@@ -1536,11 +1536,11 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       const _vpSites = Object.entries(currentCell?.sites || {}).map(([, _s]) => {
         const _sGenerated = !!(
           _s.interior_key &&
-          _vpSites[_s.interior_key] &&
-          !_vpSites[_s.interior_key].is_stub
+          _vpSiteRegistry[_s.interior_key] &&
+          !_vpSiteRegistry[_s.interior_key].is_stub
         );
         const _vpBuildings = _sGenerated
-          ? Object.entries(_vpSites[_s.interior_key].buildings || {}).map(([_bId, _b]) => ({
+          ? Object.entries(_vpSiteRegistry[_s.interior_key].buildings || {}).map(([_bId, _b]) => ({
               bld_id: _bId,
               name: _b.name || null,
               purpose: _b.purpose || null,
@@ -1572,7 +1572,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           kind: 'site',
           name: _vpActiveSite.name || null,
           type: _vpActiveSite.type || null,
-          site_id: _vpActiveSite.settlement_id || null,
+          site_id: _vpActiveSite.site_id || null,
           grid_key: cellKey,
           mac_key: `MAC:${currentPosition.mx},${currentPosition.my}`,
           mx: currentPosition.mx,
