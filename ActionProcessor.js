@@ -257,7 +257,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     const target = String(actions?.target || '').trim();
     const depth = state?.world?.current_depth ?? 1;
     if (depth >= 2) {
-      const { matches } = resolveNPCTargetFromVisible(state, target);
+      const { matches = [] } = resolveNPCTargetFromVisible(state, target) || {};
       if (matches.length === 0) {
         state.world._npcTalkResult = { outcome: 'not_found', target };
         if (logger) logger.action_resolved('talk', false, `no visible NPC matching "${target}"`);
@@ -536,10 +536,16 @@ function isNPCPresent(state, nameOrRole){
     const visible = state?.world?.active_site?._visible_npcs || [];
     if (visible.length > 0) {
       const q = String(nameOrRole || '').trim().toLowerCase();
-      return visible.some(n =>
+      const hasDirectMatch = visible.some(n =>
         String(n?.job_category || '').toLowerCase() === q ||
         String(n?.id || '').toLowerCase() === q
       );
+      if (hasDirectMatch) return true;
+      // Colloquial fallback: if only 1 NPC visible, any target string resolves to them
+      // (handles "man", "woman", "person", "stranger", etc.)
+      if (visible.length === 1) return true;
+      // Multiple NPCs, no match — validation will reject and narration will prompt specificity
+      return false;
     }
     // _visible_npcs not yet computed — any NPC in site counts as present
     return (state?.world?.active_site?.npcs || []).length > 0;
@@ -563,6 +569,11 @@ function resolveNPCTargetFromVisible(state, target) {
     String(n?.job_category || '').toLowerCase() === q ||
     String(n?.id || '').toLowerCase() === q
   );
+  // Colloquial fallback: if no exact match but exactly 1 NPC visible, resolve to them
+  // (mirrors isNPCPresent single-NPC rule — "talk to the man" with 1 merchant present)
+  if (matches.length === 0 && visible.length === 1) {
+    return { matches: visible, colloquial: true };
+  }
   return { matches };
 }
 /**

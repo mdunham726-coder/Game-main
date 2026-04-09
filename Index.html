@@ -272,8 +272,8 @@ diagLog.innerHTML = `
   <div><strong>Sample Terrain:</strong> ${(diag.sample_cell_types || []).join(', ') || 'none'}</div>
   <div style="margin-top:6px; border:1px solid #444; padding:6px; background:#111;">
     <div style="color:#888; margin-bottom:4px;">&#x25BC; NPCs (Current Context)</div>
-    <div><strong>Records&nbsp;:</strong> ${diag.npc_record_count}</div>
-    <div><strong>Visible&nbsp;:</strong> ${diag.visible_npc_count} [${diag.visible_npc_names.length > 0 ? diag.visible_npc_names.join(', ') : 'none'}]</div>
+    <div><strong>Records&nbsp;:</strong> ${diag.npc_record_count ?? 0}</div>
+    <div><strong>Visible&nbsp;:</strong> ${diag.visible_npc_count ?? 0} [${(diag.visible_npc_names || []).length > 0 ? (diag.visible_npc_names || []).join(', ') : 'none'}]</div>
   </div>
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; INIT-TIME WORLD GENERATION INPUTS (frozen)</div>
   <div><strong>phase3_seed:</strong> ${_p3s ?? '<span style="color:#666">(not set)</span>'}</div>
@@ -877,6 +877,7 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
           ? authState.visible_npc_names.join(', ')
           : 'none';
         const _recCount = authState.npc_record_count ?? 0;
+        // Defensive: authState.visible_npc_names may be absent on validation-rejection returns
         npcSection = `\n\u2500\u2500 NPCs (Current Context) \u2500\u2500\nNPC Records : ${_recCount}\nVisible NPCs : ${_visCount} [${_visNames}]`;
       }
 

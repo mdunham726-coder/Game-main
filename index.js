@@ -915,6 +915,7 @@ app.post('/narrate', async (req, res) => {
         error: `engine_failed: ${err.message}`, 
         narrative: "The engine encountered an error initializing the world.",
         state: gameState,
+        turn_history: gameState?.turn_history || null,
         debug 
       });
     }
@@ -931,6 +932,7 @@ app.post('/narrate', async (req, res) => {
           sessionId: resolvedSessionId,
           narrative: `[CLARIFICATION] I didn't quite understand that. Did you mean to: ${parseResult.intent?.primaryAction?.action || '...'}? (yes/no/try again)`,
           state: gameState,
+          turn_history: gameState?.turn_history || null,
           debug
         });
       }
@@ -978,6 +980,7 @@ app.post('/narrate', async (req, res) => {
             success: true,
             narrative: `Action invalid: ${validation.reason}`,
             state: gameState,
+            turn_history: gameState?.turn_history || null,
             debug: { ...debug, parser: "semantic", error: "INVALID_ACTION", reason: validation.reason, validation: validation.stateValidation }
           });
         }
@@ -1052,6 +1055,7 @@ app.post('/narrate', async (req, res) => {
         error_stack: err.stack,
         narrative: `The engine encountered an error: ${err.message}`,
         state: gameState,
+        turn_history: gameState?.turn_history || null,
         debug
       });
     }
@@ -1231,6 +1235,7 @@ app.post('/narrate', async (req, res) => {
     if (_narDepth >= 2 && _narActiveSite && gameState?.player?.position) {
       _narActiveSite._visible_npcs = Actions.computeVisibleNpcs(_narActiveSite, gameState.player.position);
     }
+    console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, gameState?.player?.position, _narActiveSite?._visible_npcs?.length ?? 'n/a');
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
     const _engineMsg = gameState?.world?._engineMessage || null;
     if (_engineMsg) gameState.world._engineMessage = null;
@@ -1361,6 +1366,7 @@ The player has already moved. They are now in the location described above.
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
+- If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
@@ -2015,6 +2021,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   const _ctxDepth = gameState.world.current_depth ?? 1;
   const _ctxLayer = { 1: 'L0 (overworld)', 2: 'L1 (site)', 3: 'L2 (building)', 4: 'L3 (subspace)' }[_ctxDepth] || `L? (depth ${_ctxDepth})`;
   context += `Current Layer   : ${_ctxLayer}\n`;
+  console.log('[DEBUG-CTX] layer=%s depth=%s site=%s pos=%o', _ctxLayer, _ctxDepth, !!(gameState.world.active_site), gameState.player?.position);
 
   context += `\n=== NEARBY NPCS ===\n`;
   const _dbgDepth = gameState.world.current_depth ?? 1;

@@ -143,6 +143,24 @@
       color: #d4af37;
     }
 
+    .cell-npc-badge {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      background: #b85c00;
+      color: #fff;
+      font-size: 7px;
+      font-weight: bold;
+      border-radius: 2px;
+      padding: 0 2px;
+      line-height: 10px;
+      pointer-events: none;
+    }
+
+    .cell {
+      position: relative;
+    }
+
     .player-marker {
       font-size: 10px;
       line-height: 1;
@@ -463,20 +481,57 @@
             el.className = 'cell generated';
             if (isPlayer) el.classList.add('player-pos');
             const typeLabel = tile?.type || 'space';
+
+            // Resolve NPC count for this tile from authoritative source
+            // Street tiles: npc_ids on the tile itself
+            // Building tiles: npc_ids on site.buildings[building_id]
+            let _tileNpcIds = [];
+            if (tile?.type === 'building' && tile?.building_id) {
+              _tileNpcIds = _activeSiteData.buildings?.[tile.building_id]?.npc_ids || [];
+            } else {
+              _tileNpcIds = tile?.npc_ids || [];
+            }
+            const _tileNpcCount = _tileNpcIds.length;
+
             el.innerHTML = `
-              ${isPlayer ? '<div class="player-marker">◉</div>' : ''}
+              ${isPlayer ? '<div class="player-marker">&#x25C9;</div>' : ''}
               <div class="cell-type">${escapeHtml(typeLabel)}</div>
               <div class="cell-biome">${escapeHtml(String(col) + ',' + String(row))}</div>
+              ${_tileNpcCount > 0 ? `<div class="cell-npc-badge">${_tileNpcCount}</div>` : ''}
             `;
             el.addEventListener('click', () => {
               if (selectedCell) selectedCell.classList.remove('selected');
               el.classList.add('selected');
               selectedCell = el;
-              // Minimal tile inspector at L1
               const content = document.getElementById('inspector-content');
-              content.innerHTML = `<div class="inspector-row"><span class="inspector-label">Type</span><span class="inspector-value">${escapeHtml(typeLabel)}</span></div>` +
-                `<div class="inspector-row"><span class="inspector-label">x</span><span class="inspector-value">${col}</span></div>` +
-                `<div class="inspector-row"><span class="inspector-label">y</span><span class="inspector-value">${row}</span></div>`;
+              let _iHtml = '';
+
+              // Type + coordinates
+              _iHtml += `<div class="inspector-field"><div class="inspector-label">Type</div><div class="inspector-value">${escapeHtml(typeLabel)}</div></div>`;
+              _iHtml += `<div class="inspector-field"><div class="inspector-label">x</div><div class="inspector-value">${col}</div></div>`;
+              _iHtml += `<div class="inspector-field"><div class="inspector-label">y</div><div class="inspector-value">${row}</div></div>`;
+
+              // Building identity (authoritative from site.buildings)
+              if (tile?.type === 'building' && tile?.building_id) {
+                const _bld = _activeSiteData.buildings?.[tile.building_id];
+                const _bldName = _bld?.name || '(unnamed)';
+                const _bldPurpose = _bld?.purpose || '(unknown)';
+                _iHtml += `<hr class="inspector-divider">`;
+                _iHtml += `<div class="inspector-field"><div class="inspector-label">Building</div><div class="inspector-value">${escapeHtml(_bldName)}</div></div>`;
+                _iHtml += `<div class="inspector-field"><div class="inspector-label">Purpose</div><div class="inspector-value">${escapeHtml(_bldPurpose)}</div></div>`;
+              }
+
+              // NPC identity (resolve ids against site.npcs)
+              if (_tileNpcCount > 0) {
+                const _tileNpcRecords = (_activeSiteData.npcs || []).filter(n => _tileNpcIds.includes(n.id));
+                const _tileNpcLabels = _tileNpcRecords.map(n => n.job_category || n.id).filter(Boolean);
+                _iHtml += `<hr class="inspector-divider">`;
+                _iHtml += `<div class="inspector-field"><div class="inspector-label">NPCs</div><div class="inspector-value">${_tileNpcCount} — ${escapeHtml(_tileNpcLabels.join(', ') || '(id only)')}</div></div>`;
+              } else {
+                _iHtml += `<div class="inspector-field"><div class="inspector-label">NPCs</div><div class="inspector-value empty">(none)</div></div>`;
+              }
+
+              content.innerHTML = _iHtml;
               document.getElementById('inspector-panel').style.display = 'block';
             });
             rowEl.appendChild(el);
