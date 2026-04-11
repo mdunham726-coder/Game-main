@@ -457,34 +457,7 @@ function buildOutput(prevState, inputObj, logger) {
     const enterCell = state.world.cells && state.world.cells[enterCellKey];
     const enterSites = enterCell ? Object.values(enterCell.sites || {}) : [];
 
-    // Backward-compat: real enterable sites from old sessions may have enterable !== true
-    // (evaluateCellForSites post-fix always sets it, but persisted state may predate the fix).
-    // Repair in-place so they participate correctly in entry selection.
-    for (const s of enterSites) {
-      if (!s.is_starting_location && s.category !== 'landmark' && s.enterable !== true) {
-        s.enterable = true;
-        if (!s.interior_key) s.interior_key = `${s.site_id}/l2`;
-        state.world.sites = state.world.sites || {};
-        if (!state.world.sites[s.interior_key]) {
-          state.world.sites[s.interior_key] = {
-            name: s.name ?? null, type: s.site_tier || 'settlement', npcs: [], is_stub: true
-          };
-        }
-        console.log(`[ENGINE] [COMPAT] Lazy-fixed enterable on ${s.category} site ${s.site_id} (${s.name || '(unnamed)'})`);
-      }
-    }
-
-    // Suppress bootstrap site_start once a real enterable settlement exists in this cell.
-    const _hasRealSite = enterSites.some(s => s.category === 'settlement' && !s.is_starting_location && s.enterable === true);
-    if (_hasRealSite) {
-      enterSites.filter(s => s.is_starting_location).forEach(s => { s.enterable = false; });
-    }
-
-    // Phase 7 temporary scaffolding: minimal site resolution.
-    // Priority: exact/substring match → generic term → fuzzy match → single-site fallback.
-    // Multi-site disambiguation and clarification prompts are deferred to a later phase.
-
-    // Inline levenshtein — used for typo-tolerant site name matching only.
+    // Inline levenshtein — used for typo-tolerant site name/tier matching only.
     function _lev(a, b) {
       const m = a.length, n = b.length;
       const d = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
@@ -493,97 +466,81 @@ function buildOutput(prevState, inputObj, logger) {
       return d[m][n];
     }
 
+    // Candidate pool: only sites that are explicitly enterable and not the bootstrap placeholder.
+    const candidates = enterSites.filter(s => s.enterable === true && !s.is_starting_location);
+
+    // Strip leading articles from player input for cleaner matching.
+    const targetName = (actions.target || '').toLowerCase().trim().replace(/^(the|a|an)\s+/, '');
     let targetSite = null;
-    const targetName = (actions.target || '').toLowerCase().trim();
+
     if (targetName) {
-      // Step 1: exact / substring match on name, tier, or category.
-      const namedMatch = enterSites.find(s =>
-        (s.name && s.name.toLowerCase().includes(targetName)) ||
-        (s.site_tier && s.site_tier.toLowerCase().includes(targetName)) ||
-        (s.category && s.category.toLowerCase().includes(targetName))
-      );
-      if (namedMatch) {
-        if (namedMatch.enterable === true) {
-          targetSite = namedMatch;
-        } else {
-          console.log(`[Phase10-ENTER] Named target "${targetName}" resolved to ${namedMatch.site_id} but enterable !== true — rejecting.`);
-          targetSite = null;
+      // Fields for exact/substring matching: name, tier, and category.
+      const _allFields = s => [s.name, s.site_tier, s.category].filter(Boolean).map(v => v.toLowerCase());
+      // Fields for fuzzy matching: name and tier only.
+      // Category is a routing hint, not player-facing identity — fuzzy on it reintroduces inference.
+      const _fuzzyFields = s => [s.name, s.site_tier].filter(Boolean).map(v => v.toLowerCase());
+
+      // Pass 1 — exact match on name, tier, or category.
+      const exactMatches = candidates.filter(s => _allFields(s).some(f => f === targetName));
+      if (exactMatches.length === 1) {
+        targetSite = exactMatches[0];
+        console.log(`[Phase10-ENTER] Exact match: "${targetName}" → ${targetSite.site_id}`);
+      } else if (exactMatches.length > 1) {
+        const names = exactMatches.map(s => `"${s.name || s.category}"`).join(', ');
+        state.world._engineMessage = `Multiple sites here match "${targetName}": ${names}. Which would you like to enter?`;
+        console.log(`[Phase10-ENTER] Exact match ambiguous (${exactMatches.length}) for "${targetName}"`);
+      }
+
+      // Pass 2 — substring match on name, tier, or category.
+      if (!targetSite && !state.world._engineMessage) {
+        const subMatches = candidates.filter(s => _allFields(s).some(f => f.includes(targetName)));
+        if (subMatches.length === 1) {
+          targetSite = subMatches[0];
+          console.log(`[Phase10-ENTER] Substring match: "${targetName}" → ${targetSite.site_id}`);
+        } else if (subMatches.length > 1) {
+          const names = subMatches.map(s => `"${s.name || s.category}"`).join(', ');
+          state.world._engineMessage = `Multiple sites here match "${targetName}": ${names}. Which would you like to enter?`;
+          console.log(`[Phase10-ENTER] Substring match ambiguous (${subMatches.length}) for "${targetName}"`);
         }
       }
-      // Step 3: fuzzy match (levenshtein ≤ 2) — only runs if exact/substring failed.
-      if (!targetSite) {
-        const fuzzyMatch = enterSites
-          .filter(s => s.enterable === true)
-          .find(s => {
-            const candidates = [s.name, s.site_tier, s.category].filter(Boolean).map(v => v.toLowerCase());
-            return candidates.some(v => _lev(targetName, v) <= 2 || _lev(targetName, v.replace(/^(the|a|an)\s+/, '')) <= 2);
-          });
-        if (fuzzyMatch) {
-          targetSite = fuzzyMatch;
-          console.log(`[Phase10-ENTER] Fuzzy match: "${targetName}" → ${fuzzyMatch.site_id} (${fuzzyMatch.name || fuzzyMatch.category})`);
-        }
-      }
-      // If still no match, fall through to generic term and single-site fallback below.
-    }
-    // Generic settlement term fallback: if the player typed a general category word (e.g. "enter town"
-    // or "enter the town"), strip leading articles then check against known generic terms.
-    // Settlement priority: always select a settlement over any other site type.
-    // Only fires when targetName had NO match at all (not a found-but-non-enterable case).
-    const _GENERIC_ENTRY_TERMS = new Set([
-      'town', 'city', 'village', 'hamlet', 'settlement', 'outpost',
-      'fortress', 'camp', 'keep', 'dungeon', 'ruins', 'cave', 'tower'
-    ]);
-    const _normalizedTarget = targetName.replace(/^(the|a|an)\s+/, '');
-    if (!targetSite && targetName && _GENERIC_ENTRY_TERMS.has(_normalizedTarget)) {
-      const namedMatch = enterSites.find(s =>
-        (s.name && s.name.toLowerCase().includes(_normalizedTarget)) ||
-        (s.site_tier && s.site_tier.toLowerCase().includes(_normalizedTarget)) ||
-        (s.category && s.category.toLowerCase().includes(_normalizedTarget))
-      );
-      if (!namedMatch) {
-        // No match at all — prefer settlements explicitly; never pick buildings/landmarks/pois.
-        const _siteCandidates = enterSites.filter(
-          s => s.enterable === true && s.category === 'settlement'
+
+      // Pass 3 — fuzzy match (levenshtein ≤ 2) on name and tier only.
+      if (!targetSite && !state.world._engineMessage) {
+        const fuzzyMatches = candidates.filter(s =>
+          _fuzzyFields(s).some(f => _lev(targetName, f) <= 2 || _lev(targetName, f.replace(/^(the|a|an)\s+/, '')) <= 2)
         );
-        const _anyCandidates = enterSites.filter(
-          s => s.enterable === true
-        );
-        const _genericCandidates = _siteCandidates.length > 0 ? _siteCandidates : _anyCandidates;
-        if (_genericCandidates.length === 1) {
-          targetSite = _genericCandidates[0];
-          console.log(`[Phase10-ENTER] Generic term "${targetName}" (normalized: "${_normalizedTarget}") matched single site ${targetSite.site_id} (${targetSite.category})`);
-        } else if (_genericCandidates.length > 1) {
-          // Ambiguous — use first site, log warning
-          targetSite = _genericCandidates[0];
-          console.log(`[Phase10-ENTER] Generic term "${targetName}" ambiguous (${_genericCandidates.length} candidates) — using first site: ${targetSite.site_id}`);
+        if (fuzzyMatches.length === 1) {
+          targetSite = fuzzyMatches[0];
+          console.log(`[Phase10-ENTER] Fuzzy match: "${targetName}" → ${targetSite.site_id} (${targetSite.name || targetSite.category})`);
+        } else if (fuzzyMatches.length > 1) {
+          const names = fuzzyMatches.map(s => `"${s.name || s.category}"`).join(', ');
+          state.world._engineMessage = `Multiple sites here match "${targetName}": ${names}. Which would you like to enter?`;
+          console.log(`[Phase10-ENTER] Fuzzy match ambiguous (${fuzzyMatches.length}) for "${targetName}"`);
         }
-        // Zero candidates: fall through to explicit rejection below
       }
-    }
-    // Single-site fallback: if target was specified but nothing matched at all,
-    // and exactly one enterable (non-bootstrap) site exists — use it.
-    if (!targetSite && targetName) {
-      const _entryCandidates = enterSites.filter(s => s.enterable === true && !s.is_starting_location);
-      if (_entryCandidates.length === 1) {
-        targetSite = _entryCandidates[0];
-        console.log(`[Phase10-ENTER] Single-site fallback: "${targetName}" → ${targetSite.site_id} (${targetSite.name || targetSite.category})`);
+
+      // All passes exhausted with no match and no ambiguity message.
+      if (!targetSite && !state.world._engineMessage) {
+        state.world._engineMessage = `No enterable site matching "${targetName}" found here.`;
+        console.log(`[Phase10-ENTER] No match for "${targetName}"`);
       }
-    }
-    if (!targetSite && !targetName) {
-      // No explicit target — default to first real enterable site, skipping bootstrap placeholder.
-      targetSite =
-        enterSites.find(s => s.enterable === true && !s.is_starting_location) ||
-        enterSites.find(s => s.enterable === true);
+    } else {
+      // No target — unambiguous only if exactly one enterable site exists.
+      if (candidates.length === 1) {
+        targetSite = candidates[0];
+        console.log(`[Phase10-ENTER] No target: single candidate → ${targetSite.site_id}`);
+      } else if (candidates.length > 1) {
+        const names = candidates.map(s => `"${s.name || s.category}"`).join(', ');
+        state.world._engineMessage = `Multiple sites here: ${names}. Which would you like to enter?`;
+        console.log(`[Phase10-ENTER] No target ambiguous (${candidates.length} candidates)`);
+      } else {
+        state.world._engineMessage = 'There is nothing to enter here.';
+        console.log('[Phase10-ENTER] No target: no candidates');
+      }
     }
 
     if (targetSite) {
       enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id, entry_dir: actions.dir || null }, logger);
-    } else {
-      const _rejectMsg = targetName
-        ? `No enterable site matching "${targetName}" found here.`
-        : 'There is nothing to enter here.';
-      state.world._engineMessage = _rejectMsg;
-      console.log('[Phase10-ENTER]', _rejectMsg);
     }
   }
 

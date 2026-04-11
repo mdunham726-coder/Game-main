@@ -651,7 +651,7 @@ function validateAndQueueIntent(state, normalizedIntent){
     }
 
     // Lightweight checks / always-allow group
-    if (['sit','stand','wait','listen','look','inventory','help'].includes(action)){
+    if (['sit','stand','wait','listen','look','inventory','help','enter','exit'].includes(action)){
       continue;
     }
 
