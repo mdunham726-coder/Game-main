@@ -643,6 +643,20 @@ if (wg) {
     for (const id in state.world.cells) {
       const cell = state.world.cells[id];
       if (!cell) continue;
+      // Heal legacy non-geography cell types (e.g. 'settlement' written by old sessions)
+      if (cell.type && !WorldGen.LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(cell.type) && !cell.is_custom) {
+        const _healBiome = cell.biome || state.world.macro_biome || 'rural';
+        const _healPalette = BIOME_TERRAIN_TYPES[_healBiome] || BIOME_TERRAIN_TYPES['rural'];
+        cell.type = _healPalette[0];
+        cell.description = '';
+        console.log(`[TERRAIN_HEAL] cell ${id}: type corrected to "${cell.type}"`);
+        changes1.push({ op: 'set', path: `/world/cells/${id}/type`, value: cell.type });
+      }
+      // Clear shadow-named descriptions (pattern: "A <type> called <name>") so they regenerate clean
+      if (cell.description && !cell.is_custom && /^A .+? called /i.test(cell.description)) {
+        cell.description = '';
+        changes1.push({ op: 'set', path: `/world/cells/${id}/description`, value: '' });
+      }
       if (!cell.description && !cell.is_custom) {
         const desc = WorldGen.generateL1FeatureDescription({
           type: (cell.category || cell.tags?.category || "geography"),
@@ -921,7 +935,9 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
+    const _freshStubName = site.name || null;  // Phase-5E name captured before entry
     siteRecord = WorldGen.generateL2Site(interior_key, identity, npcs_here, state.rng_seed);
+    if (_freshStubName) siteRecord.name = _freshStubName;
     siteRecord.category = site.category || null;  // carry category from cell.sites for count filtering
     state.world.sites[interior_key] = siteRecord;
 

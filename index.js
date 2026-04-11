@@ -1238,6 +1238,10 @@ app.post('/narrate', async (req, res) => {
     if (_npcTalkResult) gameState.world._npcTalkResult = null;
     let _narSceneDesc = scene.currentCell?.description || 'An empty space';
     let _narSceneType = scene.currentCell?.type || 'void';
+    // Guard: only L0 geography vocabulary may appear as terrain in the overworld prompt
+    if (!WorldGen.LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(_narSceneType)) {
+      _narSceneType = 'terrain';
+    }
     if (_narDepth >= 2 && _narActiveSite) {
       _narSceneDesc = _narActiveSite.description ||
         `The ${_narActiveSite.type || 'settlement'} of ${_narActiveSite.name || 'the settlement'}. Streets and buildings fill the area.`;
@@ -1465,6 +1469,23 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           console.warn('[PHASE5] site_updates parse failed:', _suErr.message);
         }
         gameState.world._lastSiteCapture = _cr;
+      }
+    }
+
+    // Unconditional divergence check: cell.sites is naming authority; world.sites must match.
+    // Runs every narration turn regardless of whether Phase 5 fired.
+    {
+      const _dvCell = gameState.world.cells?.[_narCellKey];
+      if (_dvCell?.sites) {
+        for (const [_dvSiteId, _dvSite] of Object.entries(_dvCell.sites)) {
+          if (_dvSite.name == null) continue;
+          const _dvMirrorKey = _dvSite.interior_key || null;
+          const _dvMirror = _dvMirrorKey ? gameState.world.sites?.[_dvMirrorKey] : null;
+          if (_dvMirror && _dvMirror.name != null && _dvMirror.name !== _dvSite.name) {
+            console.warn(`[SITE_NAME_DIVERGENCE] ${_dvSiteId}: cell="${_dvSite.name}" mirror="${_dvMirror.name}" — healing`);
+            _dvMirror.name = _dvSite.name;
+          }
+        }
       }
     }
 

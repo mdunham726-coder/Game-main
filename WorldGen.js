@@ -1154,10 +1154,8 @@ function exposeSitesInWindow(state, worldData, posLx, posLy, posMx, posMy) {
 // --- LOC: feature description (same) ---
 function generateL1FeatureDescription(site, worldSeed = "default") {
   if (!site) return "An empty space";
-  const st = site.subtype || "settlement";
-  // Use cell ID/coordinates for unique settlement names per location
-  const siteId = site.id || `${site.mx || 0},${site.my || 0},${site.lx || 0},${site.ly || 0}`;
-  return `A ${st} called ${generateSiteName(siteId, worldSeed)}`;
+  const st = site.subtype || "terrain feature";
+  return `A ${st}`;
 }
 
 // =============================================================================
