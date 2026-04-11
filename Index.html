@@ -212,7 +212,7 @@ if (_curSites.length > 0) {
   _sitesHtml = _curSites.map(s => {
     const nameStr = s.name != null ? s.name : '<span style="color:#666">(unnamed)</span>';
     const descStr  = s.description != null ? s.description : '<span style="color:#444">(null)</span>';
-    return `<div style="margin-left:8px">� <strong>${s.site_id}</strong> | ${s.category}<br>
+    return `<div style="margin-left:8px"><strong>${s.site_id}</strong> | ${s.category}<br>
       &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
       &nbsp;&nbsp;site_tier: ${s.site_tier != null ? s.site_tier : '<span style="color:#444">(null)</span>'}<br>
       &nbsp;&nbsp;desc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${descStr}<br>
@@ -220,7 +220,7 @@ if (_curSites.length > 0) {
     </div>`;
   }).join('');
 } else {
-  _sitesHtml = '<div style="color:#555;margin-left:8px">� none</div>';
+  _sitesHtml = '<div style="color:#555;margin-left:8px">(none)</div>';
 }
 
 // Build Phase 5 capture HTML
@@ -233,7 +233,7 @@ if (!_lsc || !_lsc.detected) {
     ? _lsc.capturedNames.map(n => `<div style="margin-left:8px">names captured&nbsp;&nbsp;&nbsp;: ${n.site_id} ? "${n.value}"</div>`).join('')
     : '';
   const _changesHtml = (_lsc.changes || []).length > 0
-    ? (_lsc.changes || []).map(c => `<div style="margin-left:16px;color:#aaa">${c.site_id}.${c.field}: ${c.old === null ? 'null' : '"' + c.old + '"'} \u2192 "${c.new}"</div>`).join('')
+    ? (_lsc.changes || []).map(c => `<div style="margin-left:16px;color:#aaa">${c.site_id}.${c.field}: ${c.old === null ? 'null' : '"' + c.old + '"'} -> "${c.new}"</div>`).join('')
     : '';
   _captureHtml = `
     <div style="margin-left:8px">site_updates detected : yes</div>
@@ -249,15 +249,15 @@ let _mirrorHtml = '';
 if (_curSites.length > 0) {
   _mirrorHtml = _curSites.map(s => {
     const mirror = s.interior_key ? _sites[s.interior_key] : null;
-    if (!mirror) return `<div style="margin-left:8px;color:#444">� ${s.site_id} ? (no mirror entry)</div>`;
+    if (!mirror) return `<div style="margin-left:8px;color:#444">[--] ${s.site_id} -> (no mirror entry)</div>`;
     const mismatch = s.name != null && mirror.name !== s.name;
     if (mismatch) {
-      return `<div style="margin-left:8px;color:#f80">? ${s.site_id} mismatch: site.name="${s.name}" vs mirror="${mirror.name}"</div>`;
+      return `<div style="margin-left:8px;color:#f80">[!!] ${s.site_id} mismatch: site.name="${s.name}" vs mirror="${mirror.name}"</div>`;
     }
-    return `<div style="margin-left:8px;color:#0a0">� ${s.site_id} ? site.name=${mirror.name ?? '(unnamed)'}</div>`;
+    return `<div style="margin-left:8px;color:#0a0">[OK] ${s.site_id} -> site.name=${mirror.name ?? '(unnamed)'}</div>`;
   }).join('');
 } else {
-  _mirrorHtml = '<div style="color:#555;margin-left:8px">no authoritative sites present � cell.sites is empty</div>';
+  _mirrorHtml = '<div style="color:#555;margin-left:8px">no authoritative sites present - cell.sites is empty</div>';
 }
 
 // Build entry resolver trace HTML
@@ -272,22 +272,22 @@ if (!_lrt) {
   let _p2Line = '';
   if (_lrt.p2Invoked) {
     if (_lrt.p2) {
-      _p2Line = `<div style="margin-left:8px">Phase 2: invoked &rarr; ${_lrt.p2.result}${_lrt.p2.site_id ? ' (' + _lrt.p2.site_id + ')' : _lrt.p2.ambiguousCount > 0 ? ' (' + _lrt.p2.ambiguousCount + ' ambiguous)' : ''}</div>`;
+      _p2Line = `<div style="margin-left:8px">Phase 2: invoked -> ${_lrt.p2.result}${_lrt.p2.site_id ? ' (' + _lrt.p2.site_id + ')' : _lrt.p2.ambiguousCount > 0 ? ' (' + _lrt.p2.ambiguousCount + ' ambiguous)' : ''}</div>`;
     } else {
-      _p2Line = '<div style="margin-left:8px">Phase 2: invoked &rarr; no candidates (skipped)</div>';
+      _p2Line = '<div style="margin-left:8px">Phase 2: invoked -> no candidates (skipped)</div>';
     }
   }
   let _summary;
   if (!_lrt.p1) {
     _summary = 'no resolution (no phrase)';
   } else if (_lrt.p1.result === 'resolved') {
-    _summary = `Phase1 ${_lrt.p1.pass} &rarr; resolved`;
+    _summary = `Phase1 ${_lrt.p1.pass} -> resolved`;
   } else if (_lrt.p1.result === 'ambiguous') {
-    _summary = `Phase1 ${_lrt.p1.pass} &rarr; ambiguous`;
+    _summary = `Phase1 ${_lrt.p1.pass} -> ambiguous`;
   } else if (_lrt.p2Invoked && _lrt.p2) {
-    _summary = `Phase1 no_match &rarr; Phase2 ${_lrt.p2.result}${_lrt.p2.site_id ? ' (' + _lrt.p2.site_id + ')' : ''}`;
+    _summary = `Phase1 no_match -> Phase2 ${_lrt.p2.result}${_lrt.p2.site_id ? ' (' + _lrt.p2.site_id + ')' : ''}`;
   } else if (_lrt.p2Invoked) {
-    _summary = 'Phase1 no_match &rarr; Phase2 skipped (0 candidates)';
+    _summary = 'Phase1 no_match -> Phase2 skipped (0 candidates)';
   } else {
     _summary = 'Phase1 no_match (no Phase2)';
   }
@@ -295,7 +295,7 @@ if (!_lrt) {
     <div style="margin-left:8px">Phrase: "${_lrt.phrase}" | Candidates: ${_lrt.candidateCount}</div>
     <div style="margin-left:8px">Phase 1: ${_p1Label}</div>
     ${_p2Line}
-    <div style="margin-left:8px;color:#0af">&rarr; Resolver: ${_summary}</div>
+    <div style="margin-left:8px;color:#0af">-> Resolver: ${_summary}</div>
   `;
 }
 diagLog.innerHTML = `
@@ -309,25 +309,25 @@ diagLog.innerHTML = `
   <div><strong>Current Region Cells:</strong> ${diag.region_cells !== undefined && diag.region_cells !== null ? diag.region_cells : 'n/a'}</div>
   <div><strong>Sample Terrain:</strong> ${(diag.sample_cell_types || []).join(', ') || 'none'}</div>
   <div style="margin-top:6px; border:1px solid #444; padding:6px; background:#111;">
-    <div style="color:#888; margin-bottom:4px;">&#x25BC; NPCs (Current Context)</div>
+    <div style="color:#888; margin-bottom:4px;">NPCs (Current Context)</div>
     <div><strong>Records&nbsp;:</strong> ${diag.npc_record_count ?? 0}</div>
     <div><strong>Visible&nbsp;:</strong> ${diag.visible_npc_count ?? 0} [${(diag.visible_npc_names || []).length > 0 ? (diag.visible_npc_names || []).join(', ') : 'none'}]</div>
   </div>
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; INIT-TIME WORLD GENERATION INPUTS (frozen)</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">INIT-TIME WORLD GENERATION INPUTS (frozen)</div>
   <div><strong>phase3_seed:</strong> ${_p3s ?? '<span style="color:#666">(not set)</span>'}</div>
   <div><strong>site_density:</strong> ${_wbn(_wb,'site_density')} &nbsp;|&nbsp; <strong>landmark_density:</strong> ${_wbn(_wb,'landmark_density')}</div>
   <div><strong>danger_level:</strong> ${_wbn(_wb,'danger_level')} &nbsp;|&nbsp; <strong>civilization_presence:</strong> ${_wbn(_wb,'civilization_presence')}</div>
   <div><strong>environment_tone:</strong> ${_wbn(_wb,'environment_tone')}</div>
   <div><strong>era:</strong> ${_wbn(_wc,'era')}</div>
   <div style="word-break:break-word;"><strong>world_tone:</strong> ${data.state?.world?.world_tone ?? '(missing)'}</div>
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; CURRENT CELL SITES (authoritative)</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">CURRENT CELL SITES (authoritative)</div>
   <div style="margin-left:8px;color:#777">Site Count: ${_curSites.length}</div>
   ${_sitesHtml}
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; PHASE 5 CAPTURE (last turn)</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">PHASE 5 CAPTURE (last turn)</div>
   ${_captureHtml}
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; SITE INTERIOR LINK STATUS (world.sites vs cell.sites)</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">SITE INTERIOR LINK STATUS (world.sites vs cell.sites)</div>
   ${_mirrorHtml}
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; ENTRY RESOLVER (last turn)</div>
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">ENTRY RESOLVER (last turn)</div>
   ${_resolverHtml}
 `;
 
@@ -790,12 +790,12 @@ Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' [MISMATCH]' : ' [OK]'}`
       if (movement) {
         const fromCoord = movement.from?.layer === 'L1'
           ? `(${movement.from.x},${movement.from.y}) [L1]`
-          : `(${movement.from?.mx||0},${movement.from?.my||0})\u2192(${movement.from?.lx||0},${movement.from?.ly||0})`;
+          : `(${movement.from?.mx||0},${movement.from?.my||0})->(${movement.from?.lx||0},${movement.from?.ly||0})`;
         const toCoord = movement.to?.exited === true
           ? `L0 (edge exit)`
           : movement.to?.layer === 'L1'
             ? `(${movement.to.x},${movement.to.y}) [L1]`
-            : `(${movement.to?.mx||0},${movement.to?.my||0})\u2192(${movement.to?.lx||0},${movement.to?.ly||0})`;
+            : `(${movement.to?.mx||0},${movement.to?.my||0})->(${movement.to?.lx||0},${movement.to?.ly||0})`;
         movementSection = `
 -- Movement
 From : ${fromCoord} ${movement.from_cell_type || '?'}
@@ -862,34 +862,34 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
           _sSitesTxt = _sCellSites.map(s => {
             const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
             const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
-            return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
+            return '  - ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
           }).join('\n');
         } else {
-          _sSitesTxt = '  \u2022 none';
+          _sSitesTxt = '  - none';
         }
         let _sCaptureTxt = '';
         if (!_sLsc || !_sLsc.detected) {
           _sCaptureTxt = '  site_updates detected : no';
         } else {
           const _sParse = _sLsc.parseSuccess ? 'success' : 'FAILED';
-          const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' \u2192 "' + n.value + '"').join('\n');
-          const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' \u2192 "' + c.new + '"').join('');
+          const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' -> "' + n.value + '"').join('\n');
+          const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' -> "' + c.new + '"').join('');
           _sCaptureTxt = '  detected : yes | parse : ' + _sParse + ' | applied : ' + _sLsc.updatesApplied + _sChanges + '\n  skipped : ' + _sLsc.skipped + (_sNames ? '\n' + _sNames : '');
         }
         let _sMirrorTxt = '';
         if (_sCellSites.length > 0) {
           _sMirrorTxt = _sCellSites.map(s => {
             const _sm = s.interior_key ? _sSites[s.interior_key] : null;
-            if (!_sm) return '  \u2022 ' + s.site_id + ' \u2192 (no mirror entry)';
-            const _smm = (s.name != null && _sm.name !== s.name) ? '\u26a0 MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '\u2713 ' + (_sm.name ?? '(unnamed)');
-            return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;
+            if (!_sm) return '  - ' + s.site_id + ' -> (no mirror entry)';
+            const _smm = (s.name != null && _sm.name !== s.name) ? '[!!] MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '[OK] ' + (_sm.name ?? '(unnamed)');
+            return '  - ' + s.site_id + ' -> ' + _smm;
           }).join('\n');
         } else {
-          _sMirrorTxt = '  no authoritative sites present \u2014 cell.sites is empty';
+          _sMirrorTxt = '  no authoritative sites present - cell.sites is empty';
         }
-        stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
-          + '\n\u2500\u2500 PHASE 5 CAPTURE (last turn) \u2500\u2500\n' + _sCaptureTxt
-          + '\n\u2500\u2500 SITE INTERIOR LINK STATUS (world.sites vs cell.sites) \u2500\u2500\n' + _sMirrorTxt;
+        stateSection += '\n--- CURRENT CELL SITES (authoritative) ---\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
+          + '\n--- PHASE 5 CAPTURE (last turn) ---\n' + _sCaptureTxt
+          + '\n--- SITE INTERIOR LINK STATUS (world.sites vs cell.sites) ---\n' + _sMirrorTxt;
       }
 
       // -- Site block (running only) --
@@ -918,7 +918,7 @@ NPC Count       : ${site.npcs?.length || 0}`;
           : 'none';
         const _recCount = authState.npc_record_count ?? 0;
         // Defensive: authState.visible_npc_names may be absent on validation-rejection returns
-        npcSection = `\n\u2500\u2500 NPCs (Current Context) \u2500\u2500\nNPC Records : ${_recCount}\nVisible NPCs : ${_visCount} [${_visNames}]`;
+        npcSection = `\n--- NPCs (Current Context) ---\nNPC Records : ${_recCount}\nVisible NPCs : ${_visCount} [${_visNames}]`;
       }
 
       // -- Nearby cells --
@@ -1194,12 +1194,12 @@ Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' [MISMATCH]' : ' [OK]'}`
             if (movement) {
               const fromCoord = movement.from?.layer === 'L1'
                 ? `(${movement.from.x},${movement.from.y}) [L1]`
-                : `(${movement.from?.mx||0},${movement.from?.my||0})\u2192(${movement.from?.lx||0},${movement.from?.ly||0})`;
+                : `(${movement.from?.mx||0},${movement.from?.my||0})->(${movement.from?.lx||0},${movement.from?.ly||0})`;
               const toCoord = movement.to?.exited === true
                 ? `L0 (edge exit)`
                 : movement.to?.layer === 'L1'
                   ? `(${movement.to.x},${movement.to.y}) [L1]`
-                  : `(${movement.to?.mx||0},${movement.to?.my||0})\u2192(${movement.to?.lx||0},${movement.to?.ly||0})`;
+                  : `(${movement.to?.mx||0},${movement.to?.my||0})->(${movement.to?.lx||0},${movement.to?.ly||0})`;
               movementSection = `
 -- Movement
 From : ${fromCoord} ${movement.from_cell_type || '?'}
@@ -1257,34 +1257,34 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
               _sSitesTxt = _sCellSites.map(s => {
                 const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
                 const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
-                return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
+                return '  - ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
               }).join('\n');
             } else {
-              _sSitesTxt = '  \u2022 none';
+              _sSitesTxt = '  - none';
             }
             let _sCaptureTxt = '';
             if (!_sLsc || !_sLsc.detected) {
               _sCaptureTxt = '  site_updates detected : no';
             } else {
               const _sParse = _sLsc.parseSuccess ? 'success' : 'FAILED';
-              const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' \u2192 "' + n.value + '"').join('\n');
-              const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' \u2192 "' + c.new + '"').join('');
+              const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' -> "' + n.value + '"').join('\n');
+              const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' -> "' + c.new + '"').join('');
               _sCaptureTxt = '  detected : yes | parse : ' + _sParse + ' | applied : ' + _sLsc.updatesApplied + _sChanges + '\n  skipped : ' + _sLsc.skipped + (_sNames ? '\n' + _sNames : '');
             }
             let _sMirrorTxt = '';
             if (_sCellSites.length > 0) {
               _sMirrorTxt = _sCellSites.map(s => {
                 const _sm = s.interior_key ? _sSites[s.interior_key] : null;
-                if (!_sm) return '  \u2022 ' + s.site_id + ' \u2192 (no mirror entry)';
-                const _smm = (s.name != null && _sm.name !== s.name) ? '\u26a0 MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '\u2713 ' + (_sm.name ?? '(unnamed)');
-                return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;
+                if (!_sm) return '  - ' + s.site_id + ' -> (no mirror entry)';
+                const _smm = (s.name != null && _sm.name !== s.name) ? '[!!] MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '[OK] ' + (_sm.name ?? '(unnamed)');
+                return '  - ' + s.site_id + ' -> ' + _smm;
               }).join('\n');
             } else {
-              _sMirrorTxt = '  no authoritative sites present \u2014 cell.sites is empty';
+              _sMirrorTxt = '  no authoritative sites present - cell.sites is empty';
             }
-            stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
-              + '\n\u2500\u2500 PHASE 5 CAPTURE (last turn) \u2500\u2500\n' + _sCaptureTxt
-              + '\n\u2500\u2500 SITE INTERIOR LINK STATUS (world.sites vs cell.sites) \u2500\u2500\n' + _sMirrorTxt;
+            stateSection += '\n--- CURRENT CELL SITES (authoritative) ---\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
+              + '\n--- PHASE 5 CAPTURE (last turn) ---\n' + _sCaptureTxt
+              + '\n--- SITE INTERIOR LINK STATUS (world.sites vs cell.sites) ---\n' + _sMirrorTxt;
 
             // 11. Build settlement block with clarified labels
             let siteSection = '';
@@ -1313,7 +1313,7 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
               const _tileNpcNames = _tileNpcIds.length > 0
                 ? _tileNpcIds.map(id => (_activeSite.npcs || []).find(n => n.id === id)?.name || id).join(', ')
                 : 'none';
-              npcSection = `\n\u2500\u2500 NPCs (Current Container) \u2500\u2500\nTotal    : ${_totalNpcs}\nAt Tile  : ${_tileNpcNames}`;
+              npcSection = `\n--- NPCs (Current Container) ---\nTotal    : ${_totalNpcs}\nAt Tile  : ${_tileNpcNames}`;
             }
             
             // 12. Build nearby cells snapshot
@@ -1594,12 +1594,12 @@ Narrative  : ${mismatchInfo || 'match'}${hasMismatch ? ' [MISMATCH]' : ' [OK]'}`
           if (movement) {
             const fromCoord = movement.from?.layer === 'L1'
               ? `(${movement.from.x},${movement.from.y}) [L1]`
-              : `(${movement.from?.mx||0},${movement.from?.my||0})\u2192(${movement.from?.lx||0},${movement.from?.ly||0})`;
+              : `(${movement.from?.mx||0},${movement.from?.my||0})->(${movement.from?.lx||0},${movement.from?.ly||0})`;
             const toCoord = movement.to?.exited === true
               ? `L0 (edge exit)`
               : movement.to?.layer === 'L1'
                 ? `(${movement.to.x},${movement.to.y}) [L1]`
-                : `(${movement.to?.mx||0},${movement.to?.my||0})\u2192(${movement.to?.lx||0},${movement.to?.ly||0})`;
+                : `(${movement.to?.mx||0},${movement.to?.my||0})->(${movement.to?.lx||0},${movement.to?.ly||0})`;
             movementSection = `
 -- Movement
 From : ${fromCoord} ${movement.from_cell_type || '?'}
@@ -1639,7 +1639,7 @@ Grid Key      : ${authState.cell_key || 'unknown'}
 Biome         : ${authState.biome || 'unknown'}
 Turn Counter  : ${authState.turn_counter || 0}
 Site Count    : ${authState.settlement_count || 0}
-World Cells   : ${_wTotal} total � ${_wRegionCount} in region (${_wMx},${_wMy}) � ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
+World Cells   : ${_wTotal} total | ${_wRegionCount} in region (${_wMx},${_wMy}) � ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
 -- INIT-TIME WORLD GENERATION INPUTS (frozen) --
 World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
 Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
@@ -1657,34 +1657,34 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
             _sSitesTxt = _sCellSites.map(s => {
               const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
               const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
-              return '  \u2022 ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
+              return '  - ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
             }).join('\n');
           } else {
-            _sSitesTxt = '  \u2022 none';
+            _sSitesTxt = '  - none';
           }
           let _sCaptureTxt = '';
           if (!_sLsc || !_sLsc.detected) {
             _sCaptureTxt = '  site_updates detected : no';
           } else {
             const _sParse = _sLsc.parseSuccess ? 'success' : 'FAILED';
-            const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' \u2192 "' + n.value + '"').join('\n');
-            const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' \u2192 "' + c.new + '"').join('');
+            const _sNames = (_sLsc.capturedNames || []).map(n => '  names : ' + n.site_id + ' -> "' + n.value + '"').join('\n');
+            const _sChanges = (_sLsc.changes || []).map(c => '\n    ' + c.site_id + '.' + c.field + ': ' + (c.old === null ? 'null' : '"' + c.old + '"') + ' -> "' + c.new + '"').join('');
             _sCaptureTxt = '  detected : yes | parse : ' + _sParse + ' | applied : ' + _sLsc.updatesApplied + _sChanges + '\n  skipped : ' + _sLsc.skipped + (_sNames ? '\n' + _sNames : '');
           }
           let _sMirrorTxt = '';
           if (_sCellSites.length > 0) {
             _sMirrorTxt = _sCellSites.map(s => {
               const _sm = s.interior_key ? _sSites[s.interior_key] : null;
-              if (!_sm) return '  \u2022 ' + s.site_id + ' \u2192 (no mirror entry)';
-              const _smm = (s.name != null && _sm.name !== s.name) ? '\u26a0 MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '\u2713 ' + (_sm.name ?? '(unnamed)');
-              return '  \u2022 ' + s.site_id + ' \u2192 ' + _smm;
+              if (!_sm) return '  - ' + s.site_id + ' -> (no mirror entry)';
+              const _smm = (s.name != null && _sm.name !== s.name) ? '[!!] MISMATCH site="' + s.name + '" mirror="' + _sm.name + '"' : '[OK] ' + (_sm.name ?? '(unnamed)');
+              return '  - ' + s.site_id + ' -> ' + _smm;
             }).join('\n');
           } else {
-            _sMirrorTxt = '  no authoritative sites present \u2014 cell.sites is empty';
+            _sMirrorTxt = '  no authoritative sites present - cell.sites is empty';
           }
-          stateSection += '\n\u2500\u2500 CURRENT CELL SITES (authoritative) \u2500\u2500\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
-            + '\n\u2500\u2500 PHASE 5 CAPTURE (last turn) \u2500\u2500\n' + _sCaptureTxt
-            + '\n\u2500\u2500 SITE INTERIOR LINK STATUS (world.sites vs cell.sites) \u2500\u2500\n' + _sMirrorTxt;
+          stateSection += '\n--- CURRENT CELL SITES (authoritative) ---\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
+            + '\n--- PHASE 5 CAPTURE (last turn) ---\n' + _sCaptureTxt
+            + '\n--- SITE INTERIOR LINK STATUS (world.sites vs cell.sites) ---\n' + _sMirrorTxt;
 
           // Settlement block with clarified labels
           let siteSection = '';
@@ -1713,7 +1713,7 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
             const _tileNpcNames = _tileNpcIds.length > 0
               ? _tileNpcIds.map(id => (_activeSite.npcs || []).find(n => n.id === id)?.name || id).join(', ')
               : 'none';
-            npcSection = `\n\u2500\u2500 NPCs (Current Container) \u2500\u2500\nTotal    : ${_totalNpcs}\nAt Tile  : ${_tileNpcNames}`;
+            npcSection = `\n--- NPCs (Current Container) ---\nTotal    : ${_totalNpcs}\nAt Tile  : ${_tileNpcNames}`;
           }
           
           // Nearby cells snapshot

@@ -1,4 +1,4 @@
-const path = require('path');
+﻿const path = require('path');
 const express = require('express');
 const axios = require('axios');
 const Engine = require('./Engine.js');
@@ -564,7 +564,7 @@ async function detectSystemCommand(input, sessionId, currentGameState, sessionSt
     const result = await performSave(sessionId, saveName, currentGameState);
     return {
       isSystemCommand: true,
-      message: result.success ? `✓ ${result.message}` : `❌ ${result.message}`,
+      message: result.success ? `[OK] ${result.message}` : `[FAIL] ${result.message}`,
       newState: currentGameState // State doesn't change on save
     };
   }
@@ -584,13 +584,13 @@ async function detectSystemCommand(input, sessionId, currentGameState, sessionSt
       
       return {
         isSystemCommand: true,
-        message: `✓ ${result.message}`,
+        message: `[OK] ${result.message}`,
         newState: result.gameState
       };
     } else {
       return {
         isSystemCommand: true,
-        message: `❌ ${result.message}`,
+        message: `[FAIL] ${result.message}`,
         newState: currentGameState
       };
     }
@@ -609,13 +609,13 @@ async function detectSystemCommand(input, sessionId, currentGameState, sessionSt
       
       return {
         isSystemCommand: true,
-        message: `✓ ${result.message}`,
+        message: `[OK] ${result.message}`,
         newState: result.gameState
       };
     } else {
       return {
         isSystemCommand: true,
-        message: `❌ ${result.message}`,
+        message: `[FAIL] ${result.message}`,
         newState: currentGameState
       };
     }
@@ -643,7 +643,7 @@ async function detectSystemCommand(input, sessionId, currentGameState, sessionSt
     } else {
       return {
         isSystemCommand: true,
-        message: `❌ ${result.message}`,
+        message: `[FAIL] ${result.message}`,
         newState: currentGameState
       };
     }
@@ -709,11 +709,26 @@ app.post('/narrate', async (req, res) => {
     logger.beginTurn(turnNumber, action);
   }
 
+  const _abortTurn = (reason) => {
+    const logs = logger ? logger.abortTurn(reason) : [];
+    const rec = {
+      turn_number: turnNumber,
+      timestamp: new Date().toISOString(),
+      input: { raw: action },
+      outcome: 'rejected',
+      reason,
+      logs
+    };
+    if (gameState.turn_history) gameState.turn_history.push(rec);
+    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+  };
+
   // =========================================================================
   // SYSTEM COMMAND DETECTION (NEW INTEGRATION POINT)
   // =========================================================================
   const sysCmd = await detectSystemCommand(action, resolvedSessionId, gameState, sessionStates);
   if (sysCmd.isSystemCommand) {
+    _abortTurn('SYSTEM_COMMAND');
     return res.json({
       sessionId: resolvedSessionId,
       narrative: sysCmd.message,
@@ -728,6 +743,7 @@ app.post('/narrate', async (req, res) => {
   const restartKeywords = ["new world", "restart", "begin again"];
   const actionLower = String(action).toLowerCase();
   if (restartKeywords.some(kw => actionLower.includes(kw))) {
+    _abortTurn('RESTART');
     const init = initializeGame();
     gameState = init.state;
     isFirstTurn = true;
@@ -904,6 +920,7 @@ app.post('/narrate', async (req, res) => {
       }
     } catch (err) {
       console.error('Engine error on first turn:', err.message);
+      _abortTurn('ENGINE_ERROR_FIRST_TURN');
       return res.json({ 
         sessionId: resolvedSessionId,
         error: `engine_failed: ${err.message}`, 
@@ -922,6 +939,7 @@ app.post('/narrate', async (req, res) => {
         console.log('[PARSER] semantic_clarify input="%s" confidence=%s', userInput, parseResult.confidence);
         debug.parser = "semantic_clarify";
         debug.clarification = "awaiting_confirmation";
+        _abortTurn('LOW_CONFIDENCE');
         return res.json({
           sessionId: resolvedSessionId,
           narrative: `[CLARIFICATION] I didn't quite understand that. Did you mean to: ${parseResult.intent?.primaryAction?.action || '...'}? (yes/no/try again)`,
@@ -969,6 +987,7 @@ app.post('/narrate', async (req, res) => {
           });
         }
         if (!validation.valid) {
+          _abortTurn(validation.reason);
           return res.json({
             sessionId: resolvedSessionId,
             success: true,
@@ -1120,6 +1139,7 @@ app.post('/narrate', async (req, res) => {
     } catch (err) {
       console.error('Engine error:', err.message);
       console.error('Engine error stack:', err.stack);
+      _abortTurn('ENGINE_ERROR');
       return res.json({ 
         sessionId: resolvedSessionId,
         error: `engine_failed: ${err.message}`,
@@ -1259,10 +1279,10 @@ app.post('/narrate', async (req, res) => {
     if (scene.nearbyCells && Array.isArray(scene.nearbyCells)) {
       nearbyStr = scene.nearbyCells
         .filter(c => c && c.dir)
-        .map(c => `${c.dir} → ${c.type || 'void'}`)
+        .map(c => `${c.dir} -> ${c.type || 'void'}`)
         .join('\n');
     } else {
-      nearbyStr = 'North → void\nSouth → void\nEast → void\nWest → void';
+      nearbyStr = 'North -> void\nSouth -> void\nEast -> void\nWest -> void';
     }
 
     let npcsStr = '(None visible)';
@@ -1916,7 +1936,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         diagnostics.push({
           type: 'movement_inconsistency',
           severity: 'high',
-          detail: `move succeeded but final position (${finalPos.mx},${finalPos.my})→(${finalPos.lx},${finalPos.ly}) does not match authoritative (${authoritative.mx},${authoritative.my})→(${authoritative.lx},${authoritative.ly})`
+          detail: `move succeeded but final position (${finalPos.mx},${finalPos.my})->(${finalPos.lx},${finalPos.ly}) does not match authoritative (${authoritative.mx},${authoritative.my})->(${authoritative.lx},${authoritative.ly})`
         });
       }
     } else if (movement && !movement.success) {
@@ -2010,6 +2030,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     if (logger) {
       logger.narrationFailed(err.message);
     }
+    _abortTurn('NARRATION_ERROR');
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative: "The engine encountered an error generating narration. Please try again.",
@@ -2140,7 +2161,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
 
   // === BASIC LEVEL ===
   context += `\n=== CURRENT LOCATION ===\n`;
-  context += `Position: Macro(${pos.mx},${pos.my}) → Local(${pos.lx},${pos.ly})\n`;
+  context += `Position: Macro(${pos.mx},${pos.my}) -> Local(${pos.lx},${pos.ly})\n`;
   context += `Cell Type: ${currentCell?.type || "unknown"}\n`;
   context += `Cell Subtype: ${currentCell?.subtype || "unknown"}\n`;
   context += `Cell Biome: ${currentCell?.biome || "unknown"}\n`;
@@ -2210,7 +2231,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         if (s.description != null) context += `  desc      : ${s.description}\n`;
       });
     } else {
-      context += `  • none\n`;
+      context += `  - none\n`;
     }
 
     const _dbgCap = gameState.world._lastSiteCapture;
@@ -2222,11 +2243,11 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       context += `parse result          : ${_dbgCap.parseSuccess ? 'success' : 'FAILED'}\n`;
       context += `updates applied       : ${_dbgCap.updatesApplied}\n`;
       if (_dbgCap.changes?.length > 0) {
-        _dbgCap.changes.forEach(c => { context += `  ${c.site_id}.${c.field}: ${c.old === null ? 'null' : `"${c.old}"`} → "${c.new}"\n`; });
+        _dbgCap.changes.forEach(c => { context += `  ${c.site_id}.${c.field}: ${c.old === null ? 'null' : `"${c.old}"`} -> "${c.new}"\n`; });
       }
       context += `skipped               : ${_dbgCap.skipped}\n`;
       if (_dbgCap.capturedNames?.length > 0) {
-        _dbgCap.capturedNames.forEach(n => { context += `names captured        : ${n.site_id} → "${n.value}"\n`; });
+        _dbgCap.capturedNames.forEach(n => { context += `names captured        : ${n.site_id} -> "${n.value}"\n`; });
       }
     }
 

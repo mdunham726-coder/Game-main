@@ -92,7 +92,21 @@ function createLogger(config = {}) {
     currentTurnLogs = [];
     return turnLogs;
   }
-  
+
+  /**
+   * Abort an in-progress turn and flush buffered logs as a rejected record.
+   * Identical buffer flush to endTurn() but marks the turn as rejected.
+   * Clears the turn buffer so the next beginTurn() starts clean.
+   * @param {string} reason - rejection code (e.g. 'INVALID_DIRECTION')
+   * @returns {Array} captured turn logs for inclusion in failed turn_history entry
+   */
+  function abortTurn(reason) {
+    currentTurnActive = false;
+    const turnLogs = [...currentTurnLogs];
+    currentTurnLogs = [];
+    return turnLogs;
+  }
+
   /**
    * Emit a structured event
    * @param {string} category - Event category (SESSION, WORLD_GEN, NPC, etc)
@@ -161,7 +175,7 @@ function createLogger(config = {}) {
       };
       
       fs.writeFileSync(logFilePath, JSON.stringify(output, null, 2), 'utf8');
-      console.log(`\n${colors.cyan}[LOG] ✓ Session log saved to: ${logFilePath}${colors.reset}\n`);
+      console.log(`\n${colors.cyan}[LOG] OK Session log saved to: ${logFilePath}${colors.reset}\n`);
       return logFilePath;
     } catch (err) {
       console.error(`[ERROR] Failed to write log file: ${err.message}`);
@@ -176,6 +190,7 @@ function createLogger(config = {}) {
     emit,
     beginTurn,
     endTurn,
+    abortTurn,
     flush,
     sessionId,
     logFilePath,
