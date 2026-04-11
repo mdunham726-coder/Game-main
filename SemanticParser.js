@@ -215,4 +215,86 @@ async function normalizeUserIntent(userInput, gameContext) {
   return result;
 }
 
-module.exports = { normalizeUserIntent };
+module.exports = { normalizeUserIntent, resolveEnterTarget };
+
+/**
+ * Phase 2 entry resolver — constrained LLM interpretation.
+ * Invoked when Phase 1 (deterministic) returns no_match.
+ * Asks the model to select from the provided candidate list only.
+ *
+ * @param {Array}  candidates    — enterable site objects: { site_id, name, category, site_tier, identity }
+ * @param {string} phrase        — lowercased, article-stripped player phrase (e.g. "town", "the inn")
+ * @param {number} currentDepth  — current_depth value (used to report layer in prompt)
+ * @returns {Promise<{ result: 'resolved'|'ambiguous'|'no_match', site_id?: string, ambiguous_ids?: string[], method: 'llm', error?: string }>}
+ */
+async function resolveEnterTarget(candidates, phrase, currentDepth) {
+  const candidateList = candidates.map(s => ({
+    site_id:   s.site_id,
+    name:      s.name      || null,
+    category:  s.category  || null,
+    site_tier: s.site_tier || null,
+    identity:  s.identity  || null
+  }));
+
+  const layerLabel = `L${(currentDepth || 0)}`;
+
+  const systemPrompt =
+    'You are resolving which game site a player wants to enter. ' +
+    'Select from the provided list only. Return JSON only, no prose. ' +
+    'Do not invent or infer sites outside the list.';
+
+  const userPrompt =
+    `Current layer: ${layerLabel}\n` +
+    `Player input: "${phrase}"\n` +
+    `Enterable sites:\n${JSON.stringify(candidateList)}\n\n` +
+    'Respond with exactly one of:\n' +
+    '{"result":"resolved","site_id":"<id from list above>"}\n' +
+    '{"result":"ambiguous","ambiguous_ids":["<id>","<id>"]}\n' +
+    '{"result":"no_match"}';
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user',   content: userPrompt   }
+  ];
+
+  let llmRaw;
+  try {
+    llmRaw = await callDeepSeek(messages);
+  } catch (err) {
+    return { result: 'no_match', method: 'llm', error: err?.message ?? 'callDeepSeek threw' };
+  }
+
+  if (!llmRaw.ok) {
+    return { result: 'no_match', method: 'llm', error: llmRaw.error };
+  }
+
+  const parsed = safeParseJSON(llmRaw.content);
+  if (!parsed.ok || typeof parsed.value !== 'object' || parsed.value === null) {
+    return { result: 'no_match', method: 'llm', error: 'PARSE_FAILED' };
+  }
+
+  const v = parsed.value;
+  const validResults = ['resolved', 'ambiguous', 'no_match'];
+  if (!validResults.includes(v.result)) {
+    return { result: 'no_match', method: 'llm', error: 'INVALID_RESULT_FIELD' };
+  }
+
+  const validIds = new Set(candidates.map(s => s.site_id));
+
+  if (v.result === 'resolved') {
+    // Hallucination guard: site_id must be in candidate list
+    if (typeof v.site_id !== 'string' || !validIds.has(v.site_id)) {
+      return { result: 'no_match', method: 'llm', error: 'HALLUCINATED_SITE_ID' };
+    }
+    return { result: 'resolved', site_id: v.site_id, method: 'llm' };
+  }
+
+  if (v.result === 'ambiguous') {
+    const filtered = Array.isArray(v.ambiguous_ids)
+      ? v.ambiguous_ids.filter(id => typeof id === 'string' && validIds.has(id))
+      : [];
+    return { result: 'ambiguous', ambiguous_ids: filtered, method: 'llm' };
+  }
+
+  return { result: 'no_match', method: 'llm' };
+}

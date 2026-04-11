@@ -8,7 +8,7 @@ const { createLogger } = require('./logger.js');
 const Actions = require('./ActionProcessor.js');
 
 const { validateAndQueueIntent, parseIntent } = require('./ActionProcessor.js');
-const { normalizeUserIntent } = require('./SemanticParser.js');
+const { normalizeUserIntent, resolveEnterTarget } = require('./SemanticParser.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -995,7 +995,84 @@ app.post('/narrate', async (req, res) => {
           
           // [POINT-C] Log mapped input structure for movement diagnosis (now with complete data)
           console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
-          
+
+          // ── HYBRID ENTRY RESOLVER ─────────────────────────────────────────────────
+          // Runs BEFORE buildOutput so Engine receives annotated player_intent.
+          // Only fires on 'enter' with a non-empty target phrase.
+          if (queuedAction.action === 'enter') {
+            const _resolverPhrase = (queuedAction.target || '').toLowerCase().trim().replace(/^(the|a|an)\s+/, '');
+            const _resolverTrace = {
+              phrase: _resolverPhrase,
+              candidateCount: 0,
+              p1: null,
+              p2Invoked: false,
+              p2: null,
+              resolved_site_id: null
+            };
+
+            if (_resolverPhrase) {
+              // Build candidate list from current cell (same logic as Engine enter handler).
+              const _rPos     = gameState.world.position;
+              const _rCellKey = `LOC:${_rPos.mx},${_rPos.my}:${_rPos.lx},${_rPos.ly}`;
+              const _rCell    = gameState.world.cells && gameState.world.cells[_rCellKey];
+              const _rSites   = _rCell ? Object.values(_rCell.sites || {}) : [];
+              const _rReal    = _rSites.filter(s => s.enterable === true && !s.is_starting_location);
+              const _rCandidates = _rReal.length > 0
+                ? _rReal
+                : _rSites.filter(s => s.enterable === true);
+              _resolverTrace.candidateCount = _rCandidates.length;
+
+              // Phase 1 — deterministic three-pass match.
+              const _p1 = Engine.resolveEntryPhase1(_rCandidates, _resolverPhrase);
+              const _p1MatchCount = _p1.result === 'resolved' ? 1 : _p1.ambiguous_ids?.length ?? 0;
+              _resolverTrace.p1 = { result: _p1.result, pass: _p1.pass, matchCount: _p1MatchCount };
+              console.log('[RESOLVER] Phase1:', _p1.result, 'pass:', _p1.pass, 'matchCount:', _p1MatchCount, 'phrase:', _resolverPhrase);
+
+              if (_p1.result === 'resolved') {
+                mapped.player_intent.resolved_site_id = _p1.site_id;
+                _resolverTrace.resolved_site_id = _p1.site_id;
+                console.log('[RESOLVER] Phase1 resolved:', _p1.site_id);
+
+              } else if (_p1.result === 'ambiguous') {
+                mapped.player_intent.ambiguous_ids = _p1.ambiguous_ids;
+                console.log('[RESOLVER] Phase1 ambiguous:', _p1.ambiguous_ids.length, 'ids:', _p1.ambiguous_ids);
+
+              } else {
+                // no_match — invoke Phase 2 (LLM constrained interpretation).
+                _resolverTrace.p2Invoked = true;
+                console.log('[RESOLVER] Phase2 invoke — candidateCount:', _rCandidates.length, 'phrase:', _resolverPhrase);
+
+                if (_rCandidates.length > 0) {
+                  const _currentDepth = gameState.world.current_depth || 0;
+                  const _p2 = await resolveEnterTarget(_rCandidates, _resolverPhrase, _currentDepth);
+                  _resolverTrace.p2 = {
+                    result: _p2.result,
+                    method: _p2.method,
+                    site_id: _p2.site_id || null,
+                    ambiguousCount: _p2.ambiguous_ids?.length || 0
+                  };
+                  console.log(
+                    '[RESOLVER] Phase2:', _p2.result, 'method:', _p2.method,
+                    _p2.site_id       ? 'site_id:'   + _p2.site_id                    : '',
+                    _p2.ambiguous_ids ? 'ambiguous:' + JSON.stringify(_p2.ambiguous_ids) : '',
+                    _p2.error         ? 'error:'     + _p2.error                      : ''
+                  );
+
+                  if (_p2.result === 'resolved') {
+                    mapped.player_intent.resolved_site_id = _p2.site_id;
+                    _resolverTrace.resolved_site_id = _p2.site_id;
+                  } else if (_p2.result === 'ambiguous') {
+                    mapped.player_intent.ambiguous_ids = _p2.ambiguous_ids;
+                  }
+                }
+              }
+            }
+
+            // Write trace to world state so frontend diagnostic panel can read it.
+            gameState.world._lastResolverTrace = _resolverTrace;
+          }
+          // ── END HYBRID ENTRY RESOLVER ─────────────────────────────────────────────
+
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);

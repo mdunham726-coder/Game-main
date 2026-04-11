@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -260,6 +260,44 @@ if (_curSites.length > 0) {
   _mirrorHtml = '<div style="color:#555;margin-left:8px">no authoritative sites present � cell.sites is empty</div>';
 }
 
+// Build entry resolver trace HTML
+const _lrt = data.state?.world?._lastResolverTrace || null;
+let _resolverHtml = '';
+if (!_lrt) {
+  _resolverHtml = '<div style="margin-left:8px;color:#666">no entry resolution this turn</div>';
+} else {
+  const _p1Label = _lrt.p1
+    ? `${_lrt.p1.result} (${_lrt.p1.pass || 'n/a'}, ${_lrt.p1.matchCount} match${_lrt.p1.matchCount !== 1 ? 'es' : ''})`
+    : 'not run';
+  let _p2Line = '';
+  if (_lrt.p2Invoked) {
+    if (_lrt.p2) {
+      _p2Line = `<div style="margin-left:8px">Phase 2: invoked &rarr; ${_lrt.p2.result}${_lrt.p2.site_id ? ' (' + _lrt.p2.site_id + ')' : _lrt.p2.ambiguousCount > 0 ? ' (' + _lrt.p2.ambiguousCount + ' ambiguous)' : ''}</div>`;
+    } else {
+      _p2Line = '<div style="margin-left:8px">Phase 2: invoked &rarr; no candidates (skipped)</div>';
+    }
+  }
+  let _summary;
+  if (!_lrt.p1) {
+    _summary = 'no resolution (no phrase)';
+  } else if (_lrt.p1.result === 'resolved') {
+    _summary = `Phase1 ${_lrt.p1.pass} &rarr; resolved`;
+  } else if (_lrt.p1.result === 'ambiguous') {
+    _summary = `Phase1 ${_lrt.p1.pass} &rarr; ambiguous`;
+  } else if (_lrt.p2Invoked && _lrt.p2) {
+    _summary = `Phase1 no_match &rarr; Phase2 ${_lrt.p2.result}${_lrt.p2.site_id ? ' (' + _lrt.p2.site_id + ')' : ''}`;
+  } else if (_lrt.p2Invoked) {
+    _summary = 'Phase1 no_match &rarr; Phase2 skipped (0 candidates)';
+  } else {
+    _summary = 'Phase1 no_match (no Phase2)';
+  }
+  _resolverHtml = `
+    <div style="margin-left:8px">Phrase: "${_lrt.phrase}" | Candidates: ${_lrt.candidateCount}</div>
+    <div style="margin-left:8px">Phase 1: ${_p1Label}</div>
+    ${_p2Line}
+    <div style="margin-left:8px;color:#0af">&rarr; Resolver: ${_summary}</div>
+  `;
+}
 diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.active_site_name || '(none)'}</div>
@@ -289,6 +327,8 @@ diagLog.innerHTML = `
   ${_captureHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; SITE INTERIOR LINK STATUS (world.sites vs cell.sites)</div>
   ${_mirrorHtml}
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">&#x25BC; ENTRY RESOLVER (last turn)</div>
+  ${_resolverHtml}
 `;
 
       } catch (err) {
