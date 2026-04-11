@@ -679,6 +679,24 @@ diagLog.innerHTML = `
       // -- Turn header --
       const turnHeader = `== TURN ${turnNum} ==\n${new Date(turnTimestamp).toLocaleString()}`;
 
+      // -- Rejected-turn early return --
+      if (turn.outcome === 'rejected') {
+        const rejLogs = (turn.logs && turn.logs.length > 0)
+          ? '\n' + turn.logs.map(log =>
+              `${log.category}/${log.event}${log.data && Object.keys(log.data).length > 0 ? ' - ' + JSON.stringify(log.data) : ''}`
+            ).join('\n')
+          : '\n(no logs captured)';
+        return `${turnHeader}
+-- SUMMARY
+Outcome   : rejected
+Reason    : ${turn.reason || '(unknown)'}
+
+-- INPUT
+Raw Input : ${turn.input?.raw || '(none)'}
+
+-- TURN LOGS (${(turn.logs || []).length} events)${rejLogs}`;
+      }
+
       // -- Mismatch detection (shared, score-based) --
       let hasMismatch = false;
       let mismatchInfo = '';
