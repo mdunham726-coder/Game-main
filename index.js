@@ -977,6 +977,19 @@ app.post('/narrate', async (req, res) => {
         // [POINT-A] Log parseResult details for movement diagnosis
         console.log('[POINT-A-PARSE] parseResult:', { success: parseResult.success, confidence: parseResult.confidence, action: parseResult.intent?.primaryAction?.action, dir: parseResult.intent?.primaryAction?.dir });
         debug.parser = "semantic";
+        // Post-parse normalization: catch known LLM contract violations before validation
+        const _pa = parseResult.intent?.primaryAction;
+        if (_pa && _pa.action === 'move') {
+          if (String(_pa.dir || '').toLowerCase() === 'exit') {
+            console.log('[PARSER-NORM] move+dir:exit reclassified -> exit');
+            _pa.action = 'exit';
+            delete _pa.dir;
+          } else if (!['north','south','east','west','up','down','n','s','e','w','u','d'].includes(String(_pa.dir || '').toLowerCase()) && _pa.target) {
+            console.log('[PARSER-NORM] move+no-compass-dir+target reclassified -> enter target=%s', _pa.target);
+            _pa.action = 'enter';
+            delete _pa.dir;
+          }
+        }
         // Phase 4: validate queue and execute sequentially
         const validation = validateAndQueueIntent(gameState, parseResult.intent);
         // [POINT-B] Log validation queue for movement diagnosis
