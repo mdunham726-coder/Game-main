@@ -225,7 +225,7 @@ async function performLoad(sessionId, saveName) {
       for (const _cell of Object.values(_gs.world.cells)) {
         if (_cell && _cell.sites) {
           for (const _s of Object.values(_cell.sites)) {
-            if (_s.category === 'settlement' && _s.enterable !== true) {
+            if (_s.category !== 'landmark' && !_s.is_starting_location && _s.enterable !== true) {
               _s.enterable = true;
               _enterableRepairs++;
             }
@@ -1288,7 +1288,7 @@ app.post('/narrate', async (req, res) => {
       : '';
 
     const _phase5Instruction = _hasUnnamed
-      ? `- Phase 5: Unnamed sites are present. Decide on a name for each unnamed site (internal decision only — do NOT output any reasoning, headers, or pre-narration text for this step). Use the chosen name throughout your narration — do NOT refer to any site as "unnamed", "a village", or a generic type after you have decided its name. After your narration paragraph, you MUST append a site_updates block. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them. Only reference site_ids from SITES AT CURRENT LOCATION.`
+      ? `- Phase 5: One or more sites here have not yet been named. Assign a name to each unnamed site and use that name in your narrative prose — do NOT refer to any site as "a settlement", "a village", "a building", or any other generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them. Only reference site_ids from SITES AT CURRENT LOCATION.`
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
@@ -1952,7 +1952,12 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 // REMAINING ENDPOINTS AND SERVER STARTUP (UNCHANGED)
 // =============================================================================
 
-function getActionKind(a) { return (a && a.action === 'move') ? 'MOVE' : 'FREEFORM'; }
+function getActionKind(a) {
+  if (!a) return 'FREEFORM';
+  if (a.action === 'move') return 'MOVE';
+  if (a.action === 'enter' || a.action === 'exit') return 'SITE_TRANSITION';
+  return 'FREEFORM';
+}
 
 function mapActionToInput(action, kind = "FREEFORM") {
   const result = {

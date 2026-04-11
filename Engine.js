@@ -466,8 +466,12 @@ function buildOutput(prevState, inputObj, logger) {
       return d[m][n];
     }
 
-    // Candidate pool: only sites that are explicitly enterable and not the bootstrap placeholder.
-    const candidates = enterSites.filter(s => s.enterable === true && !s.is_starting_location);
+    // Candidate pool: prefer non-bootstrap enterable sites; fall back to bootstrap only when
+    // no real (non-is_starting_location) enterable sites exist in this cell.
+    const _realCandidates = enterSites.filter(s => s.enterable === true && !s.is_starting_location);
+    const candidates = _realCandidates.length > 0
+      ? _realCandidates
+      : enterSites.filter(s => s.enterable === true);
 
     // Strip leading articles from player input for cleaner matching.
     const targetName = (actions.target || '').toLowerCase().trim().replace(/^(the|a|an)\s+/, '');
