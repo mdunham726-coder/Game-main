@@ -953,7 +953,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
   // Stored object IS the active object — no secondary generation, no split references.
   state.world.active_site = state.world.sites[interior_key];
   state.world.active_site._source_cell_key = cell_key;  // used by auto-exit guard
-  state.world.active_building = null;
+  state.world.active_local_space = null;
   state.world.current_depth = 2;
   if (!state.player) state.player = {};
   state.player.depth = 2;
@@ -969,16 +969,16 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 }
 
 /**
- * Enter a building from the currently active site.
+ * Enter a local space from the currently active site.
  */
-function enterBuilding(state, building_id_short) {
+function enterLocalSpace(state, local_space_id_short) {
   if (!state || !state.world || !state.world.active_site) return null;
   const site = state.world.active_site;
-  const bld = site.buildings[building_id_short];
+  const bld = site.local_spaces[local_space_id_short];
   if (!bld) return null;
-  const full_id = `${site.site_id}_${building_id_short}`;
-  const interior = WorldGen.generateL3Building(full_id, bld);
-  state.world.active_building = interior;
+  const full_id = `${site.site_id}_${local_space_id_short}`;
+  const interior = WorldGen.generateLocalSpace(full_id, bld);
+  state.world.active_local_space = interior;
   state.world.current_depth = 3;
   if (!state.player) state.player = {};
   state.player.depth = 3;
@@ -997,11 +997,11 @@ function exitSite(state) {
 }
 
 /**
- * Exit a building back to the site.
+ * Exit a local space back to the site.
  */
-function exitBuilding(state) {
+function exitLocalSpace(state) {
   if (!state || !state.world) return;
-  state.world.active_building = null;
+  state.world.active_local_space = null;
   state.world.current_depth = 2;
   if (!state.player) state.player = {};
   state.player.depth = 2;
@@ -1012,9 +1012,9 @@ module.exports = {
   buildOutput, 
   initState, 
   enterSite, 
-  enterBuilding, 
+  enterLocalSpace, 
   exitSite, 
-  exitBuilding,
+  exitLocalSpace,
   resolveEntryPhase1,
   // Quest system exports
   validateQuestAcceptance,

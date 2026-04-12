@@ -436,8 +436,8 @@
         let _bannerTxt = `▶ INSIDE: ${visibility.active_site_name} (${_bannerLayer})`;
         // List buildings from the active site if generated
         const _activeSite = (visibility.sites || []).find(s => s.entered === true);
-        if (_activeSite && _activeSite.buildings && _activeSite.buildings.length > 0) {
-          const _bldNames = _activeSite.buildings.map(b => b.name || b.bld_id).join(', ');
+        if (_activeSite && _activeSite.local_spaces && _activeSite.local_spaces.length > 0) {
+          const _bldNames = _activeSite.local_spaces.map(b => b.name || b.local_space_id).join(', ');
           _bannerTxt += `  ·  Places: ${_bldNames}`;
         }
         _siteBanner.textContent = _bannerTxt;
@@ -484,10 +484,10 @@
 
             // Resolve NPC count for this tile from authoritative source
             // Street tiles: npc_ids on the tile itself
-            // Building tiles: npc_ids on site.buildings[building_id]
+            // Local space tiles: npc_ids on site.local_spaces[local_space_id]
             let _tileNpcIds = [];
-            if (tile?.type === 'building' && tile?.building_id) {
-              _tileNpcIds = _activeSiteData.buildings?.[tile.building_id]?.npc_ids || [];
+            if (tile?.type === 'local_space' && tile?.local_space_id) {
+              _tileNpcIds = _activeSiteData.local_spaces?.[tile.local_space_id]?.npc_ids || [];
             } else {
               _tileNpcIds = tile?.npc_ids || [];
             }
@@ -511,13 +511,13 @@
               _iHtml += `<div class="inspector-field"><div class="inspector-label">x</div><div class="inspector-value">${col}</div></div>`;
               _iHtml += `<div class="inspector-field"><div class="inspector-label">y</div><div class="inspector-value">${row}</div></div>`;
 
-              // Building identity (authoritative from site.buildings)
-              if (tile?.type === 'building' && tile?.building_id) {
-                const _bld = _activeSiteData.buildings?.[tile.building_id];
+              // Local space identity (authoritative from site.local_spaces)
+              if (tile?.type === 'local_space' && tile?.local_space_id) {
+                const _bld = _activeSiteData.local_spaces?.[tile.local_space_id];
                 const _bldName = _bld?.name || '(unnamed)';
                 const _bldPurpose = _bld?.purpose || '(unknown)';
                 _iHtml += `<hr class="inspector-divider">`;
-                _iHtml += `<div class="inspector-field"><div class="inspector-label">Building</div><div class="inspector-value">${escapeHtml(_bldName)}</div></div>`;
+                _iHtml += `<div class="inspector-field"><div class="inspector-label">Local Space</div><div class="inspector-value">${escapeHtml(_bldName)}</div></div>`;
                 _iHtml += `<div class="inspector-field"><div class="inspector-label">Purpose</div><div class="inspector-value">${escapeHtml(_bldPurpose)}</div></div>`;
               }
 
@@ -858,14 +858,14 @@
           html += `<div class="tree-node tree-toggle${isSiteActive ? ' tree-active' : ''}" onclick="toggleNode('${_treeEsc(siteKey)}')">&nbsp;&nbsp;${toggle} [${_treeEsc(site.category || '?')}] ${siteName}${enteredMark}</div>`;
 
           if (expanded) {
-            // ── L2 nodes (buildings/places) ─────────────────────────────────
+            // ── L2 nodes (local spaces) ────────────────────────────────────────────────────
             if (!site.generated) {
               html += '<div class="tree-node tree-placeholder">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(not generated)</div>';
-            } else if (!site.buildings || site.buildings.length === 0) {
+            } else if (!site.local_spaces || site.local_spaces.length === 0) {
               html += '<div class="tree-node tree-placeholder">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(no places)</div>';
             } else {
-              for (const bld of site.buildings) {
-                const bldKey = 'bld:' + site.site_id + '/' + bld.bld_id;
+              for (const bld of site.local_spaces) {
+                const bldKey = 'ls:' + site.site_id + '/' + bld.local_space_id;
                 const bldExpanded = collapseState[bldKey] === false;
                 const bldToggle = bldExpanded ? '&#9660;' : '&#9654;';
                 const bldLabel = _treeEsc((bld.name || '(unnamed)') + ' (' + (bld.purpose || '?') + ')');

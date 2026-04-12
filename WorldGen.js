@@ -524,12 +524,12 @@ What location type should they START in? Choose one: village, town, city, outpos
 
 // --- Site footprint + population data ---
 const SITE_SIZES = {
-  outpost:    { tier: 0, footprint: 1, width: 3, height: 3, buildings: 2, population_min: 5, population_max: 15 },
-  hamlet:     { tier: 1, footprint: 1, width: 5, height: 5, buildings: 4, population_min: 15, population_max: 50 },
-  village:    { tier: 2, footprint: 1, width: 7, height: 7, buildings: 8, population_min: 50, population_max: 200 },
-  town:       { tier: 3, footprint: 1, width: 9, height: 9, buildings: 12, population_min: 200, population_max: 1000 },
-  city:       { tier: 4, footprint: 3, width: 11, height: 11, buildings: 20, population_min: 1000, population_max: 5000 },
-  metropolis: { tier: 5, footprint: 7, width: 13, height: 13, buildings: 30, population_min: 5000, population_max: 20000 }
+  outpost:    { tier: 0, footprint: 1, width: 3, height: 3, local_space_count: 2, population_min: 5, population_max: 15 },
+  hamlet:     { tier: 1, footprint: 1, width: 5, height: 5, local_space_count: 4, population_min: 15, population_max: 50 },
+  village:    { tier: 2, footprint: 1, width: 7, height: 7, local_space_count: 8, population_min: 50, population_max: 200 },
+  town:       { tier: 3, footprint: 1, width: 9, height: 9, local_space_count: 12, population_min: 200, population_max: 1000 },
+  city:       { tier: 4, footprint: 3, width: 11, height: 11, local_space_count: 20, population_min: 1000, population_max: 5000 },
+  metropolis: { tier: 5, footprint: 7, width: 13, height: 13, local_space_count: 30, population_min: 5000, population_max: 20000 }
 };
 
 // ─── World Bias Extraction ────────────────────────────────────────────────────
@@ -1198,10 +1198,10 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
     streets.push({ x: midX, y });
   }
 
-  // buildings
-  const buildings = {};
-  const buildingCount = st.buildings;
-  const buildingNamesByPurpose = {
+  // local spaces
+  const local_spaces = {};
+  const localSpaceCount = st.local_space_count;
+  const localSpaceNamesByPurpose = {
     tavern: ["The Wanderer's Rest", "The Drunk Griffin", "The Ale House"],
     house: ["Homestead", "Cottage", "Dwelling", "Residence"],
     shop: ["General Store", "Trading Post", "Stall"],
@@ -1210,7 +1210,7 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
     palace: ["The Grand Palace", "Royal Keep"]
   };
   const possiblePurposes = ["house", "house", "shop", "tavern", "house", "temple", "guildhall"];
-  for (let i = 0; i < buildingCount; i++) {
+  for (let i = 0; i < localSpaceCount; i++) {
     let bx = 0, by = 0, tries = 0;
     do {
       bx = rng.nextInt(w);
@@ -1219,11 +1219,11 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
       if (tries > 200) break;
     } while (grid[by][bx] && grid[by][bx].type === "street");
     const purpose = possiblePurposes[rng.nextInt(possiblePurposes.length)];
-    const namePool = buildingNamesByPurpose[purpose] || ["Building"];
+    const namePool = localSpaceNamesByPurpose[purpose] || ["Local Space"];
     const name = namePool[rng.nextInt(namePool.length)];
-    const bld_id = `bld_${i}`;
-    grid[by][bx] = { type: "building", building_id: bld_id, npc_ids: [] };
-    buildings[bld_id] = {
+    const local_space_id = `ls_${i}`;
+    grid[by][bx] = { type: "local_space", local_space_id: local_space_id, npc_ids: [] };
+    local_spaces[local_space_id] = {
       name,
       purpose,
       tier: st.tier,
@@ -1262,13 +1262,13 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
     streetAssigned++;
   }
   
-  // remaining to buildings round-robin
-  const bldKeys = Object.keys(buildings);
-  if (bldKeys.length > 0) {
+  // remaining to local spaces round-robin
+  const lsKeys = Object.keys(local_spaces);
+  if (lsKeys.length > 0) {
     for (let i = streetAssigned; i < npcs.length; i++) {
       const npc = npcs[i];
-      const bld = buildings[bldKeys[i % bldKeys.length]];
-      bld.npc_ids.push(npc.id || npc);
+      const ls = local_spaces[lsKeys[i % lsKeys.length]];
+      ls.npc_ids.push(npc.id || npc);
     }
   }
 
@@ -1287,7 +1287,7 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
     width: w,
     height: h,
     grid,
-    buildings,
+    local_spaces,
     npcs: npcs, // PHASE 3C: Store NPC array for persistence
     tier: st.tier,
     created_at: new Date().toISOString()
@@ -1304,10 +1304,10 @@ function generateL2POI(poi_id, poi_type) {
   };
 }
 
-// --- L3: building interior (same) ---
-function generateL3Building(building_id, buildingData) {
-  const w = buildingData?.width || 5;
-  const h = buildingData?.height || 5;
+// --- L2: local space interior ---
+function generateLocalSpace(local_space_id, localSpaceData) {
+  const w = localSpaceData?.width || 5;
+  const h = localSpaceData?.height || 5;
   const grid = [];
   for (let y = 0; y < h; y++) {
     const row = [];
@@ -1317,7 +1317,7 @@ function generateL3Building(building_id, buildingData) {
     grid.push(row);
   }
   return {
-    id: building_id,
+    id: local_space_id,
     width: w,
     height: h,
     grid
@@ -1331,7 +1331,7 @@ module.exports = {
   generateL1FeatureDescription, 
   generateL2Site, 
   generateL2POI, 
-  generateL3Building, 
+  generateLocalSpace, 
   hashSeedFromLocationID, 
   makeLCG,
   detectWorldToneWithDeepSeek,

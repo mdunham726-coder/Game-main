@@ -1372,11 +1372,11 @@ app.post('/narrate', async (req, res) => {
         const _cellType = _gridCell?.type || 'open_area';
         const _cellNpcIds = _gridCell?.npc_ids || [];
         const _cellNpcs = (_narActiveSite.npcs || []).filter(n => _cellNpcIds.includes(n.id)).map(n => n.name || n.id);
-        const _bldInfo = _gridCell?.type === 'building' && _narActiveSite.buildings?.[_gridCell.building_id]
-          ? ` (${_narActiveSite.buildings[_gridCell.building_id].purpose}: ${_narActiveSite.buildings[_gridCell.building_id].name})`
+        const _bldInfo = _gridCell?.type === 'local_space' && _narActiveSite.local_spaces?.[_gridCell.local_space_id]
+          ? ` (${_narActiveSite.local_spaces[_gridCell.local_space_id].purpose}: ${_narActiveSite.local_spaces[_gridCell.local_space_id].name})`
           : '';
-        const _tileDesc = _cellType === 'building'
-          ? `building exterior${_bldInfo}. You are OUTSIDE this building. Describe the façade, entrance, and surroundings only. Do NOT describe or infer any interior.`
+        const _tileDesc = _cellType === 'local_space'
+          ? `local space${_bldInfo}. You are OUTSIDE this local space. Describe the façade, entrance, and surroundings only. Do NOT describe or infer any interior.`
           : `${_cellType}${_bldInfo}`;
         _siteContextBlock += `\nYour position in site: (${_sp.x},${_sp.y}) — ${_tileDesc}`;
         if (_cellNpcs.length > 0) _siteContextBlock += `\nNPCs at your location: ${_cellNpcs.join(', ')}`;
@@ -1655,7 +1655,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       const _vpDepthLabels = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' };
       const _vpSiteRegistry = gameState.world.sites || {};
       const _vpActiveSite = gameState.world.active_site || null;
-      const _vpActiveBuilding = gameState.world.active_building || null;
+      const _vpActiveLocalSpace = gameState.world.active_local_space || null;
       const _vpAllCells = gameState.world.cells || {};
       const _vpWb = gameState.world.world_bias || null;
       const _vpRegionKeys = new Set(
@@ -1670,13 +1670,13 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           _vpSiteRegistry[_s.interior_key] &&
           !_vpSiteRegistry[_s.interior_key].is_stub
         );
-        const _vpBuildings = _sGenerated
-          ? Object.entries(_vpSiteRegistry[_s.interior_key].buildings || {}).map(([_bId, _b]) => ({
-              bld_id: _bId,
+        const _vpLocalSpaces = _sGenerated
+          ? Object.entries(_vpSiteRegistry[_s.interior_key].local_spaces || {}).map(([_bId, _b]) => ({
+              local_space_id: _bId,
               name: _b.name || null,
               purpose: _b.purpose || null,
               tier: _b.tier ?? null,
-              active: _vpDepth === 3 && !!_vpActiveBuilding && _vpActiveBuilding.name === _b.name
+              active: _vpDepth === 3 && !!_vpActiveLocalSpace && _vpActiveLocalSpace.name === _b.name
             }))
           : [];
         return {
@@ -1689,7 +1689,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           generated: _sGenerated,
           interior_key: _s.interior_key || null,
           l0_ref: _s.l0_ref || null,
-          buildings: _vpBuildings
+          local_spaces: _vpLocalSpaces
         };
       });
       visibilityPayload = {
@@ -2097,7 +2097,7 @@ function initializeGame() {
   } else {
     state = {
       player: { mx: 0, my: 0, layer: 1, inventory: [] },
-      world: { npcs: [], cells: {}, active_site: null, active_building: null, current_depth: 1, position: { mx:0, my:0, lx:6, ly:6 }, l1_default: { w: 12, h: 12 } }
+      world: { npcs: [], cells: {}, active_site: null, active_local_space: null, current_depth: 1, position: { mx:0, my:0, lx:6, ly:6 }, l1_default: { w: 12, h: 12 } }
     };
   }
   return {
