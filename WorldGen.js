@@ -13,7 +13,7 @@ try {
 const WORLD_WRAP = false;
 const DEFAULTS = {
   L0_SIZE: { w: 8, h: 8 },
-  L1_SIZE: { w: 12, h: 12 },
+  L1_SIZE: { w: 128, h: 128 },
   STREAM: { R: 2, P: 1 },
   DENSITY: { target_min: 7, target_max: 11,
     spacing: { outpost: 1, hamlet: 2, town: 3, city: 4, metropolis: 6 } },
@@ -916,7 +916,7 @@ function selectStartAnchor(promptSeed) {
   const l0w = DEFAULTS.L0_SIZE.w;   // 8
   const l0h = DEFAULTS.L0_SIZE.h;   // 8
   const innerMin = 2;
-  const innerRange = 8;              // yields 2–9 inclusive
+  const innerRange = DEFAULTS.L1_SIZE.w - 4;  // 2-cell margin on each side; scales with L1 grid
   const mx = Math.floor(rng() * l0w);
   const my = Math.floor(rng() * l0h);
   const lx = innerMin + Math.floor(rng() * innerRange);
@@ -927,7 +927,7 @@ function selectStartAnchor(promptSeed) {
 /**
  * Pre-generate a deterministic 7×7 terrain patch centred on anchor.
  *
- * - Clamps to L1 bounds 0–11; cells outside bounds are silently skipped.
+ * - Clamps to L1 bounds 0–127; cells outside bounds are silently skipped.
  * - Skips cells already present in existingCells.
  * - Uses seeded RNG per cell — NOT Math.random().
  * - Cell structure is identical to cells produced by Engine.js streamL1Cells.
@@ -939,8 +939,8 @@ function selectStartAnchor(promptSeed) {
  * @returns {object} { [cellKey]: cellObj }
  */
 function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
-  const l1w = DEFAULTS.L1_SIZE.w;   // 12
-  const l1h = DEFAULTS.L1_SIZE.h;   // 12
+  const l1w = DEFAULTS.L1_SIZE.w;   // 128
+  const l1h = DEFAULTS.L1_SIZE.h;   // 128
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES['rural'];
   const patch = {};
 
@@ -1107,7 +1107,8 @@ function worldGenStep(world) {
   const chosenType = settTypes[rng.nextInt(settTypes.length)];
   const fp = DEFAULTS.FOOTPRINT[chosenType] || 1;
   const siteId = `${macroKey}:site_${existing}`;
-  const center_lx = 6, center_ly = 6;
+  const center_lx = Math.floor(DEFAULTS.L1_SIZE.w / 2);
+  const center_ly = Math.floor(DEFAULTS.L1_SIZE.h / 2);
   sites[siteId] = {
     id: siteId,
     site_type: "settlement",
@@ -1136,8 +1137,8 @@ function exposeSitesInWindow(state, worldData, posLx, posLy, posMx, posMy) {
       if (dist > totalRadius) continue;
       const lx2 = posLx + dx;
       const ly2 = posLy + dy;
-      const lx = clamp(lx2, 0, 11);
-      const ly = clamp(ly2, 0, 11);
+      const lx = clamp(lx2, 0, DEFAULTS.L1_SIZE.w - 1);
+      const ly = clamp(ly2, 0, DEFAULTS.L1_SIZE.h - 1);
       known.add(`${posMx},${posMy}:${lx},${ly}`);
     }
   }

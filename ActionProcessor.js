@@ -114,8 +114,8 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       return; // No position to move from
     }
     
-    const l1w = state?.world?.l1_default?.w || 12;
-    const l1h = state?.world?.l1_default?.h || 12;
+    const l1w = state?.world?.l1_default?.w || 128;
+    const l1h = state?.world?.l1_default?.h || 128;
     
     // Map direction to coordinate delta
     const dirMap = { north: {dx:0, dy:-1}, south: {dx:0, dy:1}, east: {dx:1, dy:0}, west: {dx:-1, dy:0} };

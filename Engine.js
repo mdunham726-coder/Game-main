@@ -10,7 +10,7 @@ const { QuestSystem } = require('./QuestSystem');
 // Shared defaults must match modules
 const DEFAULTS = {
   L0_SIZE: { w: 8, h: 8 },
-  L1_SIZE: { w: 12, h: 12 },
+  L1_SIZE: { w: 128, h: 128 },
   STREAM: { R: 2, P: 1 },
 };
 
@@ -143,8 +143,8 @@ function streamL1Cells(state) {
 
   const pos = state.world.position;
   const streamR = state.world.stream?.R || 2;
-  const l1w = state.world.l1_default?.w || 12;
-  const l1h = state.world.l1_default?.h || 12;
+  const l1w = state.world.l1_default?.w || 128;
+  const l1h = state.world.l1_default?.h || 128;
   const l0w = state.world.l0_size?.w || 8;
   const l0h = state.world.l0_size?.h || 8;
   

@@ -267,8 +267,9 @@ const faction_id = null;  // Factions reserved for future politics system
   else if (r_home < 0.95) home_location = "wanderer";
   else home_location = null;
 
-  // Position placeholder (assumes 12x12 L1 grid)
-  const position = { mx: 0, my: 0, lx: Math.floor(rng()*12), ly: Math.floor(rng()*12) };
+  // Position placeholder — uses authoritative L1 grid size
+  const _l1w = 128, _l1h = 128; // matches DEFAULTS.L1_SIZE in Engine.js / WorldGen.js
+  const position = { mx: 0, my: 0, lx: Math.floor(rng()*_l1w), ly: Math.floor(rng()*_l1h) };
 
   // Lifecycle timestamps (14 days span)
   const now = new Date();

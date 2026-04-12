@@ -1167,8 +1167,8 @@ app.post('/narrate', async (req, res) => {
 
   // --- Scene: current cell + nearby cells (N,S,E,W) ---
   const pos = gameState?.world?.position || {};
-  const l1w = (gameState?.world?.l1_default?.w) || 12;
-  const l1h = (gameState?.world?.l1_default?.h) || 12;
+  const l1w = (gameState?.world?.l1_default?.w) || 128;
+  const l1h = (gameState?.world?.l1_default?.h) || 128;
   const l0w = (gameState?.world?.l0_size?.w) || 8;
   const l0h = (gameState?.world?.l0_size?.h) || 8;
   function cellKey(mx,my,lx,ly){ return `LOC:${mx},${my}:${lx},${ly}`; }
@@ -2136,7 +2136,7 @@ function initializeGame() {
   } else {
     state = {
       player: { mx: 0, my: 0, layer: 1, inventory: [] },
-      world: { npcs: [], cells: {}, active_site: null, active_local_space: null, current_depth: 1, position: { mx:0, my:0, lx:6, ly:6 }, l1_default: { w: 12, h: 12 } }
+      world: { npcs: [], cells: {}, active_site: null, active_local_space: null, current_depth: 1, position: { mx:0, my:0, lx:64, ly:64 }, l1_default: { w: 128, h: 128 } }
     };
   }
   return {
