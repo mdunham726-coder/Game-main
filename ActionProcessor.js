@@ -565,6 +565,20 @@ function resolveCellItemByName(state, query){
   return bestScore >= 6 ? best : null; // threshold similar to inventory resolver
 }
 
+function resolveSiteByName(state, query) {
+  const depth = state?.world?.current_depth ?? 1;
+  if (depth >= 2) return null; // inside a site — no outer site to examine by name
+  const cell = state?.world?.current_cell || {};
+  const sites = cell.sites ? Object.values(cell.sites) : [];
+  if (!sites.length) return null;
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return null;
+  const exact = sites.find(s => String(s.name || '').toLowerCase() === q);
+  if (exact) return exact;
+  const sub = sites.find(s => String(s.name || '').toLowerCase().includes(q));
+  return sub || null;
+}
+
 function hasInventoryItem(state, name){
   const inv = (((state||{}).player||{}).inventory)||[];
   return !!findByNameCaseInsensitive(inv, 'name', name);
@@ -673,7 +687,8 @@ function validateAndQueueIntent(state, normalizedIntent){
       const inCell = !!resolveCellItemByName(state, t);
       const inInv = hasInventoryItem(state, t);
       const npc   = isNPCPresent(state, t);
-      sv.visible = !!(inCell || inInv || npc);
+      const site  = !!resolveSiteByName(state, t);
+      sv.visible = !!(inCell || inInv || npc || site);
       if (!sv.visible) return { valid:false, queue:[], reason:"TARGET_NOT_VISIBLE", stateValidation:sv };
       continue;
     }

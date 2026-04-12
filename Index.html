@@ -149,7 +149,12 @@
         }
 
 const narrative = data.narrative || data.error || 'No response from server';
-document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
+const engineMsg = data.engine_message;
+if (engineMsg) {
+  document.getElementById('narrative').innerHTML = `<div style="border:1px solid #f90; padding:4px 10px; margin-bottom:6px; color:#f90; font-size:0.85em; border-radius:3px;">&#9888; ${engineMsg}</div><p>${narrative}</p>`;
+} else {
+  document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
+}
 document.getElementById('actionInput').value = '';
 
 // Display diagnostics (rebind to authoritative turn_history state)

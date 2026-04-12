@@ -1312,7 +1312,7 @@ app.post('/narrate', async (req, res) => {
     const _hasUnnamed = _narCellSites.some(s => s.name == null);
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
-        .map(s => `- site_id: ${s.site_id} | category: ${s.category} | site_tier: ${s.site_tier ?? '(none)'} | name: ${s.name ?? '(unnamed)'}`)
+        .map(s => `- site_id: ${s.site_id} | category: ${s.category} | site_tier: ${s.site_tier ?? '(none)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES'}`)
         .join('\n');
       let _instructionLines = '';
       if (_hasNamed && _hasUnnamed) {
@@ -1329,6 +1329,8 @@ app.post('/narrate', async (req, res) => {
       }
       // Phase 10: Tier constraint — always append so the model cannot interpret site_tier through tone/biome alone.
       _instructionLines += '\nA site\'s site_tier defines its settlement scale — town must resolve to a settlement-scale location, not a road, path, threshold, or edge space.';
+      // Enterable constraint — non-enterable sites must never be narrated as accessible.
+      _instructionLines += '\nSites with enterable: NO must NOT be described as having open doors, visible interiors, accessible entrances, or any language implying the player can enter or explore them.';
       _siteContextBlock = `\n\nSITES AT CURRENT LOCATION:\n${_siteLines}${_instructionLines}`;
     }
 
@@ -2069,6 +2071,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative, 
+      engine_message: _engineMsg || null,
       state: gameState,
       turn_history: gameState.turn_history,  // QA-014: Include turn history for export
       engine_output: engineOutput, 

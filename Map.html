@@ -706,6 +706,7 @@
               el.classList.add('selected');
               selectedCell = el;
               showInspector(cellData, mx, my, lx, ly, sites);
+              renderTreeForCell(cellData, sites, lx, ly);
             });
           } else if (isPlayer) {
             // Player is on an un-generated cell (edge case)
@@ -729,6 +730,11 @@
 
       hideOverlay();
       setStatus(`Region (${mx},${my}) · ${regionEntries.length} cells in region · Turn ${state.turn_counter ?? '?'}`);
+      // Auto-center viewport on player tile after grid is painted
+      requestAnimationFrame(() => {
+        const playerEl = container.querySelector('.player-pos');
+        if (playerEl) playerEl.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+      });
     }
 
     // ── Inspector ──────────────────────────────────────────────────────────────
@@ -933,6 +939,33 @@
       }
 
       content.innerHTML = html;
+    }
+
+    // Renders tree from a specific clicked cell's sites rather than the player's cell.
+    // Called from the L0 cell click handler; reverts to player cell on next poll.
+    function renderTreeForCell(cellData, allSites, lx, ly) {
+      const content = document.getElementById('tree-content');
+      if (!cellData) return;
+      const cellSiteRefs = cellData.sites ? Object.values(cellData.sites) : [];
+      if (!cellSiteRefs.length) {
+        content.innerHTML = `<div class="tree-node">[L0] ${_treeEsc(cellData.type || '?')} &middot; ${_treeEsc(cellData.biome || '?')}</div><div class="tree-node tree-placeholder">&nbsp;&nbsp;(no sites)</div>`;
+        return;
+      }
+      const sitesArr = cellSiteRefs.map(ref => {
+        const fullSite = allSites && ref.interior_key ? allSites[ref.interior_key] : null;
+        const lsArr = fullSite && fullSite.local_spaces
+          ? Object.values(fullSite.local_spaces).map(ls => ({ local_space_id: ls.local_space_id || ls.id, name: ls.name, purpose: ls.purpose }))
+          : [];
+        return {
+          site_id: ref.site_id || ref.interior_key || '?',
+          name: (fullSite && fullSite.name) || ref.name || '(unnamed)',
+          category: (fullSite && fullSite.category) || ref.category || '?',
+          entered: false,
+          generated: !!(fullSite && fullSite.grid),
+          local_spaces: lsArr
+        };
+      });
+      renderTree({ current_depth: 1, container: { cell_type: cellData.type, biome: cellData.biome, grid_key: `${lx},${ly}` }, sites: sitesArr });
     }
 
     function poll() {

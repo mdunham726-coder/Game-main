@@ -437,8 +437,8 @@ function resolveEntryPhase1(candidates, targetName) {
     return d[m][n];
   }
 
-  // Fields for exact/substring matching: name, tier, and category.
-  const _allFields = s => [s.name, s.site_tier, s.category].filter(Boolean).map(v => v.toLowerCase());
+  // Fields for exact/substring matching: name and tier only (category causes false positives — e.g. "building" matches all settlement-category sites).
+  const _allFields = s => [s.name, s.site_tier].filter(Boolean).map(v => v.toLowerCase());
   // Fields for fuzzy matching: name and tier only (category fuzzy reintroduces inference).
   const _fuzzyFields = s => [s.name, s.site_tier].filter(Boolean).map(v => v.toLowerCase());
 
