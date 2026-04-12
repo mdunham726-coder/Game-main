@@ -459,6 +459,20 @@ function resolveEntryPhase1(candidates, targetName) {
   if (fuzzyMatches.length === 1) return { result: 'resolved', site_id: fuzzyMatches[0].site_id, ambiguous_ids: [], pass: 'fuzzy' };
   if (fuzzyMatches.length > 1)   return { result: 'ambiguous', site_id: null, ambiguous_ids: fuzzyMatches.map(s => s.site_id), pass: 'fuzzy' };
 
+  // Pass 4 — category synonym: generic settlement vocabulary maps to category === 'settlement'.
+  // Catches Phase-4D sites with site_tier: null that Passes 1-3 cannot match by name alone.
+  // Preserves ambiguity: two settlement-category sites in the same cell still return ambiguous.
+  const _SETTLEMENT_TERMS = new Set([
+    'settlement', 'town', 'village', 'hamlet', 'city', 'outpost', 'fortress',
+    'camp', 'encampment', 'borough', 'commune', 'colony', 'keep', 'citadel',
+    'stronghold', 'metropolis', 'capital', 'township', 'burg'
+  ]);
+  const synMatches = _SETTLEMENT_TERMS.has(targetName)
+    ? candidates.filter(s => s.category === 'settlement')
+    : [];
+  if (synMatches.length === 1) return { result: 'resolved', site_id: synMatches[0].site_id, ambiguous_ids: [], pass: 'category_synonym' };
+  if (synMatches.length > 1)   return { result: 'ambiguous', site_id: null, ambiguous_ids: synMatches.map(s => s.site_id), pass: 'category_synonym' };
+
   return { result: 'no_match', site_id: null, ambiguous_ids: [], pass: null };
 }
 
