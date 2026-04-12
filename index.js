@@ -1031,7 +1031,7 @@ app.post('/narrate', async (req, res) => {
           // ── HYBRID ENTRY RESOLVER ─────────────────────────────────────────────────
           // Runs BEFORE buildOutput so Engine receives annotated player_intent.
           // Only fires on 'enter' with a non-empty target phrase.
-          if (queuedAction.action === 'enter') {
+          if (queuedAction.action === 'enter' && (gameState.world.current_depth || 0) < 2) {
             const _resolverPhrase = (queuedAction.target || '').toLowerCase().trim().replace(/^(the|a|an)\s+/, '');
             const _resolverTrace = {
               phrase: _resolverPhrase,

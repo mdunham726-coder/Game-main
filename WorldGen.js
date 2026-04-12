@@ -1217,7 +1217,7 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
       by = rng.nextInt(h);
       tries++;
       if (tries > 200) break;
-    } while (grid[by][bx] && grid[by][bx].type === "street");
+    } while (grid[by][bx]);
     const purpose = possiblePurposes[rng.nextInt(possiblePurposes.length)];
     const namePool = localSpaceNamesByPurpose[purpose] || ["Local Space"];
     const name = namePool[rng.nextInt(namePool.length)];
@@ -1306,21 +1306,33 @@ function generateL2POI(poi_id, poi_type) {
 
 // --- L2: local space interior ---
 function generateLocalSpace(local_space_id, localSpaceData) {
-  const w = localSpaceData?.width || 5;
-  const h = localSpaceData?.height || 5;
+  // Interior is always 5×5 — localSpaceData.width/height is the L1 tile footprint (1×1), not the interior size.
+  const w = 5;
+  const h = 5;
   const grid = [];
   for (let y = 0; y < h; y++) {
     const row = [];
     for (let x = 0; x < w; x++) {
-      row.push({ type: "room_floor", objects: [] });
+      row.push({ type: "room_floor", objects: [], npc_ids: [] });
     }
     grid.push(row);
   }
+  // Place any assigned NPCs at the center tile.
+  const cx = Math.floor(w / 2);
+  const cy = Math.floor(h / 2);
+  const npc_ids = Array.isArray(localSpaceData?.npc_ids) ? [...localSpaceData.npc_ids] : [];
+  if (npc_ids.length > 0) {
+    grid[cy][cx].npc_ids = npc_ids;
+  }
   return {
     id: local_space_id,
+    name: localSpaceData?.name || local_space_id,
+    purpose: localSpaceData?.purpose || 'unknown',
     width: w,
     height: h,
-    grid
+    grid,
+    npc_ids,
+    npcs: []
   };
 }
 

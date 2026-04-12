@@ -511,6 +511,24 @@ function buildOutput(prevState, inputObj, logger) {
   // Lives in buildOutput (not ActionProcessor) to avoid circular dependency.
   if (actions.action === 'enter') {
     state.world._engineMessage = null; // clear any prior message
+
+    // ── L2 entry: player is inside a site and standing on a local-space tile ──
+    let _entryHandled = false;
+    if (state.world.current_depth === 2 && state.world.active_site) {
+      _entryHandled = true;
+      const _siteGrid = state.world.active_site.grid;
+      const _pp = state.player?.position;
+      const _tile = (_siteGrid && _pp) ? _siteGrid[_pp.y]?.[_pp.x] : null;
+      if (_tile?.type === 'local_space' && _tile?.local_space_id) {
+        enterLocalSpace(state, _tile.local_space_id);
+        console.log(`[ENGINE] [L2-ENTER] Routed enter → local space ${_tile.local_space_id}`);
+      } else {
+        state.world._engineMessage = 'There is nothing to enter here.';
+        console.log('[ENGINE] [L2-ENTER] No local space on current tile');
+      }
+    }
+
+    if (!_entryHandled) {
     const enterPos = state.world.position;
     const enterCellKey = `LOC:${enterPos.mx},${enterPos.my}:${enterPos.lx},${enterPos.ly}`;
     const enterCell = state.world.cells && state.world.cells[enterCellKey];
@@ -587,6 +605,7 @@ function buildOutput(prevState, inputObj, logger) {
     if (targetSite) {
       enterSite(state, { cell_key: enterCellKey, site_id: targetSite.site_id, entry_dir: actions.dir || null }, logger);
     }
+    } // end if (!_entryHandled)
   }
 
   // Phase 10: Handle 'exit' action — site exit.
@@ -991,14 +1010,28 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 function enterLocalSpace(state, local_space_id_short) {
   if (!state || !state.world || !state.world.active_site) return null;
   const site = state.world.active_site;
-  const bld = site.local_spaces[local_space_id_short];
+  const bld = site.local_spaces && site.local_spaces[local_space_id_short];
   if (!bld) return null;
-  const full_id = `${site.site_id}_${local_space_id_short}`;
-  const interior = WorldGen.generateLocalSpace(full_id, bld);
+  // Generate once and cache on the site record — no drift on re-entry.
+  if (!bld._generated_interior) {
+    const full_id = `${site.site_id}_${local_space_id_short}`;
+    bld._generated_interior = WorldGen.generateLocalSpace(full_id, bld);
+    console.log(`[ENGINE] [L2-ENTER] Generated interior: ${full_id}`);
+  }
+  // Store the exact L1 tile position for restoration when the player exits.
+  if (!state.player) state.player = {};
+  state.world._ls_entry_pos = { x: state.player.position?.x ?? 0, y: state.player.position?.y ?? 0 };
+  const interior = bld._generated_interior;
   state.world.active_local_space = interior;
   state.world.current_depth = 3;
-  if (!state.player) state.player = {};
   state.player.depth = 3;
+  // Place player at center of the local space.
+  const _lw = interior.width || 5;
+  const _lh = interior.height || 5;
+  state.player.position = { x: Math.floor(_lw / 2), y: Math.floor(_lh / 2) };
+  // Compute visible NPCs at entry position (derived runtime field).
+  interior._visible_npcs = Actions.computeVisibleNpcs(interior, state.player.position);
+  console.log(`[ENGINE] [L2-ENTER] Entered ${interior.name || local_space_id_short} at (${state.player.position.x},${state.player.position.y})`);
   return interior;
 }
 
@@ -1022,6 +1055,11 @@ function exitLocalSpace(state) {
   state.world.current_depth = 2;
   if (!state.player) state.player = {};
   state.player.depth = 2;
+  // Restore the exact L1 tile the player entered from.
+  if (state.world._ls_entry_pos) {
+    state.player.position = state.world._ls_entry_pos;
+    delete state.world._ls_entry_pos;
+  }
 }
 
 // PHASE 3C: Export quest functions for use in index.js
