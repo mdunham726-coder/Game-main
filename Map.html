@@ -432,18 +432,68 @@
       // Site banner — show when inside a site (L1+)
       const _siteBanner = document.getElementById('site-banner');
       if (visibility && visibility.current_depth >= 2 && visibility.active_site_name) {
-        const _bannerLayer = { 2: 'L1', 3: 'L2', 4: 'L3' }[visibility.current_depth] || `L${visibility.current_depth}`;
-        let _bannerTxt = `▶ INSIDE: ${visibility.active_site_name} (${_bannerLayer})`;
-        // List buildings from the active site if generated
-        const _activeSite = (visibility.sites || []).find(s => s.entered === true);
-        if (_activeSite && _activeSite.local_spaces && _activeSite.local_spaces.length > 0) {
-          const _bldNames = _activeSite.local_spaces.map(b => b.name || b.local_space_id).join(', ');
-          _bannerTxt += `  ·  Places: ${_bldNames}`;
+        if (visibility.current_depth === 3 && visibility.container?.kind === 'local_space') {
+          const _lsName = visibility.container.name || '(unnamed)';
+          _siteBanner.textContent = `▶ IN LOCAL SPACE: ${_lsName} (L2)`;
+        } else {
+          const _bannerLayer = { 2: 'L1', 3: 'L2', 4: 'L3' }[visibility.current_depth] || `L${visibility.current_depth}`;
+          let _bannerTxt = `▶ INSIDE: ${visibility.active_site_name} (${_bannerLayer})`;
+          // List local spaces from the active site if generated
+          const _activeSite = (visibility.sites || []).find(s => s.entered === true);
+          if (_activeSite && _activeSite.local_spaces && _activeSite.local_spaces.length > 0) {
+            const _bldNames = _activeSite.local_spaces.map(b => b.name || b.local_space_id).join(', ');
+            _bannerTxt += `  ·  Places: ${_bldNames}`;
+          }
+          _siteBanner.textContent = _bannerTxt;
         }
-        _siteBanner.textContent = _bannerTxt;
         _siteBanner.style.display = 'block';
       } else {
         _siteBanner.style.display = 'none';
+      }
+      // ── L2 local space grid branch ─────────────────────────────────────────
+      // At depth=3: render active_local_space.grid. Null-safe — shows error if not yet populated (WS3 pending).
+      if (visibility && visibility.current_depth === 3) {
+        const _activeLSData = state.world && state.world.active_local_space;
+        if (!_activeLSData || !_activeLSData.grid || !Array.isArray(_activeLSData.grid) || _activeLSData.grid.length === 0) {
+          showError('L2 Grid Unavailable', 'Local space interior grid not available. Local space entry not yet wired (WS3 pending).');
+          return;
+        }
+        const _lsPos = visibility.local_space_position;
+        if (!_lsPos || typeof _lsPos.x !== 'number' || typeof _lsPos.y !== 'number') {
+          showError('L2 Grid Unavailable', 'Local-space player position is missing from state.');
+          return;
+        }
+        const _lsGrid = _activeLSData.grid;
+        const _lsH = _activeLSData.height || _lsGrid.length;
+        const _lsW = _activeLSData.width || (_lsGrid[0] ? _lsGrid[0].length : 5);
+        document.getElementById('map-notice').style.display = 'none';
+        hideOverlay();
+        const container = document.getElementById('grid-container');
+        container.innerHTML = '';
+        for (let row = 0; row < _lsH; row++) {
+          const rowEl = document.createElement('div');
+          rowEl.className = 'grid-row';
+          for (let col = 0; col < _lsW; col++) {
+            const tile = (_lsGrid[row] && _lsGrid[row][col]) || null;
+            const isPlayer = (col === _lsPos.x && row === _lsPos.y);
+            const el = document.createElement('div');
+            el.className = 'cell generated';
+            if (isPlayer) el.classList.add('player-pos');
+            const typeLabel = tile?.type || 'space';
+            const _tileNpcIds = tile?.npc_ids || [];
+            const _tileNpcCount = _tileNpcIds.length;
+            el.innerHTML = `
+              ${isPlayer ? '<div class="player-marker">&#x25C9;</div>' : ''}
+              <div class="cell-type">${escapeHtml(typeLabel)}</div>
+              <div class="cell-biome">${escapeHtml(String(col) + ',' + String(row))}</div>
+              ${_tileNpcCount > 0 ? `<div class="cell-npc-badge">${_tileNpcCount}</div>` : ''}
+            `;
+            rowEl.appendChild(el);
+          }
+          container.appendChild(rowEl);
+        }
+        setStatus(`Local space: ${_activeLSData.name || '(unnamed)'} · L2 grid ${_lsW}×${_lsH} · pos (${_lsPos.x},${_lsPos.y})`);
+        return;
       }
       // ── L1 site grid branch ────────────────────────────────────────────────
       // When inside a site (depth ≥ 2), render the site interior grid instead of

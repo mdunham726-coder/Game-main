@@ -187,6 +187,7 @@ const diag = data.turn_history && data.turn_history.length > 0
         cells_generated: cellsGen,
         region_cells: regionCells,
         site_position: auth.site_position || null,
+        local_space_position: auth.local_space_position || null,
         sample_cell_types: sampleCells,
         npc_record_count: auth.npc_record_count ?? 0,
         visible_npc_count: auth.visible_npc_count ?? 0,
@@ -301,8 +302,8 @@ if (!_lrt) {
 diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.active_site_name || '(none)'}</div>
-  ${diag.current_depth >= 2 && diag.site_position ? `<div><strong>L1 Position:</strong> (${diag.site_position.x},${diag.site_position.y})</div>` : ''}
-  <div><strong>${diag.current_depth >= 2 ? 'Parent Cell (L0)' : 'Current Cell'}:</strong> Type: ${diag.cell_type || 'unknown'} | Subtype: ${diag.cell_subtype || 'unknown'}</div>
+  ${diag.current_depth === 2 && diag.site_position ? `<div><strong>Site Position:</strong> (${diag.site_position.x},${diag.site_position.y})</div>` : diag.current_depth === 3 && diag.local_space_position ? `<div><strong>Local Space Position:</strong> (${diag.local_space_position.x},${diag.local_space_position.y})</div>` : ''}
+  <div><strong>${diag.current_depth === 3 ? 'Parent Site (L1)' : diag.current_depth >= 2 ? 'Parent Cell (L0)' : 'Current Cell'}:</strong> Type: ${diag.cell_type || 'unknown'} | Subtype: ${diag.cell_subtype || 'unknown'}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>
   <div><strong>World Initialized:</strong> ${diag.world_initialized ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
   <div><strong>Cells Generated (all regions):</strong> ${diag.cells_generated}</div>
@@ -842,7 +843,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
       if (isSnapshot) {
         // Lean state: position, cell, biome, site count only
         stateSection = `
-Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\nL1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 Biome         : ${authState.biome || 'unknown'}
 Site Count    : ${authState.site_count || 0}`;
@@ -857,7 +858,7 @@ Site Count    : ${authState.site_count || 0}`;
         const _qWc  = lastGameResponse?.state?.world?.world_context || null;
         const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
         stateSection = `
-Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\nL1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
 Description   : ${authState.cell_description || '(unknown)'}
 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 Grid Key      : ${authState.cell_key || 'unknown'}
@@ -1250,7 +1251,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
             const _stLayerLabel = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0';
             const _stContainer = authState.active_site_name || '(none)';
             let stateSection = `
-Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\nL1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
 Description   : ${authState.cell_description || '(unknown)'}
 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 Grid Key      : ${authState.cell_key || 'unknown'}
@@ -1321,7 +1322,18 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
             
             // NPCs (current container) — separate from settlement block
             let npcSection = '';
-            if (authState.current_depth >= 2) {
+            if (authState.current_depth === 3) {
+              const _lsPos = authState.local_space_position;
+              const _activeLS = lastGameResponse?.state?.world?.active_local_space;
+              const _totalNpcs = (_activeLS?.npcs || []).length;
+              const _tileNpcIds = _lsPos && _activeLS?.grid
+                ? (_activeLS.grid[_lsPos.y]?.[_lsPos.x]?.npc_ids || [])
+                : [];
+              const _tileNpcNames = _tileNpcIds.length > 0
+                ? _tileNpcIds.map(id => (_activeLS?.npcs || []).find(n => n.id === id)?.name || id).join(', ')
+                : 'none';
+              npcSection = `\n--- NPCs (Current Container: Local Space) ---\nTotal    : ${_totalNpcs}\nAt Tile  : ${_tileNpcNames}`;
+            } else if (authState.current_depth >= 2) {
               const _sitePos = authState.site_position;
               const _activeSite = lastGameResponse?.state?.world?.active_site;
               const _totalNpcs = (_activeSite?.npcs || []).length;
@@ -1650,7 +1662,7 @@ Narrative  : ${mismatchInfo} (narrative cue)`;
           const _stLayerLabel = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0';
           const _stContainer = authState.active_site_name || '(none)';
           let stateSection = `
-Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth >= 2 && authState.site_position ? '\nL1 Position   : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : ''}
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
 Description   : ${authState.cell_description || '(unknown)'}
 Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 Grid Key      : ${authState.cell_key || 'unknown'}
@@ -1721,7 +1733,18 @@ NPC Count       : ${settlement.npcs?.length || 0}`;
           
           // NPCs (current container) — separate from settlement block
           let npcSection = '';
-          if (authState.current_depth >= 2) {
+          if (authState.current_depth === 3) {
+            const _lsPos = authState.local_space_position;
+            const _activeLS = lastGameResponse?.state?.world?.active_local_space;
+            const _totalNpcs = (_activeLS?.npcs || []).length;
+            const _tileNpcIds = _lsPos && _activeLS?.grid
+              ? (_activeLS.grid[_lsPos.y]?.[_lsPos.x]?.npc_ids || [])
+              : [];
+            const _tileNpcNames = _tileNpcIds.length > 0
+              ? _tileNpcIds.map(id => (_activeLS?.npcs || []).find(n => n.id === id)?.name || id).join(', ')
+              : 'none';
+            npcSection = `\n--- NPCs (Current Container: Local Space) ---\nTotal    : ${_totalNpcs}\nAt Tile  : ${_tileNpcNames}`;
+          } else if (authState.current_depth >= 2) {
             const _sitePos = authState.site_position;
             const _activeSite = lastGameResponse?.state?.world?.active_site;
             const _totalNpcs = (_activeSite?.npcs || []).length;

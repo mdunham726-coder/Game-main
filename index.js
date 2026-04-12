@@ -1336,8 +1336,10 @@ app.post('/narrate', async (req, res) => {
     const _narDepth = gameState?.world?.current_depth || 1;
     const _narActiveSite = gameState?.world?.active_site || null;
     // Freshness guarantee: recompute visible NPCs before narration payload assembly
-    if (_narDepth >= 2 && _narActiveSite && gameState?.player?.position) {
+    if (_narDepth === 2 && _narActiveSite && gameState?.player?.position) {
       _narActiveSite._visible_npcs = Actions.computeVisibleNpcs(_narActiveSite, gameState.player.position);
+    } else if (_narDepth === 3 && gameState?.world?.active_local_space && gameState?.player?.position) {
+      gameState.world.active_local_space._visible_npcs = Actions.computeVisibleNpcs(gameState.world.active_local_space, gameState.player.position);
     }
     console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, gameState?.player?.position, _narActiveSite?._visible_npcs?.length ?? 'n/a');
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
@@ -1352,7 +1354,25 @@ app.post('/narrate', async (req, res) => {
     if (!WorldGen.LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(_narSceneType)) {
       _narSceneType = 'terrain';
     }
-    if (_narDepth >= 2 && _narActiveSite) {
+    if (_narDepth === 3 && gameState?.world?.active_local_space) {
+      const _narActiveLS = gameState.world.active_local_space;
+      _narSceneDesc = _narActiveLS.description || `The interior of ${_narActiveLS.name || 'a local space'}.`;
+      _narSceneType = _narActiveLS.type || 'local_space_interior';
+      const _lsNpcs = _narActiveLS._visible_npcs || [];
+      const _lsNpcNames = _lsNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
+      if (_lsNpcs.length > 0) {
+        npcsStr = JSON.stringify(_lsNpcs.map(n => ({ id: n.id, job: n.job_category, tier: n.tier, gender: n.gender })));
+      } else {
+        npcsStr = '(None visible)';
+      }
+      _siteContextBlock = `\n\nCURRENT LOCAL SPACE (you are inside this location):\nName: ${_narActiveLS.name || '(unnamed)'}\nType: ${_narActiveLS.type || 'local_space'}\nNPCs nearby: ${_lsNpcNames}`;
+      const _lsp = gameState?.player?.position;
+      if (_lsp && _narActiveLS.grid) {
+        const _lsCell = _narActiveLS.grid[_lsp.y]?.[_lsp.x] ?? null;
+        const _lsCellType = _lsCell?.type || 'open_area';
+        _siteContextBlock += `\nYour position in local space: (${_lsp.x},${_lsp.y}) \u2014 ${_lsCellType}`;
+      }
+    } else if (_narDepth >= 2 && _narActiveSite) {
       _narSceneDesc = _narActiveSite.description ||
         `The ${_narActiveSite.type || 'settlement'} of ${_narActiveSite.name || 'the settlement'}. Streets and buildings fill the area.`;
       _narSceneType = _narActiveSite.type || 'settlement_interior';
@@ -1470,8 +1490,10 @@ Civilization Presence: ${_narCivPresence || '(unknown)'}
 Environment Tone: ${_narEnvTone || '(unknown)'}
 
 LAYER CONSTRAINT [MANDATORY]:
-${_narDepth >= 2
-  ? `You are inside a site (Layer L${_narDepth - 1}). Describe the interior of the current site as indicated below.`
+${_narDepth === 3
+  ? `You are inside a local space (Layer L2). Describe the interior of this local space as indicated below.`
+  : _narDepth >= 2
+  ? `You are inside a site (Layer L1). Describe the interior of the current site as indicated below.`
   : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, settlement, or building. The player is outdoors in open terrain. Any settlements listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
 
 CORE INSTRUCTIONS:
@@ -1643,10 +1665,17 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       current_site: currentSite,  // Now populated if player is in a site
       current_depth: gameState.world.current_depth || 1,
       active_site_name: gameState.world.active_site?.name || null,
-      site_position: (gameState.world.current_depth || 1) >= 2 ? (gameState.player?.position || null) : null,
-      visible_npc_count: (gameState.world.active_site?._visible_npcs || []).length,
-      visible_npc_names: (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
-      npc_record_count: (gameState.world.active_site?.npcs || []).length
+      site_position: (gameState.world.current_depth || 1) === 2 ? (gameState.player?.position || null) : null,
+      local_space_position: (gameState.world.current_depth || 1) === 3 ? (gameState.player?.position || null) : null,
+      visible_npc_count: (gameState.world.current_depth || 1) === 3
+        ? (gameState.world.active_local_space?._visible_npcs || []).length
+        : (gameState.world.active_site?._visible_npcs || []).length,
+      visible_npc_names: (gameState.world.current_depth || 1) === 3
+        ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.job_category || n.id)
+        : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
+      npc_record_count: (gameState.world.current_depth || 1) === 3
+        ? (gameState.world.active_local_space?.npcs || []).length
+        : (gameState.world.active_site?.npcs || []).length
     };
 
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
@@ -1676,7 +1705,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
               name: _b.name || null,
               purpose: _b.purpose || null,
               tier: _b.tier ?? null,
-              active: _vpDepth === 3 && !!_vpActiveLocalSpace && _vpActiveLocalSpace.name === _b.name
+              active: _vpDepth === 3 && !!_vpActiveLocalSpace && _vpActiveLocalSpace.local_space_id === _bId
             }))
           : [];
         return {
@@ -1699,7 +1728,16 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         inside_site: _vpDepth >= 2,
         entered_building: _vpDepth >= 3,
         active_site_name: _vpActiveSite?.name || null,
-        container: _vpDepth >= 2 && _vpActiveSite ? {
+        container: _vpDepth === 3 && _vpActiveLocalSpace ? {
+          kind: 'local_space',
+          name: _vpActiveLocalSpace.name || null,
+          local_space_id: _vpActiveLocalSpace.local_space_id || null,
+          parent_site: _vpActiveSite ? {
+            kind: 'site',
+            name: _vpActiveSite.name || null,
+            site_id: _vpActiveSite.site_id || null
+          } : null
+        } : _vpDepth >= 2 && _vpActiveSite ? {
           kind: 'site',
           name: _vpActiveSite.name || null,
           type: _vpActiveSite.type || null,
@@ -1741,7 +1779,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         regions_explored: _vpRegionKeys.size,
         turn_counter: gameState.turn_counter || 0,
         site_count: Object.values(currentCell?.sites || {}).length,
-        site_position: _vpDepth >= 2 ? (gameState.player?.position || null) : null,
+        site_position: _vpDepth === 2 ? (gameState.player?.position || null) : null,
+        local_space_position: _vpDepth === 3 ? (gameState.player?.position || null) : null,
         last_site_capture: gameState.world._lastSiteCapture || null
       };
     }
@@ -2188,7 +2227,27 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   const _dbgDepth = gameState.world.current_depth ?? 1;
   const _dbgActiveSite = gameState.world.active_site || null;
 
-  if (_dbgDepth >= 2 && _dbgActiveSite) {
+  if (_dbgDepth === 3 && gameState.world.active_local_space) {
+    const _dbgLS = gameState.world.active_local_space;
+    if (gameState.player?.position) {
+      const Actions = require('./ActionProcessor.js');
+      _dbgLS._visible_npcs = Actions.computeVisibleNpcs(_dbgLS, gameState.player.position);
+    }
+    const _dbgVisible = _dbgLS._visible_npcs || [];
+    context += `\n=== ACTIVE LOCAL SPACE (L2) ===\n`;
+    context += `Name: ${_dbgLS.name || '(unnamed)'}\n`;
+    context += `Type: ${_dbgLS.type || '(unknown)'}\n`;
+    context += `NPC Records: ${(_dbgLS.npcs || []).length}\n`;
+    context += `Player Position (L2): (${gameState.player?.position?.x ?? '?'},${gameState.player?.position?.y ?? '?'})\n`;
+    context += `\n=== NEARBY NPCS ===\n`;
+    if (_dbgVisible.length > 0) {
+      _dbgVisible.forEach(npc => {
+        context += `- ${npc.job_category || npc.id || 'Unknown'} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}]\n`;
+      });
+    } else {
+      context += `(None visible at current tile)\n`;
+    }
+  } else if (_dbgDepth >= 2 && _dbgActiveSite) {
     // L1: recompute _visible_npcs fresh (freshness guarantee — never stale)
     if (gameState.player?.position) {
       const Actions = require('./ActionProcessor.js');

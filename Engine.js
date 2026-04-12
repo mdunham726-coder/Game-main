@@ -592,7 +592,9 @@ function buildOutput(prevState, inputObj, logger) {
   // Phase 10: Handle 'exit' action — site exit.
   if (actions.action === 'exit') {
     state.world._engineMessage = null;
-    if (state.world.current_depth >= 2) {
+    if (state.world.current_depth === 3) {
+      exitLocalSpace(state);
+    } else if (state.world.current_depth >= 2) {
       exitSite(state);
     } else {
       state.world._engineMessage = 'You are not inside anything.';
@@ -615,7 +617,8 @@ if (wg) {
   const positionChanged = oldPosition && (oldPosition.mx !== newPosition.mx || oldPosition.my !== newPosition.my || oldPosition.lx !== newPosition.lx || oldPosition.ly !== newPosition.ly);
 
   // Auto-exit: if player moved away from the cell that contains the active site, reset depth.
-  if (positionChanged && state.world.current_depth >= 2 && state.world.active_site?._source_cell_key) {
+  // Only applies at depth=2 (L1); at depth=3 the world position never changes (player is inside a local space).
+  if (positionChanged && state.world.current_depth === 2 && state.world.active_site?._source_cell_key) {
     const _newCellKey = `LOC:${newPosition.mx},${newPosition.my}:${newPosition.lx},${newPosition.ly}`;
     if (_newCellKey !== state.world.active_site._source_cell_key) {
       exitSite(state);

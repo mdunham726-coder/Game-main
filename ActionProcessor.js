@@ -126,8 +126,8 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       return; // Invalid direction
     }
 
-    // L1 site movement — depth≥2 uses site-local player.position, not world.position
-    if (state.world.current_depth >= 2 && state.world.active_site) {
+    // L1 site movement — depth=2 uses site-local player.position, not world.position
+    if (state.world.current_depth === 2 && state.world.active_site) {
       const _site = state.world.active_site;
       const _siteW = _site.width || 7;
       const _siteH = _site.height || 7;
@@ -160,6 +160,47 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           logger.action_resolved('move', true, `moved ${dir} to site pos (${_nx},${_ny})`);
         }
         console.log(`[ACTIONS] L1 move ${dir}: site pos (${_nx},${_ny})`);
+      }
+      return;
+    }
+
+    // L2 local-space movement — depth=3 uses local-space-local player.position
+    if (state.world.current_depth === 3) {
+      const _ls = state.world.active_local_space;
+      if (!_ls) {
+        console.log('[ACTIONS] L2 move: no active local space');
+        return;
+      }
+      const _lsW = _ls.width || 5;
+      const _lsH = _ls.height || 5;
+      const _lsp = state.player?.position || { x: Math.floor(_lsW / 2), y: Math.floor(_lsH / 2) };
+      const _lnx = _lsp.x + delta.dx;
+      const _lny = _lsp.y + delta.dy;
+      if (_lnx < 0 || _lnx >= _lsW || _lny < 0 || _lny >= _lsH) {
+        // Edge — exit to L1
+        if (logger) {
+          logger.player_move_attempted(dir, { layer: 'L2', x: _lsp.x, y: _lsp.y }, { layer: 'L1', exited: true });
+        }
+        state.world.active_local_space = null;
+        state.world.current_depth = 2;
+        if (!state.player) state.player = {};
+        state.player.depth = 2;
+        if (logger) {
+          logger.player_move_resolved(true, 'local_space_exit', { layer: 'L1', exited: true });
+          logger.action_resolved('move', true, `exited local space via ${dir} edge`);
+        }
+        console.log(`[ACTIONS] L2 edge exit: exited ${_ls.name || 'local space'} back to L1`);
+      } else {
+        if (logger) {
+          logger.player_move_attempted(dir, { layer: 'L2', x: _lsp.x, y: _lsp.y }, { layer: 'L2', x: _lnx, y: _lny });
+        }
+        state.player.position = { x: _lnx, y: _lny };
+        _ls._visible_npcs = computeVisibleNpcs(_ls, state.player.position);
+        if (logger) {
+          logger.player_move_resolved(true, 'success', { layer: 'L2', x: _lnx, y: _lny });
+          logger.action_resolved('move', true, `moved ${dir} to local space pos (${_lnx},${_lny})`);
+        }
+        console.log(`[ACTIONS] L2 move ${dir}: local space pos (${_lnx},${_lny})`);
       }
       return;
     }
@@ -532,8 +573,10 @@ function hasInventoryItem(state, name){
 function isNPCPresent(state, nameOrRole){
   const depth = state?.world?.current_depth ?? 1;
   if (depth >= 2) {
-    // L1: match against visible set by job_category or exact id
-    const visible = state?.world?.active_site?._visible_npcs || [];
+    // L1/L2: match against visible set for the active container
+    const visible = depth === 3
+      ? (state?.world?.active_local_space?._visible_npcs || [])
+      : (state?.world?.active_site?._visible_npcs || []);
     if (visible.length > 0) {
       const q = String(nameOrRole || '').trim().toLowerCase();
       const hasDirectMatch = visible.some(n =>
@@ -547,8 +590,9 @@ function isNPCPresent(state, nameOrRole){
       // Multiple NPCs, no match — validation will reject and narration will prompt specificity
       return false;
     }
-    // _visible_npcs not yet computed — any NPC in site counts as present
-    return (state?.world?.active_site?.npcs || []).length > 0;
+    // _visible_npcs not yet computed — any NPC in the active container counts as present
+    const _container = depth === 3 ? state?.world?.active_local_space : state?.world?.active_site;
+    return (_container?.npcs || []).length > 0;
   }
   const { npcs } = getCellEntities(state);
   return !!findByNameCaseInsensitive(npcs, 'name', nameOrRole);
@@ -562,7 +606,9 @@ function isNPCPresent(state, nameOrRole){
 function resolveNPCTargetFromVisible(state, target) {
   const depth = state?.world?.current_depth ?? 1;
   if (depth < 2) return { matches: [] };
-  const visible = state?.world?.active_site?._visible_npcs || [];
+  const visible = depth === 3
+    ? (state?.world?.active_local_space?._visible_npcs || [])
+    : (state?.world?.active_site?._visible_npcs || []);
   const q = String(target || '').trim().toLowerCase();
   if (!q) return { matches: visible }; // empty target = all visible
   const matches = visible.filter(n =>
