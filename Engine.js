@@ -620,17 +620,6 @@ function buildOutput(prevState, inputObj, logger) {
     }
   }
 
-  // WorldGen step (movement + streaming + site reveal)
-  // Biome should already be set by index.js before this is called
-  console.log('[ENGINE] Biome check - has biome?', !!state?.world?.macro_biome);
-const wg = WorldGen.worldGenStep(state.world, { actions });
-if (wg && Array.isArray(wg.deltas)) {
-  for (const d of wg.deltas) changes1.push(d);
-}
-if (wg) {
-  state.world = { ...state.world, ...wg };
-}
-
   // Track location change
   const newPosition = state.world.position;
   const positionChanged = oldPosition && (oldPosition.mx !== newPosition.mx || oldPosition.my !== newPosition.my || oldPosition.lx !== newPosition.lx || oldPosition.ly !== newPosition.ly);

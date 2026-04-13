@@ -15,9 +15,6 @@ const DEFAULTS = {
   L0_SIZE: { w: 8, h: 8 },
   L1_SIZE: { w: 128, h: 128 },
   STREAM: { R: 2, P: 1 },
-  DENSITY: { target_min: 7, target_max: 11,
-    spacing: { outpost: 1, hamlet: 2, town: 3, city: 4, metropolis: 6 } },
-  FOOTPRINT: { outpost: 1, hamlet: 1, town: 1, city: 3, metropolis: 7 },
   CAPS_PER_MACRO: { metropolis: 0, city: 1 }
 };
 
@@ -46,29 +43,6 @@ const LAYER_TERRAIN_VOCAB = {
   ],
   // Reserved for L2 building interiors — not yet used for routing
   BUILDING_INTERIOR: ["room", "corridor", "chamber", "stairwell"]
-};
-
-const TERRAIN_TYPES = {
-  geography: ["plains_grassland", "plains_wildflower", "forest_deciduous", "forest_coniferous", "forest_mixed", "meadow", "hills_rolling", "hills_rocky", "desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa", "tundra", "snowfield", "ice_sheet", "permafrost", "alpine", "swamp", "marsh", "wetland", "bog", "beach_sand", "beach_pebble", "cliffs_coastal", "tidepools", "dunes_coastal", "mountain_slopes", "mountain_peak", "mountain_pass", "rocky_terrain", "scree", "river_crossing", "stream", "lake_shore", "waterfall", "spring"],
-  settlement: [
-    "campsite", "outpost", "hamlet", "village", "town", "city", "metropolis",
-    "fort", "stronghold", "port", "harbor", "trading_post", "mining_camp",
-    "logging_camp", "monastery", "temple_complex", "ruins_settlement"
-  ],
-  poi: [
-    "cave_natural", "cavern_crystal", "grotto", "sinkhole", "hot_spring",
-    "geyser_field", "ancient_tree", "fairy_ring", "tar_pit", "quicksand",
-    "mesa_flat", "rock_formation", "natural_arch", "ruins_temple", "ruins_tower",
-    "ruins_castle", "burial_mound", "crypt", "tomb", "standing_stones",
-    "stone_circle", "obelisk", "abandoned_mine", "abandoned_mill", "abandoned_bridge",
-    "battlefield_old", "shipwreck", "monster_lair", "dragon_cave", "giant_nest",
-    "bandit_camp", "cultist_shrine", "witch_hut", "necromancer_tower", "haunted_grove",
-    "cursed_ground", "execution_site", "quarry_active", "quarry_abandoned",
-    "mine_entrance", "ore_vein", "herb_garden_wild", "berry_grove", "mushroom_circle",
-    "fishing_spot", "salt_flat", "clay_pit", "meteor_crater", "portal_remnant",
-    "ley_line_nexus", "time_distortion", "crystallized_magic", "petrified_forest",
-    "floating_rocks", "gravity_anomaly"
-  ]
 };
 
 // Keyword matching for world descriptions (9 simple biomes)
@@ -522,14 +496,14 @@ What location type should they START in? Choose one: village, town, city, outpos
   }
 }
 
-// --- Site footprint + population data ---
+// --- Site size data (tier, grid dimensions, local space count) ---
 const SITE_SIZES = {
-  outpost:    { tier: 0, footprint: 1, width: 3, height: 3, local_space_count: 2, population_min: 5, population_max: 15 },
-  hamlet:     { tier: 1, footprint: 1, width: 5, height: 5, local_space_count: 4, population_min: 15, population_max: 50 },
-  village:    { tier: 2, footprint: 1, width: 7, height: 7, local_space_count: 8, population_min: 50, population_max: 200 },
-  town:       { tier: 3, footprint: 1, width: 9, height: 9, local_space_count: 12, population_min: 200, population_max: 1000 },
-  city:       { tier: 4, footprint: 3, width: 11, height: 11, local_space_count: 20, population_min: 1000, population_max: 5000 },
-  metropolis: { tier: 5, footprint: 7, width: 13, height: 13, local_space_count: 30, population_min: 5000, population_max: 20000 }
+  outpost:    { tier: 0, width: 3,  height: 3,  local_space_count: 2  },
+  hamlet:     { tier: 1, width: 5,  height: 5,  local_space_count: 4  },
+  village:    { tier: 2, width: 7,  height: 7,  local_space_count: 8  },
+  town:       { tier: 3, width: 9,  height: 9,  local_space_count: 12 },
+  city:       { tier: 4, width: 11, height: 11, local_space_count: 20 },
+  metropolis: { tier: 5, width: 13, height: 13, local_space_count: 30 }
 };
 
 // ─── World Bias Extraction ────────────────────────────────────────────────────
@@ -1076,53 +1050,6 @@ async function generateWorldFromDescription(desc, worldSeed) {
 }
 
 // --- LOC: site placement (same) ---
-function worldGenStep(world) {
-  if (!world || !world.cells) return world;
-  // Do not run L0 site-seeding when player is inside a site (depth >= 2).
-  if ((world.current_depth ?? 1) >= 2) return world;
-  const l0s = world.l0_size || DEFAULTS.L0_SIZE;
-  const macroCells = world.cells || {};
-  const sites = world.sites || {};
-
-  const mx = Math.floor(Math.random() * l0s.w);
-  const my = Math.floor(Math.random() * l0s.h);
-  const macroKey = `MAC:${mx},${my}`;
-  const macro = macroCells[macroKey];
-  if (!macro) return world;
-
-  const seed = h32(world.seed + `|${mx},${my}`);
-  const rng = makeLCG(seed);
-
-  const targetMin = DEFAULTS.DENSITY.target_min;
-  const targetMax = DEFAULTS.DENSITY.target_max;
-  const targetCount = targetMin + rng.nextInt(targetMax - targetMin + 1);
-
-  const existing = Object.keys(sites).filter(sid => {
-    const site = sites[sid];
-    return (site.mx === mx && site.my === my);
-  }).length;
-  if (existing >= targetCount) return world;
-
-  const settTypes = ["outpost", "hamlet", "village", "town", "city"];
-  const chosenType = settTypes[rng.nextInt(settTypes.length)];
-  const fp = DEFAULTS.FOOTPRINT[chosenType] || 1;
-  const siteId = `${macroKey}:site_${existing}`;
-  const center_lx = Math.floor(DEFAULTS.L1_SIZE.w / 2);
-  const center_ly = Math.floor(DEFAULTS.L1_SIZE.h / 2);
-  sites[siteId] = {
-    id: siteId,
-    site_type: "settlement",
-    subtype: chosenType,
-    mx, my,
-    center_lx, center_ly,
-    footprint: fp,
-    biome: macro.biome,
-    is_stub: true   // worldGenStep entries are L0-concept placeholders, not entered sites
-  };
-
-  return { ...world, sites };
-}
-
 // --- exposeSitesInWindow (same) ---
 function exposeSitesInWindow(state, worldData, posLx, posLy, posMx, posMy) {
   const sites = worldData?.sites || {};
@@ -1295,16 +1222,6 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
   };
 }
 
-// --- L2: POI generation (same) ---
-function generateL2POI(poi_id, poi_type) {
-  return {
-    id: poi_id,
-    poi_type,
-    desc: `A mysterious ${poi_type}`,
-    explored: false
-  };
-}
-
 // --- L2: local space interior ---
 function generateLocalSpace(local_space_id, localSpaceData) {
   // Interior is always 5×5 — localSpaceData.width/height is the L1 tile footprint (1×1), not the interior size.
@@ -1339,11 +1256,9 @@ function generateLocalSpace(local_space_id, localSpaceData) {
 
 module.exports = { 
   generateWorldFromDescription,  
-  worldGenStep, 
   exposeSitesInWindow, 
   generateL1FeatureDescription, 
   generateL2Site, 
-  generateL2POI, 
   generateLocalSpace, 
   hashSeedFromLocationID, 
   makeLCG,
