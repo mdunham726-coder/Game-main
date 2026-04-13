@@ -1536,20 +1536,38 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     // Reset capture tracking for this turn
     gameState.world._lastSiteCapture = { detected: false };
 
-    const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-      model: 'deepseek-chat',
-      messages: [{
-        role: 'user',
-        content: narrationContent
-      }],
-      temperature: 0.7
-    }, {
-      headers: {
-        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
-    });
+    const _makeNarCall = async () => {
+      const _nCtrl = new AbortController();
+      const _nWall = setTimeout(() => _nCtrl.abort(), 90000);
+      try {
+        return await axios.post('https://api.deepseek.com/v1/chat/completions', {
+          model: 'deepseek-chat',
+          messages: [{ role: 'user', content: narrationContent }],
+          temperature: 0.7
+        }, {
+          headers: {
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 90000,
+          signal: _nCtrl.signal
+        });
+      } finally {
+        clearTimeout(_nWall);
+      }
+    };
+
+    let response;
+    try {
+      response = await _makeNarCall();
+    } catch (_nFirstErr) {
+      if (_nFirstErr?.code === 'ECONNRESET') {
+        console.warn('[NARRATE] ECONNRESET — retrying once...');
+        response = await _makeNarCall();
+      } else {
+        throw _nFirstErr;
+      }
+    }
 
     // Safely extract narrative
     let narrative = "The engine processes your action.";
