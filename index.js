@@ -2504,24 +2504,49 @@ app.post('/ask-deepseek', async (req, res) => {
       }
     ];
 
-    console.log(`[DEEPSEEK-DEBUG] Sending request to DeepSeek API (timeout: 30s)...`);
-    
-    const response = await axios.post(
-      "https://api.deepseek.com/v1/chat/completions",
-      {
-        model: "deepseek-chat",
-        messages,
-        temperature: 0.7,
-        max_tokens: 2000
-      },
-      {
-        headers: {
-          "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        timeout: 30000
+    // Helper: single outbound call with 120s wall-clock AbortController + 120s axios socket timeout.
+    // Extracted so the ECONNRESET retry path can call it a second time without duplication.
+    const _makeDeepSeekCall = async () => {
+      const _ctrl = new AbortController();
+      const _wall = setTimeout(() => _ctrl.abort(), 120000);
+      try {
+        const resp = await axios.post(
+          "https://api.deepseek.com/v1/chat/completions",
+          {
+            model: "deepseek-chat",
+            messages,
+            temperature: 0.7,
+            max_tokens: 2000
+          },
+          {
+            headers: {
+              "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              "Content-Type": "application/json"
+            },
+            timeout: 120000,
+            signal: _ctrl.signal
+          }
+        );
+        clearTimeout(_wall);
+        return resp;
+      } catch (e) {
+        clearTimeout(_wall);
+        throw e;
       }
-    );
+    };
+
+    console.log(`[DEEPSEEK-DEBUG] Sending request to DeepSeek API (timeout: 120s)...`);
+    let response;
+    try {
+      response = await _makeDeepSeekCall();
+    } catch (_firstErr) {
+      if (_firstErr?.code === 'ECONNRESET') {
+        console.warn('[DEEPSEEK-DEBUG] ECONNRESET on first attempt — retrying once...');
+        response = await _makeDeepSeekCall(); // single retry; outer catch handles second failure
+      } else {
+        throw _firstErr;
+      }
+    }
 
     console.log(`[DEEPSEEK-DEBUG] DeepSeek response received, status: ${response?.status}`);
     
@@ -2709,6 +2734,11 @@ app.get('/logs/download/:sessionId', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+// Allow heavy prompts (e.g. "critique my game") to complete before Node kills the socket.
+// headersTimeout and requestTimeout must exceed the outbound axios timeout (120s).
+server.headersTimeout = 130000;
+server.requestTimeout = 130000;
+server.setTimeout(0); // disable per-socket idle timeout — axios owns the outbound deadline

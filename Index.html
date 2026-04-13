@@ -373,14 +373,22 @@ diagLog.innerHTML = `
       try {
         console.log('[FRONTEND] Sending request to /ask-deepseek...');
         
-        const response = await fetch('/ask-deepseek', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-session-id': currentSessionId
-          },
-          body: JSON.stringify({ question, debugLevel })
-        });
+        const _askCtrl = new AbortController();
+        const _askTimer = setTimeout(() => _askCtrl.abort(), 125000);
+        let response;
+        try {
+          response = await fetch('/ask-deepseek', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-session-id': currentSessionId
+            },
+            body: JSON.stringify({ question, debugLevel }),
+            signal: _askCtrl.signal
+          });
+        } finally {
+          clearTimeout(_askTimer);
+        }
 
         console.log('[FRONTEND] Response status:', response.status);
         const data = await response.json();
@@ -404,7 +412,10 @@ diagLog.innerHTML = `
         debugResponse.style.display = 'block';
       } catch (err) {
         console.error('[FRONTEND] Fetch error:', err);
-        debugResponse.innerHTML = `<strong style="color: #ff6b6b;">[Network Error]</strong><br>${err.message}<br><br><small>Check browser console (F12) for details. DeepSeek API may be temporarily unavailable.</small>`;
+        const _isTimeout = err.name === 'AbortError';
+        debugResponse.innerHTML = _isTimeout
+          ? `<strong style="color: #f90;">[Request Timed Out]</strong><br>This prompt may be too complex for a single response. Try a shorter or more specific question.`
+          : `<strong style="color: #ff6b6b;">[Network Error]</strong><br>${err.message}<br><br><small>Check browser console (F12) for details. DeepSeek API may be temporarily unavailable.</small>`;
         debugResponse.style.display = 'block';
       } finally {
         debugLoading.style.display = 'none';
