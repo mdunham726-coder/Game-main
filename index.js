@@ -839,6 +839,8 @@ app.post('/narrate', async (req, res) => {
           // Phase 1: Persist generation bias and expressive context — frozen after this point
           gameState.world.world_bias    = worldData.world_bias;
           gameState.world.world_context = worldData.world_context;
+          // Approach C: Store founding prompt for identity alignment — natural language, not a classification
+          gameState.world.founding_prompt = inputObj.WORLD_PROMPT;
 
           // Phase 3: Seed-derived terrain patch and start position
           const phase3Seed = WorldGen.h32(inputObj.WORLD_PROMPT);
@@ -1318,7 +1320,7 @@ app.post('/narrate', async (req, res) => {
     const _hasUnfilled = _narCellSites.some(s => !s.is_filled);
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
-        .map(s => `- site_id: ${s.site_id} | identity: ${s.identity ?? '(unfilled)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES'} | is_filled: ${s.is_filled ? 'YES' : 'NO'}`)
+        .map(s => `- site_id: ${s.site_id} | identity: ${s.identity ?? '(unfilled)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'}`)
         .join('\n');
       let _instructionLines = '';
       if (_hasFilled && _hasUnfilled) {
@@ -1423,8 +1425,12 @@ app.post('/narrate', async (req, res) => {
       ? '\nNOTE: Player moved to a new overworld cell. Any sites visible here belong to this cell — they are not changes to the previous location.\n'
       : '';
 
+    // Approach C: founding prompt clause — natural language grounding, not a classification layer
+    const _foundingPromptClause = gameState.world.founding_prompt
+      ? `The player described this world as: "${gameState.world.founding_prompt}". Site identities should feel consistent with that description — a site that would feel wrong or anachronistic given those words is wrong. `
+      : '';
     const _phase5Instruction = _hasUnfilled
-      ? `- Phase 5: One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
+      ? `- Phase 5: ${_foundingPromptClause}One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. Sites marked enterable: YES must receive an identity that can be physically entered and explored — a structure, cave, vault, ruin, or similar enclosed space. A standing stone, open marker, or natural terrain feature is not enterable. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
