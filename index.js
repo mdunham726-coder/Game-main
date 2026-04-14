@@ -1601,24 +1601,28 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
               const _tgt = _capCell.sites[_upd.site_id];
               if (!_tgt) continue; // site_id not in this cell — skip
               // First-fill only: never overwrite existing values
+              let _anyFieldWritten = false;
               for (const _field of ['name', 'identity', 'description']) {
                 if (_upd[_field] != null && _tgt[_field] == null) {
                   _tgt[_field] = _upd[_field];
+                  _anyFieldWritten = true;
                   _cr.updatesApplied++;
                   _cr.changes.push({ site_id: _upd.site_id, field: _field, old: null, new: _upd[_field] });
                   if (_field === 'name') _cr.capturedNames.push({ site_id: _upd.site_id, value: _upd[_field] });
                   console.log(`[SITE_CAPTURE] site ${_upd.site_id} ${_field} set to "${_upd[_field]}"`);
-                  // Phase 5E: legacy mirror — name only
-                  // world.sites is keyed by interior_key (= site_id + '/l2'), not by site_id directly.
-                  const _ik5e = _upd.site_id ? _upd.site_id + '/l2' : null;
-                  if (_field === 'name' && _ik5e && gameState.world.sites?.[_ik5e]) {
-                    gameState.world.sites[_ik5e].name = _upd[_field];
+                  // Mirror sync — name and identity both propagate to world.sites stub
+                  const _ik5e = _tgt.interior_key || (_upd.site_id ? _upd.site_id + '/l2' : null);
+                  if (_ik5e && gameState.world.sites?.[_ik5e]) {
+                    if (_field === 'name') gameState.world.sites[_ik5e].name = _upd[_field];
+                    if (_field === 'identity') gameState.world.sites[_ik5e].type = _upd[_field];
                   }
                 } else if (_upd[_field] != null && _tgt[_field] != null) {
                   _cr.skipped++;
                   console.log(`[SITE_CAPTURE] skipped (already set): ${_upd.site_id} ${_field}`);
                 }
               }
+              // Mark site as filled once at least one field was successfully written
+              if (_anyFieldWritten) _tgt.is_filled = true;
             }
           }
         } catch (_suErr) {
@@ -2355,22 +2359,26 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
 
     context += `\n=== SITE INTERIOR REGISTRY ===\n`;
     const siteKeys = Object.keys(gameState.world.sites || {});
-    context += `Total entries: ${siteKeys.length}\n`;
-    if (siteKeys.length > 0) {
-      siteKeys.slice(0, 5).forEach(k => {
+    const _filledSites = siteKeys.filter(k => !gameState.world.sites[k].is_stub);
+    const _stubSites = siteKeys.filter(k => !!gameState.world.sites[k].is_stub);
+    context += `Total entries: ${siteKeys.length} (${_filledSites.length} filled, ${_stubSites.length} unfilled stubs)\n`;
+    if (_filledSites.length > 0) {
+      context += `-- Filled sites --\n`;
+      _filledSites.slice(0, 5).forEach(k => {
         const _sr = gameState.world.sites[k];
-        const _srParent = k.includes('/l2') ? k.split('/l2')[0] : k;
         const _srCell = (_sr.mx !== undefined && _sr.lx !== undefined)
           ? `LOC:${_sr.mx},${_sr.my}:${_sr.lx},${_sr.ly}` : '(unknown)';
         const _srActive = gameState.world.active_site === k;
-        context += `key: ${k}\n`;
-        context += `  parent: ${_srParent}  |  cell: ${_srCell}\n`;
-        context += `  type: ${_sr.type || 'unknown'}  |  NPCs: ${(_sr.npcs || []).length}  |  stub: ${!!_sr.is_stub}  |  active: ${_srActive ? 'YES' : 'no'}\n`;
+        context += `  ${k}\n`;
+        context += `    identity: ${_sr.type || '(unfilled)'}  |  name: ${_sr.name || '(unnamed)'}  |  NPCs: ${(_sr.npcs || []).length}  |  cell: ${_srCell}${_srActive ? '  [ACTIVE]' : ''}\n`;
       });
-      if (siteKeys.length > 5) {
-        context += `... and ${siteKeys.length - 5} more\n`;
-      }
-    } else {
+      if (_filledSites.length > 5) context += `  ... and ${_filledSites.length - 5} more filled\n`;
+    }
+    if (_stubSites.length > 0) {
+      context += `-- Unfilled stubs (awaiting player proximity) --\n`;
+      context += `  + ${_stubSites.length} stubs (identity pending DS fill)\n`;
+    }
+    if (siteKeys.length === 0) {
       context += `(none)\n`;
     }
 
