@@ -911,7 +911,7 @@
           const siteName = _treeEsc(site.name || '(unnamed)');
           const enteredMark = site.entered ? ' &bull;' : '';
           const isSiteActive = depth >= 2 && site.entered;
-          html += `<div class="tree-node tree-toggle${isSiteActive ? ' tree-active' : ''}" onclick="toggleNode('${_treeEsc(siteKey)}')">&nbsp;&nbsp;${toggle} [${_treeEsc(site.category || '?')}] ${siteName}${enteredMark}</div>`;
+          html += `<div class="tree-node tree-toggle${isSiteActive ? ' tree-active' : ''}" onclick="toggleNode('${_treeEsc(siteKey)}')">&nbsp;&nbsp;${toggle} [${_treeEsc(site.identity ? site.identity.slice(0, 25) : '(unfilled)')}] ${siteName}${enteredMark}</div>`;
 
           if (expanded) {
             // ── L2 nodes (local spaces) ────────────────────────────────────────────────────
@@ -959,7 +959,7 @@
         return {
           site_id: ref.site_id || ref.interior_key || '?',
           name: (fullSite && fullSite.name) || ref.name || '(unnamed)',
-          category: (fullSite && fullSite.category) || ref.category || '?',
+          identity: (fullSite && fullSite.identity) || ref.identity || null,
           entered: false,
           generated: !!(fullSite && fullSite.grid),
           local_spaces: lsArr

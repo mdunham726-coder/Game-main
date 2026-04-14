@@ -218,9 +218,9 @@ if (_curSites.length > 0) {
   _sitesHtml = _curSites.map(s => {
     const nameStr = s.name != null ? s.name : '<span style="color:#666">(unnamed)</span>';
     const descStr  = s.description != null ? s.description : '<span style="color:#444">(null)</span>';
-    return `<div style="margin-left:8px"><strong>${s.site_id}</strong> | ${s.category}<br>
-      &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
-      &nbsp;&nbsp;site_tier: ${s.site_tier != null ? s.site_tier : '<span style="color:#444">(null)</span>'}<br>
+    return `<div style="margin-left:8px"><strong>${s.site_id}</strong> | ${s.identity ?? '(unfilled)'}<br>
+      &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
+      &nbsp;&nbsp;is_filled: ${s.is_filled ? '<span style="color:#0f0">YES</span>' : '<span style="color:#666">NO</span>'}<br>
       &nbsp;&nbsp;desc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${descStr}<br>
       &nbsp;&nbsp;enterable: ${s.enterable ?? false} &nbsp;|&nbsp; entered : ${s.entered ?? false}
     </div>`;
@@ -896,8 +896,8 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
         if (_sCellSites.length > 0) {
           _sSitesTxt = _sCellSites.map(s => {
             const nm = s.name != null ? '"' + s.name + '"' : '(unnamed)';
-            const st = s.site_tier != null ? '"' + s.site_tier + '"' : '(null)';
-            return '  - ' + s.site_id + ' [' + s.category + ']\n    name=' + nm + ' | site_tier=' + st + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
+            const id = s.identity != null ? '"' + s.identity + '"' : '(unfilled)';
+            return '  - ' + s.site_id + '\n    identity=' + id + ' | name=' + nm + ' | is_filled=' + (s.is_filled ?? false) + '\n    enterable=' + (s.enterable ?? false) + ' | entered=' + (s.entered ?? false);
           }).join('\n');
         } else {
           _sSitesTxt = '  - none';

@@ -248,15 +248,7 @@ function recordSiteToCell(state, cellKey, site) {
     site.interior_key = `${site.site_id}/l2`;
   }
 
-  // Settlements are always enterable by definition. Enforce at registration time so
-  // persisted sessions and any upstream generation path cannot produce a stuck false.
-  // is_starting_location suppression is handled separately in the enter handler.
-  if (site.category === 'settlement' && site.enterable !== true) {
-    site.enterable = true;
-    if (!site.interior_key) site.interior_key = `${site.site_id}/l2`;
-    console.log(`[ENGINE] [REGISTRATION] Forced enterable=true on settlement ${site.site_id}`);
-  }
-
+  site.created_at_turn = site.created_at_turn ?? (state.turn_counter ?? 0);
   cell.sites = cell.sites || {};
   cell.sites[site.site_id] = site;
 
@@ -273,8 +265,7 @@ function recordSiteToCell(state, cellKey, site) {
     state.world.sites[site.interior_key] = {
       id:       site.interior_key,
       name:     site.name ?? null,
-      type:     site.site_tier || site.identity || site.subtype,
-      category: site.category || null,  // propagated from cell.sites for count filtering
+      type:     site.identity || null,
       npcs:     [],
       is_stub:  true,
       mx:       cell.mx,
@@ -422,7 +413,7 @@ function applyQuestReward(state, quest) {
  * Does not mutate state. Called both inline by the enter handler and externally
  * by the index.js orchestration layer before buildOutput.
  *
- * @param {Array}  candidates  — enterable site objects (with name, site_tier, category, site_id)
+ * @param {Array}  candidates  — enterable site objects (with name, identity, site_id)
  * @param {string} targetName  — lowercased, article-stripped player phrase
  * @returns {{ result: 'resolved'|'ambiguous'|'no_match', site_id: string|null, ambiguous_ids: string[], pass: 'exact'|'substring'|'fuzzy'|null }}
  */
@@ -437,10 +428,9 @@ function resolveEntryPhase1(candidates, targetName) {
     return d[m][n];
   }
 
-  // Fields for exact/substring matching: name and tier only (category causes false positives — e.g. "building" matches all settlement-category sites).
-  const _allFields = s => [s.name, s.site_tier].filter(Boolean).map(v => v.toLowerCase());
-  // Fields for fuzzy matching: name and tier only (category fuzzy reintroduces inference).
-  const _fuzzyFields = s => [s.name, s.site_tier].filter(Boolean).map(v => v.toLowerCase());
+  // Fields for exact/substring/fuzzy matching: name and identity only.
+  const _allFields = s => [s.name, s.identity].filter(Boolean).map(v => v.toLowerCase());
+  const _fuzzyFields = s => [s.name, s.identity].filter(Boolean).map(v => v.toLowerCase());
 
   // Pass 1 — exact match
   const exactMatches = candidates.filter(s => _allFields(s).some(f => f === targetName));
@@ -459,19 +449,13 @@ function resolveEntryPhase1(candidates, targetName) {
   if (fuzzyMatches.length === 1) return { result: 'resolved', site_id: fuzzyMatches[0].site_id, ambiguous_ids: [], pass: 'fuzzy' };
   if (fuzzyMatches.length > 1)   return { result: 'ambiguous', site_id: null, ambiguous_ids: fuzzyMatches.map(s => s.site_id), pass: 'fuzzy' };
 
-  // Pass 4 — category synonym: generic settlement vocabulary maps to category === 'settlement'.
-  // Catches Phase-4D sites with site_tier: null that Passes 1-3 cannot match by name alone.
-  // Preserves ambiguity: two settlement-category sites in the same cell still return ambiguous.
-  const _SETTLEMENT_TERMS = new Set([
-    'settlement', 'town', 'village', 'hamlet', 'city', 'outpost', 'fortress',
-    'camp', 'encampment', 'borough', 'commune', 'colony', 'keep', 'citadel',
-    'stronghold', 'metropolis', 'capital', 'township', 'burg'
-  ]);
-  const synMatches = _SETTLEMENT_TERMS.has(targetName)
-    ? candidates.filter(s => s.category === 'settlement')
-    : [];
-  if (synMatches.length === 1) return { result: 'resolved', site_id: synMatches[0].site_id, ambiguous_ids: [], pass: 'category_synonym' };
-  if (synMatches.length > 1)   return { result: 'ambiguous', site_id: null, ambiguous_ids: synMatches.map(s => s.site_id), pass: 'category_synonym' };
+  // Pass 4 — identity match: case-insensitive substring against name and identity.
+  const identityMatches = candidates.filter(s => {
+    const fields = [s.name, s.identity].filter(Boolean).map(v => v.toLowerCase());
+    return fields.some(f => f.includes(targetName) || targetName.includes(f));
+  });
+  if (identityMatches.length === 1) return { result: 'resolved', site_id: identityMatches[0].site_id, ambiguous_ids: [], pass: 'identity' };
+  if (identityMatches.length > 1)   return { result: 'ambiguous', site_id: null, ambiguous_ids: identityMatches.map(s => s.site_id), pass: 'identity' };
 
   return { result: 'no_match', site_id: null, ambiguous_ids: [], pass: null };
 }
@@ -560,7 +544,7 @@ function buildOutput(prevState, inputObj, logger) {
       const names = actions.ambiguous_ids
         .map(id => candidates.find(s => s.site_id === id))
         .filter(Boolean)
-        .map(s => `"${s.name || s.category}"`)
+        .map(s => `"${s.name || s.identity || '(site)'}"`)
         .join(', ');
       state.world._engineMessage = `Multiple sites match: ${names}. Which would you like to enter?`;
       console.log('[RESOLVER] Engine ambiguous:', actions.ambiguous_ids);
@@ -578,7 +562,7 @@ function buildOutput(prevState, inputObj, logger) {
           const names = _p1.ambiguous_ids
             .map(id => candidates.find(s => s.site_id === id))
             .filter(Boolean)
-            .map(s => `"${s.name || s.category}"`)
+            .map(s => `"${s.name || s.identity || '(site)'}"`)
             .join(', ');
           state.world._engineMessage = `Multiple sites here match "${targetName}": ${names}. Which would you like to enter?`;
           console.log(`[Phase10-ENTER] Phase1 ${_p1.pass} ambiguous (${_p1.ambiguous_ids.length}) for "${targetName}"`);
@@ -592,7 +576,7 @@ function buildOutput(prevState, inputObj, logger) {
           targetSite = candidates[0];
           console.log(`[Phase10-ENTER] No target: single candidate → ${targetSite.site_id}`);
         } else if (candidates.length > 1) {
-          const names = candidates.map(s => `"${s.name || s.category}"`).join(', ');
+          const names = candidates.map(s => `"${s.name || s.identity || '(site)'}"`).join(', ');
           state.world._engineMessage = `Multiple sites here: ${names}. Which would you like to enter?`;
           console.log(`[Phase10-ENTER] No target ambiguous (${candidates.length} candidates)`);
         } else {
@@ -821,8 +805,8 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
   const site = cell.sites && cell.sites[site_id];
   if (!site) return null;
 
-  // Defensive: accept site.site_tier (Phase 10), site.identity (Phase 7), or site.subtype (WorldGen legacy format)
-  const identity = site.site_tier || site.identity || 'village';
+  // Defensive: accept site.site_tier (Phase 10), site.identity (Phase 7), or generic fallback.
+  const identity = site.site_tier || site.identity || 'generic_site';
   const sid = site.site_id || site.id || site_id;
 
   // Ensure interior_key is set — should already be set by recordSiteToCell, but assign lazily

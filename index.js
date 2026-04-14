@@ -219,20 +219,32 @@ async function performLoad(sessionId, saveName) {
       delete _gs.world.sites[null];
     }
 
-    // Migration: repair enterable flag for old sessions that predate Phase E enforcement
+    // v1 clean break: discard old category-based site records, regenerate via new slot system.
     if (_gs.world && _gs.world.cells) {
-      let _enterableRepairs = 0;
-      for (const _cell of Object.values(_gs.world.cells)) {
-        if (_cell && _cell.sites) {
-          for (const _s of Object.values(_cell.sites)) {
-            if (_s.category !== 'landmark' && !_s.is_starting_location && _s.enterable !== true) {
-              _s.enterable = true;
-              _enterableRepairs++;
-            }
+      const _migSeed = _gs.world.phase3_seed;
+      const _migBias = _gs.world.world_bias;
+      for (const [_ck, _cc] of Object.entries(_gs.world.cells)) {
+        if (!_ck.startsWith('LOC:')) continue;
+        _cc.sites = {};
+        if (_migSeed !== undefined && _migBias) {
+          const _newSlots = WorldGen.evaluateCellForSites(_ck, _cc.type || 'plains', _migBias, _migSeed);
+          for (const _sl of _newSlots) {
+            _sl.created_at_turn = 0;
+            if (_sl.enterable) _sl.interior_key = `${_sl.site_id}/l2`;
+            _cc.sites[_sl.site_id] = _sl;
           }
         }
       }
-      if (_enterableRepairs > 0) console.log(`[LOAD] Repaired enterable=true on ${_enterableRepairs} settlement site(s).`);
+      if (_gs.world.sites) {
+        for (const [_sk, _sv] of Object.entries(_gs.world.sites)) {
+          if (_sv && _sv.is_stub) delete _gs.world.sites[_sk];
+        }
+      }
+      if (_gs.world.active_site?.is_stub) {
+        _gs.world.active_site = null;
+        _gs.world.current_depth = 1;
+      }
+      console.log('[LOAD] v1 migration: cell.sites wiped and regenerated from new slot system.');
     }
 
     return {
@@ -841,17 +853,10 @@ app.post('/narrate', async (req, res) => {
           // Phase 4D: seed patch cells with sites (bypass streaming hook — patch cells pre-exist)
           for (const [patchKey, patchCell] of Object.entries(patchCells)) {
             const patchSites = WorldGen.evaluateCellForSites(patchKey, patchCell.type, worldData.world_bias, phase3Seed);
-            for (const pSite of patchSites) Engine.recordSiteToCell(gameState, patchKey, pSite);
-          }
-          
-          // Log NPC spawning for all site cells
-          if (logger && worldData.cells) {
-            const siteCells = Object.values(worldData.cells).filter(c => c.type === 'settlement');
-            siteCells.forEach(siteCell => {
-              if (siteCell.npc_ids && siteCell.npc_ids.length > 0) {
-                logger.npcSpawnSucceeded(siteCell.id || siteCell.subtype, siteCell.npc_ids);
-              }
-            });
+            for (const pSite of patchSites) {
+              pSite.created_at_turn = gameState.turn_counter ?? 0;
+              Engine.recordSiteToCell(gameState, patchKey, pSite);
+            }
           }
           
           if (logger) {
@@ -890,22 +895,23 @@ app.post('/narrate', async (req, res) => {
           const _startCellSites = Object.values(gameState.world.cells[startingLocationCellKey].sites);
           const _hasEnterableSite = _startCellSites.some(s => s.enterable === true && s.interior_key);
           if (!_hasEnterableSite) {
-            const _validStartTiers = { village: 'village', town: 'town', city: 'city', outpost: 'outpost', fortress: 'fortress', hamlet: 'hamlet' };
-            const _startTier = _validStartTiers[worldData.startingLocationType] || 'village';
             const _startSiteId = `M${startPos.mx}x${startPos.my}:site_start`;
             Engine.recordSiteToCell(gameState, startingLocationCellKey, {
               site_id:          _startSiteId,
-              category:         'settlement',
-              site_tier:        _startTier,
+              parent_cell:      startingLocationCellKey,
               enterable:        true,
-              name:             null,                            // filled by Phase 5 site_updates on first narration
+              is_filled:        false,
+              created_at_turn:  gameState.turn_counter ?? 0,
+              name:             null,
+              identity:         null,
               description:      null,
               entered:          false,
-              is_starting_location: true
+              interior_key:     null,
+              is_starting_location: true,
             });
-            console.log('[WORLD] [Phase6B] Injected starting settlement site:', _startSiteId, '| identity:', worldData.startingLocationType);
+            console.log('[WORLD] [Phase6B] Injected starting site slot:', _startSiteId);
           } else {
-            console.log('[WORLD] [Phase6B] Settlement site already present from Phase 4D — skipped injection.');
+            console.log('[WORLD] [Phase6B] Enterable site already present from Phase 4D — skipped injection.');
           }
 
           // Phase 7: Legacy L2 stub block removed.
@@ -1308,27 +1314,25 @@ app.post('/narrate', async (req, res) => {
     // Phase 5B: Build site context block from current cell's sites
     let _siteContextBlock = '';
     const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites) : [];
-    const _hasNamed   = _narCellSites.some(s => s.name != null);
-    const _hasUnnamed = _narCellSites.some(s => s.name == null);
+    const _hasFilled   = _narCellSites.some(s => s.is_filled === true);
+    const _hasUnfilled = _narCellSites.some(s => !s.is_filled);
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
-        .map(s => `- site_id: ${s.site_id} | category: ${s.category} | site_tier: ${s.site_tier ?? '(none)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES'}`)
+        .map(s => `- site_id: ${s.site_id} | identity: ${s.identity ?? '(unfilled)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES'} | is_filled: ${s.is_filled ? 'YES' : 'NO'}`)
         .join('\n');
       let _instructionLines = '';
-      if (_hasNamed && _hasUnnamed) {
+      if (_hasFilled && _hasUnfilled) {
         // Mixed: scope each instruction explicitly
         _instructionLines = '\nSites that already have a name must keep that exact name — do not change or replace it.' +
-                            '\nSites marked (unnamed) may receive a first-fill name via a site_updates block.';
-      } else if (_hasNamed) {
-        // All named: lock only + narration usage
+                            '\nSites marked (unfilled) may receive identity, name, and description via a site_updates block.';
+      } else if (_hasFilled) {
+        // All filled: lock only + narration usage
         _instructionLines = '\nAll sites above have stored names. Use them exactly as written — do not invent alternatives.' +
-                            '\nWhen narrating the overworld, refer to any named site by its proper name rather than a generic description (e.g. use the site name, not "the settlement" or "a small village").';
+                            '\nWhen narrating the overworld, refer to any named site by its proper name rather than a generic description.';
       } else {
-        // All unnamed: invitation only
-        _instructionLines = '\nAll sites above are unnamed. You may introduce names for them via a site_updates block.';
+        // All unfilled: invitation only
+        _instructionLines = '\nAll sites above are unfilled. You may introduce identity, name, and description for them via a site_updates block.';
       }
-      // Phase 10: Tier constraint — always append so the model cannot interpret site_tier through tone/biome alone.
-      _instructionLines += '\nA site\'s site_tier defines its settlement scale — town must resolve to a settlement-scale location, not a road, path, threshold, or edge space.';
       // Enterable constraint — non-enterable sites must never be narrated as accessible.
       _instructionLines += '\nSites with enterable: NO must NOT be described as having open doors, visible interiors, accessible entrances, or any language implying the player can enter or explore them.';
       _siteContextBlock = `\n\nSITES AT CURRENT LOCATION:\n${_siteLines}${_instructionLines}`;
@@ -1376,8 +1380,8 @@ app.post('/narrate', async (req, res) => {
       }
     } else if (_narDepth >= 2 && _narActiveSite) {
       _narSceneDesc = _narActiveSite.description ||
-        `The ${_narActiveSite.type || 'settlement'} of ${_narActiveSite.name || 'the settlement'}. Streets and buildings fill the area.`;
-      _narSceneType = _narActiveSite.type || 'settlement_interior';
+        `The ${_narActiveSite.type || '(unknown site)'} of ${_narActiveSite.name || '(unknown site)'}. Streets and buildings fill the area.`;
+      _narSceneType = _narActiveSite.type || 'site_interior';
       // Use engine-computed visible set (derived from grid tile placement at player position)
       const _siteNpcs = _narActiveSite._visible_npcs || [];
       const _siteNpcNames = _siteNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
@@ -1419,8 +1423,8 @@ app.post('/narrate', async (req, res) => {
       ? '\nNOTE: Player moved to a new overworld cell. Any sites visible here belong to this cell — they are not changes to the previous location.\n'
       : '';
 
-    const _phase5Instruction = _hasUnnamed
-      ? `- Phase 5: One or more sites here have not yet been named. Assign a name to each unnamed site and use that name in your narrative prose — do NOT refer to any site as "a settlement", "a village", "a building", or any other generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description if you can reasonably provide them. Only reference site_ids from SITES AT CURRENT LOCATION.`
+    const _phase5Instruction = _hasUnfilled
+      ? `- Phase 5: One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
@@ -1661,7 +1665,13 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     // Prefer canonical interior_key; fall back to site_id for sessions loaded but not yet entered.
     let currentSite = null;
     {
-      const _siteLookup = Object.values(currentCell?.sites || {}).find(s => s.category === 'settlement');
+      const _allSlotsArr = Object.values(currentCell?.sites || {});
+      let _siteLookup = null;
+      if (_allSlotsArr.length === 1) {
+        _siteLookup = _allSlotsArr[0];
+      } else if (_allSlotsArr.length > 1) {
+        _siteLookup = _allSlotsArr.find(s => s.enterable === true) || _allSlotsArr[0];
+      }
       if (_siteLookup && gameState.world.sites) {
         currentSite = gameState.world.sites[_siteLookup.interior_key]
           || gameState.world.sites[_siteLookup.site_id]
@@ -1730,9 +1740,9 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           : [];
         return {
           site_id: _s.site_id,
-          category: _s.category || null,
+          identity: _s.identity || null,
+          is_filled: _s.is_filled ?? false,
           name: _s.name || null,
-          site_tier: _s.site_tier || null,
           enterable: _s.enterable ?? false,
           entered: _s.entered ?? false,
           generated: _sGenerated,
@@ -2034,7 +2044,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     const _diagCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
     const _diagCellSites = gameState.world.cells?.[_diagCellKey]?.sites;
     const isSiteCell = _diagCellSites
-      ? Object.values(_diagCellSites).some(s => s.category === 'settlement')
+      ? Object.values(_diagCellSites).some(s => s.enterable === true)
       : false;
     
     if (isSiteCell) {
@@ -2319,8 +2329,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `Site Count : ${_dbgSites.length}\n`;
     if (_dbgSites.length > 0) {
       _dbgSites.forEach(s => {
-        context += `- ${s.site_id} | ${s.category} | name: ${s.name ?? '(unnamed)'}\n`;
-        if (s.site_tier != null) context += `  site_tier : ${s.site_tier}\n`;
+        context += `- ${s.site_id} | identity: ${s.identity ?? '(unfilled)'} | name: ${s.name ?? '(unnamed)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'}\n`;
         if (s.description != null) context += `  desc      : ${s.description}\n`;
       });
     } else {

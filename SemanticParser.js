@@ -232,11 +232,9 @@ module.exports = { normalizeUserIntent, resolveEnterTarget };
  */
 async function resolveEnterTarget(candidates, phrase, currentDepth) {
   const candidateList = candidates.map(s => ({
-    site_id:   s.site_id,
-    name:      s.name      || null,
-    category:  s.category  || null,
-    site_tier: s.site_tier || null,
-    identity:  s.identity  || null
+    site_id:  s.site_id,
+    name:     s.name     || null,
+    identity: s.identity || null
   }));
 
   const layerLabel = `L${(currentDepth || 0)}`;
