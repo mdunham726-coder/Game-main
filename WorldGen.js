@@ -71,6 +71,23 @@ const BIOME_PALETTES = {
 };
 
 // =============================================================================
+// PASS 2 — BIOME SOFT-BIAS REGISTRY
+// Terrain strings considered strongly consistent with each biome.
+// Used by classifyTerrainFromNoise to decide whether to apply a soft bias
+// re-roll when the noise-derived classification conflicts with biome identity.
+// =============================================================================
+const BIOME_CONSISTENT_TERRAIN = {
+  rural:    ['plains_grassland', 'plains_wildflower', 'meadow', 'hills_rolling', 'forest_deciduous'],
+  forest:   ['forest_deciduous', 'forest_mixed', 'forest_coniferous', 'meadow'],
+  desert:   ['desert_sand', 'desert_dunes', 'desert_rocky', 'scrubland', 'badlands', 'canyon', 'mesa'],
+  tundra:   ['tundra', 'snowfield', 'ice_sheet', 'permafrost', 'alpine'],
+  jungle:   ['forest_coniferous', 'forest_mixed', 'swamp', 'marsh', 'wetland'],
+  coast:    ['beach_sand', 'beach_pebble', 'cliffs_coastal', 'tidepools', 'dunes_coastal'],
+  mountain: ['mountain_slopes', 'mountain_peak', 'mountain_pass', 'rocky_terrain', 'scree', 'alpine'],
+  wetland:  ['swamp', 'marsh', 'wetland', 'bog'],
+};
+
+// =============================================================================
 // PHASE 3C: SITE NAME GENERATION
 // =============================================================================
 
@@ -848,6 +865,88 @@ function evalTemperature(mx, my, lx, ly, worldSeed, biome) {
 // END PASS 1
 // =============================================================================
 
+// =============================================================================
+// PASS 2 — TERRAIN CLASSIFICATION FROM NOISE
+// Replaces random palette sampling. Terrain type is now derived from the
+// Pass 1 noise fields (elevation, moisture, temperature) via 10-priority
+// ordered rules, then corrected with a soft biome bias re-roll.
+// Fully deterministic — no Math.random().
+// =============================================================================
+
+/**
+ * Classify a cell's terrain type from its Pass 1 noise fields.
+ *
+ * Priority order (first matching rule wins):
+ *  1. elevation > 0.80 → high mountain terrain
+ *  2. elevation > 0.65 → rocky high-ground / mountain access
+ *  3. elevation > 0.50 → rolling/rocky hills
+ *  4. moisture > 0.75 && elevation < 0.30 → wetland / bog terrain
+ *  5. moisture > 0.55 && temperature > 0.55 → forest / jungle
+ *  6. moisture > 0.55 && temperature < 0.30 → tundra / frozen terrain
+ *  7. temperature > 0.75 && moisture < 0.20 → hot desert
+ *  8. temperature > 0.60 && moisture < 0.35 → scrubland / badlands
+ *  9. elevation < 0.15 && moisture > 0.30 → shore / coastal low terrain
+ * 10. default → plains
+ *
+ * Pool selection and biome soft bias both use seeded mulberry32 RNGs so the
+ * result is deterministic for a given (cellKey, worldSeed) pair.
+ *
+ * @param {number} elevation  — float [0,1] from evalElevation
+ * @param {number} moisture   — float [0,1] from evalMoisture
+ * @param {number} temperature — float [0,1] from evalTemperature
+ * @param {string} biome      — biome key (e.g. 'mountain', 'forest')
+ * @param {string} cellKey    — canonical cell key e.g. "LOC:2,3:45,67"
+ * @param {number|string} worldSeed — phase3_seed or promptSeed
+ * @returns {string} valid L0_GEOGRAPHY terrain string
+ */
+function classifyTerrainFromNoise(elevation, moisture, temperature, biome, cellKey, worldSeed) {
+  // --- Priority-ordered terrain pool selection ---
+  let pool;
+  if (elevation > 0.80) {
+    pool = ['mountain_peak', 'mountain_slopes', 'mountain_pass', 'scree'];
+  } else if (elevation > 0.65) {
+    pool = ['hills_rocky', 'mountain_pass', 'scree', 'rocky_terrain'];
+  } else if (elevation > 0.50) {
+    pool = ['hills_rolling', 'hills_rocky', 'rocky_terrain'];
+  } else if (moisture > 0.75 && elevation < 0.30) {
+    pool = ['swamp', 'marsh', 'bog', 'wetland'];
+  } else if (moisture > 0.55 && temperature > 0.55) {
+    pool = ['forest_deciduous', 'forest_mixed', 'forest_coniferous'];
+  } else if (moisture > 0.55 && temperature < 0.30) {
+    pool = ['tundra', 'snowfield', 'permafrost', 'ice_sheet'];
+  } else if (temperature > 0.75 && moisture < 0.20) {
+    pool = ['desert_dunes', 'desert_sand', 'desert_rocky'];
+  } else if (temperature > 0.60 && moisture < 0.35) {
+    pool = ['scrubland', 'badlands', 'mesa'];
+  } else if (elevation < 0.15 && moisture > 0.30) {
+    pool = ['lake_shore', 'beach_sand', 'tidepools'];
+  } else {
+    pool = ['plains_grassland', 'plains_wildflower', 'meadow'];
+  }
+
+  // --- Deterministic pool roll ---
+  const rollRng = mulberry32(h32(`${worldSeed}|p2_roll|${cellKey}`));
+  let result = pool[Math.floor(rollRng() * pool.length)];
+
+  // --- Biome soft bias re-roll ---
+  // If the noise-derived result conflicts with the macro biome, apply a 60%
+  // chance to substitute with a biome-palette string instead.
+  const consistent = BIOME_CONSISTENT_TERRAIN[biome] || [];
+  if (!consistent.includes(result)) {
+    const biasRng = mulberry32(h32(`${worldSeed}|p2_bias|${cellKey}`));
+    if (biasRng() < 0.60) {
+      const palette = BIOME_PALETTES[biome] || BIOME_PALETTES['rural'];
+      result = palette[Math.floor(biasRng() * palette.length)];
+    }
+  }
+
+  return result;
+}
+
+// =============================================================================
+// END PASS 2
+// =============================================================================
+
 /**
  * Derive a deterministic L0 + L1 anchor position from the world prompt hash.
  *
@@ -903,14 +1002,13 @@ function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
       // Skip cells that already exist (e.g. MAC macro cells)
       if (existingCells && existingCells[cellKey]) continue;
 
-      // Per-cell deterministic RNG — independent of other cells
-      const cellRng = mulberry32(h32(`${promptSeed}|patch|${cellKey}`));
-      const terrainType = palette[Math.floor(cellRng() * palette.length)];
-
-      // Pass 1: compute physical noise fields — additive, does not affect terrain type
+      // Pass 1: compute physical noise fields
       const _elev = evalElevation(anchor.mx, anchor.my, lx, ly, promptSeed, biome);
       const _mois = evalMoisture(anchor.mx, anchor.my, lx, ly, promptSeed, biome);
       const _temp = evalTemperature(anchor.mx, anchor.my, lx, ly, promptSeed, biome);
+
+      // Pass 2: classify terrain deterministically from noise fields
+      const terrainType = classifyTerrainFromNoise(_elev, _mois, _temp, biome, cellKey, promptSeed);
 
       patch[cellKey] = {
         type:        terrainType,
@@ -1264,4 +1362,6 @@ module.exports = {
   evalElevation,
   evalMoisture,
   evalTemperature,
+  // Pass 2 — terrain classification
+  classifyTerrainFromNoise,
 };

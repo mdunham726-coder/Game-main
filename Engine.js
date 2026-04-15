@@ -189,27 +189,21 @@ function streamL1Cells(state) {
         biome = state.world.macro_biome;
       }
 
-      // Get terrain types for this biome
-      const terrainArray = BIOME_TERRAIN_TYPES[biome] || BIOME_TERRAIN_TYPES["rural"];
-
-      // Randomly select terrain type from biome palette
-      const randomIndex = Math.floor(Math.random() * terrainArray.length);
-      let terrainType = terrainArray[randomIndex];
-
-      // Validation guard: reject any terrain string that is not in the L0 geography vocabulary.
-      // This catches legacy urban terrain types in saved sessions and future palette mistakes.
-      if (!LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(terrainType)) {
-        console.error(`[STREAM] TERRAIN VIOLATION: cell ${cellKey} received invalid L0 type "${terrainType}" (biome: ${biome}) — substituting "plains_grassland"`);
-        terrainType = 'plains_grassland';
-      }
-
-      // Pass 1: compute physical noise fields — additive only, does not affect terrain type.
-      // Terrain classification (Pass 2) will use these values; for now they are stored for
-      // validation and developer map visualization only.
+      // Pass 1: compute physical noise fields
       const _worldSeed = state.world.phase3_seed || 0;
       const _elev = WorldGen.evalElevation(mx, my, lx, ly, _worldSeed, biome);
       const _mois = WorldGen.evalMoisture(mx, my, lx, ly, _worldSeed, biome);
       const _temp = WorldGen.evalTemperature(mx, my, lx, ly, _worldSeed, biome);
+
+      // Pass 2: classify terrain deterministically from noise fields
+      let terrainType = WorldGen.classifyTerrainFromNoise(_elev, _mois, _temp, biome, cellKey, _worldSeed);
+
+      // Validation guard: reject any terrain string that is not in the L0 geography vocabulary.
+      // This catches future palette mistakes or seed edge cases.
+      if (!LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(terrainType)) {
+        console.error(`[STREAM] TERRAIN VIOLATION: cell ${cellKey} received invalid L0 type "${terrainType}" (biome: ${biome}) — substituting "plains_grassland"`);
+        terrainType = 'plains_grassland';
+      }
 
       // Create new L1 cell
       state.world.cells[cellKey] = {
