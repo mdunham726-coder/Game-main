@@ -880,13 +880,14 @@ app.post('/narrate', async (req, res) => {
           // Re-write cell: geographic type from patch (never a community type), preserve any existing sites
           gameState.world.cells[startingLocationCellKey] = {
             type: _existingPatchCell.type || 'plains',      // geographic — from patch or fallback
-            subtype: worldData.startingLocationType,        // L2 compat hint only — NOT place identity, NOT shown to AI
+            subtype: _existingPatchCell.subtype || '',      // terrain refinement only — never civilization
             biome: worldData.biome,
             mx: startPos.mx,
             my: startPos.my,
             lx: startPos.lx,
             ly: startPos.ly,
             description: _existingPatchCell.description || '',
+            starting_location_hint: worldData.startingLocationType, // civilization context — NOT a terrain field
             is_starting_location: true,
             sites: _existingPatchCell.sites || {}           // preserve any sites from Phase 4D
           };
@@ -1281,6 +1282,7 @@ app.post('/narrate', async (req, res) => {
     position_local: `(${pos.lx},${pos.ly})`,
     cell_type: diagnosticCell?.type || "unknown",
     cell_subtype: diagnosticCell?.subtype || "unknown",
+    starting_location_hint: diagnosticCell?.starting_location_hint || null,
     turn_counter: gameState.turn_counter ?? 0
   };
 
@@ -1710,6 +1712,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       cell_key: cellKey,
       cell_type: currentCell?.type || 'unknown',
       cell_subtype: currentCell?.subtype || 'unknown',
+      starting_location_hint: currentCell?.starting_location_hint || null,
       cell_description: currentCell?.description || 'unknown',  // QA-016 follow-up: for narrative comparison
       biome: gameState.world.macro_biome || 'unknown',
       turn_counter: gameState.turn_counter || 0,
@@ -1802,6 +1805,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           ly: currentPosition.ly,
           cell_type: currentCell?.type || null,
           cell_subtype: currentCell?.subtype || null,
+          starting_location_hint: currentCell?.starting_location_hint || null,
           cell_description: currentCell?.description || null,
           biome: gameState.world.macro_biome || null
         } : {
@@ -1814,6 +1818,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           ly: currentPosition.ly,
           cell_type: currentCell?.type || null,
           cell_subtype: currentCell?.subtype || null,
+          starting_location_hint: currentCell?.starting_location_hint || null,
           cell_description: currentCell?.description || null,
           biome: gameState.world.macro_biome || null,
           name: null

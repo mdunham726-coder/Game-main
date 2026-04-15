@@ -415,8 +415,8 @@
     let dragStartX, dragStartY, dragStartVpX, dragStartVpY;
 
     function applyTransform() {
-      // Clamp here so no code path can ever apply an out-of-range scale
-      vpScale = Math.min(Math.max(vpScale, MIN_SCALE), MAX_SCALE);
+      // Crash guard only — fit initializer may legitimately use scales below MIN_SCALE
+      if (!isFinite(vpScale) || vpScale <= 0) vpScale = 1;
       document.getElementById('grid-container').style.transform =
         `translate(${vpX}px, ${vpY}px) scale(${vpScale})`;
     }
@@ -779,20 +779,26 @@
       requestAnimationFrame(() => {
         if (regionKey !== lastCenteredRegionKey) {
           lastCenteredRegionKey = regionKey;
+          // Reset to identity before measuring so any previous transform doesn't
+          // pollute the fit computation (DOM layout is unaffected by CSS transform,
+          // but this guarantees a clean visual baseline for the new region).
+          vpScale = 1; vpX = 0; vpY = 0;
+          applyTransform();
           const vp = document.getElementById('map-viewport');
           const vpRect = vp.getBoundingClientRect();
           // Use the rendered grid dimensions (includes all rows/cols at current cell size)
           const gridW = container.offsetWidth;
           const gridH = container.offsetHeight;
           if (gridW > 0 && gridH > 0) {
-            // Largest scale that fits the grid inside the viewport with padding
+            // Largest scale that fits the grid inside the viewport with padding.
+            // No MIN_SCALE cap here — fit may legitimately be below it for large grids.
             const scaleX = (vpRect.width  - FIT_PADDING * 2) / gridW;
             const scaleY = (vpRect.height - FIT_PADDING * 2) / gridH;
-            vpScale = Math.min(scaleX, scaleY);
+            vpScale = Math.max(Math.min(scaleX, scaleY), 0.005); // safety floor, not MIN_SCALE
             // Center the scaled grid
             vpX = (vpRect.width  - gridW * vpScale) / 2;
             vpY = (vpRect.height - gridH * vpScale) / 2;
-            applyTransform(); // clamp applied inside
+            applyTransform();
           }
         }
       });
@@ -1072,12 +1078,14 @@
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
       const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
-      const newScale = vpScale * factor; // applyTransform will clamp
+      const newScale = vpScale * factor;
       const scaleDelta = newScale / vpScale;
       // Adjust translate so the point under the mouse stays fixed
       vpX = mouseX - (mouseX - vpX) * scaleDelta;
       vpY = mouseY - (mouseY - vpY) * scaleDelta;
-      vpScale = newScale; // clamped in applyTransform
+      vpScale = newScale;
+      // Clamp user-initiated zoom — fit initializer is exempt from these limits
+      vpScale = Math.min(Math.max(vpScale, MIN_SCALE), MAX_SCALE);
       applyTransform();
     }, { passive: false });
 

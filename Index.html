@@ -187,6 +187,7 @@ const diag = data.turn_history && data.turn_history.length > 0
         active_site_name: auth.active_site_name || null,
         cell_type: auth.cell_type || (fallbackDiag.cell_type || 'unknown'),
         cell_subtype: auth.cell_subtype || (fallbackDiag.cell_subtype || 'unknown'),
+        starting_location_hint: auth.starting_location_hint || (fallbackDiag.starting_location_hint || null),
         macro_biome: auth.biome || (fallbackDiag.macro_biome || 'UNDEFINED'),
         world_initialized: !!auth.biome,  // True if biome exists (world was initialized)
         cells_generated: cellsGen,
@@ -308,7 +309,7 @@ diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.active_site_name || '(none)'}</div>
   ${diag.current_depth === 2 && diag.site_position ? `<div><strong>Site Position:</strong> (${diag.site_position.x},${diag.site_position.y})</div>` : diag.current_depth === 3 && diag.local_space_position ? `<div><strong>Local Space Position:</strong> (${diag.local_space_position.x},${diag.local_space_position.y})</div>` : ''}
-  <div><strong>${diag.current_depth === 3 ? 'Parent Site (L1)' : diag.current_depth >= 2 ? 'Parent Cell (L0)' : 'Current Cell'}:</strong> Type: ${diag.cell_type || 'unknown'} | Terrain Variant: ${diag.cell_subtype || 'unknown'}</div>
+  <div><strong>${diag.current_depth === 3 ? 'Parent Site (L1)' : diag.current_depth >= 2 ? 'Parent Cell (L0)' : 'Current Cell'}:</strong> Type: ${diag.cell_type || 'unknown'}${diag.cell_subtype && diag.cell_subtype !== 'unknown' ? ' | Terrain Variant: ' + diag.cell_subtype : ''}${diag.starting_location_hint ? ' | Starting Location: ' + diag.starting_location_hint : ''}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>
   <div><strong>World Initialized:</strong> ${diag.world_initialized ? 'YES' : '<span style="color: #f00;">NO</span>'}</div>
   <div><strong>Cells Generated (all regions):</strong> ${diag.cells_generated}</div>
@@ -769,7 +770,7 @@ To   : ${toCoord} ${movement.to_cell_type || '?'}`;
         // Lean state: position, cell, biome, site count only
         stateSection = `
 Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
-Cell          : ${cellType} (terrain variant: ${authState.cell_subtype || 'unknown'})
+Cell          : ${cellType}${authState.cell_subtype && authState.cell_subtype !== 'unknown' ? ' (terrain: ' + authState.cell_subtype + ')' : ''}${authState.starting_location_hint ? '\nStart Hint    : ' + authState.starting_location_hint : ''}
 Biome         : ${authState.biome || 'unknown'}
 Site Count    : ${authState.site_count || 0}`;
       } else {
@@ -785,7 +786,7 @@ Site Count    : ${authState.site_count || 0}`;
         stateSection = `
 Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
 Description   : ${authState.cell_description || '(unknown)'}
-Cell          : ${cellType} (terrain variant: ${authState.cell_subtype || 'unknown'})
+Cell          : ${cellType}${authState.cell_subtype && authState.cell_subtype !== 'unknown' ? ' (terrain: ' + authState.cell_subtype + ')' : ''}${authState.starting_location_hint ? '\nStart Hint    : ' + authState.starting_location_hint : ''}
 Grid Key      : ${authState.cell_key || 'unknown'}
 Biome         : ${authState.biome || 'unknown'}
 Turn Counter  : ${authState.turn_counter || 0}
