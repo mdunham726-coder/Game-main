@@ -304,7 +304,7 @@ async function listSavesData(sessionId) {
 // PHASE 3C: QUEST SYSTEM API ENDPOINTS
 // =============================================================================
 
-// GET /quest/available - Get available quests for a settlement
+// GET /quest/available - Get available quests for a site
 app.get('/quest/available', (req, res) => {
   const sessionId = req.headers['x-session-id'];
   const { siteId } = req.query;
@@ -872,12 +872,12 @@ app.post('/narrate', async (req, res) => {
           
           // Phase 6B: Fix start cell — preserve geographic type from patch; inject site record.
           // The patch cells were seeded by Phase 4D above. We must NOT overwrite cell.type with
-          // "settlement" or destroy the sites that evaluateCellForSites already placed.
+          // "community" or destroy the sites that evaluateCellForSites already placed.
           const startPos = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
           const startingLocationCellKey = `LOC:${startPos.mx},${startPos.my}:${startPos.lx},${startPos.ly}`;
           const _existingPatchCell = gameState.world.cells[startingLocationCellKey] || {};
 
-          // Re-write cell: geographic type from patch (never "settlement"), preserve any existing sites
+          // Re-write cell: geographic type from patch (never a community type), preserve any existing sites
           gameState.world.cells[startingLocationCellKey] = {
             type: _existingPatchCell.type || 'plains',      // geographic — from patch or fallback
             subtype: worldData.startingLocationType,        // L2 compat hint only — NOT place identity, NOT shown to AI
@@ -898,10 +898,22 @@ app.post('/narrate', async (req, res) => {
           const _hasEnterableSite = _startCellSites.some(s => s.enterable === true && s.interior_key);
           if (!_hasEnterableSite) {
             const _startSiteId = `M${startPos.mx}x${startPos.my}:site_start`;
+            // Compute community signal for the fallback starting site injection.
+            // Uses the same probability thresholds as evaluateCellForSites, elevated
+            // slightly for starting positions (player likely starts near civilization).
+            const _civPresence = gameState.world.world_bias?.civilization_presence || 'medium';
+            const _commHash = WorldGen.h32(`${startingLocationCellKey}|start|community`);
+            const _commProb = _civPresence === 'high' ? 0.70 : _civPresence === 'medium' ? 0.45 : 0.15;
+            const _isCommunity = (_commHash % 1000) / 1000 < _commProb;
+            const _sizeMax = _civPresence === 'high' ? 9 : _civPresence === 'medium' ? 6 : 3;
+            const _sizeHash = WorldGen.h32(`${startingLocationCellKey}|start|community_size`);
+            const _communitySize = _isCommunity ? Math.max(1, (_sizeHash % _sizeMax) + 1) : 0;
             Engine.recordSiteToCell(gameState, startingLocationCellKey, {
               site_id:          _startSiteId,
               parent_cell:      startingLocationCellKey,
               enterable:        true,
+              is_community:     _isCommunity,
+              community_size:   _communitySize,
               is_filled:        false,
               created_at_turn:  gameState.turn_counter ?? 0,
               name:             null,
@@ -1290,7 +1302,7 @@ app.post('/narrate', async (req, res) => {
   let visibilityPayload = null;
 
   try {
-    // Phase 6D: _settlementDirective / _preNarSettlementKey / _expectingSettlementName removed.
+    // Phase 6D: _siteDirective / _preNarSiteKey / _expectingSiteName removed.
     // Place identity and naming now exclusively resolved from cell.sites via Phase 5B site context block below.
     const _narCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
     const _narCell = gameState?.world?.cells?.[_narCellKey] || null;
@@ -1320,7 +1332,7 @@ app.post('/narrate', async (req, res) => {
     const _hasUnfilled = _narCellSites.some(s => !s.is_filled);
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
-        .map(s => `- site_id: ${s.site_id} | identity: ${s.identity ?? '(unfilled)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'}`)
+        .map(s => `- site_id: ${s.site_id} | identity: ${s.identity ?? '(unfilled)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'} | is_community: ${s.is_community ? 'YES' : 'NO'}${s.is_community && s.community_size ? ` | community_size: ${s.community_size}` : ''}`)
         .join('\n');
       let _instructionLines = '';
       if (_hasFilled && _hasUnfilled) {
@@ -1393,7 +1405,7 @@ app.post('/narrate', async (req, res) => {
       } else {
         npcsStr = '(None visible)';
       }
-      _siteContextBlock = `\n\nCURRENT SITE (you are inside this location):\nName: ${_narActiveSite.name || '(unnamed)'}\nType: ${_narActiveSite.type || 'settlement'}\nPopulation: ${(_narActiveSite.npcs || []).length}\nNPCs nearby: ${_siteNpcNames}`;
+      _siteContextBlock = `\n\nCURRENT SITE (you are inside this location):\nName: ${_narActiveSite.name || '(unnamed)'}\nType: ${_narActiveSite.type || 'site'}\nPopulation: ${(_narActiveSite.npcs || []).length}\nNPCs nearby: ${_siteNpcNames}`;
       const _sp = gameState?.player?.position;
       if (_sp && _narActiveSite.grid) {
         const _gridCell = _narActiveSite.grid[_sp.y]?.[_sp.x] ?? null;
@@ -1430,7 +1442,7 @@ app.post('/narrate', async (req, res) => {
       ? `The player described this world as: "${gameState.world.founding_prompt}". Site identities should feel consistent with that description — a site that would feel wrong or anachronistic given those words is wrong. `
       : '';
     const _phase5Instruction = _hasUnfilled
-      ? `- Phase 5: ${_foundingPromptClause}One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. Sites marked enterable: YES must receive an identity that can be physically entered and explored — a structure, cave, vault, ruin, or similar enclosed space. A standing stone, open marker, or natural terrain feature is not enterable. The identity must name the place itself, not a feature within it — it must describe what the whole site fundamentally is. A well, shrine, stall, signpost, or any other element that exists inside or around a place is a feature, not a place. If the surrounding context implies a community, name the community. If it implies a single enclosed structure, name the structure. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
+      ? `- Phase 5: ${_foundingPromptClause}One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. Sites marked enterable: YES must receive an identity that can be physically entered and explored — a structure, cave, vault, ruin, or similar enclosed space. A standing stone, open marker, or natural terrain feature is not enterable. The identity must name the place itself, not a feature within it — it must describe what the whole site fundamentally is. A well, shrine, stall, signpost, or any other element that exists inside or around a place is a feature, not a place. If the surrounding context implies a community, name the community. If it implies a single enclosed structure, name the structure. Sites marked is_community: YES are confirmed by the engine to host a human community — assign an identity appropriate to a community of that scale (community_size 1 = outpost or hamlet, 9 = city). Sites marked is_community: NO must not be assumed to be communities unless the world description makes one clearly implied. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
@@ -1506,7 +1518,7 @@ ${_narDepth === 3
   ? `You are inside a local space (Layer L2). Describe the interior of this local space as indicated below.`
   : _narDepth >= 2
   ? `You are inside a site (Layer L1). Describe the interior of the current site as indicated below.`
-  : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, settlement, or building. The player is outdoors in open terrain. Any settlements listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
+  : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
 
 CORE INSTRUCTIONS:
 - Let the world tone guide your descriptions and atmosphere
@@ -1905,7 +1917,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     function classifyCellCategory(cellType) {
       if (!cellType) return '';
       const type = cellType.toLowerCase();
-      if (type.includes('settlement') || type.includes('village') || type.includes('town') || type.includes('house')) {
+      if (type.includes('village') || type.includes('town') || type.includes('house')) {
         return 'residential';
       } else if (type.includes('market') || type.includes('plaza') || type.includes('square') || type.includes('alley')) {
         return 'commerce_public';
@@ -1923,7 +1935,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     function scoreNarrativeCategory(narrativeText) {
       const locationKeywords = {
         commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
-        residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
+        residential: ['village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
         nature_outdoor: ['park', 'forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
         structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
       };
@@ -2063,7 +2075,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         diagnostics.push({
           type: 'site_presence_mismatch',
           severity: 'high',
-          detail: `cell type is settlement but site not found in registry`
+          detail: `cell type is community-type but site not found in registry`
         });
       } else if (!currentSite.name || currentSite.name.trim() === '') {
         diagnostics.push({
@@ -2537,7 +2549,7 @@ app.post('/ask-deepseek', async (req, res) => {
     const messages = [
       {
         role: "system",
-        content: `You are an expert game engine debugger. The user is asking questions about their AI-driven roguelike game's current state. Answer their questions based on the game context provided. Be specific about game mechanics, world generation, NPC placement, and settlement types. If something is missing or unusual, explain why it might be missing based on the generation algorithms.`
+        content: `You are an expert game engine debugger. The user is asking questions about their AI-driven roguelike game's current state. Answer their questions based on the game context provided. Be specific about game mechanics, world generation, NPC placement, and site types. If something is missing or unusual, explain why it might be missing based on the generation algorithms.`
       },
       {
         role: "user",

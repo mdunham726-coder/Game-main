@@ -231,7 +231,7 @@ function streamL1Cells(state) {
 
 /**
  * Phase 4: Authoritative single write path for site records.
- * Writes site to cell.sites and mirrors settlement-category sites to
+ * Writes site to cell.sites and mirrors enterable sites to
  * world.sites (keyed by interior_key).
  *
  * @param {object} state   — game state
@@ -263,15 +263,17 @@ function recordSiteToCell(state, cellKey, site) {
       return;
     }
     state.world.sites[site.interior_key] = {
-      id:       site.interior_key,
-      name:     site.name ?? null,
-      type:     site.identity || null,
-      npcs:     [],
-      is_stub:  true,
-      mx:       cell.mx,
-      my:       cell.my,
-      lx:       cell.lx,
-      ly:       cell.ly,
+      id:             site.interior_key,
+      name:           site.name ?? null,
+      type:           site.identity || null,
+      npcs:           [],
+      is_stub:        true,
+      is_community:   site.is_community ?? false,
+      community_size: site.community_size ?? 0,
+      mx:             cell.mx,
+      my:             cell.my,
+      lx:             cell.lx,
+      ly:             cell.ly,
     };
   }
 }
@@ -359,7 +361,7 @@ function validateQuestAcceptance(state, questId) {
     return { valid: false, error: "ACTIVE_QUEST_LIMIT" };
   }
   
-  // Quest existence check (search all settlements)
+  // Quest existence check (search all site quests)
   const quest = Object.values(state.quests.allQuestsSeeded)
     .flat()
     .find(q => q.id === questId);
@@ -640,7 +642,7 @@ function buildOutput(prevState, inputObj, logger) {
     for (const id in state.world.cells) {
       const cell = state.world.cells[id];
       if (!cell) continue;
-      // Heal legacy non-geography cell types (e.g. 'settlement' written by old sessions)
+      // Heal legacy non-geography cell types (e.g. old site-typed cells written by previous sessions)
       if (cell.type && !WorldGen.LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(cell.type) && !cell.is_custom) {
         const _healBiome = cell.biome || state.world.macro_biome || 'rural';
         const _healPalette = BIOME_TERRAIN_TYPES[_healBiome] || BIOME_TERRAIN_TYPES['rural'];
@@ -792,7 +794,7 @@ function main() {
 if (require.main === module) main();
 
 /**
- * Enter an L2 location (settlement or POI) from an L1 cell.
+ * Enter an L2 location (site or POI) from an L1 cell.
  * Phase 7: Site-driven entry — l2_id derived from site.site_id, not cell subtype.
  * Input: { cell_key, site_id } — caller resolves target site before calling.
  */

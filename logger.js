@@ -44,7 +44,7 @@ const categoryColors = {
   ENGINE: colors.blue,
   MOVEMENT: colors.cyan,
   NPC: colors.green,
-  SETTLEMENT: colors.yellow,
+  SITE: colors.yellow,
   NARRATION: colors.magenta,
   ERROR: colors.red,
 };
@@ -212,12 +212,12 @@ function createLogger(config = {}) {
     scenesResolved: (cellCount) => emit('ENGINE', 'scene_resolved', { cellCount }),
     
     // Sites
-    siteCreated: (name, type, location) => emit('SETTLEMENT', 'site_created', { name, type, location }),
+    siteCreated: (name, type, location) => emit('SITE', 'site_created', { name, type, location }),
     
     // NPCs
-    npcSpawnAttempted: (settlementId, count) => emit('NPC', 'npc_spawn_attempted', { settlementId, count }),
-    npcSpawnSucceeded: (settlementId, npcs) => emit('NPC', 'npc_spawn_succeeded', { settlementId, count: npcs.length }),
-    npcSpawnFailed: (settlementId, reason) => emit('NPC', 'npc_spawn_failed', { settlementId, reason }, { level: 'WARN' }),
+    npcSpawnAttempted: (siteId, count) => emit('NPC', 'npc_spawn_attempted', { siteId, count }),
+    npcSpawnSucceeded: (siteId, npcs) => emit('NPC', 'npc_spawn_succeeded', { siteId, count: npcs.length }),
+    npcSpawnFailed: (siteId, reason) => emit('NPC', 'npc_spawn_failed', { siteId, reason }, { level: 'WARN' }),
     
     // Narration
     narrationGenerated: (length) => emit('NARRATION', 'narration_generated', { length }),
@@ -246,7 +246,7 @@ function createLogger(config = {}) {
 
     // Site existence
     site_registered: (siteId, name, type, cellPosition) => 
-      emit('SETTLEMENT', 'site_registered', { site_id: siteId, name, type, cell_position: cellPosition }),
+      emit('SITE', 'site_registered', { site_id: siteId, name, type, cell_position: cellPosition }),
 
     // NPC spawning
     npc_spawn_attempted: (siteId, expectedCount) => 

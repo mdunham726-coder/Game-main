@@ -123,7 +123,7 @@ function tickAllNPCsGlobally(state, nowISO, deltas, turnNumber){
 
     // [SCHEDULING STUB]
     // TODO: Compute desired NPC position based on npc.schedule (when implemented)
-    //   For now: ensure NPC position defaults to settlement center if schedule undefined
+    //   For now: ensure NPC position defaults to site center if schedule undefined
     //   Future: Implement day/night cycles, work schedules, patrol routes, etc.
 
     // Mark last tick turn (diagnostics; included in delta via parent set)

@@ -723,7 +723,7 @@ Raw Input : ${turn.input?.raw || '(none)'}
 
       const locationKeywords = {
         commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
-        residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
+        residential: ['village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
         nature_outdoor: ['park', 'forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
         structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
       };
@@ -736,7 +736,7 @@ Raw Input : ${turn.input?.raw || '(none)'}
       }
 
       let cellCategory = '';
-      if (cellType.includes('settlement') || cellType.includes('house')) {
+      if (cellType.includes('house')) {
         cellCategory = 'residential';
       } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square') || cellType.includes('alley')) {
         cellCategory = 'commerce_public';
@@ -1099,7 +1099,7 @@ Total Turns Included: ${turnHistory.length}
             // QA-017: Expanded keyword list with common location descriptors
             const locationKeywords = {
               commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
-              settlement_residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
+              residential: ['village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
               nature_outdoor: ['park', 'forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
               structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
             };
@@ -1116,8 +1116,8 @@ Total Turns Included: ${turnHistory.length}
             
             // Classify cell type category
             let cellCategory = '';
-            if (cellType.includes('settlement') || cellType.includes('house')) {
-              cellCategory = 'settlement_residential';
+            if (cellType.includes('house')) {
+              cellCategory = 'residential';
             } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square') || cellType.includes('alley')) {
               cellCategory = 'commerce_public';
             } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain') || cellType.includes('meadow') || cellType.includes('field') || cellType.includes('grassland') || cellType.includes('plain') || cellType.includes('woodland')) {
@@ -1131,13 +1131,13 @@ Total Turns Included: ${turnHistory.length}
             let narrativeCategory = '';
             let narrativeCategoryScores = {
               commerce_public: 0,
-              settlement_residential: 0,
+              residential: 0,
               nature_outdoor: 0,
               structure_indoor: 0
             };
             let matchedKeywords = {
               commerce_public: [],
-              settlement_residential: [],
+              residential: [],
               nature_outdoor: [],
               structure_indoor: []
             };
@@ -1273,11 +1273,11 @@ Cell          : ${cellType} (terrain variant: ${authState.cell_subtype || 'unkno
 Grid Key      : ${authState.cell_key || 'unknown'}
 Biome         : ${authState.biome || 'unknown'}
 Turn Counter  : ${authState.turn_counter || 0}
-Site Count    : ${authState.settlement_count || 0}
+Site Count    : ${authState.site_count || 0}
 World Cells   : ${_wTotal} total | ${_wRegionCount} in region (${_wMx},${_wMy}) | ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
 -- INIT-TIME WORLD GENERATION INPUTS (frozen) --
 World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
-Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
+Bias          : site=${_qWbn(_qWb,'site_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
 Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
             
@@ -1324,19 +1324,19 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
             // 11. Build site block with clarified labels
             let siteSection = '';
             if (authState.current_site) {
-              const settlement = authState.current_site;
+              const site = authState.current_site;
               siteSection = `
 -- Active Site
-Registered Name : ${settlement.name || '(unnamed)'}
-Registered Type : ${settlement.type || '(unfilled)'}
-NPC Count       : ${settlement.npcs?.length || 0}`;
+Registered Name : ${site.name || '(unnamed)'}
+Registered Type : ${site.type || '(unfilled)'}
+NPC Count       : ${site.npcs?.length || 0}`;
             } else {
               siteSection = `
 -- Active Site
 (Not in a site)`;
             }
             
-            // NPCs (current container) — separate from settlement block
+            // NPCs (current container) — separate from site block
             let npcSection = '';
             if (authState.current_depth === 3) {
               const _lsPos = authState.local_space_position;
@@ -1505,7 +1505,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           // QA-017: Expanded keyword list with common location descriptors
           const locationKeywords = {
             commerce_public: ['market', 'plaza', 'square', 'street', 'district', 'bazaar', 'shopping', 'vendor', 'merchant', 'alley', 'lane', 'road', 'path'],
-            settlement_residential: ['settlement', 'village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
+            residential: ['village', 'town', 'city', 'hamlet', 'house', 'home', 'residence', 'dwelling', 'apartment', 'living'],
             nature_outdoor: ['park', 'forest', 'desert', 'lake', 'river', 'mountain', 'field', 'wood', 'plain', 'beach', 'coast', 'trail', 'grove'],
             structure_indoor: ['cave', 'temple', 'tower', 'ruins', 'camp', 'fort', 'building', 'structure', 'chamber', 'hall', 'room', 'courtyard', 'pavilion', 'terrace', 'gallery', 'vault', 'rooftop', 'crypt', 'corridor', 'archway']
           };
@@ -1521,8 +1521,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           // Classify cell type category
           let cellCategory = '';
           let narrativeCue = '';  // Track which keyword triggered mismatch
-          if (cellType.includes('settlement') || cellType.includes('house')) {
-            cellCategory = 'settlement_residential';
+          if (cellType.includes('house')) {
+            cellCategory = 'residential';
           } else if (cellType.includes('market') || cellType.includes('plaza') || cellType.includes('square') || cellType.includes('alley')) {
             cellCategory = 'commerce_public';
           } else if (cellType.includes('forest') || cellType.includes('desert') || cellType.includes('lake') || cellType.includes('mountain') || cellType.includes('meadow') || cellType.includes('field') || cellType.includes('grassland') || cellType.includes('plain') || cellType.includes('woodland')) {
@@ -1536,13 +1536,13 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           let narrativeCategory = '';
           let narrativeCategoryScores = {
             commerce_public: 0,
-            settlement_residential: 0,
+            residential: 0,
             nature_outdoor: 0,
             structure_indoor: 0
           };
           let matchedKeywords = {
             commerce_public: [],
-            settlement_residential: [],
+            residential: [],
             nature_outdoor: [],
             structure_indoor: []
           };
@@ -1684,11 +1684,11 @@ Cell          : ${cellType} (subtype: ${authState.cell_subtype || 'unknown'})
 Grid Key      : ${authState.cell_key || 'unknown'}
 Biome         : ${authState.biome || 'unknown'}
 Turn Counter  : ${authState.turn_counter || 0}
-Site Count    : ${authState.settlement_count || 0}
+Site Count    : ${authState.site_count || 0}
 World Cells   : ${_wTotal} total | ${_wRegionCount} in region (${_wMx},${_wMy}) � ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored
 -- INIT-TIME WORLD GENERATION INPUTS (frozen) --
 World Seed    : ${lastGameResponse?.state?.world?.phase3_seed ?? '(not set)'}
-Bias          : settlement=${_qWbn(_qWb,'settlement_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
+Bias          : site=${_qWbn(_qWb,'site_density')} landmark=${_qWbn(_qWb,'landmark_density')} danger=${_qWbn(_qWb,'danger_level')}
 Civ/Env       : civilization=${_qWbn(_qWb,'civilization_presence')} tone=${_qWbn(_qWb,'environment_tone')}
 Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?.world?.world_tone ?? '(missing)'}`;
           stateSection = stateSection.replace(/World Cells[^\n]*/u, `World Cells   : ${_wTotal} total | ${_wRegionCount} in region (${_wMx},${_wMy}) | ${_wRegions} region${_wRegions !== 1 ? 's' : ''} explored`);
@@ -1735,19 +1735,19 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
           // Site block with clarified labels
           let siteSection = '';
           if (authState.current_site) {
-            const settlement = authState.current_site;
+            const site = authState.current_site;
             siteSection = `
 -- Active Site
-Registered Name : ${settlement.name || '(unnamed)'}
-Registered Type : ${settlement.type || '(unfilled)'}
-NPC Count       : ${settlement.npcs?.length || 0}`;
+Registered Name : ${site.name || '(unnamed)'}
+Registered Type : ${site.type || '(unfilled)'}
+NPC Count       : ${site.npcs?.length || 0}`;
           } else {
             siteSection = `
 -- Active Site
 (Not in a site)`;
           }
           
-          // NPCs (current container) — separate from settlement block
+          // NPCs (current container) — separate from site block
           let npcSection = '';
           if (authState.current_depth === 3) {
             const _lsPos = authState.local_space_position;
@@ -1850,7 +1850,7 @@ ${turnHeader}${summaryLine}${movementSection}${mismatchWarning}${stateSection}${
 
           await navigator.clipboard.writeText(snapshotBundle);
           const logsResponse = document.getElementById('logsResponse');
-          logsResponse.innerHTML = 'QA snapshot copied to clipboard!\n\nBundle includes:\n- Parsed intent\n- Movement before/after\n- Authoritative state\n- Settlement info\n- Nearby cells\n- Narrative + turn logs';
+          logsResponse.innerHTML = 'QA snapshot copied to clipboard!\n\nBundle includes:\n- Parsed intent\n- Movement before/after\n- Authoritative state\n- Site info\n- Nearby cells\n- Narrative + turn logs';
           logsResponse.style.display = 'block';
           logsResponse.style.color = '#2ecc71';
 

@@ -1,4 +1,4 @@
-// WorldGen.js — Phase 3C: Enhanced with NPC persistence, settlement metadata, and quest integration
+// WorldGen.js — Phase 3C: Enhanced with NPC persistence, site metadata, and quest integration
 const crypto = require('crypto');
 const { createLogger } = require('./logger');
 
@@ -71,7 +71,7 @@ const BIOME_PALETTES = {
 };
 
 // =============================================================================
-// PHASE 3C: SETTLEMENT NAME GENERATION
+// PHASE 3C: SITE NAME GENERATION
 // =============================================================================
 
 // Name component libraries for procedural generation
@@ -89,10 +89,10 @@ const NAME_SUFFIXES = [
 ];
 
 /**
- * Generate deterministic settlement name from settlement ID and world seed
- * @param {string} settlementId - Unique settlement identifier
+ * Generate deterministic site name from site ID and world seed
+ * @param {string} siteId - Unique site identifier
  * @param {string} worldSeed - World seed for consistency
- * @returns {string} Generated settlement name
+ * @returns {string} Generated site name
  */
 function generateSiteName(siteId, worldSeed) {
   const combinedSeed = `${worldSeed}|${siteId}|name`;
@@ -111,12 +111,12 @@ function generateSiteName(siteId, worldSeed) {
 }
 
 // =============================================================================
-// PHASE 3C: NPC COUNT BY SETTLEMENT TYPE
+// PHASE 3C: NPC COUNT BY SITE TYPE
 // =============================================================================
 
 /**
- * Get NPC count for settlement type
- * @param {string} settlementType - Type of settlement
+ * Get NPC count for site type
+ * @param {string} siteType - Type of site
  * @returns {number} Number of NPCs to generate
  */
 function getNPCCountForSite(siteType) {
@@ -208,9 +208,9 @@ function generateNPCInventory(profession, rng) {
 // =============================================================================
 
 /**
- * Generate NPCs for a settlement with persistent IDs and quest-giver flags
- * @param {string} settlementId - Unique settlement identifier
- * @param {string} settlementType - Type of settlement
+ * Generate NPCs for a site with persistent IDs and quest-giver flags
+ * @param {string} siteId - Unique site identifier
+ * @param {string} siteType - Type of site
  * @param {string} worldSeed - World seed for determinism
  * @param {object} npcModule - NPCs.js module (for generateNPC, TRAITS_CATALOG)
  * @returns {Array<object>} Array of generated NPCs with metadata
@@ -440,7 +440,7 @@ async function detectWorldToneWithDeepSeek(worldPrompt) {
  * Detect starting location type from player's world prompt
  * Uses semantic understanding to infer what kind of place the character should start in
  * @param {string} worldPrompt - Player's world description
- * @returns {Promise<string>} Settlement type (e.g. "village", "shop", "tavern", "temple")
+ * @returns {Promise<string>} Site type (e.g. "village", "shop", "tavern", "temple")
  */
 async function detectStartingLocationWithDeepSeek(worldPrompt) {
   if (!process.env.DEEPSEEK_API_KEY || !axios) {
@@ -484,7 +484,7 @@ What location type should they START in? Choose one: village, town, city, outpos
     // Sanitize to valid site-scale types only (no building-scale vocabulary)
     const validTypes = ["village", "town", "city", "outpost", "fort", "castle", "cave", "ruins", "forest", "port", "mine", "farm", "wilderness"];
     if (!validTypes.includes(locationType)) {
-      console.log(`[LOCATION] Invalid type "${locationType}", mapping to nearest settlement type`);
+      console.log(`[LOCATION] Invalid type "${locationType}", mapping to nearest site type`);
       locationType = "village";
     }
 
@@ -683,17 +683,32 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
     else if (i === 0) enterable = enterRoll < 0.60;
     else              enterable = enterRoll < 0.40;
 
+    // Community signal — engine-owned, deterministic. Engine decides if a community
+    // exists and how large it is. Model decides what kind of community it is.
+    const civPresence = (worldBias?.civilization_presence) || 'medium';
+    const commRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|community`))();
+    const commProb = civPresence === 'high' ? 0.40 : civPresence === 'medium' ? 0.20 : 0.08;
+    const is_community = enterable && (commRoll < commProb);
+    let community_size = 0;
+    if (is_community) {
+      const sizeMax = civPresence === 'high' ? 9 : civPresence === 'medium' ? 6 : 3;
+      const sizeRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|community_size`))();
+      community_size = Math.max(1, Math.ceil(sizeRoll * sizeMax));
+    }
+
     sites.push({
       site_id,
-      parent_cell:  cellKey,
-      l0_ref:       { mx, my, lx, ly },
+      parent_cell:   cellKey,
+      l0_ref:        { mx, my, lx, ly },
       enterable,
-      is_filled:    false,
-      name:         null,
-      identity:     null,
-      description:  null,
-      entered:      false,
-      interior_key: null,
+      is_community,
+      community_size,
+      is_filled:     false,
+      name:          null,
+      identity:      null,
+      description:   null,
+      entered:       false,
+      interior_key:  null,
     });
   }
 
@@ -954,7 +969,7 @@ function generateL1FeatureDescription(site, worldSeed = "default") {
 }
 
 // =============================================================================
-// PHASE 3C: ENHANCED L2 SETTLEMENT GENERATION
+// PHASE 3C: ENHANCED L2 SITE GENERATION
 // =============================================================================
 
 /**

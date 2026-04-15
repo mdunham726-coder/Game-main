@@ -121,7 +121,7 @@ class QuestConstraintEngine {
   }
 
   /**
-   * Roll quest constraints based on settlement and world context
+   * Roll quest constraints based on site and world context
    */
   rollQuestConstraints(siteContext, questTier = 'random') {
     const constraints = {
@@ -428,7 +428,7 @@ class FallbackQuestSystem {
     return [{
       protagonist: { name: "Worried Villager", description: "A concerned local with a small problem", faction: "Village", reputation: "Neutral" },
       antagonist: { name: "Minor Nuisance", type: "wildlife", motivation: "Basic survival needs" },
-      narrative: "A small problem has been bothering the locals around ${settlement}. It's nothing serious, but someone needs to handle it.",
+      narrative: "A small problem has been bothering the locals around ${site}. It's nothing serious, but someone needs to handle it.",
       objective_description: "Deal with the minor issue causing trouble for the villagers.",
       reward_description: "The villagers have pooled ${reward_gold} gold for your help.",
       narrative_hooks: ["It's been going on for a few days", "Nobody else has time to deal with it"],
@@ -440,7 +440,7 @@ class FallbackQuestSystem {
     return [{
       protagonist: { name: "Local Merchant", description: "A business owner facing difficulties", faction: "Trade Guild", reputation: "Respected" },
       antagonist: { name: "Troublemakers", type: "bandits", motivation: "Quick profit" },
-      narrative: "Some troublemakers have been causing issues around ${settlement}. They've been stealing supplies and generally making life difficult.",
+      narrative: "Some troublemakers have been causing issues around ${site}. They've been stealing supplies and generally making life difficult.",
       objective_description: "Find the troublemakers and put a stop to their activities.",
       reward_description: "The merchant's guild offers ${reward_gold} gold for resolving this problem.",
       narrative_hooks: ["The troublemakers seem organized", "Some locals are secretly helping them"],
@@ -452,7 +452,7 @@ class FallbackQuestSystem {
     return [{
       protagonist: { name: "Town Official", description: "A respected community leader", faction: "Town Council", reputation: "Authority" },
       antagonist: { name: "Organized Threat", type: "cultists", motivation: "Ideological goals" },
-      narrative: "An organized group has been operating in the area around ${settlement}, causing significant problems that threaten community stability.",
+      narrative: "An organized group has been operating in the area around ${site}, causing significant problems that threaten community stability.",
       objective_description: "Investigate the group's activities and neutralize the threat they pose.",
       reward_description: "The town council has authorized a reward of ${reward_gold} gold for success.",
       narrative_hooks: ["The group has inside supporters", "Their goals are unclear but dangerous"],
@@ -464,7 +464,7 @@ class FallbackQuestSystem {
     return [{
       protagonist: { name: "Military Commander", description: "An experienced officer dealing with serious threats", faction: "Military", reputation: "Feared" },
       antagonist: { name: "Dangerous Organization", type: "mercenaries", motivation: "Wealth and power" },
-      narrative: "A dangerous organization has established itself near ${settlement}, posing a serious threat to regional security.",
+      narrative: "A dangerous organization has established itself near ${site}, posing a serious threat to regional security.",
       objective_description: "Confront and dismantle the organization's operations in the area.",
       reward_description: "A bounty of ${reward_gold} gold has been placed on resolving this situation.",
       narrative_hooks: ["The organization has powerful backers", "Previous attempts have failed"],
@@ -476,7 +476,7 @@ class FallbackQuestSystem {
     return [{
       protagonist: { name: "Royal Agent", description: "An elite operative dealing with existential threats", faction: "Crown", reputation: "Legendary" },
       antagonist: { name: "Mortal Threat", type: "monsters", motivation: "Destruction or domination" },
-      narrative: "A truly dangerous threat has emerged near ${settlement}, one that could devastate the entire region if not stopped.",
+      narrative: "A truly dangerous threat has emerged near ${site}, one that could devastate the entire region if not stopped.",
       objective_description: "Eliminate the threat completely, using any means necessary.",
       reward_description: "The crown offers ${reward_gold} gold and royal favor for success.",
       narrative_hooks: ["The threat has already claimed many lives", "Time is running out"],
@@ -488,7 +488,7 @@ class FallbackQuestSystem {
     const filled = JSON.parse(JSON.stringify(template));
     
     // Replace all placeholders with actual constraint values
-    let narrative = filled.narrative.replace('${settlement}', constraints.site_type);
+    let narrative = filled.narrative.replace('${site}', constraints.site_type);
     narrative = narrative.replace('${reward_gold}', constraints.reward_gold);
     filled.narrative = narrative;
     
