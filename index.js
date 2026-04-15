@@ -823,9 +823,15 @@ app.post('/narrate', async (req, res) => {
     
     if (logger) logger.worldPromptReceived(inputObj.WORLD_PROMPT);
     
+    // Worldgen log — accumulated during this init sequence, frozen after Engine.buildOutput().
+    const _worldgenLog = [];
+    const _wLogT0 = Date.now();
+    const _wLog = (pass, step, data) => _worldgenLog.push({ pass, step, data, ms: Date.now() - _wLogT0 });
+
     try {
       // Handle async world generation with DeepSeek biome detection
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
+        _wLog('init', 'world_description_analysis', { prompt: (inputObj.WORLD_PROMPT || '').slice(0, 80) });
         const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, gameState.rng_seed || 0);
         if (worldData) {
           gameState.world.macro_biome = worldData.biome;
@@ -841,25 +847,31 @@ app.post('/narrate', async (req, res) => {
           gameState.world.world_context = worldData.world_context;
           // Approach C: Store founding prompt for identity alignment — natural language, not a classification
           gameState.world.founding_prompt = inputObj.WORLD_PROMPT;
+          _wLog('init', 'world_profile', { biome: worldData.biome, tone: worldData.worldTone, macro_palette: worldData.palette });
 
           // Phase 3: Seed-derived terrain patch and start position
+          _wLog('pass1+2', 'terrain_patch_start', { anchor: WorldGen.selectStartAnchor(WorldGen.h32(inputObj.WORLD_PROMPT)), biome: worldData.biome });
           const phase3Seed = WorldGen.h32(inputObj.WORLD_PROMPT);
           const startAnchor = WorldGen.selectStartAnchor(phase3Seed);
           const patchCells  = WorldGen.generateTerrainPatch(startAnchor, worldData.biome, phase3Seed, gameState.world.cells);
           Object.assign(gameState.world.cells, patchCells);
+          _wLog('pass1+2', 'terrain_patch_complete', { cell_count: Object.keys(patchCells).length });
           gameState.world.position = WorldGen.selectStartPosition(phase3Seed, worldData.world_bias, patchCells, startAnchor);
           // Phase 4A: persist seed so Engine.js can use it for deterministic site generation
           gameState.world.phase3_seed = phase3Seed;
           console.log('[PHASE3] anchor=', startAnchor, '| start=', gameState.world.position, '| patch cells=', Object.keys(patchCells).length);
 
           // Phase 4D: seed patch cells with sites (bypass streaming hook — patch cells pre-exist)
+          let _totalPatchSites = 0;
           for (const [patchKey, patchCell] of Object.entries(patchCells)) {
             const patchSites = WorldGen.evaluateCellForSites(patchKey, patchCell.type, worldData.world_bias, phase3Seed);
             for (const pSite of patchSites) {
               pSite.created_at_turn = gameState.turn_counter ?? 0;
               Engine.recordSiteToCell(gameState, patchKey, pSite);
             }
+            _totalPatchSites += patchSites.length;
           }
+          _wLog('sites', 'patch_sites_seeded', { total_sites: _totalPatchSites });
           
           if (logger) {
             logger.biomeDetected(worldData.biome);
@@ -933,6 +945,25 @@ app.post('/narrate', async (req, res) => {
             console.log('[WORLD] [Phase6B] Enterable site already present from Phase 4D — skipped injection.');
           }
 
+          _wLog('init', 'start_cell_resolved', {
+            mx: startPos.mx, my: startPos.my, lx: startPos.lx, ly: startPos.ly,
+            type: gameState.world.cells[startingLocationCellKey]?.type || '(unknown)'
+          });
+
+          // Phase obs: Pre-generate the full 128×128 starting macro cell.
+          // Executed AFTER Phase 6B so the skip guard in generateFullMacroCell
+          // protects the patch cells and the start cell from being overwritten.
+          console.log('[WORLDGEN] Generating full 128×128 macro cell for observability...');
+          const _fullMacroCells = WorldGen.generateFullMacroCell(
+            startAnchor.mx, startAnchor.my, worldData.biome, phase3Seed, gameState.world.cells
+          );
+          Object.assign(gameState.world.cells, _fullMacroCells);
+          _wLog('pass1+2', 'full_macro_cell_generated', {
+            new_cells: Object.keys(_fullMacroCells).length,
+            total_world_cells: Object.keys(gameState.world.cells).length
+          });
+          console.log('[WORLDGEN] Full macro cell complete:', Object.keys(_fullMacroCells).length, 'new cells');
+
           // Phase 7: Legacy L2 stub block removed.
           // recordSiteToCell now stores the stub under the canonical site.interior_key.
         }
@@ -942,6 +973,154 @@ app.post('/narrate', async (req, res) => {
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
         sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: false, logger });
+      }
+
+      // Worldgen observability: compute world-shape summaries from the full 128×128 macro,
+      // then freeze the log. Runs only on first turn (after full macro pre-generation).
+      if (_worldgenLog.length > 0 && startAnchor) {
+        _wLog('stream', 'streaming_complete', { total_cells: Object.keys(gameState.world.cells).length });
+
+        // Collect all L1 cells for the starting macro
+        const _macroPrefix = `LOC:${startAnchor.mx},${startAnchor.my}:`;
+        const _macroCells = Object.entries(gameState.world.cells)
+          .filter(([k]) => k.startsWith(_macroPrefix))
+          .map(([, v]) => v);
+
+        // C2a: Field statistics (elevation, moisture, temperature)
+        const _fieldStats = {};
+        for (const field of ['elevation', 'moisture', 'temperature']) {
+          const vals = _macroCells.map(c => c[field]).filter(v => v != null);
+          if (vals.length === 0) { _fieldStats[field] = { n: 0 }; continue; }
+          const n = vals.length;
+          const min = Math.min(...vals);
+          const max = Math.max(...vals);
+          const mean = vals.reduce((s, v) => s + v, 0) / n;
+          const stddev = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / n);
+          _fieldStats[field] = {
+            n, min: +min.toFixed(3), max: +max.toFixed(3),
+            mean: +mean.toFixed(3), stddev: +stddev.toFixed(3)
+          };
+        }
+        _wLog('pass1', 'field_statistics', _fieldStats);
+
+        // C2b: Terrain distribution
+        const _typeCounts = {};
+        const _groupCounts = {};
+        const _tgMap = WorldGen.TERRAIN_GROUP_MAP;
+        for (const cell of _macroCells) {
+          const t = cell.type || 'unknown';
+          _typeCounts[t] = (_typeCounts[t] || 0) + 1;
+          const g = _tgMap[t] || 'wilderness';
+          _groupCounts[g] = (_groupCounts[g] || 0) + 1;
+        }
+        const _sortedByCount = obj => Object.fromEntries(
+          Object.entries(obj).sort(([, a], [, b]) => b - a)
+        );
+        _wLog('pass2', 'terrain_distribution', {
+          total: _macroCells.length,
+          type_counts: _sortedByCount(_typeCounts),
+          group_counts: _sortedByCount(_groupCounts)
+        });
+
+        // C2c: Coarse map snapshot — 16×16 grid (each block = 8×8 cells)
+        const _terrainCodes = {
+          plains_grassland:'PG', plains_wildflower:'PW', meadow:'ME',
+          forest_deciduous:'FD', forest_mixed:'FM', forest_coniferous:'FC',
+          hills_rolling:'HR', hills_rocky:'HK', rocky_terrain:'RT', scree:'SC',
+          mountain_slopes:'MS', mountain_peak:'MP', mountain_pass:'MA',
+          desert_sand:'DS', desert_dunes:'DD', desert_rocky:'DR',
+          scrubland:'SB', badlands:'BL', canyon:'CY', mesa:'MZ',
+          tundra:'TU', snowfield:'SF', ice_sheet:'IS', permafrost:'PF', alpine:'AL',
+          swamp:'SW', marsh:'MR', wetland:'WL', bog:'BG',
+          beach_sand:'BS', beach_pebble:'BP', cliffs_coastal:'CC', tidepools:'TP', dunes_coastal:'DC',
+          river_crossing:'RC', stream:'ST', lake_shore:'LS', waterfall:'WF', spring:'SP'
+        };
+        const _coarseGrid = [];
+        for (let by = 0; by < 16; by++) {
+          const row = [];
+          for (let bx = 0; bx < 16; bx++) {
+            const blockCells = _macroCells.filter(c =>
+              Math.floor(c.lx / 8) === bx && Math.floor(c.ly / 8) === by
+            );
+            if (blockCells.length === 0) { row.push(null); continue; }
+            const freq = {};
+            for (const c of blockCells) { const t = c.type||''; freq[t] = (freq[t]||0)+1; }
+            const dom = Object.entries(freq).sort(([,a],[,b])=>b-a)[0][0];
+            row.push(_terrainCodes[dom] || '??');
+          }
+          _coarseGrid.push(row);
+        }
+        const _codesLegend = Object.entries(_terrainCodes).map(([k,v])=>`${v}=${k}`).join(',');
+        _wLog('pass2', 'coarse_map_16x16', { grid: _coarseGrid, codes: _codesLegend });
+
+        // C2d: Spatial summaries — 16×16 zones of 8×8 cells each
+        const _zones = {};
+        for (const cell of _macroCells) {
+          const zk = `${Math.floor(cell.lx/8)},${Math.floor(cell.ly/8)}`;
+          if (!_zones[zk]) _zones[zk] = { elev:[], mois:[], temp:[] };
+          if (cell.elevation != null) _zones[zk].elev.push(cell.elevation);
+          if (cell.moisture  != null) _zones[zk].mois.push(cell.moisture);
+          if (cell.temperature != null) _zones[zk].temp.push(cell.temperature);
+        }
+        const _zoneMeans = Object.entries(_zones).map(([zk, z]) => ({
+          zone: zk,
+          meanElev: z.elev.length ? z.elev.reduce((a,b)=>a+b,0)/z.elev.length : null,
+          meanMois: z.mois.length ? z.mois.reduce((a,b)=>a+b,0)/z.mois.length : null,
+          meanTemp: z.temp.length ? z.temp.reduce((a,b)=>a+b,0)/z.temp.length : null,
+        }));
+        const _topN = (arr, key, n, asc=false) =>
+          arr.filter(z=>z[key]!=null)
+             .sort((a,b)=> asc ? a[key]-b[key] : b[key]-a[key])
+             .slice(0,n)
+             .map(z=>({ zone: z.zone, mean: +z[key].toFixed(3) }));
+        _wLog('pass1', 'spatial_summaries', {
+          top5_elevation:    _topN(_zoneMeans, 'meanElev', 5),
+          top5_moisture:     _topN(_zoneMeans, 'meanMois', 5),
+          bottom5_moisture:  _topN(_zoneMeans, 'meanMois', 5, true),
+          top3_temperature:  _topN(_zoneMeans, 'meanTemp', 3),
+          bottom3_temperature: _topN(_zoneMeans, 'meanTemp', 3, true),
+        });
+
+        // C2e: Contiguity signals — BFS per terrain group within starting macro
+        const _posMap = {};
+        for (const cell of _macroCells) {
+          const g = _tgMap[cell.type] || 'wilderness';
+          if (!_posMap[g]) _posMap[g] = new Map();
+          _posMap[g].set(`${cell.lx},${cell.ly}`, true);
+        }
+        const _contiguity = {};
+        for (const [group, posSet] of Object.entries(_posMap)) {
+          const visited = new Set();
+          let componentCount = 0;
+          let largestSize = 0;
+          let isolatedCells = 0;
+          for (const posKey of posSet.keys()) {
+            if (visited.has(posKey)) continue;
+            componentCount++;
+            const queue = [posKey];
+            visited.add(posKey);
+            let size = 0;
+            while (queue.length) {
+              const cur = queue.shift();
+              size++;
+              const [cx, cy] = cur.split(',').map(Number);
+              for (const [nx, ny] of [[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]]) {
+                const nk = `${nx},${ny}`;
+                if (!visited.has(nk) && posSet.has(nk)) {
+                  visited.add(nk);
+                  queue.push(nk);
+                }
+              }
+            }
+            if (size > largestSize) largestSize = size;
+            if (size === 1) isolatedCells++;
+          }
+          _contiguity[group] = { component_count: componentCount, largest_component_size: largestSize, isolated_cells: isolatedCells };
+        }
+        _wLog('pass2', 'contiguity', { groups: _contiguity });
+
+        // Freeze worldgen log on gameState — no further writes
+        gameState.world.worldgen_log = _worldgenLog;
       }
     } catch (err) {
       console.error('Engine error on first turn:', err.message);
@@ -2053,6 +2232,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       scene, 
       diagnostics,
       visibility: visibilityPayload,
+      worldgen_log: gameState.world?.worldgen_log || null,
       debug 
     });
   } catch (err) {

@@ -1030,6 +1030,63 @@ function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
 }
 
 /**
+ * Pre-generate all 128×128 L1 cells for a single macro cell at init time.
+ *
+ * Called once during world initialisation, after generateTerrainPatch() and
+ * after Phase 6B start-cell rewrite, so the skip guard guarantees the patch
+ * and start-cell data are never overwritten.
+ *
+ * - Identical Pass 1 + Pass 2 logic as generateTerrainPatch.
+ * - Does NOT seed sites (sites remain on-demand via streaming / Phase 4D).
+ * - Returns a flat { [cellKey]: cellObj } map of all newly created cells.
+ *
+ * @param {number} mx           — macro x (0–7)
+ * @param {number} my           — macro y (0–7)
+ * @param {string} biome        — biome key
+ * @param {number} worldSeed    — phase3_seed / promptSeed
+ * @param {object} existingCells — current gameState.world.cells (read-only)
+ * @returns {object} { [cellKey]: cellObj }
+ */
+function generateFullMacroCell(mx, my, biome, worldSeed, existingCells) {
+  const l1w = DEFAULTS.L1_SIZE.w;   // 128
+  const l1h = DEFAULTS.L1_SIZE.h;   // 128
+  const cells = {};
+
+  for (let lx = 0; lx < l1w; lx++) {
+    for (let ly = 0; ly < l1h; ly++) {
+      const cellKey = `LOC:${mx},${my}:${lx},${ly}`;
+
+      // Skip any cell already written (patch + Phase 6B start cell are protected)
+      if (existingCells && existingCells[cellKey]) continue;
+
+      // Pass 1: compute physical noise fields
+      const _elev = evalElevation(mx, my, lx, ly, worldSeed, biome);
+      const _mois = evalMoisture(mx, my, lx, ly, worldSeed, biome);
+      const _temp = evalTemperature(mx, my, lx, ly, worldSeed, biome);
+
+      // Pass 2: classify terrain deterministically from noise fields
+      const terrainType = classifyTerrainFromNoise(_elev, _mois, _temp, biome, cellKey, worldSeed);
+
+      cells[cellKey] = {
+        type:        terrainType,
+        subtype:     '',
+        biome:       biome,
+        mx:          mx,
+        my:          my,
+        lx:          lx,
+        ly:          ly,
+        description: '',
+        elevation:   _elev,
+        moisture:    _mois,
+        temperature: _temp,
+      };
+    }
+  }
+
+  return cells;
+}
+
+/**
  * Select the best starting cell from a terrain patch based on world_bias.
  *
  * Scoring: CIV_TERRAIN_SCORE[terrainGroup][civilization_presence]
@@ -1364,4 +1421,7 @@ module.exports = {
   evalTemperature,
   // Pass 2 — terrain classification
   classifyTerrainFromNoise,
+  // Observability slice — full macro pre-generation + group map
+  generateFullMacroCell,
+  TERRAIN_GROUP_MAP,
 };

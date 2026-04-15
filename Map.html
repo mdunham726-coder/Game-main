@@ -353,6 +353,53 @@
     #message-body {
       font-size: 12px;
     }
+    /* ── Worldgen Log Panel ── */
+    #wglog-panel {
+      position: absolute;
+      top: 0; right: 0;
+      width: 460px;
+      max-height: 70vh;
+      background: #111;
+      border: 1px solid #444;
+      border-top: none;
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      font-size: 11px;
+      font-family: monospace;
+    }
+    #wglog-panel.visible { display: flex; }
+    #wglog-copy-row {
+      padding: 6px 10px;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1a1a1a;
+      flex-shrink: 0;
+    }
+    #wglog-copy-btn {
+      background: #283593; border: 1px solid #3949ab; color: #e0e0e0;
+      font-family: monospace; font-size: 11px; padding: 2px 10px;
+      cursor: pointer; letter-spacing: 0.5px;
+    }
+    #wglog-copy-btn:hover { background: #3949ab; }
+    #wglog-label { color: #888; font-size: 10px; }
+    #wglog-entries {
+      overflow-y: auto;
+      flex: 1;
+      padding: 6px 10px;
+    }
+    .wglog-entry {
+      display: flex; gap: 8px; align-items: baseline;
+      padding: 2px 0;
+      border-bottom: 1px solid #1c1c1c;
+      color: #c0c0c0;
+    }
+    .wglog-ms   { color: #666; min-width: 48px; text-align: right; flex-shrink: 0; }
+    .wglog-pass { color: #f39c12; min-width: 60px; flex-shrink: 0; }
+    .wglog-step { color: #7ecbff; min-width: 140px; flex-shrink: 0; }
+    .wglog-data { color: #888; word-break: break-all; font-size: 10px; }
   </style>
 </head>
 <body>
@@ -360,6 +407,11 @@
   <div id="header">
     <h1>MAP v0 — TRUTH VIEWER</h1>
     <div style="display:flex; align-items:center; gap:12px;">
+      <button id="wglog-btn" onclick="toggleWgLog()" style="
+        background:#222; border:1px solid #555; color:#e0e0e0;
+        font-family:monospace; font-size:11px; padding:3px 10px;
+        cursor:pointer; letter-spacing:0.5px;
+      ">WORLDGEN LOG</button>
       <button id="overlay-btn" onclick="toggleOverlay()" style="
         background:#222; border:1px solid #555; color:#e0e0e0;
         font-family:monospace; font-size:11px; padding:3px 10px;
@@ -367,6 +419,14 @@
       ">Overlay: TERRAIN</button>
       <span id="status-bar">Initializing...</span>
     </div>
+  </div>
+
+  <div id="wglog-panel">
+    <div id="wglog-copy-row">
+      <button id="wglog-copy-btn" onclick="copyWgLog()">Copy Log JSON</button>
+      <span id="wglog-label">No worldgen log yet — open game and play Turn 1</span>
+    </div>
+    <div id="wglog-entries"></div>
   </div>
 
   <div id="main" style="position: relative;">
@@ -403,7 +463,7 @@
   <script>
     // ── Constants ──────────────────────────────────────────────────────────────
     const POLL_INTERVAL_MS = 500;
-    const MIN_SCALE = 0.2;   // practical floor — cells remain legible colored squares
+    const MIN_SCALE = 0.05;  // practical floor — full 128×128 grid fits viewport at first open
     const MAX_SCALE = 3.0;   // ~3 cells filling the viewport at max zoom
     const FIT_PADDING = 24;  // px margin each side when fitting grid to viewport
 
@@ -412,6 +472,9 @@
     let selectedCell = null;
     // Track which region was last centered so we only center once per region entry
     let lastCenteredRegionKey = null;
+    // World grid dimensions — updated in render(); used by clampPan() and RAF fit block
+    let _worldGridW = 128;
+    let _worldGridH = 128;
 
     // ── Overlay mode ──────────────────────────────────────────────────────────
     // 'terrain' = default dark-blue for generated cells (no color table yet — Pass 2)
@@ -421,6 +484,34 @@
     const OVERLAY_SEQUENCE = ['terrain', 'elevation', 'moisture'];
     const OVERLAY_LABELS   = { terrain: 'TERRAIN', elevation: 'ELEVATION', moisture: 'MOISTURE' };
 
+    // ── Terrain type → hex color (used in terrain overlay mode) ──────────────
+    const TERRAIN_COLORS = {
+      // open
+      plains_grassland: '#6ab04c', plains_wildflower: '#a3cb38', meadow: '#78e08f',
+      hills_rolling:    '#4c9e3c', scrubland:         '#95a94a',
+      // forest
+      forest_deciduous: '#218c3b', forest_coniferous: '#1a5c2c', forest_mixed: '#2d7a46',
+      // rugged
+      hills_rocky:      '#7f8c8d', mountain_slopes:   '#8c7853', mountain_peak: '#bdc3c7',
+      mountain_pass:    '#a0896d', rocky_terrain:     '#786450', scree:         '#9e8870',
+      alpine:           '#d0c8c0',
+      // arid
+      desert_sand:      '#f9ca24', desert_dunes:      '#f0932b', desert_rocky:  '#c6862c',
+      badlands:         '#c0392b', canyon:            '#a93226', mesa:          '#b85c38',
+      // cold
+      tundra:           '#74b9ff', snowfield:         '#dfe6e9', ice_sheet:     '#a0c4d4',
+      permafrost:       '#6c8c9a',
+      // wetland
+      swamp:            '#2d4c2d', marsh:             '#3d6040', wetland:       '#4a705a',
+      bog:              '#3a4c30',
+      // water
+      river_crossing:   '#2980b9', stream:            '#54a0ff', lake_shore:    '#74b9ff',
+      waterfall:        '#0652dd', spring:            '#12cbc4',
+      // coast
+      beach_sand:       '#f7d794', beach_pebble:      '#c0a882', cliffs_coastal: '#7f8c8d',
+      tidepools:        '#00b894', dunes_coastal:     '#fad390',
+    };
+
     function toggleOverlay() {
       const idx = OVERLAY_SEQUENCE.indexOf(mapOverlay);
       mapOverlay = OVERLAY_SEQUENCE[(idx + 1) % OVERLAY_SEQUENCE.length];
@@ -429,8 +520,8 @@
     }
 
     // Returns the CSS background-color string for a generated cell given current overlay mode.
-    // cellEl must have data-elevation and data-moisture attributes written at render time.
-    function cellOverlayColor(elevation, moisture) {
+    // cellEl must have data-elevation, data-moisture, and data-type attributes written at render time.
+    function cellOverlayColor(elevation, moisture, terrainType) {
       if (mapOverlay === 'elevation') {
         if (elevation == null) return '#3a0a0a'; // missing data — explicit red-tint
         const L = Math.round(elevation * 100);
@@ -441,16 +532,18 @@
         const L = Math.round(moisture * 80); // 0–80% lightness on blue hue
         return `hsl(210,60%,${L}%)`;
       }
-      return '#1a1a2e'; // terrain mode — default generated cell color
+      // terrain mode — use TERRAIN_COLORS lookup, fall back to dark blue
+      return TERRAIN_COLORS[terrainType] || '#1a1a2e';
     }
 
     // Re-colors all existing generated cell DOM elements without re-rendering the grid.
     function recolorCells() {
       const cells = document.querySelectorAll('.cell.generated');
       for (const el of cells) {
-        const elevation = el.dataset.elevation != null ? parseFloat(el.dataset.elevation) : null;
-        const moisture  = el.dataset.moisture  != null ? parseFloat(el.dataset.moisture)  : null;
-        el.style.backgroundColor = cellOverlayColor(elevation, moisture);
+        const elevation   = el.dataset.elevation != null ? parseFloat(el.dataset.elevation) : null;
+        const moisture    = el.dataset.moisture  != null ? parseFloat(el.dataset.moisture)  : null;
+        const terrainType = el.dataset.type || null;
+        el.style.backgroundColor = cellOverlayColor(elevation, moisture, terrainType);
       }
     }
 
@@ -467,6 +560,21 @@
       if (!isFinite(vpScale) || vpScale <= 0) vpScale = 1;
       document.getElementById('grid-container').style.transform =
         `translate(${vpX}px, ${vpY}px) scale(${vpScale})`;
+    }
+
+    // Hard pan clamp — prevents panning outside the world grid.
+    // When the scaled world is smaller than the viewport, the world is centered.
+    // When larger, the viewport is hard-stopped at world edges.
+    function clampPan() {
+      const vp = document.getElementById('map-viewport');
+      const vpRect = vp.getBoundingClientRect();
+      const _cellPxW = 65; const _cellPxH = 53;
+      const scaledW = _worldGridW * _cellPxW * vpScale;
+      const scaledH = _worldGridH * _cellPxH * vpScale;
+      if (scaledW <= vpRect.width)  { vpX = (vpRect.width  - scaledW) / 2; }
+      else { vpX = Math.min(0, Math.max(vpX, vpRect.width  - scaledW)); }
+      if (scaledH <= vpRect.height) { vpY = (vpRect.height - scaledH) / 2; }
+      else { vpY = Math.min(0, Math.max(vpY, vpRect.height - scaledH)); }
     }
 
     // ── Overlay helpers ────────────────────────────────────────────────────────
@@ -718,6 +826,7 @@
         gridW = l1Default.w;
         gridH = l1Default.h;
         dimensionNotice = null;
+        _worldGridW = gridW; _worldGridH = gridH; // update module-level for clampPan()
       } else {
         // No configured dimensions — derive tight bounding box from actual cell coords only
         let minLx = Infinity, maxLx = -Infinity, minLy = Infinity, maxLy = -Infinity;
@@ -736,6 +845,7 @@
         // Tight bounding box: offset grid starts at (minLx, minLy)
         gridW = maxLx - minLx + 1;
         gridH = maxLy - minLy + 1;
+        _worldGridW = gridW; _worldGridH = gridH; // update module-level for clampPan()
         dimensionNotice = `Region dimensions unavailable — showing known generated cells only.`;
       }
 
@@ -791,9 +901,10 @@
             // Store noise values as data attributes for recolorCells() re-pass
             if (_elev != null) el.dataset.elevation = _elev.toFixed(4);
             if (_mois != null) el.dataset.moisture  = _mois.toFixed(4);
+            el.dataset.type = cellData.type || '';
 
             // Apply overlay color immediately
-            el.style.backgroundColor = cellOverlayColor(_elev, _mois);
+            el.style.backgroundColor = cellOverlayColor(_elev, _mois, cellData.type);
 
             el.innerHTML = `
               ${isPlayer ? '<div class="player-marker">◉</div>' : ''}
@@ -836,44 +947,26 @@
       requestAnimationFrame(() => {
         if (regionKey !== lastCenteredRegionKey) {
           lastCenteredRegionKey = regionKey;
-          // Reset to identity before measuring so any previous transform doesn't
-          // pollute the fit computation (DOM layout is unaffected by CSS transform,
-          // but this guarantees a clean visual baseline for the new region).
+          // Reset to identity before measuring.
           vpScale = 1; vpX = 0; vpY = 0;
           applyTransform();
           const vp = document.getElementById('map-viewport');
           const vpRect = vp.getBoundingClientRect();
-          // Fit to the bounding box of generated cells, not the full theoretical grid.
-          // This gives truth-first framing on open — player can pan/zoom to full extent.
-          // Cell pixel size must match CSS: width=64px + 1px border each side = 66px per col;
-          // height=52px + 1px border each side = 54px per row. (border-box sizing, 1px border)
+          // Fit to the full theoretical grid (gridW × gridH), not just generated cells.
+          // This gives a truthful view of the entire world from first open.
           const _cellPxW = 65; // 64px width + 1px right border
           const _cellPxH = 53; // 52px height + 1px bottom border
-          // Collect column/row indices of generated cells from the already-built cellMap
-          const _genCols = [];
-          const _genRows = [];
-          for (const key of Object.keys(cellMap)) {
-            const [gx, gy] = key.split(',').map(Number);
-            _genCols.push(gx - lxOffset);
-            _genRows.push(gy - lyOffset);
-          }
-          if (_genCols.length > 0) {
-            const _minCol = Math.min(..._genCols);
-            const _maxCol = Math.max(..._genCols);
-            const _minRow = Math.min(..._genRows);
-            const _maxRow = Math.max(..._genRows);
-            const _genPxW = (_maxCol - _minCol + 1) * _cellPxW;
-            const _genPxH = (_maxRow - _minRow + 1) * _cellPxH;
-            const _genOffX = _minCol * _cellPxW;
-            const _genOffY = _minRow * _cellPxH;
-            const scaleX = (vpRect.width  - FIT_PADDING * 2) / _genPxW;
-            const scaleY = (vpRect.height - FIT_PADDING * 2) / _genPxH;
-            vpScale = Math.max(Math.min(scaleX, scaleY), 0.005); // safety floor, not MIN_SCALE
-            // Center viewport on the generated area
-            vpX = (vpRect.width  - _genPxW * vpScale) / 2 - _genOffX * vpScale;
-            vpY = (vpRect.height - _genPxH * vpScale) / 2 - _genOffY * vpScale;
-            applyTransform();
-          }
+          const _fullPxW = _worldGridW * _cellPxW;
+          const _fullPxH = _worldGridH * _cellPxH;
+          const scaleX = (vpRect.width  - FIT_PADDING * 2) / _fullPxW;
+          const scaleY = (vpRect.height - FIT_PADDING * 2) / _fullPxH;
+          vpScale = Math.max(Math.min(scaleX, scaleY), 0.005); // safety floor, not MIN_SCALE
+          // Center the full world grid in the viewport
+          vpX = (vpRect.width  - _fullPxW * vpScale) / 2;
+          vpY = (vpRect.height - _fullPxH * vpScale) / 2;
+          applyTransform();
+          clampPan();
+          applyTransform();
         }
       });
     }
@@ -1139,10 +1232,62 @@
       try {
         render(state, result.visibility);
         renderTree(result.visibility);
+        refreshWgLog();
       } catch (e) {
         showError('Render Error', e.message || 'Unknown render error.');
         setStatus('Error');
       }
+    }
+
+    // ── Worldgen Log Panel ─────────────────────────────────────────────────────
+    let _wgLogShown = false;
+
+    function toggleWgLog() {
+      _wgLogShown = !_wgLogShown;
+      const panel = document.getElementById('wglog-panel');
+      if (_wgLogShown) {
+        panel.classList.add('visible');
+        refreshWgLog();
+      } else {
+        panel.classList.remove('visible');
+      }
+    }
+
+    function refreshWgLog() {
+      if (!_wgLogShown) return;
+      let wgLog = null;
+      try {
+        wgLog = window.opener?.lastGameResponse?.worldgen_log || null;
+      } catch (_) { wgLog = null; }
+
+      const label = document.getElementById('wglog-label');
+      const entries = document.getElementById('wglog-entries');
+
+      if (!wgLog || !Array.isArray(wgLog) || wgLog.length === 0) {
+        label.textContent = 'No worldgen log yet — open game and play Turn 1';
+        entries.innerHTML = '';
+        return;
+      }
+
+      label.textContent = `${wgLog.length} entries · last at ${wgLog[wgLog.length - 1]?.ms ?? '?'}ms`;
+      entries.innerHTML = wgLog.map(e => {
+        const dataStr = e.data != null ? JSON.stringify(e.data) : '';
+        return `<div class="wglog-entry">
+          <span class="wglog-ms">${e.ms ?? '?'}ms</span>
+          <span class="wglog-pass">${escapeHtml(String(e.pass ?? ''))}</span>
+          <span class="wglog-step">${escapeHtml(String(e.step ?? ''))}</span>
+          <span class="wglog-data">${escapeHtml(dataStr)}</span>
+        </div>`;
+      }).join('');
+    }
+
+    function copyWgLog() {
+      let wgLog = null;
+      try { wgLog = window.opener?.lastGameResponse?.worldgen_log || null; } catch (_) { wgLog = null; }
+      if (!wgLog) { alert('No worldgen log available yet.'); return; }
+      navigator.clipboard.writeText(JSON.stringify(wgLog, null, 2))
+        .then(() => { document.getElementById('wglog-label').textContent = 'Copied to clipboard!'; })
+        .catch(() => { alert('Clipboard write failed.'); });
     }
 
     // ── Init ───────────────────────────────────────────────────────────────────
@@ -1167,6 +1312,7 @@
       vpScale = newScale;
       // Clamp user-initiated zoom — fit initializer is exempt from these limits
       vpScale = Math.min(Math.max(vpScale, MIN_SCALE), MAX_SCALE);
+      clampPan();
       applyTransform();
     }, { passive: false });
 
@@ -1191,6 +1337,7 @@
       if (!wasDragged) return;
       vpX = dragStartVpX + dx;
       vpY = dragStartVpY + dy;
+      clampPan();
       applyTransform();
     });
 
