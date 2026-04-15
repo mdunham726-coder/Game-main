@@ -889,6 +889,10 @@ app.post('/narrate', async (req, res) => {
             description: _existingPatchCell.description || '',
             starting_location_hint: worldData.startingLocationType, // civilization context — NOT a terrain field
             is_starting_location: true,
+            // Pass 1: preserve noise fields from patch cell — must not be dropped on rewrite
+            elevation:   _existingPatchCell.elevation   ?? null,
+            moisture:    _existingPatchCell.moisture    ?? null,
+            temperature: _existingPatchCell.temperature ?? null,
             sites: _existingPatchCell.sites || {}           // preserve any sites from Phase 4D
           };
           console.log('[WORLD] [Phase6B] Start cell type preserved as geographic:', gameState.world.cells[startingLocationCellKey].type, '| locationType:', worldData.startingLocationType);

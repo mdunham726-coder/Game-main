@@ -843,18 +843,35 @@
           applyTransform();
           const vp = document.getElementById('map-viewport');
           const vpRect = vp.getBoundingClientRect();
-          // Use the rendered grid dimensions (includes all rows/cols at current cell size)
-          const gridW = container.offsetWidth;
-          const gridH = container.offsetHeight;
-          if (gridW > 0 && gridH > 0) {
-            // Largest scale that fits the grid inside the viewport with padding.
-            // No MIN_SCALE cap here — fit may legitimately be below it for large grids.
-            const scaleX = (vpRect.width  - FIT_PADDING * 2) / gridW;
-            const scaleY = (vpRect.height - FIT_PADDING * 2) / gridH;
+          // Fit to the bounding box of generated cells, not the full theoretical grid.
+          // This gives truth-first framing on open — player can pan/zoom to full extent.
+          // Cell pixel size must match CSS: width=64px + 1px border each side = 66px per col;
+          // height=52px + 1px border each side = 54px per row. (border-box sizing, 1px border)
+          const _cellPxW = 65; // 64px width + 1px right border
+          const _cellPxH = 53; // 52px height + 1px bottom border
+          // Collect column/row indices of generated cells from the already-built cellMap
+          const _genCols = [];
+          const _genRows = [];
+          for (const key of Object.keys(cellMap)) {
+            const [gx, gy] = key.split(',').map(Number);
+            _genCols.push(gx - lxOffset);
+            _genRows.push(gy - lyOffset);
+          }
+          if (_genCols.length > 0) {
+            const _minCol = Math.min(..._genCols);
+            const _maxCol = Math.max(..._genCols);
+            const _minRow = Math.min(..._genRows);
+            const _maxRow = Math.max(..._genRows);
+            const _genPxW = (_maxCol - _minCol + 1) * _cellPxW;
+            const _genPxH = (_maxRow - _minRow + 1) * _cellPxH;
+            const _genOffX = _minCol * _cellPxW;
+            const _genOffY = _minRow * _cellPxH;
+            const scaleX = (vpRect.width  - FIT_PADDING * 2) / _genPxW;
+            const scaleY = (vpRect.height - FIT_PADDING * 2) / _genPxH;
             vpScale = Math.max(Math.min(scaleX, scaleY), 0.005); // safety floor, not MIN_SCALE
-            // Center the scaled grid
-            vpX = (vpRect.width  - gridW * vpScale) / 2;
-            vpY = (vpRect.height - gridH * vpScale) / 2;
+            // Center viewport on the generated area
+            vpX = (vpRect.width  - _genPxW * vpScale) / 2 - _genOffX * vpScale;
+            vpY = (vpRect.height - _genPxH * vpScale) / 2 - _genOffY * vpScale;
             applyTransform();
           }
         }
