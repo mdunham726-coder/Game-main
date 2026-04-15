@@ -396,6 +396,9 @@
   <script>
     // ── Constants ──────────────────────────────────────────────────────────────
     const POLL_INTERVAL_MS = 500;
+    const MIN_SCALE = 0.2;   // practical floor — cells remain legible colored squares
+    const MAX_SCALE = 3.0;   // ~3 cells filling the viewport at max zoom
+    const FIT_PADDING = 24;  // px margin each side when fitting grid to viewport
 
     // ── State ──────────────────────────────────────────────────────────────────
     let lastRenderedTurnCounter = -1;
@@ -412,6 +415,8 @@
     let dragStartX, dragStartY, dragStartVpX, dragStartVpY;
 
     function applyTransform() {
+      // Clamp here so no code path can ever apply an out-of-range scale
+      vpScale = Math.min(Math.max(vpScale, MIN_SCALE), MAX_SCALE);
       document.getElementById('grid-container').style.transform =
         `translate(${vpX}px, ${vpY}px) scale(${vpScale})`;
     }
@@ -769,22 +774,26 @@
 
       hideOverlay();
       setStatus(`Region (${mx},${my}) · ${regionEntries.length} cells in region · Turn ${state.turn_counter ?? '?'}`);
-      // Center on player once per region entry. If the user drags away, the view stays put.
+      // Fit-to-viewport + center once per region entry. User can pan/zoom freely after.
       const regionKey = `${mx},${my}`;
       requestAnimationFrame(() => {
-        const playerEl = container.querySelector('.player-pos');
-        if (playerEl && regionKey !== lastCenteredRegionKey) {
+        if (regionKey !== lastCenteredRegionKey) {
           lastCenteredRegionKey = regionKey;
           const vp = document.getElementById('map-viewport');
           const vpRect = vp.getBoundingClientRect();
-          const cellRect = playerEl.getBoundingClientRect();
-          // Compute where the player cell center sits in viewport-local coords
-          const cellCenterX = cellRect.left - vpRect.left + cellRect.width / 2;
-          const cellCenterY = cellRect.top  - vpRect.top  + cellRect.height / 2;
-          // Shift transform so player lands at viewport center
-          vpX += vpRect.width  / 2 - cellCenterX;
-          vpY += vpRect.height / 2 - cellCenterY;
-          applyTransform();
+          // Use the rendered grid dimensions (includes all rows/cols at current cell size)
+          const gridW = container.offsetWidth;
+          const gridH = container.offsetHeight;
+          if (gridW > 0 && gridH > 0) {
+            // Largest scale that fits the grid inside the viewport with padding
+            const scaleX = (vpRect.width  - FIT_PADDING * 2) / gridW;
+            const scaleY = (vpRect.height - FIT_PADDING * 2) / gridH;
+            vpScale = Math.min(scaleX, scaleY);
+            // Center the scaled grid
+            vpX = (vpRect.width  - gridW * vpScale) / 2;
+            vpY = (vpRect.height - gridH * vpScale) / 2;
+            applyTransform(); // clamp applied inside
+          }
         }
       });
     }
@@ -1062,13 +1071,13 @@
       const rect = mapViewport.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const newScale = Math.min(Math.max(vpScale * factor, 0.1), 8);
+      const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+      const newScale = vpScale * factor; // applyTransform will clamp
       const scaleDelta = newScale / vpScale;
       // Adjust translate so the point under the mouse stays fixed
       vpX = mouseX - (mouseX - vpX) * scaleDelta;
       vpY = mouseY - (mouseY - vpY) * scaleDelta;
-      vpScale = newScale;
+      vpScale = newScale; // clamped in applyTransform
       applyTransform();
     }, { passive: false });
 
