@@ -47,23 +47,43 @@
     /* ── Map area ── */
     #map-area {
       flex: 1;
-      overflow: auto;
-      padding: 12px;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
-      gap: 6px;
+    }
+
+    #map-notices {
+      flex-shrink: 0;
+      padding: 6px 12px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
 
     #map-notice {
       font-size: 11px;
       color: #f39c12;
-      padding: 4px 0;
+    }
+
+    #map-viewport {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+      cursor: grab;
+    }
+
+    #map-viewport.dragging {
+      cursor: grabbing;
     }
 
     #grid-container {
       display: inline-block;
       border: 1px solid #333;
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
+      will-change: transform;
     }
 
     .grid-row {
@@ -344,9 +364,13 @@
 
   <div id="main" style="position: relative;">
     <div id="map-area">
-      <div id="site-banner" style="display:none; padding:6px 10px; margin-bottom:6px; background:#1a2a1a; border:1px solid #2e7d32; color:#81c784; font-size:12px; font-weight:bold; letter-spacing:0.5px;"></div>
-      <div id="map-notice" style="display:none;"></div>
-      <div id="grid-container"></div>
+      <div id="map-notices">
+        <div id="site-banner" style="display:none; padding:6px 10px; background:#1a2a1a; border:1px solid #2e7d32; color:#81c784; font-size:12px; font-weight:bold; letter-spacing:0.5px;"></div>
+        <div id="map-notice" style="display:none;"></div>
+      </div>
+      <div id="map-viewport">
+        <div id="grid-container"></div>
+      </div>
     </div>
 
     <div id="tree-panel">
@@ -376,6 +400,21 @@
     // ── State ──────────────────────────────────────────────────────────────────
     let lastRenderedTurnCounter = -1;
     let selectedCell = null;
+    // Track which region was last centered so we only center once per region entry
+    let lastCenteredRegionKey = null;
+
+    // ── Zoom / Pan state ───────────────────────────────────────────────────────
+    let vpScale = 1.0;
+    let vpX = 0;
+    let vpY = 0;
+    let isDragging = false;
+    let wasDragged = false;   // distinguishes drag from click
+    let dragStartX, dragStartY, dragStartVpX, dragStartVpY;
+
+    function applyTransform() {
+      document.getElementById('grid-container').style.transform =
+        `translate(${vpX}px, ${vpY}px) scale(${vpScale})`;
+    }
 
     // ── Overlay helpers ────────────────────────────────────────────────────────
     function showError(title, body) {
@@ -730,10 +769,23 @@
 
       hideOverlay();
       setStatus(`Region (${mx},${my}) · ${regionEntries.length} cells in region · Turn ${state.turn_counter ?? '?'}`);
-      // Auto-center viewport on player tile after grid is painted
+      // Center on player once per region entry. If the user drags away, the view stays put.
+      const regionKey = `${mx},${my}`;
       requestAnimationFrame(() => {
         const playerEl = container.querySelector('.player-pos');
-        if (playerEl) playerEl.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+        if (playerEl && regionKey !== lastCenteredRegionKey) {
+          lastCenteredRegionKey = regionKey;
+          const vp = document.getElementById('map-viewport');
+          const vpRect = vp.getBoundingClientRect();
+          const cellRect = playerEl.getBoundingClientRect();
+          // Compute where the player cell center sits in viewport-local coords
+          const cellCenterX = cellRect.left - vpRect.left + cellRect.width / 2;
+          const cellCenterY = cellRect.top  - vpRect.top  + cellRect.height / 2;
+          // Shift transform so player lands at viewport center
+          vpX += vpRect.width  / 2 - cellCenterX;
+          vpY += vpRect.height / 2 - cellCenterY;
+          applyTransform();
+        }
       });
     }
 
@@ -1000,6 +1052,64 @@
     // ── Init ───────────────────────────────────────────────────────────────────
     poll(); // Immediate check on load
     setInterval(poll, POLL_INTERVAL_MS);
+
+    // ── Zoom / Pan event listeners ─────────────────────────────────────────────
+    const mapViewport = document.getElementById('map-viewport');
+
+    // Mouse wheel — zoom centered on cursor position
+    mapViewport.addEventListener('wheel', e => {
+      e.preventDefault();
+      const rect = mapViewport.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const newScale = Math.min(Math.max(vpScale * factor, 0.1), 8);
+      const scaleDelta = newScale / vpScale;
+      // Adjust translate so the point under the mouse stays fixed
+      vpX = mouseX - (mouseX - vpX) * scaleDelta;
+      vpY = mouseY - (mouseY - vpY) * scaleDelta;
+      vpScale = newScale;
+      applyTransform();
+    }, { passive: false });
+
+    // Mousedown — begin drag
+    mapViewport.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      isDragging = true;
+      wasDragged = false;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragStartVpX = vpX;
+      dragStartVpY = vpY;
+      mapViewport.classList.add('dragging');
+    });
+
+    // Mousemove — pan
+    window.addEventListener('mousemove', e => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      if (!wasDragged && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) wasDragged = true;
+      if (!wasDragged) return;
+      vpX = dragStartVpX + dx;
+      vpY = dragStartVpY + dy;
+      applyTransform();
+    });
+
+    // Mouseup — end drag; suppress click if we actually moved
+    window.addEventListener('mouseup', () => {
+      if (!isDragging) return;
+      isDragging = false;
+      mapViewport.classList.remove('dragging');
+    });
+
+    // Suppress cell click when the mouseup follows a drag
+    mapViewport.addEventListener('click', e => {
+      if (wasDragged) {
+        e.stopPropagation();
+        wasDragged = false;
+      }
+    }, true); // capture phase so it fires before the cell's own listener
   </script>
 </body>
 </html>
