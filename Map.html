@@ -359,7 +359,14 @@
 
   <div id="header">
     <h1>MAP v0 — TRUTH VIEWER</h1>
-    <span id="status-bar">Initializing...</span>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <button id="overlay-btn" onclick="toggleOverlay()" style="
+        background:#222; border:1px solid #555; color:#e0e0e0;
+        font-family:monospace; font-size:11px; padding:3px 10px;
+        cursor:pointer; letter-spacing:0.5px;
+      ">Overlay: TERRAIN</button>
+      <span id="status-bar">Initializing...</span>
+    </div>
   </div>
 
   <div id="main" style="position: relative;">
@@ -405,6 +412,47 @@
     let selectedCell = null;
     // Track which region was last centered so we only center once per region entry
     let lastCenteredRegionKey = null;
+
+    // ── Overlay mode ──────────────────────────────────────────────────────────
+    // 'terrain' = default dark-blue for generated cells (no color table yet — Pass 2)
+    // 'elevation' = grayscale heatmap from cell.elevation [0,1]
+    // 'moisture'  = blue-tint heatmap from cell.moisture [0,1]
+    let mapOverlay = 'terrain';
+    const OVERLAY_SEQUENCE = ['terrain', 'elevation', 'moisture'];
+    const OVERLAY_LABELS   = { terrain: 'TERRAIN', elevation: 'ELEVATION', moisture: 'MOISTURE' };
+
+    function toggleOverlay() {
+      const idx = OVERLAY_SEQUENCE.indexOf(mapOverlay);
+      mapOverlay = OVERLAY_SEQUENCE[(idx + 1) % OVERLAY_SEQUENCE.length];
+      document.getElementById('overlay-btn').textContent = `Overlay: ${OVERLAY_LABELS[mapOverlay]}`;
+      recolorCells();
+    }
+
+    // Returns the CSS background-color string for a generated cell given current overlay mode.
+    // cellEl must have data-elevation and data-moisture attributes written at render time.
+    function cellOverlayColor(elevation, moisture) {
+      if (mapOverlay === 'elevation') {
+        if (elevation == null) return '#3a0a0a'; // missing data — explicit red-tint
+        const L = Math.round(elevation * 100);
+        return `hsl(0,0%,${L}%)`;
+      }
+      if (mapOverlay === 'moisture') {
+        if (moisture == null) return '#3a0a0a'; // missing data — explicit red-tint
+        const L = Math.round(moisture * 80); // 0–80% lightness on blue hue
+        return `hsl(210,60%,${L}%)`;
+      }
+      return '#1a1a2e'; // terrain mode — default generated cell color
+    }
+
+    // Re-colors all existing generated cell DOM elements without re-rendering the grid.
+    function recolorCells() {
+      const cells = document.querySelectorAll('.cell.generated');
+      for (const el of cells) {
+        const elevation = el.dataset.elevation != null ? parseFloat(el.dataset.elevation) : null;
+        const moisture  = el.dataset.moisture  != null ? parseFloat(el.dataset.moisture)  : null;
+        el.style.backgroundColor = cellOverlayColor(elevation, moisture);
+      }
+    }
 
     // ── Zoom / Pan state ───────────────────────────────────────────────────────
     let vpScale = 1.0;
@@ -737,6 +785,15 @@
           if (cellData) {
             const typeLabel = cellData.type || '?';
             const biomeLabel = cellData.biome || '—';
+            const _elev = cellData.elevation != null ? cellData.elevation : null;
+            const _mois = cellData.moisture  != null ? cellData.moisture  : null;
+
+            // Store noise values as data attributes for recolorCells() re-pass
+            if (_elev != null) el.dataset.elevation = _elev.toFixed(4);
+            if (_mois != null) el.dataset.moisture  = _mois.toFixed(4);
+
+            // Apply overlay color immediately
+            el.style.backgroundColor = cellOverlayColor(_elev, _mois);
 
             el.innerHTML = `
               ${isPlayer ? '<div class="player-marker">◉</div>' : ''}
@@ -824,19 +881,26 @@
       }
 
       const fields = [
-        { label: 'Type',    value: cell.type    || '' },
-        { label: 'Subtype', value: cell.subtype  || '' },
-        { label: 'Biome',   value: cell.biome    || '' },
-        { label: 'mx',      value: String(mx) },
-        { label: 'my',      value: String(my) },
-        { label: 'lx',      value: String(lx) },
-        { label: 'ly',      value: String(ly) },
+        { label: 'Type',        value: cell.type    || '' },
+        { label: 'Subtype',     value: cell.subtype  || '' },
+        { label: 'Biome',       value: cell.biome    || '' },
+        { label: 'mx',          value: String(mx) },
+        { label: 'my',          value: String(my) },
+        { label: 'lx',          value: String(lx) },
+        { label: 'ly',          value: String(ly) },
+        // Pass 1 noise fields — shown as 2-decimal floats; explicit if absent (pre-Pass1 cells)
+        { label: 'Elevation',    value: cell.elevation   != null ? cell.elevation.toFixed(2)   : null },
+        { label: 'Moisture',     value: cell.moisture    != null ? cell.moisture.toFixed(2)    : null },
+        { label: 'Temperature',  value: cell.temperature != null ? cell.temperature.toFixed(2) : null },
       ];
 
       let html = '';
       for (const f of fields) {
-        const valueClass = f.value === '' ? 'inspector-value empty' : 'inspector-value';
-        const display = f.value === '' ? '(empty)' : escapeHtml(f.value);
+        // null  → field absent from cell (pre-Pass1); '' → field present but empty
+        const isMissing = f.value === null;
+        const isEmpty   = f.value === '';
+        const valueClass = (isMissing || isEmpty) ? 'inspector-value empty' : 'inspector-value';
+        const display = isMissing ? '(not computed)' : isEmpty ? '(empty)' : escapeHtml(f.value);
         html += `
           <div class="inspector-field">
             <div class="inspector-label">${f.label}</div>

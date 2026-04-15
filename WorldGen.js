@@ -758,6 +758,96 @@ const CIV_TERRAIN_SCORE = {
   wilderness: { high: 0.3, medium: 0.5, low: 0.9 },
 };
 
+// =============================================================================
+// PASS 1 — fBm NOISE FIELDS
+// Three deterministic continuous fields: elevation, moisture, temperature.
+// All use the same 4-octave fBm pattern — independent RNG instances per octave.
+// Biome bias nudges the raw sum before clamping to preserve biome identity.
+// These fields are ADDITIVE — terrain classification is NOT changed in Pass 1.
+// =============================================================================
+
+// Bias applied to the raw fBm sum (before clamp) per biome per field.
+// Zero means no bias for that biome/field combination.
+const BIOME_NOISE_BIAS = {
+  mountain: { elevation: +0.35, moisture: -0.15, temperature: -0.20 },
+  desert:   { elevation: -0.10, moisture: -0.40, temperature: +0.40 },
+  wetland:  { elevation: -0.20, moisture: +0.40, temperature:  0    },
+  tundra:   { elevation: +0.10, moisture: -0.10, temperature: -0.50 },
+  coast:    { elevation: -0.15, moisture: +0.20, temperature: +0.10 },
+  jungle:   { elevation: -0.10, moisture: +0.35, temperature: +0.30 },
+  forest:   { elevation:  0,    moisture: +0.15, temperature:  0    },
+  rural:    { elevation:  0,    moisture:  0,    temperature:  0    },
+};
+
+/**
+ * 4-octave fBm noise for a single field, deterministic via h32 + mulberry32.
+ *
+ * Each octave samples one RNG value from an independently seeded mulberry32.
+ * Hash key encodes: fieldName, worldSeed, octave index, scaled grid coords,
+ * and macro cell coords — ensuring independence across fields, seeds, and cells.
+ *
+ * @param {string} fieldName  — "elevation" | "moisture" | "temperature"
+ * @param {number} mx         — macro x (0–7)
+ * @param {number} my         — macro y (0–7)
+ * @param {number} lx         — local x (0–127)
+ * @param {number} ly         — local y (0–127)
+ * @param {number|string} worldSeed
+ * @param {string} biome      — key into BIOME_NOISE_BIAS
+ * @returns {number} float clamped to [0, 1]
+ */
+function _evalNoiseField(fieldName, mx, my, lx, ly, worldSeed, biome) {
+  // Octave frequencies (doubling) and amplitudes (halving); sum of amplitudes = ~1.0
+  const OCTAVES = [
+    { freq: 1,  amp: 0.5    },
+    { freq: 2,  amp: 0.25   },
+    { freq: 4,  amp: 0.125  },
+    { freq: 8,  amp: 0.0625 },
+  ];
+
+  let sum = 0;
+  for (const { freq, amp } of OCTAVES) {
+    // Grid coordinates scaled to current octave frequency.
+    // Math.round keeps coords integer so hash is deterministic at all scales.
+    const gx = Math.round(lx * freq);
+    const gy = Math.round(ly * freq);
+    const key = `${fieldName}|${worldSeed}|f${freq}|${gx},${gy}|${mx},${my}`;
+    // Independent RNG per octave — first call only, closed over state
+    sum += mulberry32(h32(key))() * amp;
+  }
+
+  // Apply biome bias and clamp to [0, 1]
+  const bias = (BIOME_NOISE_BIAS[biome] || {})[fieldName] || 0;
+  return Math.max(0, Math.min(1, sum + bias));
+}
+
+/**
+ * Elevation field — higher values mean higher terrain.
+ * @returns {number} float [0, 1]
+ */
+function evalElevation(mx, my, lx, ly, worldSeed, biome) {
+  return _evalNoiseField('elevation', mx, my, lx, ly, worldSeed, biome || 'rural');
+}
+
+/**
+ * Moisture field — higher values mean wetter terrain.
+ * @returns {number} float [0, 1]
+ */
+function evalMoisture(mx, my, lx, ly, worldSeed, biome) {
+  return _evalNoiseField('moisture', mx, my, lx, ly, worldSeed, biome || 'rural');
+}
+
+/**
+ * Temperature field — higher values mean warmer terrain.
+ * @returns {number} float [0, 1]
+ */
+function evalTemperature(mx, my, lx, ly, worldSeed, biome) {
+  return _evalNoiseField('temperature', mx, my, lx, ly, worldSeed, biome || 'rural');
+}
+
+// =============================================================================
+// END PASS 1
+// =============================================================================
+
 /**
  * Derive a deterministic L0 + L1 anchor position from the world prompt hash.
  *
@@ -817,6 +907,11 @@ function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
       const cellRng = mulberry32(h32(`${promptSeed}|patch|${cellKey}`));
       const terrainType = palette[Math.floor(cellRng() * palette.length)];
 
+      // Pass 1: compute physical noise fields — additive, does not affect terrain type
+      const _elev = evalElevation(anchor.mx, anchor.my, lx, ly, promptSeed, biome);
+      const _mois = evalMoisture(anchor.mx, anchor.my, lx, ly, promptSeed, biome);
+      const _temp = evalTemperature(anchor.mx, anchor.my, lx, ly, promptSeed, biome);
+
       patch[cellKey] = {
         type:        terrainType,
         subtype:     '',
@@ -826,6 +921,9 @@ function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
         lx:          lx,
         ly:          ly,
         description: '',
+        elevation:   _elev,
+        moisture:    _mois,
+        temperature: _temp,
       };
     }
   }
@@ -1162,4 +1260,8 @@ module.exports = {
   generateTerrainPatch,
   selectStartPosition,
   LAYER_TERRAIN_VOCAB,
+  // Pass 1 — noise fields
+  evalElevation,
+  evalMoisture,
+  evalTemperature,
 };

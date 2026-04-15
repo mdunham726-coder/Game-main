@@ -203,6 +203,14 @@ function streamL1Cells(state) {
         terrainType = 'plains_grassland';
       }
 
+      // Pass 1: compute physical noise fields — additive only, does not affect terrain type.
+      // Terrain classification (Pass 2) will use these values; for now they are stored for
+      // validation and developer map visualization only.
+      const _worldSeed = state.world.phase3_seed || 0;
+      const _elev = WorldGen.evalElevation(mx, my, lx, ly, _worldSeed, biome);
+      const _mois = WorldGen.evalMoisture(mx, my, lx, ly, _worldSeed, biome);
+      const _temp = WorldGen.evalTemperature(mx, my, lx, ly, _worldSeed, biome);
+
       // Create new L1 cell
       state.world.cells[cellKey] = {
         type: terrainType,
@@ -212,11 +220,13 @@ function streamL1Cells(state) {
         my: my,
         lx: lx,
         ly: ly,
-        description: "" // Will be filled by L1 description pass
+        description: "", // Will be filled by L1 description pass
+        elevation:   _elev,
+        moisture:    _mois,
+        temperature: _temp,
       };
 
       // Phase 4: Deterministic site generation at cell creation time
-      const _worldSeed = state.world.phase3_seed || 0;
       const _worldBias = state.world.world_bias;
       const _sites = WorldGen.evaluateCellForSites(cellKey, terrainType, _worldBias, _worldSeed);
       for (const _site of _sites) recordSiteToCell(state, cellKey, _site);
