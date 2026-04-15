@@ -1,4 +1,5 @@
 ﻿const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const axios = require('axios');
 const Engine = require('./Engine.js');
@@ -17,6 +18,15 @@ app.use(express.static(__dirname));
 
 // Session state management
 const sessionStates = new Map();
+
+// ── Real-time init progress bus (for first-turn progress polling) ─────────────
+const _initProgress = new Map();
+function _pushProgress(token, step, pct, detail = {}) {
+  if (!token) return;
+  const arr = _initProgress.get(token) || [];
+  arr.push({ step, pct, detail, ts: Date.now() });
+  _initProgress.set(token, arr);
+}
 
 function generateSessionId() {
   return Date.now() + '-' + Math.random().toString(36).substr(2, 9);
@@ -828,10 +838,15 @@ app.post('/narrate', async (req, res) => {
     const _wLogT0 = Date.now();
     const _wLog = (pass, step, data) => _worldgenLog.push({ pass, step, data, ms: Date.now() - _wLogT0 });
 
+    // Progress token — sent by client via x-progress-token header (pre-issued by GET /narrate/session-token)
+    const _progToken = req.headers['x-progress-token'] || null;
+    const _reportProgress = (step, pct, detail = {}) => _pushProgress(_progToken, step, pct, detail);
+
     let startAnchor = null; // hoisted — referenced by worldgen summary block outside if(worldData)
     try {
       // Handle async world generation with DeepSeek biome detection
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
+        _reportProgress('analyzing', 2, { prompt: (inputObj.WORLD_PROMPT || '').slice(0, 40) });
         _wLog('init', 'world_description_analysis', { prompt: (inputObj.WORLD_PROMPT || '').slice(0, 80) });
         const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, gameState.rng_seed || 0);
         if (worldData) {
@@ -849,15 +864,18 @@ app.post('/narrate', async (req, res) => {
           // Approach C: Store founding prompt for identity alignment — natural language, not a classification
           gameState.world.founding_prompt = inputObj.WORLD_PROMPT;
           _wLog('init', 'world_profile', { biome: worldData.biome, tone: worldData.worldTone, macro_palette: worldData.palette });
+          _reportProgress('world_profile', 8, { biome: worldData.biome });
 
           // Phase 3: Seed-derived terrain patch and start position
           _wLog('pass1+2', 'terrain_patch_start', { anchor: WorldGen.selectStartAnchor(WorldGen.h32(inputObj.WORLD_PROMPT)), biome: worldData.biome });
+          _reportProgress('terrain_patch', 12, { biome: worldData.biome });
           const phase3Seed = WorldGen.h32(inputObj.WORLD_PROMPT);
           startAnchor = WorldGen.selectStartAnchor(phase3Seed); // assigns hoisted let
           const patchCells  = WorldGen.generateTerrainPatch(startAnchor, worldData.biome, phase3Seed, gameState.world.cells);
           Object.assign(gameState.world.cells, patchCells);
           _wLog('pass1+2', 'terrain_patch_complete', { cell_count: Object.keys(patchCells).length });
           gameState.world.position = WorldGen.selectStartPosition(phase3Seed, worldData.world_bias, patchCells, startAnchor);
+          _reportProgress('patch_complete', 18, { startPos: gameState.world.position });
           // Phase 4A: persist seed so Engine.js can use it for deterministic site generation
           gameState.world.phase3_seed = phase3Seed;
           console.log('[PHASE3] anchor=', startAnchor, '| start=', gameState.world.position, '| patch cells=', Object.keys(patchCells).length);
@@ -954,16 +972,19 @@ app.post('/narrate', async (req, res) => {
           // Phase obs: Pre-generate the full 128×128 starting macro cell.
           // Executed AFTER Phase 6B so the skip guard in generateFullMacroCell
           // protects the patch cells and the start cell from being overwritten.
-          console.log('[WORLDGEN] Generating full 128×128 macro cell for observability...');
-          const _fullMacroCells = WorldGen.generateFullMacroCell(
-            startAnchor.mx, startAnchor.my, worldData.biome, phase3Seed, gameState.world.cells
+          console.log('[WORLDGEN] Generating full 128×128 macro cell + hydrology...');
+          const { cells: _fullMacroCellsObj, hydrologyStats: _hydroStats } = WorldGen.generateFullMacroCell(
+            startAnchor.mx, startAnchor.my, worldData.biome, phase3Seed,
+            gameState.world.cells, _reportProgress
           );
-          Object.assign(gameState.world.cells, _fullMacroCells);
+          Object.assign(gameState.world.cells, _fullMacroCellsObj);
           _wLog('pass1+2', 'full_macro_cell_generated', {
-            new_cells: Object.keys(_fullMacroCells).length,
+            new_cells: Object.keys(_fullMacroCellsObj).length,
             total_world_cells: Object.keys(gameState.world.cells).length
           });
-          console.log('[WORLDGEN] Full macro cell complete:', Object.keys(_fullMacroCells).length, 'new cells');
+          if (_hydroStats) _wLog('pass3', 'hydrology', _hydroStats);
+          console.log('[WORLDGEN] Full macro cell complete:', Object.keys(_fullMacroCellsObj).length,
+            'new cells | rivers:', _hydroStats?.riverCount, '| lakes:', _hydroStats?.lakeBasins);
 
           // Phase 7: Legacy L2 stub block removed.
           // recordSiteToCell now stores the stub under the canonical site.interior_key.
@@ -1122,6 +1143,9 @@ app.post('/narrate', async (req, res) => {
 
         // Freeze worldgen log on gameState — no further writes
         gameState.world.worldgen_log = _worldgenLog;
+
+        // TTL: remove progress tracking entry after 60 s (response already sent by then)
+        if (_progToken) setTimeout(() => _initProgress.delete(_progToken), 60000);
       }
     } catch (err) {
       console.error('Engine error on first turn:', err.message);
@@ -2351,6 +2375,21 @@ app.get('/status', (req, res) => {
     isFirstTurn: isFirstTurn,
     playerLocation: gameState?.player?.mx || null
   });
+});
+
+// P3: Pre-issue a progress token for first-turn polling.
+// Client calls this BEFORE submitting the world prompt, then polls /narrate/progress.
+app.get('/narrate/session-token', (req, res) => {
+  const token = crypto.randomUUID();
+  _initProgress.set(token, []);
+  res.json({ token });
+});
+
+// P4: Progress polling endpoint.
+app.get('/narrate/progress', (req, res) => {
+  const token = req.query.token;
+  if (!token) return res.status(400).json({ error: 'missing token' });
+  res.json({ steps: _initProgress.get(token) || [] });
 });
 
 /**

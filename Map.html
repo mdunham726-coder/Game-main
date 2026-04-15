@@ -412,6 +412,11 @@
         font-family:monospace; font-size:11px; padding:3px 10px;
         cursor:pointer; letter-spacing:0.5px;
       ">WORLDGEN LOG</button>
+      <button onclick="centerOnPlayer()" style="
+        background:#222; border:1px solid #555; color:#e0e0e0;
+        font-family:monospace; font-size:11px; padding:3px 10px;
+        cursor:pointer; letter-spacing:0.5px;
+      ">Find Player</button>
       <button id="overlay-btn" onclick="toggleOverlay()" style="
         background:#222; border:1px solid #555; color:#e0e0e0;
         font-family:monospace; font-size:11px; padding:3px 10px;
@@ -1288,6 +1293,18 @@
       navigator.clipboard.writeText(JSON.stringify(wgLog, null, 2))
         .then(() => { document.getElementById('wglog-label').textContent = 'Copied to clipboard!'; })
         .catch(() => { alert('Clipboard write failed.'); });
+    }
+
+    function centerOnPlayer() {
+      const result = getState();
+      if (!result.ok) { alert('No game state available.'); return; }
+      const pos = result.state?.world?.position;
+      if (!pos) { alert('Player position not found.'); return; }
+      const vpRect = document.getElementById('map-viewport').getBoundingClientRect();
+      vpX = vpRect.width  / 2 - (pos.lx * 65 + 32.5) * vpScale;
+      vpY = vpRect.height / 2 - (pos.ly * 53 + 26.5) * vpScale;
+      clampPan();
+      applyTransform();
     }
 
     // ── Init ───────────────────────────────────────────────────────────────────

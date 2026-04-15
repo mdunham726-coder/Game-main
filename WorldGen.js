@@ -1029,29 +1029,151 @@ function generateTerrainPatch(anchor, biome, promptSeed, existingCells) {
   return patch;
 }
 
+// =============================================================================
+// ELEVATION STRUCTURE — biome-specific Gaussian massifs + basins
+// =============================================================================
+
+const BIOME_ELEV_CONFIG = {
+  mountain: { massifRange: [4, 6], baseElev: 0.45, radiusRange: [20, 38], peakRange: [0.65, 0.90], basinRange: [1, 2] },
+  tundra:   { massifRange: [2, 4], baseElev: 0.38, radiusRange: [18, 32], peakRange: [0.55, 0.85], basinRange: [1, 2] },
+  forest:   { massifRange: [1, 3], baseElev: 0.33, radiusRange: [15, 28], peakRange: [0.50, 0.80], basinRange: [1, 3] },
+  rural:    { massifRange: [1, 2], baseElev: 0.30, radiusRange: [14, 24], peakRange: [0.45, 0.75], basinRange: [2, 3] },
+  jungle:   { massifRange: [0, 2], baseElev: 0.28, radiusRange: [12, 22], peakRange: [0.50, 0.80], basinRange: [2, 4] },
+  desert:   { massifRange: [1, 1], baseElev: 0.25, radiusRange: [12, 20], peakRange: [0.55, 0.85], basinRange: [0, 1] },
+  coast:    { massifRange: [0, 0], baseElev: 0.22, radiusRange: [0,   0], peakRange: [0,    0   ], basinRange: [2, 4] },
+  wetland:  { massifRange: [0, 0], baseElev: 0.18, radiusRange: [0,   0], peakRange: [0,    0   ], basinRange: [3, 5] },
+};
+
+/**
+ * Build a structured elevation field for a 128×128 L1 macro cell.
+ * Places biome-specific Gaussian massifs and basins to produce coherent
+ * highland/lowland regions. Adds a small noise perturbation to break
+ * circular symmetry (naturalization pass).
+ *
+ * @param {number}        mx             — macro x (0–7)
+ * @param {number}        my             — macro y (0–7)
+ * @param {string}        biome          — biome key
+ * @param {number}        worldSeed      — h32 seed
+ * @param {Function|null} reportProgress — optional callback(step, pct, detail)
+ * @returns {{ elevMap: Float32Array, massifCount: number, basinCount: number }}
+ */
+function generateElevationStructure(mx, my, biome, worldSeed, reportProgress = null) {
+  const l1w = DEFAULTS.L1_SIZE.w;  // 128
+  const l1h = DEFAULTS.L1_SIZE.h;  // 128
+  const cfg  = BIOME_ELEV_CONFIG[biome] || BIOME_ELEV_CONFIG.rural;
+
+  // Determine feature counts (deterministic per macro cell)
+  const mRng = mulberry32(h32(`${worldSeed}|m_count|${mx},${my}`));
+  const [mMin, mMax] = cfg.massifRange;
+  const massifCount  = mMin + Math.floor(mRng() * (mMax - mMin + 1));
+
+  const bRng = mulberry32(h32(`${worldSeed}|b_count|${mx},${my}`));
+  const [bMin, bMax] = cfg.basinRange;
+  const basinCount   = bMin + Math.floor(bRng() * (bMax - bMin + 1));
+
+  // Build feature parameter arrays
+  const massifs = [];
+  for (let i = 0; i < massifCount; i++) {
+    const rng    = mulberry32(h32(`${worldSeed}|massif|${i}|${mx},${my}`));
+    const cx     = Math.floor(rng() * l1w);
+    const cy     = Math.floor(rng() * l1h);
+    const [rMin2, rMax2] = cfg.radiusRange;
+    const radius = rMin2 + rng() * (rMax2 - rMin2);
+    const [pMin, pMax]   = cfg.peakRange;
+    const peak   = pMin  + rng() * (pMax  - pMin);
+    massifs.push({ cx, cy, radius, peak });
+  }
+
+  const basins = [];
+  for (let j = 0; j < basinCount; j++) {
+    const rng    = mulberry32(h32(`${worldSeed}|basin|${j}|${mx},${my}`));
+    const cx     = Math.floor(rng() * l1w);
+    const cy     = Math.floor(rng() * l1h);
+    const radius = 14 + rng() * 16;   // [14, 30]
+    const depth  = 0.15 + rng() * 0.15; // [0.15, 0.30]
+    basins.push({ cx, cy, radius, depth });
+  }
+
+  // Build elevMap — ly outer, lx inner (index = ly*128 + lx)
+  const elevMap  = new Float32Array(l1w * l1h);
+  const total    = l1w * l1h;
+  let   cellIdx  = 0;
+
+  for (let ly = 0; ly < l1h; ly++) {
+    for (let lx = 0; lx < l1w; lx++) {
+      let v = cfg.baseElev;
+      for (const m of massifs) {
+        const d2 = (lx - m.cx) ** 2 + (ly - m.cy) ** 2;
+        v += m.peak * Math.exp(-d2 / (m.radius * m.radius));
+      }
+      for (const b of basins) {
+        const d2 = (lx - b.cx) ** 2 + (ly - b.cy) ** 2;
+        v -= b.depth * Math.exp(-d2 / (b.radius * b.radius));
+      }
+      elevMap[ly * l1w + lx] = Math.max(0, Math.min(1, v));
+      cellIdx++;
+      // Progress ticks at 25/50/75/100% of elev_map build (~12/14/16/18%)
+      if (cellIdx % 4096 === 0) {
+        reportProgress?.('elev_map', 10 + Math.round(cellIdx / total * 8), { cellIdx });
+      }
+    }
+  }
+
+  // Naturalization: small per-cell perturbation breaks Gaussian circularity
+  for (let ly = 0; ly < l1h; ly++) {
+    for (let lx = 0; lx < l1w; lx++) {
+      const idx     = ly * l1w + lx;
+      const perturb = 0.08 * (rnd01(worldSeed, ['elev_nat', lx, ly, mx, my]) - 0.5);
+      elevMap[idx]  = Math.max(0, Math.min(1, elevMap[idx] + perturb));
+    }
+  }
+
+  return { elevMap, massifCount, basinCount };
+}
+
+// =============================================================================
+// FULL MACRO PRE-GENERATION — Pass 1+2 baseline + Pass 3 hydrology
+// =============================================================================
+
 /**
  * Pre-generate all 128×128 L1 cells for a single macro cell at init time.
  *
- * Called once during world initialisation, after generateTerrainPatch() and
- * after Phase 6B start-cell rewrite, so the skip guard guarantees the patch
- * and start-cell data are never overwritten.
+ * Pass 0: generateElevationStructure builds coherent highland/lowland regions.
+ * Pass 1+2: blended elevation (structured × 0.70 + noise × 0.30) drives terrain
+ *           classification. Cells with finalElev >= 0.65 are river source candidates.
+ * Pass 3a: spacing-constrained source selection (min 24 cells apart).
+ * Pass 3b: gradient-descent river tracing with directional continuity bias.
+ * Pass 3c: lake basin flood-fill at sinks (strict radius 4 envelope).
+ * Pass 3d: multi-source BFS for water_distance (cap 64).
  *
- * - Identical Pass 1 + Pass 2 logic as generateTerrainPatch.
- * - Does NOT seed sites (sites remain on-demand via streaming / Phase 4D).
- * - Returns a flat { [cellKey]: cellObj } map of all newly created cells.
+ * Returns { cells, hydrologyStats }.
  *
- * @param {number} mx           — macro x (0–7)
- * @param {number} my           — macro y (0–7)
- * @param {string} biome        — biome key
- * @param {number} worldSeed    — phase3_seed / promptSeed
- * @param {object} existingCells — current gameState.world.cells (read-only)
- * @returns {object} { [cellKey]: cellObj }
+ * @param {number}        mx             — macro x (0–7)
+ * @param {number}        my             — macro y (0–7)
+ * @param {string}        biome          — biome key
+ * @param {number}        worldSeed      — phase3_seed / promptSeed
+ * @param {object}        existingCells  — current gameState.world.cells (read-only)
+ * @param {Function|null} reportProgress — optional callback(step, pct, detail)
+ * @returns {{ cells: object, hydrologyStats: object }}
  */
-function generateFullMacroCell(mx, my, biome, worldSeed, existingCells) {
+function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportProgress = null) {
   const l1w = DEFAULTS.L1_SIZE.w;   // 128
   const l1h = DEFAULTS.L1_SIZE.h;   // 128
   const cells = {};
+  const WATER_GROUPS = new Set(['water', 'coast', 'wetland']);
+  const TGMAP = TERRAIN_GROUP_MAP;
+  const BFS_CAP = 64;
 
+  // ── Pre-step: Build structured elevation field ────────────────────────────
+  const { elevMap, massifCount, basinCount } =
+    generateElevationStructure(mx, my, biome, worldSeed, reportProgress);
+  reportProgress?.('elevation_structure', 20, { massifCount, basinCount });
+
+  const mountainCandidates = [];
+  let cellsProcessed = 0;
+  const l1total = l1w * l1h; // 16384
+
+  // ── Pass 1 + 2: Blended elevation + terrain classification ────────────────
   for (let lx = 0; lx < l1w; lx++) {
     for (let ly = 0; ly < l1h; ly++) {
       const cellKey = `LOC:${mx},${my}:${lx},${ly}`;
@@ -1059,13 +1181,14 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells) {
       // Skip any cell already written (patch + Phase 6B start cell are protected)
       if (existingCells && existingCells[cellKey]) continue;
 
-      // Pass 1: compute physical noise fields
-      const _elev = evalElevation(mx, my, lx, ly, worldSeed, biome);
-      const _mois = evalMoisture(mx, my, lx, ly, worldSeed, biome);
-      const _temp = evalTemperature(mx, my, lx, ly, worldSeed, biome);
+      // Blend structured elevation (0.70) with raw noise (0.30)
+      const rawElev   = evalElevation(mx, my, lx, ly, worldSeed, biome);
+      const _mois     = evalMoisture(mx, my, lx, ly, worldSeed, biome);
+      const _temp     = evalTemperature(mx, my, lx, ly, worldSeed, biome);
+      const sElev     = elevMap[ly * l1w + lx];
+      const finalElev = Math.max(0, Math.min(1, sElev * 0.70 + rawElev * 0.30));
 
-      // Pass 2: classify terrain deterministically from noise fields
-      const terrainType = classifyTerrainFromNoise(_elev, _mois, _temp, biome, cellKey, worldSeed);
+      const terrainType = classifyTerrainFromNoise(finalElev, _mois, _temp, biome, cellKey, worldSeed);
 
       cells[cellKey] = {
         type:        terrainType,
@@ -1076,14 +1199,265 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells) {
         lx:          lx,
         ly:          ly,
         description: '',
-        elevation:   _elev,
+        elevation:   finalElev,
         moisture:    _mois,
         temperature: _temp,
       };
+
+      // Accumulate high-elevation cells as river source candidates
+      if (finalElev >= 0.65) mountainCandidates.push({ key: cellKey, elev: finalElev, lx, ly });
+
+      // Progress: 4 checkpoints at 31 / 41 / 51 / 60 %
+      cellsProcessed++;
+      if (cellsProcessed % 4096 === 0) {
+        reportProgress?.('pass1_2',
+          Math.round(22 + (cellsProcessed / l1total) * 38),
+          { cellsProcessed, total: l1total });
+      }
     }
   }
 
-  return cells;
+  // ── Pass 3 rivers + lakes (conditional on biome having river sources) ─────
+  const BIOME_RIVER_SOURCES = {
+    mountain: 6, tundra: 4, forest: 4, rural: 3,
+    jungle: 5, desert: 1, coast: 0, wetland: 0,
+  };
+  const targetSources = BIOME_RIVER_SOURCES[biome] ?? 0;
+
+  let riverCount = 0, totalRiverCells = 0;
+  let lakeBasins = 0, lakeCells = 0;
+  let sourcesCount = 0;
+  const sinks = [];
+
+  const getCell = key => cells[key] || (existingCells && existingCells[key]) || null;
+
+  if (targetSources > 0 && mountainCandidates.length > 0) {
+    // ── Pass 3a: Source selection with minimum spacing ──────────────────────
+    const shuffleRng = mulberry32(h32(`${worldSeed}|river_sources|${mx},${my}`));
+    const candidates  = [...mountainCandidates];
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(shuffleRng() * (i + 1));
+      const tmp = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tmp;
+    }
+
+    const MIN_SPACING = 24;
+    const sources = [];
+    for (const cand of candidates) {
+      if (sources.length >= targetSources) break;
+      if (sources.every(s =>
+        Math.abs(cand.lx - s.lx) + Math.abs(cand.ly - s.ly) >= MIN_SPACING
+      )) {
+        sources.push(cand);
+      }
+    }
+    sourcesCount = sources.length;
+    reportProgress?.('pass3_sources', 62,
+      { sourceCount: sourcesCount, mountainCells: mountainCandidates.length });
+
+    // ── Pass 3b: Gradient-descent river tracing with directional continuity ─
+    const visitedRiver = new Set();
+    for (const source of sources) {
+      const path = [];
+      let curLx = source.lx, curLy = source.ly, curElev = source.elev;
+      let lastDx = 0, lastDy = 0;
+      const PATH_CAP = 96;
+
+      while (path.length < PATH_CAP) {
+        const curKey = `LOC:${mx},${my}:${curLx},${curLy}`;
+        if (visitedRiver.has(curKey)) break;
+        visitedRiver.add(curKey);
+        path.push({ key: curKey, lx: curLx, ly: curLy });
+
+        let moved = false;
+
+        // 1. Directional continuity — prefer same heading
+        if (lastDx !== 0 || lastDy !== 0) {
+          const nlx = curLx + lastDx, nly = curLy + lastDy;
+          if (nlx >= 0 && nlx < l1w && nly >= 0 && nly < l1h) {
+            const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
+            if (!visitedRiver.has(nKey)) {
+              const nCell = getCell(nKey);
+              if (nCell && nCell.elevation < curElev) {
+                curElev = nCell.elevation; curLx = nlx; curLy = nly; moved = true;
+              }
+            }
+          }
+        }
+
+        // 2. Fallback: lowest unvisited 4-directional neighbor
+        if (!moved) {
+          let bestElev = curElev, bestLx = -1, bestLy = -1, bestDx = 0, bestDy = 0;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nlx = curLx + dx, nly = curLy + dy;
+            if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
+            const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
+            if (visitedRiver.has(nKey)) continue;
+            const nCell = getCell(nKey);
+            if (nCell && nCell.elevation < bestElev) {
+              bestElev = nCell.elevation;
+              bestLx = nlx; bestLy = nly; bestDx = dx; bestDy = dy;
+            }
+          }
+          if (bestLx === -1) {
+            sinks.push({ lx: curLx, ly: curLy, elev: curElev });
+            break;
+          }
+          curElev = bestElev; curLx = bestLx; curLy = bestLy;
+          lastDx = bestDx; lastDy = bestDy;
+        }
+      }
+      // Path cap reached — treat current position as sink
+      if (path.length >= PATH_CAP) {
+        sinks.push({ lx: curLx, ly: curLy, elev: curElev });
+      }
+      if (path.length === 0) continue;
+
+      riverCount++;
+      totalRiverCells += path.length;
+
+      // Reclassify: first 60% → stream, last 40% → river_crossing
+      const streamEnd = Math.round(path.length * 0.60);
+      for (let i = 0; i < path.length; i++) {
+        const { key } = path[i];
+        const cell = getCell(key);
+        if (!cell) continue;
+        if (WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) continue;
+        const newType = i < streamEnd ? 'stream' : 'river_crossing';
+        if (cells[key])                             cells[key].type = newType;
+        else if (existingCells && existingCells[key]) existingCells[key].type = newType;
+      }
+    }
+    reportProgress?.('pass3_rivers', 65, { riversCut: riverCount, totalRiverCells });
+
+    // ── Pass 3c: Lake basin flood-fill at sinks ─────────────────────────────
+    const BASIN_RADIUS = 4;
+    const sinkSeen = new Set();
+    for (const sink of sinks) {
+      const sk = `${sink.lx},${sink.ly}`;
+      if (sinkSeen.has(sk)) continue;
+      sinkSeen.add(sk);
+      lakeBasins++;
+      const queue    = [{ lx: sink.lx, ly: sink.ly }];
+      const bVisited = new Set([sk]);
+
+      while (queue.length > 0) {
+        const cur    = queue.shift();
+        const curKey = `LOC:${mx},${my}:${cur.lx},${cur.ly}`;
+        const cell   = getCell(curKey);
+        if (cell && !WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) {
+          if (cells[curKey])                              cells[curKey].type = 'lake_shore';
+          else if (existingCells && existingCells[curKey]) existingCells[curKey].type = 'lake_shore';
+          lakeCells++;
+        }
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nlx = cur.lx + dx, nly = cur.ly + dy;
+          // Hard radius envelope check on every enqueue
+          if (Math.abs(nlx - sink.lx) + Math.abs(nly - sink.ly) > BASIN_RADIUS) continue;
+          if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
+          const nk = `${nlx},${nly}`;
+          if (bVisited.has(nk)) continue;
+          const nKey  = `LOC:${mx},${my}:${nlx},${nly}`;
+          const nCell = getCell(nKey);
+          if (nCell && nCell.elevation < sink.elev + 0.10) {
+            bVisited.add(nk);
+            queue.push({ lx: nlx, ly: nly });
+          }
+        }
+      }
+    }
+    reportProgress?.('pass3_lakes', 70, { lakeBasins, lakeCells });
+
+  } else {
+    // Biome does not support river generation — emit progress stubs so client bar fills
+    reportProgress?.('pass3_sources', 62, { sourceCount: 0, mountainCells: mountainCandidates.length });
+    reportProgress?.('pass3_rivers',  65, { riversCut: 0, totalRiverCells: 0 });
+    reportProgress?.('pass3_lakes',   70, { lakeBasins: 0, lakeCells: 0 });
+  }
+
+  // ── Pass 3d: Multi-source BFS for water_distance (always runs) ───────────
+  const allKeys = new Set(Object.keys(cells));
+  if (existingCells) for (const k of Object.keys(existingCells)) allKeys.add(k);
+
+  const bfsQueue = [];
+  const bfsDist  = new Map();
+  for (const key of allKeys) {
+    const cell = cells[key] || (existingCells && existingCells[key]);
+    if (!cell) continue;
+    if (WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) {
+      bfsDist.set(key, 0);
+      bfsQueue.push(key);
+    }
+  }
+
+  const bfsTotal = allKeys.size || 1;
+  let bfsVisited = 0;
+  let bfsHead    = 0;
+  while (bfsHead < bfsQueue.length) {
+    const curKey  = bfsQueue[bfsHead++];
+    const curDist = bfsDist.get(curKey);
+    bfsVisited++;
+    if (bfsVisited % 1638 === 0) {
+      reportProgress?.('pass3_bfs',
+        72 + Math.floor(bfsVisited / bfsTotal * 10),
+        { bfsVisited });
+    }
+    if (curDist >= BFS_CAP) continue;
+    const m = curKey.match(/^LOC:\d+,\d+:(\d+),(\d+)$/);
+    if (!m) continue;
+    const clx = parseInt(m[1], 10), cly = parseInt(m[2], 10);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nlx = clx + dx, nly = cly + dy;
+      if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
+      const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
+      if (bfsDist.has(nKey)) continue;
+      if (!allKeys.has(nKey)) continue;
+      bfsDist.set(nKey, curDist + 1);
+      bfsQueue.push(nKey);
+    }
+  }
+
+  // Write water_distance + compute stats
+  let distSum = 0, distCount = 0;
+  const distH = { d0_4: 0, d5_15: 0, d16_32: 0, d33_64: 0, dOver64: 0 };
+  for (const key of allKeys) {
+    const d    = bfsDist.has(key) ? bfsDist.get(key) : BFS_CAP;
+    if (cells[key])                              cells[key].water_distance = d;
+    else if (existingCells && existingCells[key]) existingCells[key].water_distance = d;
+    const cell = cells[key] || (existingCells && existingCells[key]);
+    if (cell && !WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) { distSum += d; distCount++; }
+    if      (d <= 4)  distH.d0_4++;
+    else if (d <= 15) distH.d5_15++;
+    else if (d <= 32) distH.d16_32++;
+    else if (d <= 64) distH.d33_64++;
+    else               distH.dOver64++;
+  }
+
+  const noiseWaterCells = bfsQueue.length; // BFS seeds = all water cells after Pass 3
+  let waterAfterPass3 = 0;
+  const cellCount = Object.keys(cells).length;
+  for (const cell of Object.values(cells)) {
+    if (WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) waterAfterPass3++;
+  }
+  const waterCoveragePct = cellCount > 0
+    ? +((waterAfterPass3 / cellCount) * 100).toFixed(2)
+    : 0;
+
+  const hydrologyStats = {
+    riverCount,
+    totalRiverCells,
+    lakeBasins,
+    lakeCells,
+    mountainCells:    mountainCandidates.length,
+    riverSources:     sourcesCount,
+    noiseWaterCells,
+    waterCoveragePct,
+    avgWaterDistance: distCount > 0 ? +(distSum / distCount).toFixed(2) : 0,
+    distribution:     distH,
+  };
+
+  reportProgress?.('complete', 100, { waterCoveragePct });
+
+  return { cells, hydrologyStats };
 }
 
 /**

@@ -173,19 +173,66 @@
         .catch(() => alert('Clipboard write failed.'));
     }
 
+    function updateWgOverlayProgress(steps) {
+      const stepsDiv = document.getElementById('worldgen-steps');
+      if (!stepsDiv || !steps || steps.length === 0) return;
+      const latest = steps[steps.length - 1];
+      const pct    = latest?.pct ?? 0;
+      const filled = Math.round(pct / 5); // 20-char bar
+      const bar    = '█'.repeat(Math.min(filled, 20)) + '░'.repeat(Math.max(0, 20 - filled));
+      const completed = steps.slice(0, -1);
+      let html = `<div style="padding:4px 0; font-family:monospace; font-size:12px; color:#d4af37;">[${bar}] ${pct}%</div>`;
+      html += `<div style="color:#d4af37; padding:2px 0; font-size:12px;">${_escHtml(String(latest?.step ?? ''))}</div>`;
+      if (completed.length > 0) {
+        html += completed.map(s =>
+          `<div class="wg-step"><span class="wg-step-check">✓</span><span class="wg-step-name">${_escHtml(String(s.step ?? ''))}</span><span class="wg-step-data">${s.pct}%</span></div>`
+        ).join('');
+      }
+      stepsDiv.innerHTML = html;
+    }
+
+    let _progToken = null;
+    let _progPollInterval = null;
+
     async function submitAction() {
       const action = document.getElementById('actionInput').value;
       if (!action) return;
       
       document.getElementById('loading').style.display = 'block';
       const _wgIsFirstTurn = lastGameResponse === null;
-      if (_wgIsFirstTurn) showWgOverlay();
+      if (_wgIsFirstTurn) {
+        showWgOverlay();
+        // Pre-flight: obtain a progress token from the server, then start polling
+        _progToken = null;
+        try {
+          const _tokenResp = await fetch('/narrate/session-token');
+          if (_tokenResp.ok) {
+            const _tokenData = await _tokenResp.json();
+            _progToken = _tokenData.token || null;
+          }
+        } catch (_) { _progToken = null; }
+        if (_progToken) {
+          _progPollInterval = setInterval(async () => {
+            try {
+              const _pr = await fetch(`/narrate/progress?token=${encodeURIComponent(_progToken)}`);
+              if (_pr.ok) {
+                const _pd = await _pr.json();
+                if (_pd.steps && _pd.steps.length > 0) updateWgOverlayProgress(_pd.steps);
+              }
+            } catch (_) { /* ignore polling errors */ }
+          }, 300);
+        }
+      }
       
       try {
         const headers = { 'Content-Type': 'application/json' };
         // Send sessionId if we have one (all turns after first)
         if (currentSessionId) {
           headers['x-session-id'] = currentSessionId;
+        }
+        // Send progress token so server can push to the polling bus
+        if (_wgIsFirstTurn && _progToken) {
+          headers['x-progress-token'] = _progToken;
         }
         
         // [DIAG-5] Log headers before sending Request
@@ -203,6 +250,8 @@
         });
         
         const data = await response.json();
+        // Clear progress poll as soon as the game response arrives
+        if (_progPollInterval) { clearInterval(_progPollInterval); _progPollInterval = null; }
         
         // [DIAG-4] Log sessionId from response
         console.log('[DIAG-4-CLIENT-AFTER-RESPONSE] Full response object keys:', Object.keys(data));
@@ -428,6 +477,7 @@ diagLog.innerHTML = `
 `;
 
       } catch (err) {
+        if (_progPollInterval) { clearInterval(_progPollInterval); _progPollInterval = null; }
         if (_wgIsFirstTurn) errorWgOverlay(err.message || 'Unknown error');
         document.getElementById('narrative').innerHTML = `<p>Error: ${err.message}</p>`;
       } finally {
