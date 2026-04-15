@@ -138,9 +138,10 @@
       document.getElementById('worldgen-overlay').classList.add('visible');
     }
     function populateWgOverlay(wgLog) {
-      document.getElementById('worldgen-box-title').textContent = 'WORLDGEN — COMPLETE';
-      document.getElementById('worldgen-box-title').style.color = '#2ecc71';
-      if (wgLog && Array.isArray(wgLog) && wgLog.length > 0) {
+      const _hasLog = wgLog && Array.isArray(wgLog) && wgLog.length > 0;
+      document.getElementById('worldgen-box-title').textContent = _hasLog ? 'WORLDGEN — COMPLETE' : 'WORLDGEN — DONE (no log)';
+      document.getElementById('worldgen-box-title').style.color = _hasLog ? '#2ecc71' : '#f39c12';
+      if (_hasLog) {
         document.getElementById('worldgen-copy-btn').style.display = '';
         document.getElementById('worldgen-steps').innerHTML = wgLog.map(e => {
           const dataStr = e.data != null ? JSON.stringify(e.data) : '';

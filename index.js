@@ -828,6 +828,7 @@ app.post('/narrate', async (req, res) => {
     const _wLogT0 = Date.now();
     const _wLog = (pass, step, data) => _worldgenLog.push({ pass, step, data, ms: Date.now() - _wLogT0 });
 
+    let startAnchor = null; // hoisted — referenced by worldgen summary block outside if(worldData)
     try {
       // Handle async world generation with DeepSeek biome detection
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
@@ -852,7 +853,7 @@ app.post('/narrate', async (req, res) => {
           // Phase 3: Seed-derived terrain patch and start position
           _wLog('pass1+2', 'terrain_patch_start', { anchor: WorldGen.selectStartAnchor(WorldGen.h32(inputObj.WORLD_PROMPT)), biome: worldData.biome });
           const phase3Seed = WorldGen.h32(inputObj.WORLD_PROMPT);
-          const startAnchor = WorldGen.selectStartAnchor(phase3Seed);
+          startAnchor = WorldGen.selectStartAnchor(phase3Seed); // assigns hoisted let
           const patchCells  = WorldGen.generateTerrainPatch(startAnchor, worldData.biome, phase3Seed, gameState.world.cells);
           Object.assign(gameState.world.cells, patchCells);
           _wLog('pass1+2', 'terrain_patch_complete', { cell_count: Object.keys(patchCells).length });
