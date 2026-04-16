@@ -1152,11 +1152,14 @@ function generateElevationStructure(mx, my, biome, worldSeed, reportProgress = n
     }
   }
 
-  // Naturalization: small per-cell perturbation breaks Gaussian circularity
+  // Naturalization: tiny per-cell perturbation breaks Gaussian circularity so
+  // every cell has a uniquely defined lowest neighbor (required for acyclic flow).
+  // Magnitude 0.004 keeps noise-to-gradient ratio < 0.2 on the flattest massif
+  // slope, so flow direction decisions are dominated by terrain, not noise.
   for (let ly = 0; ly < l1h; ly++) {
     for (let lx = 0; lx < l1w; lx++) {
       const idx     = ly * l1w + lx;
-      const perturb = 0.08 * (rnd01(worldSeed, ['elev_nat', lx, ly, mx, my]) - 0.5);
+      const perturb = 0.004 * (rnd01(worldSeed, ['elev_nat', lx, ly, mx, my]) - 0.5);
       elevMap[idx]  = Math.max(0, Math.min(1, elevMap[idx] + perturb));
     }
   }
@@ -1493,144 +1496,140 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     Object.entries(terrainCounts).sort((a, b) => b[1] - a[1])
   );
 
-  // ── Pass 3 rivers + lakes (conditional on biome having river sources) ─────
-  const BIOME_RIVER_SOURCES = {
-    mountain: 6, tundra: 4, forest: 4, rural: 3,
-    jungle: 5, desert: 1, coast: 0, wetland: 0,
-  };
-  const targetSources = Math.ceil((BIOME_RIVER_SOURCES[biome] ?? 0) * (hydroStrength > 0 ? 1 + hydroStrength * 0.5 : 1));
+  // ── Pass 3 rivers + lakes — flow-driven extraction ───────────────────────
+  // Rivers are extracted directly from the flowAccum field rather than traced
+  // from elevation-based sources.  Any cell whose upstream catchment area meets
+  // the threshold is part of a river; chains are walked downstream via flowDir.
 
   let riverCount = 0, totalRiverCells = 0;
   const hydroCells = new Set(); let poolCells = 0; let streamHaloCells = 0;
   let channelCells = 0, channelPairsCount = 0;
   let lakeBasins = 0, lakeCells = 0;
-  let sourcesCount = 0;
+  let riverThreshold = 0;
   const sinks = [];
   const riverPaths = [];
 
   const getCell = key => cells[key] || (existingCells && existingCells[key]) || null;
 
-  if (targetSources > 0 && mountainCandidates.length > 0) {
-    // ── Pass 3a: Source selection with minimum spacing ──────────────────────
-    const shuffleRng = mulberry32(h32(`${worldSeed}|river_sources|${mx},${my}`));
-    const candidates  = [...mountainCandidates];
-    for (let i = candidates.length - 1; i > 0; i--) {
-      const j = Math.floor(shuffleRng() * (i + 1));
-      const tmp = candidates[i]; candidates[i] = candidates[j]; candidates[j] = tmp;
+  // Compute flow diagnostics first — needed for threshold.
+  // maxFlowAccum is also surfaced in hydrologyStats for verification.
+  let maxFlowAccum = 0;
+  for (let _i = 0; _i < flowAccum.length; _i++) {
+    if (flowAccum[_i] > maxFlowAccum) maxFlowAccum = flowAccum[_i];
+  }
+  const _faSorted    = flowAccum.slice().sort();
+  const medianFlowAccum = _faSorted[_faSorted.length >> 1] ?? 0;
+
+  // River extraction operates when the flow field has coherent accumulation.
+  // ACCUM_FLOOR guards against still-incoherent runs (should not occur after
+  // the naturalization magnitude fix, but prevents silent bad output).
+  const RIVER_FRACTION   = 0.08;  // top 8% of maxFlowAccum → main channels
+  const ACCUM_FLOOR      = 16;    // absolute minimum threshold
+  const MIN_RIVER_LENGTH = 8;     // discard short fragments
+  const DIR_OFFSETS      = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // N E S W (D4)
+
+  riverThreshold = Math.max(ACCUM_FLOOR, Math.round(maxFlowAccum * RIVER_FRACTION));
+
+  if (maxFlowAccum >= ACCUM_FLOOR) {
+    // ── Pass 3b_flow: Identify chain heads and walk downstream ───────────────
+    // A chain head is a cell that meets the threshold but whose single upstream
+    // cardinal neighbor (the cell pointing INTO this one) does not.  Walking
+    // from each head follows the flow pointer until the chain drops below
+    // threshold, hits a map sink, or exits the boundary.
+
+    // Build a reverse-pointer map: for each cell, which cell flows into it?
+    // (Only needed for chain-head detection — not stored beyond this block.)
+    const inflow = new Int32Array(l1w * l1h).fill(-1); // -1 = no single inflow
+    for (let i = 0; i < l1w * l1h; i++) {
+      const d = flowDir[i];
+      if (d === -1) continue;
+      const lx = i % l1w;
+      const ly = (i - lx) / l1w;
+      const ni = (ly + DIR_OFFSETS[d][1]) * l1w + (lx + DIR_OFFSETS[d][0]);
+      // Mark ni as having an inflow from i.  If multiple cells flow into ni,
+      // mark it as -2 (confluence — still a valid chain interior, not a head).
+      inflow[ni] = inflow[ni] === -1 ? i : -2;
     }
 
-    const MIN_SPACING = 24;
-    const sources = [];
-    for (const cand of candidates) {
-      if (sources.length >= targetSources) break;
-      // Require flowAccum >= 4: the source must have at least 4 upstream cells
-      // feeding it, confirming it sits on a real drainage path rather than an
-      // isolated peak that leads nowhere.
-      if (flowAccum[cand.ly * l1w + cand.lx] < 4) continue;
-      if (sources.every(s =>
-        Math.abs(cand.lx - s.lx) + Math.abs(cand.ly - s.ly) >= MIN_SPACING
-      )) {
-        sources.push(cand);
-      }
-    }
-    sourcesCount = sources.length;
-    reportProgress?.('pass3_sources', 62,
-      { sourceCount: sourcesCount, mountainCells: mountainCandidates.length });
+    const visited = new Uint8Array(l1w * l1h); // 0 = unvisited
 
-    // ── Pass 3b: River tracing — follows precomputed flow direction field ─────
-    // Instead of scoring neighbors locally at every step, each river simply
-    // follows the flowDir pointer chain computed for the full elevation map.
-    // This produces globally consistent drainage paths that traverse the entire
-    // macro cell rather than terminating on flat inter-massif terrain.
-    const SINK_FLOOR  = 0.12; // safety: terminate if cell is already at natural base
-    const DIR_OFFSETS = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // N, E, S, W (D4)
-    for (const source of sources) {
-      // Each river gets its own visited set so later rivers trace full independent
-      // paths instead of colliding with earlier ones after 1–3 cells.
-      const visitedRiver = new Set();
+    for (let i = 0; i < l1w * l1h; i++) {
+      if (flowAccum[i] < riverThreshold) continue; // below threshold
+      if (visited[i]) continue;
+
+      // Determine if this is a chain head.
+      // A head has no qualifying inflow — i.e. the cell draining into it
+      // (inflow[i]) either doesn't exist or is itself below threshold.
+      const inf = inflow[i];
+      const isHead = inf === -1 || inf === -2
+        ? true // map-edge inflow or multi-source confluence → treat as head
+        : flowAccum[inf] < riverThreshold; // single upstream is below threshold
+
+      if (!isHead) continue;
+
+      // Walk downstream from this head
       const path = [];
-      let curLx = source.lx, curLy = source.ly;
-      const PATH_CAP = 96;
+      let curIdx = i;
 
-      while (path.length < PATH_CAP) {
-        const curKey = `LOC:${mx},${my}:${curLx},${curLy}`;
-        if (visitedRiver.has(curKey)) break;
-        visitedRiver.add(curKey);
-        path.push({ key: curKey, lx: curLx, ly: curLy });
+      while (true) {
+        if (visited[curIdx]) break; // joined an already-extracted river
+        if (flowAccum[curIdx] < riverThreshold) break; // dropped below threshold
+        visited[curIdx] = 1;
 
-        const curCell = getCell(curKey);
+        const lx = curIdx % l1w;
+        const ly = (curIdx - lx) / l1w;
+        const key = `LOC:${mx},${my}:${lx},${ly}`;
+        path.push({ key, lx, ly, idx: curIdx });
 
-        // Terminate: reached existing hydrology — clean confluence, no lake needed
-        if (path.length > 1 && curCell && hydroCells.has(curKey)) break;
-
-        // Terminate: already at natural drainage floor (safety edge case)
-        if (curCell && curCell.elevation < SINK_FLOOR) {
-          sinks.push({ lx: curLx, ly: curLy, elev: curCell.elevation });
+        const d = flowDir[curIdx];
+        if (d === -1) {
+          // Natural sink — feed Pass 3c lake fill
+          const c = getCell(key);
+          sinks.push({ lx, ly, elev: c ? c.elevation : 0 });
           break;
         }
-
-        // Follow the precomputed flow direction pointer for this cell
-        const cellIdx = curLy * l1w + curLx;
-        const dirIdx  = flowDir[cellIdx];
-        if (dirIdx === -1) {
-          // Local minimum — natural drainage sink, feed Pass 3c lake fill
-          sinks.push({ lx: curLx, ly: curLy, elev: curCell ? curCell.elevation : 0 });
+        const [ddx, ddy] = DIR_OFFSETS[d];
+        const nLx = lx + ddx, nLy = ly + ddy;
+        if (nLx < 0 || nLx >= l1w || nLy < 0 || nLy >= l1h) {
+          // Exits boundary — treat as edge sink for lake eligibility
+          const c = getCell(key);
+          sinks.push({ lx, ly, elev: c ? c.elevation : 0 });
           break;
         }
-
-        const [ddx, ddy] = DIR_OFFSETS[dirIdx];
-        const nextLx = curLx + ddx, nextLy = curLy + ddy;
-        // Flow pointer exits the macro cell boundary — treat edge as sink
-        if (nextLx < 0 || nextLx >= l1w || nextLy < 0 || nextLy >= l1h) {
-          sinks.push({ lx: curLx, ly: curLy, elev: curCell ? curCell.elevation : 0 });
-          break;
-        }
-
-        const nextKey = `LOC:${mx},${my}:${nextLx},${nextLy}`;
-        if (visitedRiver.has(nextKey)) {
-          // Tributary confluence with an already-traced segment — no lake
-          break;
-        }
-
-        curLx = nextLx; curLy = nextLy;
+        curIdx = nLy * l1w + nLx;
       }
-      // Path cap reached — treat current position as edgeward sink
-      if (path.length >= PATH_CAP) {
-        const lastCell = getCell(`LOC:${mx},${my}:${curLx},${curLy}`);
-        sinks.push({ lx: curLx, ly: curLy, elev: lastCell ? lastCell.elevation : 0 });
-      }
-      // Discard stub paths shorter than 4 cells
-      if (path.length < 4) continue;
+
+      if (path.length < MIN_RIVER_LENGTH) continue;
 
       riverCount++;
       totalRiverCells += path.length;
 
       // Reclassify: first 60% → stream, last 40% → river_crossing
-      // Only protect true open water / coast — let rivers carve through swamp/marsh/bog
       const RIVER_PROTECTED_GROUPS = new Set(['water', 'coast']);
       const streamEnd = Math.round(path.length * 0.60);
-      for (let i = 0; i < path.length; i++) {
-        const { key } = path[i];
+      for (let pi = 0; pi < path.length; pi++) {
+        const { key } = path[pi];
         const cell = getCell(key);
         if (!cell) continue;
         if (RIVER_PROTECTED_GROUPS.has(TGMAP[cell.type] || 'wilderness')) continue;
-        const newType = i < streamEnd ? 'stream' : 'river_crossing';
-        if (cells[key])                             cells[key].type = newType;
+        const newType = pi < streamEnd ? 'stream' : 'river_crossing';
+        if (cells[key])                              cells[key].type = newType;
         else if (existingCells && existingCells[key]) existingCells[key].type = newType;
         hydroCells.add(key);
       }
 
-      // Record river path summary
+      // Record path summary
       const sdx = path[path.length - 1].lx - path[0].lx;
       const sdy = path[path.length - 1].ly - path[0].ly;
       riverPaths.push({
-        sourceLx: path[0].lx, sourceLy: path[0].ly, sourceElev: source.elev,
+        sourceLx: path[0].lx, sourceLy: path[0].ly,
+        sourceElev: (() => { const c = getCell(path[0].key); return c ? c.elevation : 0; })(),
         sinkLx: path[path.length - 1].lx, sinkLy: path[path.length - 1].ly,
         length: path.length,
         compassDir: compassFromVector(sdx, sdy),
       });
     }
-    reportProgress?.('pass3_rivers', 65, { riversCut: riverCount, totalRiverCells });
+    reportProgress?.('pass3_rivers', 65, { riversCut: riverCount, totalRiverCells, riverThreshold });
 
     // ── Pass 3c: Lake basin flood-fill at sinks ─────────────────────────────
     const BASIN_RADIUS = 4;
@@ -1655,7 +1654,6 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         }
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nlx = cur.lx + dx, nly = cur.ly + dy;
-          // Hard radius envelope check on every enqueue
           if (Math.abs(nlx - sink.lx) + Math.abs(nly - sink.ly) > BASIN_RADIUS) continue;
           if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
           const nk = `${nlx},${nly}`;
@@ -1672,10 +1670,10 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     reportProgress?.('pass3_lakes', 70, { lakeBasins, lakeCells });
 
   } else {
-    // Biome does not support river generation — emit progress stubs so client bar fills
-    reportProgress?.('pass3_sources', 62, { sourceCount: 0, mountainCells: mountainCandidates.length });
-    reportProgress?.('pass3_rivers',  65, { riversCut: 0, totalRiverCells: 0 });
-    reportProgress?.('pass3_lakes',   70, { lakeBasins: 0, lakeCells: 0 });
+    // Flow field incoherent or biome has no meaningful accumulation (coast/wetland) —
+    // emit progress stubs so the client progress bar fills smoothly.
+    reportProgress?.('pass3_rivers', 65, { riversCut: 0, totalRiverCells: 0, riverThreshold });
+    reportProgress?.('pass3_lakes',  70, { lakeBasins: 0, lakeCells: 0 });
 
     // ── Pass 3b_wet: Wetland diffuse pool placement ────────────────────────
     if (biome === 'wetland') {
@@ -1900,13 +1898,8 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   }
   reportProgress?.('pass3_fringe', 84, { fringeCells });
 
-  // Flow field diagnostics — computed from the full 16 384-cell flowAccum array
-  let maxFlowAccum = 0;
-  for (let _i = 0; _i < flowAccum.length; _i++) {
-    if (flowAccum[_i] > maxFlowAccum) maxFlowAccum = flowAccum[_i];
-  }
-  const _faSorted = flowAccum.slice().sort(); // sorts Uint16Array in place on a copy
-  const medianFlowAccum = _faSorted[_faSorted.length >> 1] ?? 0;
+  // maxFlowAccum, medianFlowAccum, and riverThreshold were computed earlier in
+  // Pass 3b_flow and are already bound as locals — no recomputation needed here.
 
   const hydrologyStats = {
     riverCount,
@@ -1918,7 +1911,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     channelPairsCount,
     streamHaloCells,
     mountainCells:    mountainCandidates.length,
-    riverSources:     sourcesCount,
+    riverThreshold,
     noiseWaterCells,
     waterCoveragePct,
     avgWaterDistance: distCount > 0 ? +(distSum / distCount).toFixed(2) : 0,
