@@ -60,14 +60,14 @@ const BIOME_KEYWORDS = {
 
 // Terrain palettes for each biome — L0 geography strings only (see LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY)
 const BIOME_PALETTES = {
-  rural: ["plains_grassland", "plains_wildflower", "meadow", "forest_deciduous", "hills_rolling", "rocky_terrain", "stream"],
-  forest: ["forest_deciduous", "forest_mixed", "forest_coniferous", "meadow", "stream", "hills_rolling"],
+  rural: ["plains_grassland", "plains_wildflower", "meadow", "forest_deciduous", "hills_rolling", "rocky_terrain"],
+  forest: ["forest_deciduous", "forest_mixed", "forest_coniferous", "meadow", "meadow", "hills_rolling"],
   desert: ["desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa"],
   tundra: ["tundra", "snowfield", "ice_sheet", "permafrost", "alpine"],
-  jungle: ["forest_coniferous", "meadow", "swamp", "marsh", "forest_mixed", "stream", "wetland"],
+  jungle: ["forest_coniferous", "meadow", "swamp", "marsh", "forest_mixed", "meadow", "wetland"],
   coast: ["beach_sand", "beach_pebble", "cliffs_coastal", "tidepools", "dunes_coastal", "scrubland", "plains_grassland"],
   mountain: ["mountain_slopes", "mountain_peak", "mountain_pass", "rocky_terrain", "scree", "alpine", "hills_rocky"],
-  wetland: ["swamp", "marsh", "wetland", "bog", "stream", "bog"]
+  wetland: ["swamp", "marsh", "wetland", "bog", "bog", "bog"]
 };
 
 // =============================================================================
@@ -1395,7 +1395,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   const targetSources = BIOME_RIVER_SOURCES[biome] ?? 0;
 
   let riverCount = 0, totalRiverCells = 0;
-  const hydroCells = new Set(); let poolCells = 0;
+  const hydroCells = new Set(); let poolCells = 0; let streamHaloCells = 0;
   let lakeBasins = 0, lakeCells = 0;
   let sourcesCount = 0;
   const sinks = [];
@@ -1591,6 +1591,38 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     }
   }
 
+  // ── Pass 3c_str: Terrain-stream halo around hydrology seeds ────────────────
+  const STREAM_HALO_BIOMES = new Set(['wetland', 'jungle', 'rural', 'forest']);
+  if (STREAM_HALO_BIOMES.has(biome) && hydroCells.size > 0) {
+    const HALO_RADIUS = 2;
+    const HALO_DENSITY = 0.18;
+    const haloVisited = new Set();
+    for (const seedKey of hydroCells) {
+      const sm = seedKey.match(/^LOC:\d+,\d+:(\d+),(\d+)$/);
+      if (!sm) continue;
+      const slx = parseInt(sm[1], 10), sly = parseInt(sm[2], 10);
+      for (let hdx = -HALO_RADIUS; hdx <= HALO_RADIUS; hdx++) {
+        for (let hdy = -HALO_RADIUS; hdy <= HALO_RADIUS; hdy++) {
+          if (Math.abs(hdx) + Math.abs(hdy) > HALO_RADIUS) continue;
+          const nlx = slx + hdx, nly = sly + hdy;
+          if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
+          const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
+          if (haloVisited.has(nKey)) continue;
+          haloVisited.add(nKey);
+          if (hydroCells.has(nKey)) continue;
+          if (!cells[nKey]) continue;
+          if (WATER_GROUPS.has(TGMAP[cells[nKey].type] || 'wilderness')) continue;
+          const haloRng = mulberry32(h32(`${worldSeed}|p3str|${nKey}`));
+          if (haloRng() < HALO_DENSITY) {
+            cells[nKey].type = 'stream';
+            streamHaloCells++;
+          }
+        }
+      }
+    }
+    reportProgress?.('pass3_stream_halo', 71, { streamHaloCells });
+  }
+
   // ── Pass 3d: Multi-source BFS for water_distance (always runs) ───────────
   const allKeys = new Set(Object.keys(cells));
   if (existingCells) for (const k of Object.keys(existingCells)) allKeys.add(k);
@@ -1704,6 +1736,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     lakeBasins,
     lakeCells,
     poolCells,
+    streamHaloCells,
     mountainCells:    mountainCandidates.length,
     riverSources:     sourcesCount,
     noiseWaterCells,
