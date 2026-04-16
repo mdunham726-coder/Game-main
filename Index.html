@@ -165,6 +165,8 @@
     }
     function dismissWgOverlay() {
       document.getElementById('worldgen-overlay').classList.remove('visible');
+      clearInterval(_stepTickInterval); _stepTickInterval = null;
+      _allKnownSteps = []; _stepDisplayIdx = -1;
     }
     function copyWgLogOverlay() {
       const log = window.lastGameResponse?.worldgen_log || null;
@@ -173,6 +175,21 @@
         .catch(() => alert('Clipboard write failed.'));
     }
 
+    const _WG_STEP_NAMES = {
+      analyzing:           'Analyzing world profile',
+      world_profile:       'World profile complete',
+      terrain_patch:       'Generating terrain',
+      patch_complete:      'Terrain patch ready',
+      elev_map:            'Building elevation map',
+      elevation_structure: 'Elevation structure done',
+      pass1_2:             'Classifying terrain',
+      pass3_sources:       'Locating river sources',
+      pass3_rivers:        'Tracing rivers',
+      pass3_lakes:         'Flooding lake basins',
+      pass3_bfs:           'Computing water proximity',
+      complete:            'World generation complete',
+    };
+
     function updateWgOverlayProgress(steps) {
       const stepsDiv = document.getElementById('worldgen-steps');
       if (!stepsDiv || !steps || steps.length === 0) return;
@@ -180,19 +197,24 @@
       const pct    = latest?.pct ?? 0;
       const filled = Math.round(pct / 5); // 20-char bar
       const bar    = '█'.repeat(Math.min(filled, 20)) + '░'.repeat(Math.max(0, 20 - filled));
-      const completed = steps.slice(0, -1);
+      const latestName = _WG_STEP_NAMES[latest?.step] || String(latest?.step ?? '');
+      const completed = steps.slice(-5, -1);
       let html = `<div style="padding:4px 0; font-family:monospace; font-size:12px; color:#d4af37;">[${bar}] ${pct}%</div>`;
-      html += `<div style="color:#d4af37; padding:2px 0; font-size:12px;">${_escHtml(String(latest?.step ?? ''))}</div>`;
+      html += `<div style="color:#d4af37; padding:2px 0; font-size:12px;">${_escHtml(latestName)}</div>`;
       if (completed.length > 0) {
-        html += completed.map(s =>
-          `<div class="wg-step"><span class="wg-step-check">✓</span><span class="wg-step-name">${_escHtml(String(s.step ?? ''))}</span><span class="wg-step-data">${s.pct}%</span></div>`
-        ).join('');
+        html += completed.map(s => {
+          const name = _WG_STEP_NAMES[s.step] || String(s.step ?? '');
+          return `<div class="wg-step"><span class="wg-step-check">✓</span><span class="wg-step-name">${_escHtml(name)}</span><span class="wg-step-data">${s.pct}%</span></div>`;
+        }).join('');
       }
       stepsDiv.innerHTML = html;
     }
 
     let _progToken = null;
     let _progPollInterval = null;
+    let _allKnownSteps = [];
+    let _stepDisplayIdx = -1;
+    let _stepTickInterval = null;
 
     async function submitAction() {
       const action = document.getElementById('actionInput').value;
@@ -203,6 +225,8 @@
       if (_wgIsFirstTurn) {
         showWgOverlay();
         // Pre-flight: obtain a progress token from the server, then start polling
+        _allKnownSteps = []; _stepDisplayIdx = -1;
+        if (_stepTickInterval) { clearInterval(_stepTickInterval); _stepTickInterval = null; }
         _progToken = null;
         try {
           const _tokenResp = await fetch('/narrate/session-token');
@@ -217,10 +241,16 @@
               const _pr = await fetch(`/narrate/progress?token=${encodeURIComponent(_progToken)}`);
               if (_pr.ok) {
                 const _pd = await _pr.json();
-                if (_pd.steps && _pd.steps.length > 0) updateWgOverlayProgress(_pd.steps);
+                if (_pd.steps && _pd.steps.length > 0) _allKnownSteps = _pd.steps;
               }
             } catch (_) { /* ignore polling errors */ }
           }, 300);
+          _stepTickInterval = setInterval(() => {
+            if (_stepDisplayIdx < _allKnownSteps.length - 1) {
+              _stepDisplayIdx++;
+              updateWgOverlayProgress(_allKnownSteps.slice(0, _stepDisplayIdx + 1));
+            }
+          }, 450);
         }
       }
       

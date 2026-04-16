@@ -470,6 +470,7 @@
     const POLL_INTERVAL_MS = 500;
     const MIN_SCALE = 0.05;  // practical floor — full 128×128 grid fits viewport at first open
     const MAX_SCALE = 3.0;   // ~3 cells filling the viewport at max zoom
+    const FIND_PLAYER_ZOOM = 1.5; // zoom level applied by Find Player button
     const FIT_PADDING = 24;  // px margin each side when fitting grid to viewport
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -1300,6 +1301,7 @@
       if (!result.ok) { alert('No game state available.'); return; }
       const pos = result.state?.world?.position;
       if (!pos) { alert('Player position not found.'); return; }
+      vpScale = FIND_PLAYER_ZOOM;
       const vpRect = document.getElementById('map-viewport').getBoundingClientRect();
       vpX = vpRect.width  / 2 - (pos.lx * 65 + 32.5) * vpScale;
       vpY = vpRect.height / 2 - (pos.ly * 53 + 26.5) * vpScale;

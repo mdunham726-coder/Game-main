@@ -934,7 +934,7 @@ function classifyTerrainFromNoise(elevation, moisture, temperature, biome, cellK
   const consistent = BIOME_CONSISTENT_TERRAIN[biome] || [];
   if (!consistent.includes(result)) {
     const biasRng = mulberry32(h32(`${worldSeed}|p2_bias|${cellKey}`));
-    if (biasRng() < 0.60) {
+    if (biasRng() < 0.80) {
       const palette = BIOME_PALETTES[biome] || BIOME_PALETTES['rural'];
       result = palette[Math.floor(biasRng() * palette.length)];
     }
@@ -1044,6 +1044,27 @@ const BIOME_ELEV_CONFIG = {
   wetland:  { massifRange: [0, 0], baseElev: 0.18, radiusRange: [0,   0], peakRange: [0,    0   ], basinRange: [3, 5] },
 };
 
+// Configurable blend weights — higher = more structured, lower = more noise
+const STRUCTURE_BLEND = { elevation: 0.70, moisture: 0.70, temperature: 0.70 };
+
+// Biome moisture zone configuration (wet zones add, dry zones subtract)
+const BIOME_MOISTURE_CONFIG = {
+  wetland:  { baseVal: 0.82, wetZoneRange: [2, 4], dryZoneRange: [0, 0], wetRadii: [20, 40], dryRadii: [],       wetStrength: [0.12, 0.22], dryStrength: [] },
+  jungle:   { baseVal: 0.70, wetZoneRange: [2, 3], dryZoneRange: [0, 1], wetRadii: [18, 35], dryRadii: [10, 18], wetStrength: [0.10, 0.18], dryStrength: [0.05, 0.10] },
+  forest:   { baseVal: 0.55, wetZoneRange: [1, 3], dryZoneRange: [1, 2], wetRadii: [16, 30], dryRadii: [12, 22], wetStrength: [0.12, 0.20], dryStrength: [0.08, 0.14] },
+  coast:    { baseVal: 0.52, wetZoneRange: [1, 2], dryZoneRange: [0, 1], wetRadii: [15, 28], dryRadii: [10, 20], wetStrength: [0.10, 0.18], dryStrength: [0.06, 0.10] },
+  rural:    { baseVal: 0.45, wetZoneRange: [1, 2], dryZoneRange: [1, 2], wetRadii: [15, 28], dryRadii: [12, 24], wetStrength: [0.14, 0.22], dryStrength: [0.10, 0.16] },
+  mountain: { baseVal: 0.35, wetZoneRange: [0, 2], dryZoneRange: [1, 2], wetRadii: [14, 26], dryRadii: [12, 22], wetStrength: [0.10, 0.16], dryStrength: [0.08, 0.14] },
+  tundra:   { baseVal: 0.28, wetZoneRange: [0, 1], dryZoneRange: [1, 2], wetRadii: [14, 24], dryRadii: [12, 20], wetStrength: [0.08, 0.14], dryStrength: [0.06, 0.12] },
+  desert:   { baseVal: 0.12, wetZoneRange: [0, 1], dryZoneRange: [1, 2], wetRadii: [12, 22], dryRadii: [12, 24], wetStrength: [0.05, 0.10], dryStrength: [0.06, 0.12] },
+};
+
+// Base temperature per biome (before elevation cooling)
+const BIOME_BASE_TEMP = {
+  desert: 0.85, jungle: 0.75, coast: 0.60, wetland: 0.55,
+  rural: 0.55, forest: 0.50, mountain: 0.45, tundra: 0.20,
+};
+
 /**
  * Build a structured elevation field for a 128×128 L1 macro cell.
  * Places biome-specific Gaussian massifs and basins to produce coherent
@@ -1128,7 +1149,102 @@ function generateElevationStructure(mx, my, biome, worldSeed, reportProgress = n
     }
   }
 
-  return { elevMap, massifCount, basinCount };
+  return {
+    elevMap, massifCount, basinCount,
+    elevStructureFeatures: [
+      ...massifs.map(m => ({
+        type: 'massif', cx: m.cx, cy: m.cy,
+        radius: Math.round(m.radius), peak: +m.peak.toFixed(2),
+        quadrant: quadrantLabel(m.cx, m.cy),
+      })),
+      ...basins.map(b => ({
+        type: 'basin', cx: b.cx, cy: b.cy,
+        radius: Math.round(b.radius), depth: +b.depth.toFixed(2),
+        quadrant: quadrantLabel(b.cx, b.cy),
+      })),
+    ],
+  };
+}
+
+// ── Private spatial helpers ───────────────────────────────────────────────────
+function quadrantLabel(cx, cy) {
+  return cx < 64 && cy < 64 ? 'NW' : cx >= 64 && cy < 64 ? 'NE' : cx < 64 ? 'SW' : 'SE';
+}
+
+function compassFromVector(dx, dy) {
+  const adx = Math.abs(dx), ady = Math.abs(dy);
+  if (adx === 0 && ady === 0) return 'NONE';
+  if (adx > ady * 2) return dx > 0 ? 'E' : 'W';
+  if (ady > adx * 2) return dy > 0 ? 'S' : 'N';
+  if (dx >= 0 && dy < 0) return 'NE';
+  if (dx >= 0 && dy >= 0) return 'SE';
+  if (dx < 0  && dy < 0)  return 'NW';
+  return 'SW';
+}
+
+/**
+ * Build a structured moisture field for a 128×128 L1 macro cell.
+ * Places biome-specific wet and dry Gaussian zones to produce coherent
+ * high/low moisture regions.
+ *
+ * @returns {{ moistMap: Float32Array, wetZoneCount: number, dryZoneCount: number, zones: Array }}
+ */
+function generateMoistureStructure(mx, my, biome, worldSeed) {
+  const l1w = DEFAULTS.L1_SIZE.w;  // 128
+  const l1h = DEFAULTS.L1_SIZE.h;  // 128
+  const cfg  = BIOME_MOISTURE_CONFIG[biome] || BIOME_MOISTURE_CONFIG.rural;
+
+  // Determine zone counts (deterministic per macro cell)
+  const wRng = mulberry32(h32(`${worldSeed}|mw_count|${mx},${my}`));
+  const [wMin, wMax] = cfg.wetZoneRange;
+  const wetZoneCount = wMin + Math.floor(wRng() * (wMax - wMin + 1));
+
+  const dRng = mulberry32(h32(`${worldSeed}|md_count|${mx},${my}`));
+  const [dMin, dMax] = cfg.dryZoneRange;
+  const dryZoneCount = dMin + Math.floor(dRng() * (dMax - dMin + 1));
+
+  const zones = [];
+
+  // Build wet zone parameters
+  for (let i = 0; i < wetZoneCount; i++) {
+    const rng    = mulberry32(h32(`${worldSeed}|mwet|${i}|${mx},${my}`));
+    const cx     = Math.floor(rng() * l1w);
+    const cy     = Math.floor(rng() * l1h);
+    const [r0, r1] = cfg.wetRadii.length >= 2 ? cfg.wetRadii : [16, 30];
+    const radius = r0 + rng() * (r1 - r0);
+    const [s0, s1] = cfg.wetStrength.length >= 2 ? cfg.wetStrength : [0.10, 0.18];
+    const strength = s0 + rng() * (s1 - s0);
+    zones.push({ type: 'wet', cx, cy, radius, strength, quadrant: quadrantLabel(cx, cy) });
+  }
+
+  // Build dry zone parameters
+  for (let j = 0; j < dryZoneCount; j++) {
+    const rng    = mulberry32(h32(`${worldSeed}|mdry|${j}|${mx},${my}`));
+    const cx     = Math.floor(rng() * l1w);
+    const cy     = Math.floor(rng() * l1h);
+    const [r0, r1] = cfg.dryRadii.length >= 2 ? cfg.dryRadii : [12, 22];
+    const radius = r0 + rng() * (r1 - r0);
+    const [s0, s1] = cfg.dryStrength.length >= 2 ? cfg.dryStrength : [0.08, 0.14];
+    const strength = s0 + rng() * (s1 - s0);
+    zones.push({ type: 'dry', cx, cy, radius, strength, quadrant: quadrantLabel(cx, cy) });
+  }
+
+  // Build moistMap
+  const moistMap = new Float32Array(l1w * l1h);
+  for (let ly = 0; ly < l1h; ly++) {
+    for (let lx = 0; lx < l1w; lx++) {
+      let v = cfg.baseVal;
+      for (const z of zones) {
+        const d2 = (lx - z.cx) ** 2 + (ly - z.cy) ** 2;
+        const contribution = z.strength * Math.exp(-d2 / (z.radius * z.radius));
+        if (z.type === 'wet') v += contribution;
+        else                  v -= contribution;
+      }
+      moistMap[ly * l1w + lx] = Math.max(0, Math.min(1, v));
+    }
+  }
+
+  return { moistMap, wetZoneCount, dryZoneCount, zones };
 }
 
 // =============================================================================
@@ -1165,13 +1281,22 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   const BFS_CAP = 64;
 
   // ── Pre-step: Build structured elevation field ────────────────────────────
-  const { elevMap, massifCount, basinCount } =
+  const { elevMap, massifCount, basinCount, elevStructureFeatures } =
     generateElevationStructure(mx, my, biome, worldSeed, reportProgress);
   reportProgress?.('elevation_structure', 20, { massifCount, basinCount });
+
+  // ── Pre-step: Build structured moisture field ─────────────────────────────
+  const { moistMap, wetZoneCount, dryZoneCount, zones: moistZones } =
+    generateMoistureStructure(mx, my, biome, worldSeed);
 
   const mountainCandidates = [];
   let cellsProcessed = 0;
   const l1total = l1w * l1h; // 16384
+
+  // Accumulators for terrain breakdown, averages, and spatial log
+  const terrainCounts = {};
+  let elevSum = 0, moistSum = 0;
+  const coarseGrid = Array.from({ length: 16 }, () => Array.from({ length: 16 }, () => new Map()));
 
   // ── Pass 1 + 2: Blended elevation + terrain classification ────────────────
   for (let lx = 0; lx < l1w; lx++) {
@@ -1181,14 +1306,22 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       // Skip any cell already written (patch + Phase 6B start cell are protected)
       if (existingCells && existingCells[cellKey]) continue;
 
-      // Blend structured elevation (0.70) with raw noise (0.30)
+      // Blend structured elevation with raw noise
       const rawElev   = evalElevation(mx, my, lx, ly, worldSeed, biome);
-      const _mois     = evalMoisture(mx, my, lx, ly, worldSeed, biome);
-      const _temp     = evalTemperature(mx, my, lx, ly, worldSeed, biome);
       const sElev     = elevMap[ly * l1w + lx];
-      const finalElev = Math.max(0, Math.min(1, sElev * 0.70 + rawElev * 0.30));
+      const finalElev = Math.max(0, Math.min(1, sElev * STRUCTURE_BLEND.elevation + rawElev * (1 - STRUCTURE_BLEND.elevation)));
 
-      const terrainType = classifyTerrainFromNoise(finalElev, _mois, _temp, biome, cellKey, worldSeed);
+      // Blend structured moisture with raw noise
+      const rawMois   = evalMoisture(mx, my, lx, ly, worldSeed, biome);
+      const finalMois = Math.max(0, Math.min(1, moistMap[ly * l1w + lx] * STRUCTURE_BLEND.moisture + rawMois * (1 - STRUCTURE_BLEND.moisture)));
+
+      // Derive structured temperature from elevation + biome base, blend with noise
+      const rawTemp       = evalTemperature(mx, my, lx, ly, worldSeed, biome);
+      const biomeBaseTemp = BIOME_BASE_TEMP[biome] ?? 0.55;
+      const sTemp         = Math.max(0, Math.min(1, biomeBaseTemp - finalElev * 0.40));
+      const finalTemp     = Math.max(0, Math.min(1, sTemp * STRUCTURE_BLEND.temperature + rawTemp * (1 - STRUCTURE_BLEND.temperature)));
+
+      const terrainType = classifyTerrainFromNoise(finalElev, finalMois, finalTemp, biome, cellKey, worldSeed);
 
       cells[cellKey] = {
         type:        terrainType,
@@ -1200,9 +1333,18 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         ly:          ly,
         description: '',
         elevation:   finalElev,
-        moisture:    _mois,
-        temperature: _temp,
+        moisture:    finalMois,
+        temperature: finalTemp,
       };
+
+      // Accumulate stats
+      terrainCounts[terrainType] = (terrainCounts[terrainType] || 0) + 1;
+      elevSum  += finalElev;
+      moistSum += finalMois;
+      const gx = Math.floor(lx / 8);
+      const gy = Math.floor(ly / 8);
+      const cgCell = coarseGrid[gy][gx];
+      cgCell.set(terrainType, (cgCell.get(terrainType) || 0) + 1);
 
       // Accumulate high-elevation cells as river source candidates
       if (finalElev >= 0.65) mountainCandidates.push({ key: cellKey, elev: finalElev, lx, ly });
@@ -1217,6 +1359,34 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     }
   }
 
+  // Build coarse grid log (16×16 dominant terrain blocks, 4-char codes)
+  const TERRAIN_ABBREV = {
+    mountain_peak: 'MNTN', mountain_slopes: 'MNTN', mountain_pass: 'MNTN', scree: 'MNTN',
+    hills_rocky: 'HILL', hills_rolling: 'HILL', rocky_terrain: 'HILL',
+    plains_grassland: 'GRSS', plains_wildflower: 'GRSS', meadow: 'GRSS',
+    forest_deciduous: 'FRST', forest_mixed: 'FRST', forest_coniferous: 'FRST',
+    desert_dunes: 'DSRT', desert_sand: 'DSRT', desert_rocky: 'DSRT', scrubland: 'DSRT', badlands: 'DSRT', mesa: 'DSRT',
+    swamp: 'SWMP', marsh: 'SWMP', bog: 'SWMP', wetland: 'SWMP',
+    stream: 'STRM', river_crossing: 'STRM',
+    lake_shore: 'LAKE',
+    beach_sand: 'CSTL', tidepools: 'CSTL',
+    tundra: 'TNDR', snowfield: 'TNDR', permafrost: 'TNDR', ice_sheet: 'TNDR',
+  };
+  const coarseGridLog = coarseGrid.map(row =>
+    row.map(blockMap => {
+      if (blockMap.size === 0) return '....';
+      let bestTerrain = '', bestCount = 0;
+      for (const [t, c] of blockMap) { if (c > bestCount) { bestCount = c; bestTerrain = t; } }
+      return TERRAIN_ABBREV[bestTerrain] || '????';
+    }).join(' ')
+  );
+
+  const avgElev  = cellsProcessed > 0 ? +(elevSum  / cellsProcessed).toFixed(3) : 0;
+  const avgMois  = cellsProcessed > 0 ? +(moistSum / cellsProcessed).toFixed(3) : 0;
+  const terrainBreakdown = Object.fromEntries(
+    Object.entries(terrainCounts).sort((a, b) => b[1] - a[1])
+  );
+
   // ── Pass 3 rivers + lakes (conditional on biome having river sources) ─────
   const BIOME_RIVER_SOURCES = {
     mountain: 6, tundra: 4, forest: 4, rural: 3,
@@ -1228,6 +1398,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   let lakeBasins = 0, lakeCells = 0;
   let sourcesCount = 0;
   const sinks = [];
+  const riverPaths = [];
 
   const getCell = key => cells[key] || (existingCells && existingCells[key]) || null;
 
@@ -1255,7 +1426,11 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       { sourceCount: sourcesCount, mountainCells: mountainCandidates.length });
 
     // ── Pass 3b: Gradient-descent river tracing with directional continuity ─
+    const RIVER_CONTINUATION_TOLERANCE = 0.025;
+    const RIVER_SINK_TOLERANCE         = 0.015;
+    const RIVER_DIRECTION_BONUS        = 0.015;
     const visitedRiver = new Set();
+    const riverPaths   = [];
     for (const source of sources) {
       const path = [];
       let curLx = source.lx, curLy = source.ly, curElev = source.elev;
@@ -1270,35 +1445,37 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
 
         let moved = false;
 
-        // 1. Directional continuity — prefer same heading
+        // 1. Directional continuity — prefer same heading (with tolerance)
         if (lastDx !== 0 || lastDy !== 0) {
           const nlx = curLx + lastDx, nly = curLy + lastDy;
           if (nlx >= 0 && nlx < l1w && nly >= 0 && nly < l1h) {
             const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
             if (!visitedRiver.has(nKey)) {
               const nCell = getCell(nKey);
-              if (nCell && nCell.elevation < curElev) {
+              if (nCell && nCell.elevation <= curElev + RIVER_CONTINUATION_TOLERANCE) {
                 curElev = nCell.elevation; curLx = nlx; curLy = nly; moved = true;
               }
             }
           }
         }
 
-        // 2. Fallback: lowest unvisited 4-directional neighbor
+        // 2. Fallback: direction-preference scored lowest neighbor
         if (!moved) {
-          let bestElev = curElev, bestLx = -1, bestLy = -1, bestDx = 0, bestDy = 0;
+          let bestScore = Infinity, bestElev = curElev, bestLx = -1, bestLy = -1, bestDx = 0, bestDy = 0;
           for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
             const nlx = curLx + dx, nly = curLy + dy;
             if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
             const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
             if (visitedRiver.has(nKey)) continue;
             const nCell = getCell(nKey);
-            if (nCell && nCell.elevation < bestElev) {
-              bestElev = nCell.elevation;
+            if (!nCell) continue;
+            const score = nCell.elevation - (dx === lastDx && dy === lastDy ? RIVER_DIRECTION_BONUS : 0);
+            if (score < bestScore) {
+              bestScore = score; bestElev = nCell.elevation;
               bestLx = nlx; bestLy = nly; bestDx = dx; bestDy = dy;
             }
           }
-          if (bestLx === -1) {
+          if (bestLx === -1 || bestElev > curElev + RIVER_SINK_TOLERANCE) {
             sinks.push({ lx: curLx, ly: curLy, elev: curElev });
             break;
           }
@@ -1326,6 +1503,16 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         if (cells[key])                             cells[key].type = newType;
         else if (existingCells && existingCells[key]) existingCells[key].type = newType;
       }
+
+      // Record river path summary
+      const sdx = path[path.length - 1].lx - path[0].lx;
+      const sdy = path[path.length - 1].ly - path[0].ly;
+      riverPaths.push({
+        sourceLx: path[0].lx, sourceLy: path[0].ly, sourceElev: source.elev,
+        sinkLx: path[path.length - 1].lx, sinkLy: path[path.length - 1].ly,
+        length: path.length,
+        compassDir: compassFromVector(sdx, sdy),
+      });
     }
     reportProgress?.('pass3_rivers', 65, { riversCut: riverCount, totalRiverCells });
 
@@ -1453,6 +1640,18 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     waterCoveragePct,
     avgWaterDistance: distCount > 0 ? +(distSum / distCount).toFixed(2) : 0,
     distribution:     distH,
+    // Spatial observability
+    massifCount,
+    basinCount,
+    elevStructureFeatures,
+    wetZoneCount,
+    dryZoneCount,
+    moistZones,
+    riverPaths,
+    terrainBreakdown,
+    avgElev,
+    avgMois,
+    coarseGridLog,
   };
 
   reportProgress?.('complete', 100, { waterCoveragePct });

@@ -982,7 +982,25 @@ app.post('/narrate', async (req, res) => {
             new_cells: Object.keys(_fullMacroCellsObj).length,
             total_world_cells: Object.keys(gameState.world.cells).length
           });
-          if (_hydroStats) _wLog('pass3', 'hydrology', _hydroStats);
+          if (_hydroStats) {
+            _wLog('pass0', 'elevation_structure', {
+              massifCount: _hydroStats.massifCount,
+              basinCount:  _hydroStats.basinCount,
+              features:    _hydroStats.elevStructureFeatures,
+            });
+            _wLog('pass1', 'moisture_structure', {
+              wetZoneCount: _hydroStats.wetZoneCount,
+              dryZoneCount: _hydroStats.dryZoneCount,
+              zones:        _hydroStats.moistZones,
+            });
+            _wLog('pass2', 'terrain_distribution', {
+              terrainBreakdown: _hydroStats.terrainBreakdown,
+              avgElev:          _hydroStats.avgElev,
+              avgMois:          _hydroStats.avgMois,
+              coarseGrid:       _hydroStats.coarseGridLog,
+            });
+            _wLog('pass3', 'hydrology', _hydroStats);
+          }
           console.log('[WORLDGEN] Full macro cell complete:', Object.keys(_fullMacroCellsObj).length,
             'new cells | rivers:', _hydroStats?.riverCount, '| lakes:', _hydroStats?.lakeBasins);
 
