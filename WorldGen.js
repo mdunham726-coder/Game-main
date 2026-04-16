@@ -1260,6 +1260,95 @@ function generateMoistureStructure(mx, my, biome, worldSeed) {
 }
 
 // =============================================================================
+// FLOW FIELD — precomputed downslope direction + upstream accumulation
+// =============================================================================
+
+/**
+ * Compute a D4 flow direction field and upstream accumulation map from an
+ * elevation grid in two linear passes.
+ *
+ * Algorithm:
+ *   1. Sort all 16 384 cell indices by elevation descending (high → low).
+ *   2. Assign each cell the cardinal direction (0=N 1=E 2=S 3=W) to its
+ *      lowest neighbor, or -1 when already a local minimum (natural sink).
+ *   3. Propagate accumulation: traverse high→low; each cell donates its
+ *      accumulated upstream count to the cell its pointer targets.
+ *      Because we process cells strictly high-to-low, a cell's accumulation
+ *      is final before it donates — the pass is acyclic by construction.
+ *
+ * The naturalization perturbation (±0.04) applied inside generateElevationStructure
+ * ensures no two adjacent cells share the exact same elevation, so every cell
+ * has a uniquely defined lowest neighbor.  No special flat-resolution handling
+ * is required.
+ *
+ * Cost: O(n log n) for the sort + two O(n) passes — ~200 000 operations total.
+ *
+ * @param {Float32Array} elevMap — ly*l1w+lx indexed elevation values [0,1]
+ * @param {number}       l1w    — grid width  (128)
+ * @param {number}       l1h    — grid height (128)
+ * @returns {{ flowDir: Int8Array, flowAccum: Uint16Array }}
+ *   flowDir[i]   — D4 direction index (0–3) or -1 for sink cells
+ *   flowAccum[i] — number of upstream cells draining through cell i (≥ 1)
+ */
+function generateFlowField(elevMap, l1w, l1h) {
+  const n = l1w * l1h; // 16 384
+
+  // D4 cardinal direction offsets indexed 0=N, 1=E, 2=S, 3=W
+  const DX = [0, 1, 0, -1];
+  const DY = [-1, 0, 1, 0];
+
+  // ── Pass 1: Sort cell indices high → low ─────────────────────────────────
+  // Uint16Array is sufficient because n = 16 384 ≤ 65 535.
+  const order = new Uint16Array(n);
+  for (let i = 0; i < n; i++) order[i] = i;
+  order.sort((a, b) => elevMap[b] - elevMap[a]);
+
+  // ── Pass 2: Assign D4 flow direction per cell ────────────────────────────
+  const flowDir   = new Int8Array(n).fill(-1); // -1 = sink (no lower cardinal neighbor)
+  const flowAccum = new Uint16Array(n).fill(1); // every cell contributes itself
+
+  for (let k = 0; k < n; k++) {
+    const i    = order[k];
+    const lx   = i % l1w;
+    const ly   = (i - lx) / l1w;
+    const elev = elevMap[i];
+
+    let lowestElev = elev; // neighbor must be STRICTLY lower to qualify
+    let lowestDir  = -1;
+
+    for (let d = 0; d < 4; d++) {
+      const nx = lx + DX[d];
+      const ny = ly + DY[d];
+      if (nx < 0 || nx >= l1w || ny < 0 || ny >= l1h) continue;
+      const nElev = elevMap[ny * l1w + nx];
+      if (nElev < lowestElev) {
+        lowestElev = nElev;
+        lowestDir  = d;
+      }
+    }
+
+    flowDir[i] = lowestDir; // -1 if cell is a local minimum
+  }
+
+  // ── Pass 3: Propagate accumulation high → low ────────────────────────────
+  // Processing high→low guarantees that each cell's flowAccum value is fully
+  // accumulated before it donates to its downstream neighbor.
+  for (let k = 0; k < n; k++) {
+    const i = order[k];
+    const d = flowDir[i];
+    if (d === -1) continue; // sink — nothing to donate downstream
+
+    const lx = i % l1w;
+    const ly = (i - lx) / l1w;
+    const ni = (ly + DY[d]) * l1w + (lx + DX[d]);
+    // Cap at Uint16 max to prevent silent wrap-around on very long channels
+    flowAccum[ni] = Math.min(65535, flowAccum[ni] + flowAccum[i]);
+  }
+
+  return { flowDir, flowAccum };
+}
+
+// =============================================================================
 // FULL MACRO PRE-GENERATION — Pass 1+2 baseline + Pass 3 hydrology
 // =============================================================================
 
@@ -1296,6 +1385,11 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   const { elevMap, massifCount, basinCount, elevStructureFeatures } =
     generateElevationStructure(mx, my, biome, worldSeed, reportProgress, hydroStrength);
   reportProgress?.('elevation_structure', 20, { massifCount, basinCount });
+
+  // ── Pre-step: Build global flow field from elevation ──────────────────────
+  // flowDir[i]   — D4 direction index (0=N 1=E 2=S 3=W) or -1 for local sinks
+  // flowAccum[i] — upstream cell count; large values identify main drainage paths
+  const { flowDir, flowAccum } = generateFlowField(elevMap, l1w, l1h);
 
   // ── Pre-step: Build structured moisture field ─────────────────────────────
   const { moistMap, wetZoneCount, dryZoneCount, zones: moistZones } =
@@ -1429,6 +1523,10 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     const sources = [];
     for (const cand of candidates) {
       if (sources.length >= targetSources) break;
+      // Require flowAccum >= 4: the source must have at least 4 upstream cells
+      // feeding it, confirming it sits on a real drainage path rather than an
+      // isolated peak that leads nowhere.
+      if (flowAccum[cand.ly * l1w + cand.lx] < 4) continue;
       if (sources.every(s =>
         Math.abs(cand.lx - s.lx) + Math.abs(cand.ly - s.ly) >= MIN_SPACING
       )) {
@@ -1439,18 +1537,19 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     reportProgress?.('pass3_sources', 62,
       { sourceCount: sourcesCount, mountainCells: mountainCandidates.length });
 
-    // ── Pass 3b: Robust river tracing — tolerant of shallow/irregular terrain ─
-    const STEP_TOLERANCE       = 0.04;  // max elev rise per step (wide — handles plateaus)
-    const RIVER_DIRECTION_BONUS = 0.03; // subtracted from score when continuing same heading
-    const SINK_FLOOR           = 0.12;  // natural low point — terminate cleanly here
+    // ── Pass 3b: River tracing — follows precomputed flow direction field ─────
+    // Instead of scoring neighbors locally at every step, each river simply
+    // follows the flowDir pointer chain computed for the full elevation map.
+    // This produces globally consistent drainage paths that traverse the entire
+    // macro cell rather than terminating on flat inter-massif terrain.
+    const SINK_FLOOR  = 0.12; // safety: terminate if cell is already at natural base
+    const DIR_OFFSETS = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // N, E, S, W (D4)
     for (const source of sources) {
       // Each river gets its own visited set so later rivers trace full independent
       // paths instead of colliding with earlier ones after 1–3 cells.
       const visitedRiver = new Set();
       const path = [];
       let curLx = source.lx, curLy = source.ly;
-      let waterElev = source.elev; // running water level — only falls, never rises
-      let lastDx = 0, lastDy = 0;
       const PATH_CAP = 96;
 
       while (path.length < PATH_CAP) {
@@ -1459,121 +1558,48 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         visitedRiver.add(curKey);
         path.push({ key: curKey, lx: curLx, ly: curLy });
 
-        // Terminate: reached open water or existing hydrology — clean merge
         const curCell = getCell(curKey);
-        if (path.length > 1 && curCell && hydroCells.has(curKey)) {
-          sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
-          break;
-        }
-        // Terminate: natural sink floor reached
+
+        // Terminate: reached existing hydrology — clean confluence, no lake needed
+        if (path.length > 1 && curCell && hydroCells.has(curKey)) break;
+
+        // Terminate: already at natural drainage floor (safety edge case)
         if (curCell && curCell.elevation < SINK_FLOOR) {
-          sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
+          sinks.push({ lx: curLx, ly: curLy, elev: curCell.elevation });
           break;
         }
 
-        let moved = false;
-
-        // 1. Directional continuity — prefer same heading within step tolerance
-        const curCellElev = curCell ? curCell.elevation : waterElev;
-        const stepFloor   = Math.max(waterElev, curCellElev);
-        if (lastDx !== 0 || lastDy !== 0) {
-          const nlx = curLx + lastDx, nly = curLy + lastDy;
-          if (nlx >= 0 && nlx < l1w && nly >= 0 && nly < l1h) {
-            const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
-            if (!visitedRiver.has(nKey)) {
-              const nCell = getCell(nKey);
-              if (nCell && nCell.elevation <= stepFloor + STEP_TOLERANCE) {
-                waterElev = Math.min(waterElev, nCell.elevation);
-                curLx = nlx; curLy = nly; moved = true;
-              }
-            }
-          }
+        // Follow the precomputed flow direction pointer for this cell
+        const cellIdx = curLy * l1w + curLx;
+        const dirIdx  = flowDir[cellIdx];
+        if (dirIdx === -1) {
+          // Local minimum — natural drainage sink, feed Pass 3c lake fill
+          sinks.push({ lx: curLx, ly: curLy, elev: curCell ? curCell.elevation : 0 });
+          break;
         }
 
-        // 2. Scored neighbor selection — prefer descent, bias toward last heading
-        if (!moved) {
-          // Adaptive tolerance: on genuinely flat terrain, widen window so rivers
-          // can escape plateaus without risking uphill drift on real gradients.
-          // Spread < 0.03 means all unvisited neighbors are within a 0.03 band — true plateau.
-          let elevSpreadMin = Infinity, elevSpreadMax = -Infinity;
-          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-            const nlx = curLx + dx, nly = curLy + dy;
-            if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
-            const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
-            if (visitedRiver.has(nKey)) continue;
-            const nCell = getCell(nKey);
-            if (!nCell) continue;
-            if (nCell.elevation < elevSpreadMin) elevSpreadMin = nCell.elevation;
-            if (nCell.elevation > elevSpreadMax) elevSpreadMax = nCell.elevation;
-          }
-          const elevSpread   = (elevSpreadMax > elevSpreadMin) ? (elevSpreadMax - elevSpreadMin) : 0;
-          const adaptiveTol  = elevSpread < 0.03 ? STEP_TOLERANCE * 2 : STEP_TOLERANCE;
-
-          let bestScore = Infinity, bestElev = Infinity;
-          let bestLx = -1, bestLy = -1, bestDx = 0, bestDy = 0;
-          let validCount = 0;
-          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-            const nlx = curLx + dx, nly = curLy + dy;
-            if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
-            const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
-            if (visitedRiver.has(nKey)) continue;
-            const nCell = getCell(nKey);
-            if (!nCell) continue;
-            if (nCell.elevation > stepFloor + adaptiveTol) continue; // outside adaptive tolerance
-            validCount++;
-            const score = nCell.elevation - (dx === lastDx && dy === lastDy ? RIVER_DIRECTION_BONUS : 0);
-            if (score < bestScore) {
-              bestScore = score; bestElev = nCell.elevation;
-              bestLx = nlx; bestLy = nly; bestDx = dx; bestDy = dy;
-            }
-          }
-
-          // 3. Lookahead: on flat terrain, look one step further to find descent
-          if (validCount > 0 && bestLx !== -1) {
-            const curCellElev = curCell ? curCell.elevation : waterElev;
-            const isFlat = Math.abs(bestElev - curCellElev) < 0.01;
-            if (isFlat) {
-              for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                const nlx = curLx + dx, nly = curLy + dy;
-                if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
-                const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
-                if (visitedRiver.has(nKey)) continue;
-                const nCell = getCell(nKey);
-                if (!nCell || nCell.elevation > stepFloor + adaptiveTol) continue;
-                // Score each candidate by its own best neighbor's elevation
-                let lookaheadBest = nCell.elevation;
-                for (const [dx2, dy2] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                  const nlx2 = nlx + dx2, nly2 = nly + dy2;
-                  if (nlx2 < 0 || nlx2 >= l1w || nly2 < 0 || nly2 >= l1h) continue;
-                  const nKey2 = `LOC:${mx},${my}:${nlx2},${nly2}`;
-                  if (visitedRiver.has(nKey2)) continue;
-                  const nCell2 = getCell(nKey2);
-                  if (nCell2) lookaheadBest = Math.min(lookaheadBest, nCell2.elevation);
-                }
-                const score = lookaheadBest - (dx === lastDx && dy === lastDy ? RIVER_DIRECTION_BONUS : 0);
-                if (score < bestScore) {
-                  bestScore = score; bestElev = nCell.elevation;
-                  bestLx = nlx; bestLy = nly; bestDx = dx; bestDy = dy;
-                }
-              }
-            }
-          }
-
-          // No valid neighbor at all — true depression, terminate
-          if (bestLx === -1) {
-            sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
-            break;
-          }
-          waterElev = Math.min(waterElev, bestElev);
-          curLx = bestLx; curLy = bestLy;
-          lastDx = bestDx; lastDy = bestDy;
+        const [ddx, ddy] = DIR_OFFSETS[dirIdx];
+        const nextLx = curLx + ddx, nextLy = curLy + ddy;
+        // Flow pointer exits the macro cell boundary — treat edge as sink
+        if (nextLx < 0 || nextLx >= l1w || nextLy < 0 || nextLy >= l1h) {
+          sinks.push({ lx: curLx, ly: curLy, elev: curCell ? curCell.elevation : 0 });
+          break;
         }
+
+        const nextKey = `LOC:${mx},${my}:${nextLx},${nextLy}`;
+        if (visitedRiver.has(nextKey)) {
+          // Tributary confluence with an already-traced segment — no lake
+          break;
+        }
+
+        curLx = nextLx; curLy = nextLy;
       }
-      // Path cap reached — treat current position as sink
+      // Path cap reached — treat current position as edgeward sink
       if (path.length >= PATH_CAP) {
-        sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
+        const lastCell = getCell(`LOC:${mx},${my}:${curLx},${curLy}`);
+        sinks.push({ lx: curLx, ly: curLy, elev: lastCell ? lastCell.elevation : 0 });
       }
-      // Discard stub paths shorter than 4 cells — genuine stuck rivers, not tolerance failures
+      // Discard stub paths shorter than 4 cells
       if (path.length < 4) continue;
 
       riverCount++;
@@ -1874,6 +1900,14 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   }
   reportProgress?.('pass3_fringe', 84, { fringeCells });
 
+  // Flow field diagnostics — computed from the full 16 384-cell flowAccum array
+  let maxFlowAccum = 0;
+  for (let _i = 0; _i < flowAccum.length; _i++) {
+    if (flowAccum[_i] > maxFlowAccum) maxFlowAccum = flowAccum[_i];
+  }
+  const _faSorted = flowAccum.slice().sort(); // sorts Uint16Array in place on a copy
+  const medianFlowAccum = _faSorted[_faSorted.length >> 1] ?? 0;
+
   const hydrologyStats = {
     riverCount,
     totalRiverCells,
@@ -1889,6 +1923,8 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     waterCoveragePct,
     avgWaterDistance: distCount > 0 ? +(distSum / distCount).toFixed(2) : 0,
     distribution:     distH,
+    maxFlowAccum,
+    medianFlowAccum,
     // Spatial observability
     massifCount,
     basinCount,
