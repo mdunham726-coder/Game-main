@@ -1427,16 +1427,17 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     reportProgress?.('pass3_sources', 62,
       { sourceCount: sourcesCount, mountainCells: mountainCandidates.length });
 
-    // ── Pass 3b: Gradient-descent river tracing with directional continuity ─
-    const RIVER_CONTINUATION_TOLERANCE = 0.025;
-    const RIVER_SINK_TOLERANCE         = 0.015;
-    const RIVER_DIRECTION_BONUS        = 0.015;
+    // ── Pass 3b: Robust river tracing — tolerant of shallow/irregular terrain ─
+    const STEP_TOLERANCE       = 0.04;  // max elev rise per step (wide — handles plateaus)
+    const RIVER_DIRECTION_BONUS = 0.03; // subtracted from score when continuing same heading
+    const SINK_FLOOR           = 0.12;  // natural low point — terminate cleanly here
     for (const source of sources) {
       // Each river gets its own visited set so later rivers trace full independent
       // paths instead of colliding with earlier ones after 1–3 cells.
       const visitedRiver = new Set();
       const path = [];
-      let curLx = source.lx, curLy = source.ly, curElev = source.elev;
+      let curLx = source.lx, curLy = source.ly;
+      let waterElev = source.elev; // running water level — only falls, never rises
       let lastDx = 0, lastDy = 0;
       const PATH_CAP = 96;
 
@@ -1446,25 +1447,40 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         visitedRiver.add(curKey);
         path.push({ key: curKey, lx: curLx, ly: curLy });
 
+        // Terminate: reached open water or existing hydrology — clean merge
+        const curCell = getCell(curKey);
+        if (path.length > 1 && curCell && hydroCells.has(curKey)) {
+          sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
+          break;
+        }
+        // Terminate: natural sink floor reached
+        if (curCell && curCell.elevation < SINK_FLOOR) {
+          sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
+          break;
+        }
+
         let moved = false;
 
-        // 1. Directional continuity — prefer same heading (with tolerance)
+        // 1. Directional continuity — prefer same heading within step tolerance
         if (lastDx !== 0 || lastDy !== 0) {
           const nlx = curLx + lastDx, nly = curLy + lastDy;
           if (nlx >= 0 && nlx < l1w && nly >= 0 && nly < l1h) {
             const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
             if (!visitedRiver.has(nKey)) {
               const nCell = getCell(nKey);
-              if (nCell && nCell.elevation <= curElev + RIVER_CONTINUATION_TOLERANCE) {
-                curElev = nCell.elevation; curLx = nlx; curLy = nly; moved = true;
+              if (nCell && nCell.elevation <= waterElev + STEP_TOLERANCE) {
+                waterElev = Math.min(waterElev, nCell.elevation);
+                curLx = nlx; curLy = nly; moved = true;
               }
             }
           }
         }
 
-        // 2. Fallback: direction-preference scored lowest neighbor
+        // 2. Scored neighbor selection — prefer descent, bias toward last heading
         if (!moved) {
-          let bestScore = Infinity, bestElev = curElev, bestLx = -1, bestLy = -1, bestDx = 0, bestDy = 0;
+          let bestScore = Infinity, bestElev = Infinity;
+          let bestLx = -1, bestLy = -1, bestDx = 0, bestDy = 0;
+          let validCount = 0;
           for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
             const nlx = curLx + dx, nly = curLy + dy;
             if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
@@ -1472,26 +1488,62 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
             if (visitedRiver.has(nKey)) continue;
             const nCell = getCell(nKey);
             if (!nCell) continue;
+            if (nCell.elevation > waterElev + STEP_TOLERANCE) continue; // outside tolerance
+            validCount++;
             const score = nCell.elevation - (dx === lastDx && dy === lastDy ? RIVER_DIRECTION_BONUS : 0);
             if (score < bestScore) {
               bestScore = score; bestElev = nCell.elevation;
               bestLx = nlx; bestLy = nly; bestDx = dx; bestDy = dy;
             }
           }
-          if (bestLx === -1 || bestElev > curElev + RIVER_SINK_TOLERANCE) {
-            sinks.push({ lx: curLx, ly: curLy, elev: curElev });
+
+          // 3. Lookahead: on flat terrain, look one step further to find descent
+          if (validCount > 0 && bestLx !== -1) {
+            const curCellElev = curCell ? curCell.elevation : waterElev;
+            const isFlat = Math.abs(bestElev - curCellElev) < 0.01;
+            if (isFlat) {
+              for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const nlx = curLx + dx, nly = curLy + dy;
+                if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
+                const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
+                if (visitedRiver.has(nKey)) continue;
+                const nCell = getCell(nKey);
+                if (!nCell || nCell.elevation > waterElev + STEP_TOLERANCE) continue;
+                // Score each candidate by its own best neighbor's elevation
+                let lookaheadBest = nCell.elevation;
+                for (const [dx2, dy2] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                  const nlx2 = nlx + dx2, nly2 = nly + dy2;
+                  if (nlx2 < 0 || nlx2 >= l1w || nly2 < 0 || nly2 >= l1h) continue;
+                  const nKey2 = `LOC:${mx},${my}:${nlx2},${nly2}`;
+                  if (visitedRiver.has(nKey2)) continue;
+                  const nCell2 = getCell(nKey2);
+                  if (nCell2) lookaheadBest = Math.min(lookaheadBest, nCell2.elevation);
+                }
+                const score = lookaheadBest - (dx === lastDx && dy === lastDy ? RIVER_DIRECTION_BONUS : 0);
+                if (score < bestScore) {
+                  bestScore = score; bestElev = nCell.elevation;
+                  bestLx = nlx; bestLy = nly; bestDx = dx; bestDy = dy;
+                }
+              }
+            }
+          }
+
+          // No valid neighbor at all — true depression, terminate
+          if (bestLx === -1) {
+            sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
             break;
           }
-          curElev = bestElev; curLx = bestLx; curLy = bestLy;
+          waterElev = Math.min(waterElev, bestElev);
+          curLx = bestLx; curLy = bestLy;
           lastDx = bestDx; lastDy = bestDy;
         }
       }
       // Path cap reached — treat current position as sink
       if (path.length >= PATH_CAP) {
-        sinks.push({ lx: curLx, ly: curLy, elev: curElev });
+        sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
       }
-      // Discard stub paths — 1–3 cell rivers add noise without visual impact
-      if (path.length < 4) continue;
+      // Discard stub paths shorter than 8 cells — genuine stuck rivers, not tolerance failures
+      if (path.length < 8) continue;
 
       riverCount++;
       totalRiverCells += path.length;
