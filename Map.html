@@ -557,6 +557,7 @@
     let vpScale = 1.0;
     let vpX = 0;
     let vpY = 0;
+    let _suppressAutoFit = false; // set by centerOnPlayer to protect its zoom from RAF auto-fit
     let isDragging = false;
     let wasDragged = false;   // distinguishes drag from click
     let dragStartX, dragStartY, dragStartVpX, dragStartVpY;
@@ -955,6 +956,13 @@
       requestAnimationFrame(() => {
         if (regionKey !== lastCenteredRegionKey) {
           lastCenteredRegionKey = regionKey;
+          // If Find Player just ran, preserve its zoom rather than resetting to fit.
+          if (_suppressAutoFit) {
+            _suppressAutoFit = false;
+            clampPan();
+            applyTransform();
+            return;
+          }
           // Reset to identity before measuring.
           vpScale = 1; vpX = 0; vpY = 0;
           applyTransform();
@@ -1303,6 +1311,7 @@
       if (!result.ok) { alert('No game state available.'); return; }
       const pos = result.state?.world?.position;
       if (!pos) { alert('Player position not found.'); return; }
+      _suppressAutoFit = true;
       vpScale = FIND_PLAYER_ZOOM;
       const vpRect = document.getElementById('map-viewport').getBoundingClientRect();
       vpX = vpRect.width  / 2 - (pos.lx * 65 + 32.5) * vpScale;

@@ -1429,9 +1429,10 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     const RIVER_CONTINUATION_TOLERANCE = 0.025;
     const RIVER_SINK_TOLERANCE         = 0.015;
     const RIVER_DIRECTION_BONUS        = 0.015;
-    const visitedRiver = new Set();
-    const riverPaths   = [];
     for (const source of sources) {
+      // Each river gets its own visited set so later rivers trace full independent
+      // paths instead of colliding with earlier ones after 1–3 cells.
+      const visitedRiver = new Set();
       const path = [];
       let curLx = source.lx, curLy = source.ly, curElev = source.elev;
       let lastDx = 0, lastDy = 0;
@@ -1487,7 +1488,8 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       if (path.length >= PATH_CAP) {
         sinks.push({ lx: curLx, ly: curLy, elev: curElev });
       }
-      if (path.length === 0) continue;
+      // Discard stub paths — 1–3 cell rivers add noise without visual impact
+      if (path.length < 4) continue;
 
       riverCount++;
       totalRiverCells += path.length;
