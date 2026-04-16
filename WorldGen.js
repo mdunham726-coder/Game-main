@@ -1396,6 +1396,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
 
   let riverCount = 0, totalRiverCells = 0;
   const hydroCells = new Set(); let poolCells = 0; let streamHaloCells = 0;
+  let channelCells = 0, channelPairsCount = 0;
   let lakeBasins = 0, lakeCells = 0;
   let sourcesCount = 0;
   const sinks = [];
@@ -1594,8 +1595,8 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       const PAIR_CAP              = Math.floor(poolSeeds.length * 0.6);
       const JITTER_MAX            = 4;
       const connectionCount       = new Array(poolSeeds.length).fill(0);
-      let   channelPairsCount     = 0;
-      let   channelCells          = 0;
+      channelPairsCount     = 0;
+      channelCells          = 0;
 
       // Enumerate pairs sorted by Manhattan distance (closest first)
       const poolPairs = [];
