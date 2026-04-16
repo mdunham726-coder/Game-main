@@ -60,14 +60,14 @@ const BIOME_KEYWORDS = {
 
 // Terrain palettes for each biome — L0 geography strings only (see LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY)
 const BIOME_PALETTES = {
-  rural: ["plains_grassland", "plains_wildflower", "meadow", "forest_deciduous", "hills_rolling", "river_crossing", "stream"],
+  rural: ["plains_grassland", "plains_wildflower", "meadow", "forest_deciduous", "hills_rolling", "rocky_terrain", "stream"],
   forest: ["forest_deciduous", "forest_mixed", "forest_coniferous", "meadow", "stream", "hills_rolling"],
   desert: ["desert_sand", "desert_dunes", "desert_rocky", "scrubland", "badlands", "canyon", "mesa"],
   tundra: ["tundra", "snowfield", "ice_sheet", "permafrost", "alpine"],
-  jungle: ["forest_coniferous", "meadow", "swamp", "marsh", "river_crossing", "stream", "wetland"],
+  jungle: ["forest_coniferous", "meadow", "swamp", "marsh", "forest_mixed", "stream", "wetland"],
   coast: ["beach_sand", "beach_pebble", "cliffs_coastal", "tidepools", "dunes_coastal", "scrubland", "plains_grassland"],
   mountain: ["mountain_slopes", "mountain_peak", "mountain_pass", "rocky_terrain", "scree", "alpine", "hills_rocky"],
-  wetland: ["swamp", "marsh", "wetland", "bog", "stream", "river_crossing"]
+  wetland: ["swamp", "marsh", "wetland", "bog", "stream", "bog"]
 };
 
 // =============================================================================
@@ -1390,11 +1390,12 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   // ── Pass 3 rivers + lakes (conditional on biome having river sources) ─────
   const BIOME_RIVER_SOURCES = {
     mountain: 6, tundra: 4, forest: 4, rural: 3,
-    jungle: 5, desert: 1, coast: 0, wetland: 8,
+    jungle: 5, desert: 1, coast: 0, wetland: 0,
   };
   const targetSources = BIOME_RIVER_SOURCES[biome] ?? 0;
 
   let riverCount = 0, totalRiverCells = 0;
+  const hydroCells = new Set(); let poolCells = 0;
   let lakeBasins = 0, lakeCells = 0;
   let sourcesCount = 0;
   const sinks = [];
@@ -1506,6 +1507,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         const newType = i < streamEnd ? 'stream' : 'river_crossing';
         if (cells[key])                             cells[key].type = newType;
         else if (existingCells && existingCells[key]) existingCells[key].type = newType;
+        hydroCells.add(key);
       }
 
       // Record river path summary
@@ -1538,6 +1540,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         if (cell && !WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) {
           if (cells[curKey])                              cells[curKey].type = 'lake_shore';
           else if (existingCells && existingCells[curKey]) existingCells[curKey].type = 'lake_shore';
+          hydroCells.add(curKey);
           lakeCells++;
         }
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -1563,6 +1566,29 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     reportProgress?.('pass3_sources', 62, { sourceCount: 0, mountainCells: mountainCandidates.length });
     reportProgress?.('pass3_rivers',  65, { riversCut: 0, totalRiverCells: 0 });
     reportProgress?.('pass3_lakes',   70, { lakeBasins: 0, lakeCells: 0 });
+
+    // ── Pass 3b_wet: Wetland diffuse pool placement ────────────────────────
+    if (biome === 'wetland') {
+      const POOL_EXCLUDED_GROUPS = new Set(['water', 'coast']);
+      const MIN_POOL_SPACING = 12;
+      const cellsByElev = Object.entries(cells)
+        .filter(([, c]) => !POOL_EXCLUDED_GROUPS.has(TGMAP[c.type] || 'wilderness'))
+        .sort(([, a], [, b]) => a.elevation - b.elevation);
+      const poolTarget = Math.floor(cellsByElev.length * 0.03);
+      const poolSeeds = [];
+      for (const [key, cell] of cellsByElev) {
+        if (poolSeeds.length >= poolTarget) break;
+        if (poolSeeds.every(s =>
+          Math.abs(cell.lx - s.lx) + Math.abs(cell.ly - s.ly) >= MIN_POOL_SPACING
+        )) {
+          cells[key].type = 'lake_shore';
+          hydroCells.add(key);
+          poolSeeds.push({ lx: cell.lx, ly: cell.ly });
+          poolCells++;
+        }
+      }
+      reportProgress?.('pass3_pools', 64, { poolCells });
+    }
   }
 
   // ── Pass 3d: Multi-source BFS for water_distance (always runs) ───────────
@@ -1574,7 +1600,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   for (const key of allKeys) {
     const cell = cells[key] || (existingCells && existingCells[key]);
     if (!cell) continue;
-    if (WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) {
+    if (hydroCells.has(key)) {
       bfsDist.set(key, 0);
       bfsQueue.push(key);
     }
@@ -1677,6 +1703,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     totalRiverCells,
     lakeBasins,
     lakeCells,
+    poolCells,
     mountainCells:    mountainCandidates.length,
     riverSources:     sourcesCount,
     noiseWaterCells,
