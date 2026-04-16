@@ -33,7 +33,7 @@ const LAYER_TERRAIN_VOCAB = {
     "swamp", "marsh", "wetland", "bog",
     "beach_sand", "beach_pebble", "cliffs_coastal", "tidepools", "dunes_coastal",
     "mountain_slopes", "mountain_peak", "mountain_pass", "rocky_terrain", "scree",
-    "river_crossing", "stream", "lake_shore", "waterfall", "spring"
+    "river_crossing", "river", "stream", "lake_shore", "waterfall", "spring"
   ],
   // These strings are valid inside a site's traversal grid — never as L0 cell.type
   SITE_TRAVERSAL: [
@@ -754,7 +754,7 @@ const TERRAIN_GROUP_MAP = {
   tundra:           'cold',  snowfield:         'cold',   ice_sheet:      'cold',
   permafrost:       'cold',
   swamp:            'wetland', marsh:            'wetland', wetland:       'wetland', bog: 'wetland',
-  river_crossing:   'water',  stream:           'water',  lake_shore:    'water',
+  river_crossing:   'water',  river:            'water',  stream:        'water',  lake_shore:    'water',
   beach_sand:       'coast',  beach_pebble:     'coast',  cliffs_coastal: 'coast',
   tidepools:        'coast',  dunes_coastal:    'coast',
 };
@@ -1552,6 +1552,10 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     }
 
     const visited = new Uint8Array(l1w * l1h); // 0 = unvisited
+    let riverCells = 0, streamCells = 0; // totals across all rivers
+    const RIVER_PROTECTED_GROUPS = new Set(['water', 'coast']);
+    const RIVER_CELL_MULTIPLIER  = 2;        // tune if too few/many cells become 'river'
+    const RIVER_CELL_THRESHOLD   = riverThreshold * RIVER_CELL_MULTIPLIER;
 
     for (let i = 0; i < l1w * l1h; i++) {
       if (flowAccum[i] < riverThreshold) continue; // below threshold
@@ -1573,7 +1577,8 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
 
       while (true) {
         if (visited[curIdx]) break; // joined an already-extracted river
-        if (flowAccum[curIdx] < riverThreshold) break; // dropped below threshold
+        // NOTE: threshold is only used to select heads (above). Once a walk
+        // starts it follows flowDir all the way to a natural sink or map edge.
         visited[curIdx] = 1;
 
         const lx = curIdx % l1w;
@@ -1604,16 +1609,17 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       riverCount++;
       totalRiverCells += path.length;
 
-      // Reclassify: first 60% → stream, last 40% → river_crossing
-      const RIVER_PROTECTED_GROUPS = new Set(['water', 'coast']);
-      const streamEnd = Math.round(path.length * 0.60);
+      // Reclassify by accumulated flow strength:
+      //   accum >= RIVER_CELL_THRESHOLD → 'river'  (main channel trunk)
+      //   accum <  RIVER_CELL_THRESHOLD → 'stream' (upper reaches / tributaries)
       for (let pi = 0; pi < path.length; pi++) {
-        const { key } = path[pi];
+        const { key, idx } = path[pi];
         const cell = getCell(key);
         if (!cell) continue;
         if (RIVER_PROTECTED_GROUPS.has(TGMAP[cell.type] || 'wilderness')) continue;
-        const newType = pi < streamEnd ? 'stream' : 'river_crossing';
-        if (cells[key])                              cells[key].type = newType;
+        const newType = flowAccum[idx] >= RIVER_CELL_THRESHOLD ? 'river' : 'stream';
+        if (newType === 'river') riverCells++; else streamCells++;
+        if (cells[key])                               cells[key].type = newType;
         else if (existingCells && existingCells[key]) existingCells[key].type = newType;
         hydroCells.add(key);
       }
@@ -1629,7 +1635,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         compassDir: compassFromVector(sdx, sdy),
       });
     }
-    reportProgress?.('pass3_rivers', 65, { riversCut: riverCount, totalRiverCells, riverThreshold });
+    reportProgress?.('pass3_rivers', 65, { riversCut: riverCount, totalRiverCells, riverCells, streamCells, riverThreshold, RIVER_CELL_MULTIPLIER: 2 });
 
     // ── Pass 3c: Lake basin flood-fill at sinks ─────────────────────────────
     const BASIN_RADIUS = 4;
