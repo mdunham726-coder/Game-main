@@ -1587,7 +1587,67 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
           poolCells++;
         }
       }
-      reportProgress?.('pass3_pools', 64, { poolCells });
+
+      // ── Pass 3b_chan: Meander channel walks between nearby pools ─────────────
+      const MAX_CHANNEL_DIST      = 45;
+      const MAX_CONNECTIONS_PER_POOL = 1;
+      const PAIR_CAP              = Math.floor(poolSeeds.length * 0.6);
+      const JITTER_MAX            = 4;
+      const connectionCount       = new Array(poolSeeds.length).fill(0);
+      let   channelPairsCount     = 0;
+      let   channelCells          = 0;
+
+      // Enumerate pairs sorted by Manhattan distance (closest first)
+      const poolPairs = [];
+      for (let i = 0; i < poolSeeds.length; i++) {
+        for (let j = i + 1; j < poolSeeds.length; j++) {
+          const dist = Math.abs(poolSeeds[i].lx - poolSeeds[j].lx)
+                     + Math.abs(poolSeeds[i].ly - poolSeeds[j].ly);
+          if (dist <= MAX_CHANNEL_DIST) poolPairs.push({ i, j, dist });
+        }
+      }
+      poolPairs.sort((a, b) => a.dist - b.dist);
+
+      for (const { i, j, dist } of poolPairs) {
+        if (channelPairsCount >= PAIR_CAP) break;
+        if (connectionCount[i] >= MAX_CONNECTIONS_PER_POOL) continue;
+        if (connectionCount[j] >= MAX_CONNECTIONS_PER_POOL) continue;
+        connectionCount[i]++;
+        connectionCount[j]++;
+        channelPairsCount++;
+
+        // Jittered greedy meander walk from poolSeeds[i] → poolSeeds[j]
+        const target        = poolSeeds[j];
+        const MAX_STEPS     = Math.floor(dist * 2.0) + 10;
+        const chanVisited   = new Set();
+        let   curLx         = poolSeeds[i].lx;
+        let   curLy         = poolSeeds[i].ly;
+
+        for (let step = 0; step < MAX_STEPS; step++) {
+          if (Math.abs(curLx - target.lx) + Math.abs(curLy - target.ly) <= 2) break;
+          const stepRng = mulberry32(h32(`${worldSeed}|chan|${i},${j}|${step}`));
+          let bestKey = null, bestLx = -1, bestLy = -1, bestScore = Infinity;
+          for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            const nlx = curLx + dx, nly = curLy + dy;
+            if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
+            const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
+            if (chanVisited.has(nKey)) continue;
+            const score = Math.abs(nlx - target.lx) + Math.abs(nly - target.ly)
+                        + stepRng() * JITTER_MAX;
+            if (score < bestScore) { bestScore = score; bestKey = nKey; bestLx = nlx; bestLy = nly; }
+          }
+          if (!bestKey) break;
+          chanVisited.add(bestKey);
+          curLx = bestLx; curLy = bestLy;
+          if (!cells[bestKey]) continue;
+          if (hydroCells.has(bestKey)) continue;
+          if (WATER_GROUPS.has(TGMAP[cells[bestKey].type] || 'wilderness')) continue;
+          cells[bestKey].type = 'stream';
+          hydroCells.add(bestKey);
+          channelCells++;
+        }
+      }
+      reportProgress?.('pass3_pools', 64, { poolCells, channelCells, channelPairsCount });
     }
   }
 
@@ -1736,6 +1796,8 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     lakeBasins,
     lakeCells,
     poolCells,
+    channelCells,
+    channelPairsCount,
     streamHaloCells,
     mountainCells:    mountainCandidates.length,
     riverSources:     sourcesCount,
