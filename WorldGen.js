@@ -1078,10 +1078,22 @@ const BIOME_BASE_TEMP = {
  * @param {Function|null} reportProgress — optional callback(step, pct, detail)
  * @returns {{ elevMap: Float32Array, massifCount: number, basinCount: number }}
  */
-function generateElevationStructure(mx, my, biome, worldSeed, reportProgress = null) {
+function generateElevationStructure(mx, my, biome, worldSeed, reportProgress = null, hydroStrength = 0) {
   const l1w = DEFAULTS.L1_SIZE.w;  // 128
   const l1h = DEFAULTS.L1_SIZE.h;  // 128
-  const cfg  = BIOME_ELEV_CONFIG[biome] || BIOME_ELEV_CONFIG.rural;
+  // Start with a mutable copy so hydroStrength overrides don't affect the shared config.
+  const cfg  = Object.assign({}, BIOME_ELEV_CONFIG[biome] || BIOME_ELEV_CONFIG.rural);
+  if (hydroStrength > 0) {
+    // More massifs → more high terrain → more source candidates
+    cfg.massifRange = [cfg.massifRange[0], cfg.massifRange[1] + hydroStrength];
+    // Raise the minimum peak floor to clear the source-candidate threshold (0.65)
+    const PEAK_FLOORS = { 1: 0.70, 2: 0.75 };
+    const peakFloor = PEAK_FLOORS[hydroStrength] ?? 0.70;
+    cfg.peakRange = [
+      Math.max(cfg.peakRange[0], peakFloor),
+      Math.min(cfg.peakRange[1] + 0.05 * hydroStrength, 0.95)
+    ];
+  }
 
   // Determine feature counts (deterministic per macro cell)
   const mRng = mulberry32(h32(`${worldSeed}|m_count|${mx},${my}`));
@@ -1272,7 +1284,7 @@ function generateMoistureStructure(mx, my, biome, worldSeed) {
  * @param {Function|null} reportProgress — optional callback(step, pct, detail)
  * @returns {{ cells: object, hydrologyStats: object }}
  */
-function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportProgress = null) {
+function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportProgress = null, hydroStrength = 0) {
   const l1w = DEFAULTS.L1_SIZE.w;   // 128
   const l1h = DEFAULTS.L1_SIZE.h;   // 128
   const cells = {};
@@ -1282,7 +1294,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
 
   // ── Pre-step: Build structured elevation field ────────────────────────────
   const { elevMap, massifCount, basinCount, elevStructureFeatures } =
-    generateElevationStructure(mx, my, biome, worldSeed, reportProgress);
+    generateElevationStructure(mx, my, biome, worldSeed, reportProgress, hydroStrength);
   reportProgress?.('elevation_structure', 20, { massifCount, basinCount });
 
   // ── Pre-step: Build structured moisture field ─────────────────────────────
@@ -1392,7 +1404,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     mountain: 6, tundra: 4, forest: 4, rural: 3,
     jungle: 5, desert: 1, coast: 0, wetland: 0,
   };
-  const targetSources = BIOME_RIVER_SOURCES[biome] ?? 0;
+  const targetSources = Math.ceil((BIOME_RIVER_SOURCES[biome] ?? 0) * (hydroStrength > 0 ? 1 + hydroStrength * 0.5 : 1));
 
   let riverCount = 0, totalRiverCells = 0;
   const hydroCells = new Set(); let poolCells = 0; let streamHaloCells = 0;
@@ -1480,6 +1492,23 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
 
         // 2. Scored neighbor selection — prefer descent, bias toward last heading
         if (!moved) {
+          // Adaptive tolerance: on genuinely flat terrain, widen window so rivers
+          // can escape plateaus without risking uphill drift on real gradients.
+          // Spread < 0.03 means all unvisited neighbors are within a 0.03 band — true plateau.
+          let elevSpreadMin = Infinity, elevSpreadMax = -Infinity;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const nlx = curLx + dx, nly = curLy + dy;
+            if (nlx < 0 || nlx >= l1w || nly < 0 || nly >= l1h) continue;
+            const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
+            if (visitedRiver.has(nKey)) continue;
+            const nCell = getCell(nKey);
+            if (!nCell) continue;
+            if (nCell.elevation < elevSpreadMin) elevSpreadMin = nCell.elevation;
+            if (nCell.elevation > elevSpreadMax) elevSpreadMax = nCell.elevation;
+          }
+          const elevSpread   = (elevSpreadMax > elevSpreadMin) ? (elevSpreadMax - elevSpreadMin) : 0;
+          const adaptiveTol  = elevSpread < 0.03 ? STEP_TOLERANCE * 2 : STEP_TOLERANCE;
+
           let bestScore = Infinity, bestElev = Infinity;
           let bestLx = -1, bestLy = -1, bestDx = 0, bestDy = 0;
           let validCount = 0;
@@ -1490,7 +1519,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
             if (visitedRiver.has(nKey)) continue;
             const nCell = getCell(nKey);
             if (!nCell) continue;
-            if (nCell.elevation > stepFloor + STEP_TOLERANCE) continue; // outside tolerance
+            if (nCell.elevation > stepFloor + adaptiveTol) continue; // outside adaptive tolerance
             validCount++;
             const score = nCell.elevation - (dx === lastDx && dy === lastDy ? RIVER_DIRECTION_BONUS : 0);
             if (score < bestScore) {
@@ -1510,7 +1539,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
                 const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
                 if (visitedRiver.has(nKey)) continue;
                 const nCell = getCell(nKey);
-                if (!nCell || nCell.elevation > stepFloor + STEP_TOLERANCE) continue;
+                if (!nCell || nCell.elevation > stepFloor + adaptiveTol) continue;
                 // Score each candidate by its own best neighbor's elevation
                 let lookaheadBest = nCell.elevation;
                 for (const [dx2, dy2] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -1955,6 +1984,16 @@ async function generateWorldFromDescription(desc, worldSeed) {
     }
   }
 
+  // Derive hydroStrength from prompt keywords — controls river-terrain amplification.
+  // strength 1: one or more hydro signals  (rivers get modest terrain boost)
+  // strength 2: three or more hydro signals (explicit river/water world → stronger boost)
+  const HYDRO_SIGNALS = ['river','rivers','stream','streams','waterway','flowing','lake','lakes','flooded','delta','marsh','canal','tributary','flood'];
+  const hydroMatches  = HYDRO_SIGNALS.filter(kw => _descLower.includes(kw)).length;
+  const hydroStrength = hydroMatches >= 3 ? 2 : hydroMatches >= 1 ? 1 : 0;
+  if (hydroStrength > 0) {
+    console.log(`[WORLD] Hydrology signals detected (strength ${hydroStrength}) — boosting river-support terrain`);
+  }
+
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
   const l0s = DEFAULTS.L0_SIZE;
   const macroCells = {};
@@ -1974,7 +2013,8 @@ async function generateWorldFromDescription(desc, worldSeed) {
     palette,
     l0_size: l0s,
     cells: macroCells,
-    sites: {}
+    sites: {},
+    hydro_strength: hydroStrength
   };
 }
 

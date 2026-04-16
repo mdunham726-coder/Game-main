@@ -975,7 +975,7 @@ app.post('/narrate', async (req, res) => {
           console.log('[WORLDGEN] Generating full 128×128 macro cell + hydrology...');
           const { cells: _fullMacroCellsObj, hydrologyStats: _hydroStats } = WorldGen.generateFullMacroCell(
             startAnchor.mx, startAnchor.my, worldData.biome, phase3Seed,
-            gameState.world.cells, _reportProgress
+            gameState.world.cells, _reportProgress, worldData.hydro_strength || 0
           );
           Object.assign(gameState.world.cells, _fullMacroCellsObj);
           _wLog('pass1+2', 'full_macro_cell_generated', {
