@@ -672,6 +672,7 @@
         const _lsGrid = _activeLSData.grid;
         const _lsH = _activeLSData.height || _lsGrid.length;
         const _lsW = _activeLSData.width || (_lsGrid[0] ? _lsGrid[0].length : 5);
+        _worldGridW = _lsW; _worldGridH = _lsH; // keep clampPan in sync with actual grid
         document.getElementById('map-notice').style.display = 'none';
         hideOverlay();
         const container = document.getElementById('grid-container');
@@ -720,6 +721,7 @@
         const _siteGrid = _activeSiteData.grid;
         const _siteH = _activeSiteData.height || _siteGrid.length;
         const _siteW = _activeSiteData.width || (_siteGrid[0] ? _siteGrid[0].length : 7);
+        _worldGridW = _siteW; _worldGridH = _siteH; // keep clampPan in sync with actual grid
 
         document.getElementById('map-notice').style.display = 'none';
         hideOverlay();

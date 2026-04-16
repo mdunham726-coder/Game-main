@@ -1049,8 +1049,8 @@ const STRUCTURE_BLEND = { elevation: 0.70, moisture: 0.70, temperature: 0.70 };
 
 // Biome moisture zone configuration (wet zones add, dry zones subtract)
 const BIOME_MOISTURE_CONFIG = {
-  wetland:  { baseVal: 0.82, wetZoneRange: [2, 4], dryZoneRange: [0, 0], wetRadii: [20, 40], dryRadii: [],       wetStrength: [0.12, 0.22], dryStrength: [] },
-  jungle:   { baseVal: 0.70, wetZoneRange: [2, 3], dryZoneRange: [0, 1], wetRadii: [18, 35], dryRadii: [10, 18], wetStrength: [0.10, 0.18], dryStrength: [0.05, 0.10] },
+  wetland:  { baseVal: 0.55, wetZoneRange: [2, 4], dryZoneRange: [0, 0], wetRadii: [20, 40], dryRadii: [],       wetStrength: [0.12, 0.22], dryStrength: [] },
+  jungle:   { baseVal: 0.60, wetZoneRange: [2, 3], dryZoneRange: [0, 1], wetRadii: [18, 35], dryRadii: [10, 18], wetStrength: [0.10, 0.18], dryStrength: [0.05, 0.10] },
   forest:   { baseVal: 0.55, wetZoneRange: [1, 3], dryZoneRange: [1, 2], wetRadii: [16, 30], dryRadii: [12, 22], wetStrength: [0.12, 0.20], dryStrength: [0.08, 0.14] },
   coast:    { baseVal: 0.52, wetZoneRange: [1, 2], dryZoneRange: [0, 1], wetRadii: [15, 28], dryRadii: [10, 20], wetStrength: [0.10, 0.18], dryStrength: [0.06, 0.10] },
   rural:    { baseVal: 0.45, wetZoneRange: [1, 2], dryZoneRange: [1, 2], wetRadii: [15, 28], dryRadii: [12, 24], wetStrength: [0.14, 0.22], dryStrength: [0.10, 0.16] },
@@ -1390,7 +1390,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   // ── Pass 3 rivers + lakes (conditional on biome having river sources) ─────
   const BIOME_RIVER_SOURCES = {
     mountain: 6, tundra: 4, forest: 4, rural: 3,
-    jungle: 5, desert: 1, coast: 0, wetland: 0,
+    jungle: 5, desert: 1, coast: 0, wetland: 8,
   };
   const targetSources = BIOME_RIVER_SOURCES[biome] ?? 0;
 
@@ -1493,12 +1493,14 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       totalRiverCells += path.length;
 
       // Reclassify: first 60% → stream, last 40% → river_crossing
+      // Only protect true open water / coast — let rivers carve through swamp/marsh/bog
+      const RIVER_PROTECTED_GROUPS = new Set(['water', 'coast']);
       const streamEnd = Math.round(path.length * 0.60);
       for (let i = 0; i < path.length; i++) {
         const { key } = path[i];
         const cell = getCell(key);
         if (!cell) continue;
-        if (WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) continue;
+        if (RIVER_PROTECTED_GROUPS.has(TGMAP[cell.type] || 'wilderness')) continue;
         const newType = i < streamEnd ? 'stream' : 'river_crossing';
         if (cells[key])                             cells[key].type = newType;
         else if (existingCells && existingCells[key]) existingCells[key].type = newType;
@@ -1629,6 +1631,45 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     ? +((waterAfterPass3 / cellCount) * 100).toFixed(2)
     : 0;
 
+  // ── Pass 3e: Post-hydrology fringe — wet biomes only ─────────────────────
+  // After BFS has written water_distance, push wet terrain outward from rivers/
+  // lakes so ecosystems form around flow paths, not as a pre-saturation blanket.
+  let fringeCells = 0;
+  if (biome === 'wetland' || biome === 'jungle') {
+    for (const key of allKeys) {
+      const cell = cells[key] || (existingCells && existingCells[key]);
+      if (!cell) continue;
+      // Skip already-water terrain (streams, rivers, lakes, swamp already placed)
+      if (WATER_GROUPS.has(TGMAP[cell.type] || 'wilderness')) continue;
+      const d = cell.water_distance ?? BFS_CAP;
+      const frngRng = mulberry32(h32(`${worldSeed}|p3e|${key}`));
+
+      let newType = null;
+      if (biome === 'wetland') {
+        if (d <= 4) {
+          const pool = ['swamp', 'marsh', 'bog', 'wetland'];
+          newType = pool[Math.floor(frngRng() * pool.length)];
+        } else if (d <= 10 && frngRng() < 0.40) {
+          newType = frngRng() < 0.5 ? 'bog' : 'wetland';
+        }
+      } else { // jungle
+        if (d <= 4) {
+          const pool = ['marsh', 'forest_mixed', 'forest_deciduous'];
+          newType = pool[Math.floor(frngRng() * pool.length)];
+        } else if (d <= 10 && frngRng() < 0.30) {
+          newType = 'forest_mixed';
+        }
+      }
+
+      if (newType) {
+        if (cells[key])                               cells[key].type = newType;
+        else if (existingCells && existingCells[key]) existingCells[key].type = newType;
+        fringeCells++;
+      }
+    }
+  }
+  reportProgress?.('pass3_fringe', 84, { fringeCells });
+
   const hydrologyStats = {
     riverCount,
     totalRiverCells,
@@ -1652,6 +1693,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     avgElev,
     avgMois,
     coarseGridLog,
+    fringeCells,
   };
 
   reportProgress?.('complete', 100, { waterCoveragePct });
