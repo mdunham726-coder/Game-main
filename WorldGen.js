@@ -1462,13 +1462,15 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         let moved = false;
 
         // 1. Directional continuity — prefer same heading within step tolerance
+        const curCellElev = curCell ? curCell.elevation : waterElev;
+        const stepFloor   = Math.max(waterElev, curCellElev);
         if (lastDx !== 0 || lastDy !== 0) {
           const nlx = curLx + lastDx, nly = curLy + lastDy;
           if (nlx >= 0 && nlx < l1w && nly >= 0 && nly < l1h) {
             const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
             if (!visitedRiver.has(nKey)) {
               const nCell = getCell(nKey);
-              if (nCell && nCell.elevation <= waterElev + STEP_TOLERANCE) {
+              if (nCell && nCell.elevation <= stepFloor + STEP_TOLERANCE) {
                 waterElev = Math.min(waterElev, nCell.elevation);
                 curLx = nlx; curLy = nly; moved = true;
               }
@@ -1488,7 +1490,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
             if (visitedRiver.has(nKey)) continue;
             const nCell = getCell(nKey);
             if (!nCell) continue;
-            if (nCell.elevation > waterElev + STEP_TOLERANCE) continue; // outside tolerance
+            if (nCell.elevation > stepFloor + STEP_TOLERANCE) continue; // outside tolerance
             validCount++;
             const score = nCell.elevation - (dx === lastDx && dy === lastDy ? RIVER_DIRECTION_BONUS : 0);
             if (score < bestScore) {
@@ -1508,7 +1510,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
                 const nKey = `LOC:${mx},${my}:${nlx},${nly}`;
                 if (visitedRiver.has(nKey)) continue;
                 const nCell = getCell(nKey);
-                if (!nCell || nCell.elevation > waterElev + STEP_TOLERANCE) continue;
+                if (!nCell || nCell.elevation > stepFloor + STEP_TOLERANCE) continue;
                 // Score each candidate by its own best neighbor's elevation
                 let lookaheadBest = nCell.elevation;
                 for (const [dx2, dy2] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -1542,8 +1544,8 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       if (path.length >= PATH_CAP) {
         sinks.push({ lx: curLx, ly: curLy, elev: waterElev });
       }
-      // Discard stub paths shorter than 8 cells — genuine stuck rivers, not tolerance failures
-      if (path.length < 8) continue;
+      // Discard stub paths shorter than 4 cells — genuine stuck rivers, not tolerance failures
+      if (path.length < 4) continue;
 
       riverCount++;
       totalRiverCells += path.length;
