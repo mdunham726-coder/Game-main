@@ -252,6 +252,7 @@ async function performLoad(sessionId, saveName) {
       }
       if (_gs.world.active_site?.is_stub) {
         _gs.world.active_site = null;
+        _gs.world.active_local_space = null;
         _gs.world.current_depth = 1;
       }
       console.log('[LOAD] v1 migration: cell.sites wiped and regenerated from new slot system.');
@@ -1045,6 +1046,9 @@ app.post('/narrate', async (req, res) => {
                 if (_scContainer === 'L2' && _startCtx.local_space_purpose) {
                   gameState.world._startLocalSpacePurpose = _startCtx.local_space_purpose;
                 }
+                if (_scContainer === 'L2' && _startCtx.local_space_name) {
+                  gameState.world._startLocalSpaceName = _startCtx.local_space_name;
+                }
 
                 // Phase A fix: object-form call (was positional — enterSite second arg is destructured object)
                 const _scSite = Engine.enterSite(gameState, { cell_key: _scCellKey, site_id: _scSlot.site_id, entry_dir: 'south' });
@@ -1372,7 +1376,7 @@ app.post('/narrate', async (req, res) => {
           // ── HYBRID ENTRY RESOLVER ─────────────────────────────────────────────────
           // Runs BEFORE buildOutput so Engine receives annotated player_intent.
           // Only fires on 'enter' with a non-empty target phrase.
-          if (queuedAction.action === 'enter' && (gameState.world.current_depth || 0) < 2) {
+          if (queuedAction.action === 'enter' && !gameState.world.active_site) {
             const _resolverPhrase = (queuedAction.target || '').toLowerCase().trim().replace(/^(the|a|an)\s+/, '');
             const _resolverTrace = {
               phrase: _resolverPhrase,
@@ -1416,7 +1420,7 @@ app.post('/narrate', async (req, res) => {
                 console.log('[RESOLVER] Phase2 invoke — candidateCount:', _rCandidates.length, 'phrase:', _resolverPhrase);
 
                 if (_rCandidates.length > 0) {
-                  const _currentDepth = gameState.world.current_depth || 0;
+                  const _currentDepth = gameState.world.active_local_space ? 3 : gameState.world.active_site ? 2 : 1;
                   const _p2 = await resolveEnterTarget(_rCandidates, _resolverPhrase, _currentDepth);
                   _resolverTrace.p2 = {
                     result: _p2.result,
@@ -1675,7 +1679,8 @@ app.post('/narrate', async (req, res) => {
     }
 
     // Phase 10: Override scene description and site context when player is inside a site
-    const _narDepth = gameState?.world?.current_depth || 1;
+    // Layer derived from containment state — not from current_depth counter which can drift.
+    const _narDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
     const _narActiveSite = gameState?.world?.active_site || null;
     // Freshness guarantee: recompute visible NPCs before narration payload assembly
     if (_narDepth === 2 && _narActiveSite && gameState?.player?.position) {
@@ -1707,7 +1712,7 @@ app.post('/narrate', async (req, res) => {
       } else {
         npcsStr = '(None visible)';
       }
-      _siteContextBlock = `\n\nCURRENT LOCAL SPACE (you are inside this location):\nName: ${_narActiveLS.name || '(unnamed)'}\nType: ${_narActiveLS.type || 'local_space'}\nNPCs nearby: ${_lsNpcNames}`;
+      _siteContextBlock = `\n\nCURRENT LOCAL SPACE (you are inside this location):\nName: ${_narActiveLS.name || '(unnamed)'}\nType: ${_narActiveLS.type || 'local_space'}\nNPCs nearby: ${_lsNpcNames}\nIMPORTANT: The name above is COMMITTED. Use it exactly as given. Do not rename or reinterpret this location.`;
       const _lsp = gameState?.player?.position;
       if (_lsp && _narActiveLS.grid) {
         const _lsCell = _narActiveLS.grid[_lsp.y]?.[_lsp.x] ?? null;
@@ -2038,17 +2043,18 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       turn_counter: gameState.turn_counter || 0,
       site_count: Object.values(currentCell?.sites || {}).length,
       current_site: currentSite,  // Now populated if player is in a site
-      current_depth: gameState.world.current_depth || 1,
+      // Layer derived from containment state — current_depth updated to match but not used as source of truth
+      current_depth: gameState.world.active_local_space ? 3 : gameState.world.active_site ? 2 : 1,
       active_site_name: gameState.world.active_site?.name || null,
-      site_position: (gameState.world.current_depth || 1) === 2 ? (gameState.player?.position || null) : null,
-      local_space_position: (gameState.world.current_depth || 1) === 3 ? (gameState.player?.position || null) : null,
-      visible_npc_count: (gameState.world.current_depth || 1) === 3
+      site_position: gameState.world.active_site && !gameState.world.active_local_space ? (gameState.player?.position || null) : null,
+      local_space_position: gameState.world.active_local_space ? (gameState.player?.position || null) : null,
+      visible_npc_count: gameState.world.active_local_space
         ? (gameState.world.active_local_space?._visible_npcs || []).length
         : (gameState.world.active_site?._visible_npcs || []).length,
-      visible_npc_names: (gameState.world.current_depth || 1) === 3
+      visible_npc_names: gameState.world.active_local_space
         ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.job_category || n.id)
         : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
-      npc_record_count: (gameState.world.current_depth || 1) === 3
+      npc_record_count: gameState.world.active_local_space
         ? (gameState.world.active_local_space?.npcs || []).length
         : (gameState.world.active_site?.npcs || []).length,
       start_container: gameState.world.start_container || 'L0',
@@ -2057,7 +2063,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
     {
-      const _vpDepth = gameState.world.current_depth || 1;
+      // Layer derived from containment state — not from current_depth counter
+      const _vpDepth = gameState.world.active_local_space ? 3 : gameState.world.active_site ? 2 : 1;
       const _vpDepthLabels = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' };
       const _vpSiteRegistry = gameState.world.sites || {};
       const _vpActiveSite = gameState.world.active_site || null;

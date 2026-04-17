@@ -746,7 +746,9 @@
             // Local space tiles: npc_ids on site.local_spaces[local_space_id]
             let _tileNpcIds = [];
             if (tile?.type === 'local_space' && tile?.local_space_id) {
-              _tileNpcIds = _activeSiteData.local_spaces?.[tile.local_space_id]?.npc_ids || [];
+              // Prefer _generated_interior.npc_ids (authoritative) over stub slot npc_ids
+              const _lsSlot = _activeSiteData.local_spaces?.[tile.local_space_id];
+              _tileNpcIds = _lsSlot?._generated_interior?.npc_ids ?? _lsSlot?.npc_ids ?? [];
             } else {
               _tileNpcIds = tile?.npc_ids || [];
             }

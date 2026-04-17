@@ -531,14 +531,14 @@ async function detectStartContextWithDeepSeek(desc) {
 
   if (!process.env.DEEPSEEK_API_KEY || !axios) {
     console.log('[START-CTX] DeepSeek unavailable — using keyword fallback');
-    return { container: _fallbackContainer, scale: null, local_space_purpose: null };
+    return { container: _fallbackContainer, scale: null, local_space_purpose: null, local_space_name: null };
   }
 
   try {
     const messages = [
       {
         role: 'system',
-        content: `You are a game world interpreter. Given a player's opening description, determine where they are starting.\nRespond with ONLY a valid JSON object with exactly these three fields:\n- "container": one of "L0", "L1", "L2". L0 = open world (forest, road, wilderness, travelling). L1 = inside a named place or site but not a specific room (village square, market, city street, camp perimeter, plaza). L2 = inside a specific room or enclosed space (forge interior, tavern common room, prison cell, shack interior, kitchen).\n- "scale": integer 1–10 representing size of the implied site. 1=tiny single room, 3=small inn or camp, 5=village, 7=town, 9=large city district, 10=major city. null if container is "L0".\n- "local_space_purpose": a short lowercase string describing the room type if L2 (e.g. "forge", "tavern", "house", "cell", "kitchen", "shop"). null if container is "L0" or "L1".\nRespond with JSON only. No explanation, no markdown fences.`
+        content: `You are a game world interpreter. Given a player's opening description, determine where they are starting.\nRespond with ONLY a valid JSON object with exactly these four fields:\n- "container": one of "L0", "L1", "L2". L0 = open world (forest, road, wilderness, travelling). L1 = inside a named place or site but not a specific room (village square, market, city street, camp perimeter, plaza). L2 = inside a specific room or enclosed space (forge interior, tavern common room, prison cell, shack interior, kitchen).\n- "scale": integer 1–10 representing size of the implied site. 1=tiny single room, 3=small inn or camp, 5=village, 7=town, 9=large city district, 10=major city. null if container is "L0".\n- "local_space_purpose": a short lowercase string describing the room type if L2 (e.g. "forge", "tavern", "house", "cell", "kitchen", "shop"). null if container is "L0" or "L1".\n- "local_space_name": the specific named location if explicitly stated in the player's prompt (e.g. "Taco Bell", "McDonald's", "Jungle Java"). Keep original casing. null if no specific named location is stated or if container is not "L2".\nRespond with JSON only. No explanation, no markdown fences.`
       },
       {
         role: 'user',
@@ -590,12 +590,21 @@ async function detectStartContextWithDeepSeek(desc) {
       }
     }
 
-    console.log(`[START-CTX] Detected: container=${container}, scale=${scale}, local_space_purpose=${local_space_purpose}`);
-    return { container, scale, local_space_purpose };
+    // Validate local_space_name; only meaningful for L2; preserve original casing
+    let local_space_name = null;
+    if (container === 'L2') {
+      const rawName = parsed.local_space_name;
+      if (typeof rawName === 'string' && rawName.trim().length > 0) {
+        local_space_name = rawName.trim();
+      }
+    }
+
+    console.log(`[START-CTX] Detected: container=${container}, scale=${scale}, local_space_purpose=${local_space_purpose}, local_space_name=${local_space_name}`);
+    return { container, scale, local_space_purpose, local_space_name };
 
   } catch (err) {
     console.log(`[START-CTX] Detection failed (${err?.message}) — using keyword fallback`);
-    return { container: _fallbackContainer, scale: null, local_space_purpose: null };
+    return { container: _fallbackContainer, scale: null, local_space_purpose: null, local_space_name: null };
   }
 }
 
@@ -2254,8 +2263,12 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     const purpose = (i === 0 && options.local_space_purpose)
       ? options.local_space_purpose
       : possiblePurposes[rng.nextInt(possiblePurposes.length)];
-    const namePool = localSpaceNamesByPurpose[purpose] || ["Local Space"];
-    const name = namePool[rng.nextInt(namePool.length)];
+    // Name: exact startup name (highest priority) > pool match > Title Case from purpose
+    const namePool = localSpaceNamesByPurpose[purpose]
+      || [purpose.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())];
+    const name = (i === 0 && options.local_space_name)
+      ? options.local_space_name
+      : namePool[rng.nextInt(namePool.length)];
     const local_space_id = `ls_${i}`;
     grid[by][bx] = { type: "local_space", local_space_id: local_space_id, npc_ids: [] };
     local_spaces[local_space_id] = {
@@ -2353,6 +2366,9 @@ function generateLocalSpace(local_space_id, localSpaceData) {
     id: local_space_id,
     name: localSpaceData?.name || local_space_id,
     purpose: localSpaceData?.purpose || 'unknown',
+    description: localSpaceData?.purpose
+      ? `The interior of a ${localSpaceData.purpose.replace(/_/g, ' ')}.`
+      : 'A local interior.',
     width: w,
     height: h,
     grid,

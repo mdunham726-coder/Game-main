@@ -323,10 +323,11 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
   // ========== EXIT / LEAVE ==========
   // Semantic exit: works at any depth. Directional edge-walk also triggers exit implicitly.
   // L2 → exitLocalSpace → L1 | L1 → exitSite → L0 | L0 → no-op
+  // Gate on containment state (NOT current_depth which can drift).
   if (act === 'exit' || act === 'leave') {
-    const depth = state.world.current_depth || 1;
-    if (depth === 3) {
-      const _lsName = state.world.active_local_space?.name || 'local space';
+    if (state.world.active_local_space) {
+      // L2 → L1: exit local space, restore L1 tile position
+      const _lsName = state.world.active_local_space.name || 'local space';
       state.world.active_local_space = null;
       state.world.current_depth = 2;
       if (!state.player) state.player = {};
@@ -337,8 +338,9 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       }
       if (logger) logger.action_resolved(act, true, `exited local space "${_lsName}" to L1`);
       console.log(`[ACTIONS] exit: exited local space "${_lsName}" back to L1`);
-    } else if (depth === 2) {
-      const _siteName = state.world.active_site?.name || 'site';
+    } else if (state.world.active_site) {
+      // L1 → L0: exit site
+      const _siteName = state.world.active_site.name || 'site';
       state.world.active_site = null;
       state.world.current_depth = 1;
       if (!state.player) state.player = {};

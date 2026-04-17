@@ -806,11 +806,13 @@ if (require.main === module) main();
 function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
   if (!state || !state.world) return null;
 
-  // Startup-only transient scratch: local_space_purpose for first local space anchoring.
+  // Startup-only transient scratch: local_space_purpose/name for first local space anchoring.
   // Read and delete unconditionally here — guarantees no stale value persists between turns
   // or leaks to any call path outside the Turn-1 startup block. Safe to call on every entry.
   const _startLsPurpose = state.world._startLocalSpacePurpose || null;
   delete state.world._startLocalSpacePurpose;
+  const _startLsName = state.world._startLocalSpaceName || null;
+  delete state.world._startLocalSpaceName;
   // Resolve site from cell.sites
   const cell = state.world.cells && state.world.cells[cell_key];
   if (!cell) return null;
@@ -898,7 +900,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     const _stubName = siteRecord.name || null;  // Phase-5E name if already written
     const _stubMx = siteRecord.mx, _stubMy = siteRecord.my;
     const _stubLx = siteRecord.lx, _stubLy = siteRecord.ly;
-    siteRecord = WorldGen.generateL2Site(interior_key, site.site_size ?? 3, npcs_here, state.rng_seed, undefined, _startLsPurpose ? { local_space_purpose: _startLsPurpose } : {});
+    siteRecord = WorldGen.generateL2Site(interior_key, site.site_size ?? 3, npcs_here, state.rng_seed, undefined, { local_space_purpose: _startLsPurpose || undefined, local_space_name: _startLsName || undefined });
     // Restore authoritative name: Phase-5E value takes precedence over generated fallback.
     if (_stubName) siteRecord.name = _stubName;
     siteRecord.mx = _stubMx; siteRecord.my = _stubMy;
@@ -945,7 +947,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
     const _freshStubName = site.name || null;  // Phase-5E name captured before entry
-    siteRecord = WorldGen.generateL2Site(interior_key, site.site_size ?? 3, npcs_here, state.rng_seed, undefined, _startLsPurpose ? { local_space_purpose: _startLsPurpose } : {});
+    siteRecord = WorldGen.generateL2Site(interior_key, site.site_size ?? 3, npcs_here, state.rng_seed, undefined, { local_space_purpose: _startLsPurpose || undefined, local_space_name: _startLsName || undefined });
     if (_freshStubName) siteRecord.name = _freshStubName;
     siteRecord.category = site.category || null;  // carry category from cell.sites for count filtering
     state.world.sites[interior_key] = siteRecord;

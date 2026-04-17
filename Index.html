@@ -944,16 +944,41 @@ To   : ${toCoord} ${movement.to_cell_type || '?'}`;
 (No movement this turn)`;
       }
 
-      // -- State block --
+      // -- Context block: always-visible depth stack --
+      const _ctxLayer = _stLayerLabel;
+      let _ctxStack = '';
+      if (_vis?.container) {
+        const _c = _vis.container;
+        if (_c.kind === 'local_space') {
+          const _pSite = _c.parent_site;
+          const _cellPart = _pSite ? `${_c.cell_description || _c.cell_type || '?'} (L0)` : '(L0)';
+          const _sitePart = _pSite ? `${_pSite.name || '?'} (L1)` : '(no parent site)';
+          const _lsPart = `${_c.name || '?'} (L2, 5×5)`;
+          _ctxStack = `${_cellPart} → ${_sitePart} → ${_lsPart}`;
+        } else if (_c.kind === 'site') {
+          const _cellPart = `${_c.cell_description || _c.cell_type || '?'} (L0)`;
+          const _sitePart = `${_c.name || '?'} (L1)`;
+          _ctxStack = `${_cellPart} → ${_sitePart}`;
+        } else {
+          _ctxStack = `${_c.cell_description || _c.cell_type || '?'} (L0)`;
+        }
+      } else {
+        _ctxStack = `${authState.cell_type || '?'} (L0)`;
+      }
+      const contextBlock = `\n=== Active Context ===\nLayer : ${_ctxLayer}\nStack : ${_ctxStack}`;
+
+      // -- Layer-derived label (same logic as visibilityPayload / authoritativeState) --
+      // Use vis.layer from visibilityPayload (already derived from active_local_space / active_site).
+      // Fallback to authState.current_depth only when vis is absent (e.g. rejected-turn snapshots).
       const _vis = turn.visibility || null;
-      const _stLayerLabel = { 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0';
+      const _stLayerLabel = _vis?.layer || ({ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[authState.current_depth] || 'L0');
       const _stContainer = authState.active_site_name || '(none)';
       let stateSection;
 
       if (isSnapshot) {
         // Lean state: position, cell, biome, site count only
         stateSection = `
-Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${_ctxLayer === 'L1' && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : _ctxLayer === 'L2' && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
 Cell          : ${cellType}${authState.cell_subtype && authState.cell_subtype !== 'unknown' ? ' (terrain: ' + authState.cell_subtype + ')' : ''}${authState.starting_location_hint ? '\nStart Hint    : ' + authState.starting_location_hint : ''}
 Biome         : ${authState.biome || 'unknown'}
 Site Count    : ${authState.site_count || 0}`;
@@ -968,7 +993,7 @@ Site Count    : ${authState.site_count || 0}`;
         const _qWc  = lastGameResponse?.state?.world?.world_context || null;
         const _qWbn = (obj, field) => obj?.[field] ?? '(missing)';
         stateSection = `
-Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${authState.current_depth === 2 && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : authState.current_depth === 3 && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
+Position      : Macro(${authState.position?.mx},${authState.position?.my}) > Local(${authState.position?.lx},${authState.position?.ly}) | Layer: ${_stLayerLabel} | Container: ${_stContainer}${_ctxLayer === 'L1' && authState.site_position ? '\nSite Pos      : (' + authState.site_position.x + ',' + authState.site_position.y + ')' : _ctxLayer === 'L2' && authState.local_space_position ? '\nLS Pos        : (' + authState.local_space_position.x + ',' + authState.local_space_position.y + ')' : ''}
 Description   : ${authState.cell_description || '(unknown)'}
 Cell          : ${cellType}${authState.cell_subtype && authState.cell_subtype !== 'unknown' ? ' (terrain: ' + authState.cell_subtype + ')' : ''}${authState.starting_location_hint ? '\nStart Hint    : ' + authState.starting_location_hint : ''}
 Grid Key      : ${authState.cell_key || 'unknown'}
@@ -1016,26 +1041,29 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
         } else {
           _sMirrorTxt = '  no authoritative sites present - cell.sites is empty';
         }
-        stateSection += '\n--- CURRENT CELL SITES (authoritative) ---\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
+        stateSection += '\n--- CURRENT CELL SITES (L0 / authoritative) ---\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
           + '\n--- PHASE 5 CAPTURE (last turn) ---\n' + _sCaptureTxt
           + '\n--- SITE INTERIOR LINK STATUS (world.sites vs cell.sites) ---\n' + _sMirrorTxt;
       }
 
-      // -- Site block (running only) --
+      // -- Site block (running only) — labeled as Parent Site when at L2 --
       let siteSection = '';
       if (!isSnapshot) {
+        const _siteLabel = (_ctxLayer === 'L2') ? 'Parent Site (L1)' : 'Site';
         if (authState.current_site) {
           const site = authState.current_site;
-          siteSection = `
--- Site
-Name      : ${site.name || '(unknown)'}
-Site size : ${site.site_size ?? '?'}
-NPC Count : ${site.npcs?.length || 0}`;
+          siteSection = `\n-- ${_siteLabel}\nName      : ${site.name || '(unknown)'}\nSite size : ${site.site_size ?? '?'}\nNPC Count : ${site.npcs?.length || 0}`;
         } else {
-          siteSection = `
--- Site
-(Not in a site)`;
+          siteSection = `\n-- ${_siteLabel}\n(Not in a site)`;
         }
+      }
+
+      // -- Local space block (running only, L2 only) --
+      let localSpaceSection = '';
+      if (!isSnapshot && _ctxLayer === 'L2' && _vis?.container?.kind === 'local_space') {
+        const _lsCont = _vis.container;
+        const _lsPos = authState.local_space_position;
+        localSpaceSection = `\n-- Active Local Space (L2)\nName      : ${_lsCont.name || '(unnamed)'}\nPurpose   : ${lastGameResponse?.state?.world?.active_local_space?.purpose || '?'}\nGrid      : 5×5\nDescription: ${lastGameResponse?.state?.world?.active_local_space?.description || '(none)'}\nVisible NPCs: ${authState.visible_npc_count ?? 0} [${(authState.visible_npc_names || []).join(', ') || 'none'}]${_lsPos ? '\nPosition  : (' + _lsPos.x + ',' + _lsPos.y + ')' : ''}`;
       }
 
       // -- NPC section (running only) --
@@ -1135,7 +1163,7 @@ ${turn.narrative || '(no narrative)'}`;
       }
 
       // -- Assemble and return --
-      return `${turnHeader}${diagnosticsSection}${summaryLine}${movementSection}${stateSection}${siteSection}${npcSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
+      return `${turnHeader}${contextBlock}${diagnosticsSection}${summaryLine}${movementSection}${stateSection}${localSpaceSection}${siteSection}${npcSection}${nearbyCellsSection}${intentSection}${narrativeSection}${logsSection}`;
     }
 
     // A2/A3: QA Export Function with dual-mode support and log flushing
