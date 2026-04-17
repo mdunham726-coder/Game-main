@@ -908,7 +908,7 @@ Confidence : ${confidence}${parsedIntentSource === 'fallback' ? ' (inferred)' : 
 State      : ${cellType}
 Sites      : ${authState.site_count || 0}
 In Site    : ${authState.current_site ? 'YES (' + (authState.current_site.name || '(unnamed)') + ')' : 'NO'}
-Community  : ${authState.current_site ? (authState.current_site.is_community ? 'YES (size: ' + authState.current_site.community_size + ')' : 'NO') : 'N/A'}`;
+Community  : ${authState.current_site ? (authState.current_site.is_community ? 'YES (size: ' + (authState.current_site.site_size ?? authState.current_site.community_size ?? '?') + ')' : 'NO') : 'N/A'}`;
       }
 
       // -- Movement --
