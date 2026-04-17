@@ -507,6 +507,98 @@ What location type should they START in? Choose one: village, town, city, outpos
   }
 }
 
+/**
+ * Detect start container context from the player's opening prompt.
+ * Determines where the player begins: inside a room (L2), inside a place (L1), or open world (L0).
+ * Also infers implied site scale (1–10) and local space purpose (L2 only).
+ *
+ * Returns { container, scale, local_space_purpose } — consumed during Turn-1 worldgen.
+ * Result is NOT stored to world state; it is a local interpretation used to drive
+ * site_size and generateL2Site options, then discarded.
+ */
+async function detectStartContextWithDeepSeek(desc) {
+  const _descLower = String(desc || '').toLowerCase();
+
+  // Keyword fallback — used when AI is unavailable or returns unparseable output.
+  // These arrays are the fallback path only; AI result takes precedence when available.
+  const L2_KEYWORDS = ['work at', 'working at', 'wake up in', 'inside the', 'inside a',
+    'in the kitchen', 'in the shop', 'in the forge', 'in the tavern', 'in a cell',
+    'imprisoned in', 'living in a', 'sleeping in a'];
+  const L1_KEYWORDS = ['in the city', 'in town', 'in the market', 'in the square',
+    'walk through', 'in the plaza', 'in the district', 'in the village', 'in new york'];
+  const _fallbackContainer = L2_KEYWORDS.some(kw => _descLower.includes(kw)) ? 'L2'
+    : L1_KEYWORDS.some(kw => _descLower.includes(kw)) ? 'L1' : 'L0';
+
+  if (!process.env.DEEPSEEK_API_KEY || !axios) {
+    console.log('[START-CTX] DeepSeek unavailable — using keyword fallback');
+    return { container: _fallbackContainer, scale: null, local_space_purpose: null };
+  }
+
+  try {
+    const messages = [
+      {
+        role: 'system',
+        content: `You are a game world interpreter. Given a player's opening description, determine where they are starting.\nRespond with ONLY a valid JSON object with exactly these three fields:\n- "container": one of "L0", "L1", "L2". L0 = open world (forest, road, wilderness, travelling). L1 = inside a named place or site but not a specific room (village square, market, city street, camp perimeter, plaza). L2 = inside a specific room or enclosed space (forge interior, tavern common room, prison cell, shack interior, kitchen).\n- "scale": integer 1–10 representing size of the implied site. 1=tiny single room, 3=small inn or camp, 5=village, 7=town, 9=large city district, 10=major city. null if container is "L0".\n- "local_space_purpose": a short lowercase string describing the room type if L2 (e.g. "forge", "tavern", "house", "cell", "kitchen", "shop"). null if container is "L0" or "L1".\nRespond with JSON only. No explanation, no markdown fences.`
+      },
+      {
+        role: 'user',
+        content: `Player's opening description: "${desc}"`
+      }
+    ];
+
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      { model: 'deepseek-chat', messages, temperature: 0, max_tokens: 80 },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 8000
+      }
+    );
+
+    const raw = resp?.data?.choices?.[0]?.message?.content?.trim() || '';
+    // Strip markdown code fences if model includes them despite instructions
+    const jsonStr = raw.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/i, '').trim();
+    const parsed = JSON.parse(jsonStr);
+
+    // Validate container
+    let container = parsed.container;
+    if (!['L0', 'L1', 'L2'].includes(container)) {
+      console.log(`[START-CTX] Invalid container "${container}" — using keyword fallback`);
+      container = _fallbackContainer;
+    }
+
+    // Validate and clamp scale; force null for L0
+    let scale = null;
+    if (container !== 'L0') {
+      const rawScale = parsed.scale;
+      if (typeof rawScale === 'number' && isFinite(rawScale)) {
+        scale = Math.max(1, Math.min(10, Math.round(rawScale)));
+      } else if (rawScale != null) {
+        console.log(`[START-CTX] Invalid scale "${rawScale}" — defaulting to null`);
+      }
+    }
+
+    // Validate local_space_purpose; only meaningful for L2; force null otherwise
+    let local_space_purpose = null;
+    if (container === 'L2') {
+      const rawPurpose = parsed.local_space_purpose;
+      if (typeof rawPurpose === 'string' && rawPurpose.trim().length > 0) {
+        local_space_purpose = rawPurpose.trim().toLowerCase();
+      }
+    }
+
+    console.log(`[START-CTX] Detected: container=${container}, scale=${scale}, local_space_purpose=${local_space_purpose}`);
+    return { container, scale, local_space_purpose };
+
+  } catch (err) {
+    console.log(`[START-CTX] Detection failed (${err?.message}) — using keyword fallback`);
+    return { container: _fallbackContainer, scale: null, local_space_purpose: null };
+  }
+}
+
 // --- Site grid dimensions from engine-assigned size (1–10) ---
 function siteGridFromSize(site_size) {
   const s = Math.max(1, Math.min(10, site_size ?? 3));
@@ -700,10 +792,10 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
     const commRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|community`))();
     const commProb = civPresence === 'high' ? 0.40 : civPresence === 'medium' ? 0.20 : 0.08;
     const is_community = enterable && (commRoll < commProb);
-    // site_size: engine-assigned 1–3 for non-community, 2–9 for community (deterministic)
+    // site_size: engine-assigned 1–3 for non-community, 2–10 for community (deterministic)
     let site_size;
     if (is_community) {
-      const szMax = civPresence === 'high' ? 9 : civPresence === 'medium' ? 7 : 4;
+      const szMax = civPresence === 'high' ? 10 : civPresence === 'medium' ? 7 : 4;
       const szMin = civPresence === 'high' ? 3 : 2;
       const szRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|site_size`))();
       site_size = Math.max(szMin, Math.min(szMax, szMin + Math.floor(szRoll * (szMax - szMin + 1))));
@@ -1993,12 +2085,13 @@ function selectStartPosition(promptSeed, worldBias, patchCells, anchor) {
 
 // --- MAC: macro region logic (same) ---
 async function generateWorldFromDescription(desc, worldSeed) {
-  // Detect biome, tone, starting location, AND world bias/context in parallel
-  const [biome, worldTone, startingLocationType, biasResult] = await Promise.all([
+  // Detect biome, tone, starting location, world bias/context, AND start container in parallel
+  const [biome, worldTone, startingLocationType, biasResult, startContext] = await Promise.all([
     detectBiomeWithDeepSeek(desc),
     detectWorldToneWithDeepSeek(desc),
     detectStartingLocationWithDeepSeek(desc),
-    extractWorldBiasWithDeepSeek(desc)
+    extractWorldBiasWithDeepSeek(desc),
+    detectStartContextWithDeepSeek(desc)
   ]);
 
   const { world_bias, world_context } = biasResult;
@@ -2027,21 +2120,10 @@ async function generateWorldFromDescription(desc, worldSeed) {
     console.log(`[WORLD] Hydrology signals detected (strength ${hydroStrength}) — boosting river-support terrain`);
   }
 
-  // Detect start container level from player's description.
-  // L2 checked first (most specific — inside a local_space);
-  // L1 = inside a site; L0 = default (overworld).
-  const L2_KEYWORDS = ['work at', 'working at', 'wake up in', 'inside the', 'inside a',
-    'in the kitchen', 'in the shop', 'in the forge', 'in the tavern', 'in a cell',
-    'imprisoned in', 'living in a', 'sleeping in a'];
-  const L1_KEYWORDS = ['in the city', 'in town', 'in the market', 'in the square',
-    'walk through', 'in the plaza', 'in the district', 'in the village', 'in new york'];
-  let start_container = 'L0';
-  if (L2_KEYWORDS.some(kw => _descLower.includes(kw))) {
-    start_container = 'L2';
-  } else if (L1_KEYWORDS.some(kw => _descLower.includes(kw))) {
-    start_container = 'L1';
-  }
-  console.log(`[WORLD] Start container detected: ${start_container}`);
+  // start_container is resolved by detectStartContextWithDeepSeek (AI-primary, keyword fallback).
+  // Keyword arrays live inside that function as the fallback path — not duplicated here.
+  const start_container = startContext.container;
+  console.log(`[WORLD] Start container: ${start_container} (scale=${startContext.scale}, local_space_purpose=${startContext.local_space_purpose})`);
 
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
   const l0s = DEFAULTS.L0_SIZE;
@@ -2064,7 +2146,8 @@ async function generateWorldFromDescription(desc, worldSeed) {
     cells: macroCells,
     sites: {},
     hydro_strength: hydroStrength,
-    start_container
+    start_container,
+    start_context: startContext  // transient interpretation result — consumed during Turn-1, not stored to world
   };
 }
 
@@ -2118,7 +2201,7 @@ function generateL1FeatureDescription(site, worldSeed = "default") {
  * @param {object} npcModule - NPCs.js module
  * @returns {object} Site layout with persistent NPCs and metadata
  */
-function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule) {
+function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, options = {}) {
   const st = siteGridFromSize(typeof site_size === 'number' ? site_size : 3);
   const seed = hashSeedFromLocationID(siteId);
   const rng = makeLCG(seed);
@@ -2166,7 +2249,11 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule) {
       tries++;
       if (tries > 200) break;
     } while (grid[by][bx]);
-    const purpose = possiblePurposes[rng.nextInt(possiblePurposes.length)];
+    // First local space anchored to prompt-implied purpose when provided (startup path only).
+    // options.local_space_purpose is a transient value passed from the routing block via enterSite.
+    const purpose = (i === 0 && options.local_space_purpose)
+      ? options.local_space_purpose
+      : possiblePurposes[rng.nextInt(possiblePurposes.length)];
     const namePool = localSpaceNamesByPurpose[purpose] || ["Local Space"];
     const name = namePool[rng.nextInt(namePool.length)];
     const local_space_id = `ls_${i}`;

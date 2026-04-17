@@ -376,6 +376,7 @@ const _wc  = data.state?.world?.world_context  || null;
 const _wbn = (obj, field) => obj?.[field] ?? '(missing)';
 const _p3s = data.state?.world?.phase3_seed ?? null;
 const _lsc = data.state?.world?._lastSiteCapture || null;
+const _srl = data.state?.world?._startRoutingLog || null;
 const _pos = data.state?.world?.position;
 const _curKey = _pos ? `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}` : null;
 const _curSites = _curKey && data.state?.world?.cells?.[_curKey]?.sites
@@ -478,6 +479,17 @@ diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.active_site_name || '(none)'}</div>
   <div><strong>Start Container:</strong> ${diag.start_container || 'L0'}</div>
+  ${_srl ? `<div style="margin-top:4px; border:1px solid #444; padding:5px; background:#0a0a0a;">
+    <div style="color:#888; margin-bottom:3px;">STARTUP ROUTING</div>
+    <div><strong>Container:</strong> ${_srl.start_container || 'L0'}</div>
+    <div><strong>Slot found:</strong> ${_srl.slot_found ? '<span style="color:#0f0">YES</span>' : '<span style="color:#f00">NO</span>'}</div>
+    <div><strong>enterSite:</strong> ${_srl.enter_site_success ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f00">FAIL</span>'}</div>
+    ${_srl.enter_local_space_success !== null && _srl.enter_local_space_success !== undefined ? `<div><strong>enterLocalSpace:</strong> ${_srl.enter_local_space_success ? '<span style="color:#0f0">OK</span>' : '<span style="color:#f00">FAIL</span>'}</div>` : ''}
+    <div><strong>Final depth:</strong> ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[_srl.final_depth] || 'L0'}</div>
+    ${_srl.site_name ? `<div><strong>Site:</strong> ${_srl.site_name}</div>` : ''}
+    ${_srl.site_size != null ? `<div><strong>Site size:</strong> ${_srl.site_size}</div>` : ''}
+    ${_srl.grid_dims ? `<div><strong>Grid:</strong> ${_srl.grid_dims.w}&times;${_srl.grid_dims.h}</div>` : ''}
+  </div>` : ''}
   ${diag.current_depth === 2 && diag.site_position ? `<div><strong>Site Position:</strong> (${diag.site_position.x},${diag.site_position.y})</div>` : diag.current_depth === 3 && diag.local_space_position ? `<div><strong>Local Space Position:</strong> (${diag.local_space_position.x},${diag.local_space_position.y})</div>` : ''}
   <div><strong>${diag.current_depth === 3 ? 'Parent Site (L1)' : diag.current_depth >= 2 ? 'Parent Cell (L0)' : 'Current Cell'}:</strong> Type: ${diag.cell_type || 'unknown'}${diag.cell_subtype && diag.cell_subtype !== 'unknown' ? ' | Terrain Variant: ' + diag.cell_subtype : ''}${diag.starting_location_hint ? ' | Starting Location: ' + diag.starting_location_hint : ''}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>

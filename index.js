@@ -929,31 +929,40 @@ app.post('/narrate', async (req, res) => {
           };
           console.log('[WORLD] [Phase6B] Start cell type preserved as geographic:', gameState.world.cells[startingLocationCellKey].type, '| locationType:', worldData.startingLocationType);
 
-          // Ensure the starting place has a site record in cell.sites (authoritative).
-          // evaluateCellForSites may have already placed one — only inject if none with enterable===true exists.
+          // Ensure the starting place has an enterable site record.
+          // For non-L0 starts: always inject — AI-inferred scale drives site_size directly.
+          // For L0 starts: only inject if Phase 4D left no enterable site (existing behavior).
+          const _startCtx = worldData.start_context || { container: 'L0', scale: null, local_space_purpose: null };
+          const _isNonL0Start = gameState.world.start_container !== 'L0';
           const _startCellSites = Object.values(gameState.world.cells[startingLocationCellKey].sites);
           const _hasEnterableSite = _startCellSites.some(s => s.enterable === true && s.interior_key);
-          if (!_hasEnterableSite) {
+          if (_isNonL0Start || !_hasEnterableSite) {
             const _startSiteId = `M${startPos.mx}x${startPos.my}:site_start`;
-            // Compute community signal for the fallback starting site injection.
-            // Uses the same probability thresholds as evaluateCellForSites, elevated
-            // slightly for starting positions (player likely starts near civilization).
             const _civPresence = gameState.world.world_bias?.civilization_presence || 'medium';
-            const _commHash = WorldGen.h32(`${startingLocationCellKey}|start|community`);
-            const _commProb = _civPresence === 'high' ? 0.70 : _civPresence === 'medium' ? 0.45 : 0.15;
-            const _isCommunity = (_commHash % 1000) / 1000 < _commProb;
-            const _szHash = WorldGen.h32(`${startingLocationCellKey}|start|site_size`);
-            const _szRoll = (_szHash % 1000) / 1000;
-            const _szMin = _civPresence === 'high' ? 3 : 2;
-            const _szMax = _civPresence === 'high' ? 9 : _civPresence === 'medium' ? 7 : 4;
-            const _siteSize = _isCommunity
-              ? Math.max(_szMin, Math.min(_szMax, _szMin + Math.floor(_szRoll * (_szMax - _szMin + 1))))
-              : Math.max(1, Math.min(3, 1 + Math.floor(_szRoll * 3)));
+            let _siteSize;
+            if (_isNonL0Start && _startCtx.scale != null) {
+              // AI-inferred scale is the authoritative source for non-L0 starts.
+              // Provisional: fallback sizing below is used only when AI returned null.
+              _siteSize = _startCtx.scale;
+            } else {
+              // Fallback: civPresence-based probabilistic sizing (L0 injection or AI-unavailable).
+              const _commHash = WorldGen.h32(`${startingLocationCellKey}|start|community`);
+              const _commProb = _civPresence === 'high' ? 0.70 : _civPresence === 'medium' ? 0.45 : 0.15;
+              const _isCommunity = (_commHash % 1000) / 1000 < _commProb;
+              const _szHash = WorldGen.h32(`${startingLocationCellKey}|start|site_size`);
+              const _szRoll = (_szHash % 1000) / 1000;
+              const _szMin = _civPresence === 'high' ? 3 : 2;
+              const _szMax = _civPresence === 'high' ? 10 : _civPresence === 'medium' ? 7 : 4;
+              _siteSize = _isCommunity
+                ? Math.max(_szMin, Math.min(_szMax, _szMin + Math.floor(_szRoll * (_szMax - _szMin + 1))))
+                : Math.max(1, Math.min(3, 1 + Math.floor(_szRoll * 3)));
+            }
             Engine.recordSiteToCell(gameState, startingLocationCellKey, {
               site_id:          _startSiteId,
               parent_cell:      startingLocationCellKey,
+              l0_ref:           { mx: startPos.mx, my: startPos.my, lx: startPos.lx, ly: startPos.ly },
               enterable:        true,
-              is_community:     _isCommunity,
+              is_community:     _isNonL0Start ? (_siteSize >= 4) : false,
               site_size:        _siteSize,
               is_filled:        false,
               created_at_turn:  gameState.turn_counter ?? 0,
@@ -964,9 +973,9 @@ app.post('/narrate', async (req, res) => {
               is_starting_location: true,
             });
             gameState.world.start_site_id = _startSiteId;
-            console.log('[WORLD] [Phase6B] Injected starting site slot:', _startSiteId);
+            console.log(`[WORLD] [Phase6B] Injected starting site: ${_startSiteId} | site_size=${_siteSize} | non-L0=${_isNonL0Start}`);
           } else {
-            console.log('[WORLD] [Phase6B] Enterable site already present from Phase 4D — skipped injection.');
+            console.log('[WORLD] [Phase6B] L0 start — enterable site present from Phase 4D, skipped injection.');
           }
 
           _wLog('init', 'start_cell_resolved', {
@@ -1014,21 +1023,62 @@ app.post('/narrate', async (req, res) => {
 
           // Start-container routing — L1/L2 players begin already inside a site/local_space.
           // Runs once at turn-1 worldgen time only, guarded by start_container value.
-          if (gameState.world.start_container && gameState.world.start_container !== 'L0') {
-            const _scPos = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
-            const _scCellKey = `LOC:${_scPos.mx},${_scPos.my}:${_scPos.lx},${_scPos.ly}`;
-            const _scCell = gameState.world.cells?.[_scCellKey];
-            const _scSlot = _scCell && Object.values(_scCell.sites || {}).find(s => s.enterable === true);
-            if (_scSlot) {
-              const _scSite = Engine.enterSite(gameState, _scCellKey, _scSlot.site_id, 'south');
-              if (_scSite && gameState.world.start_container === 'L2') {
-                const _scLsId = _scSite.start_local_space_id
-                  || Object.keys(_scSite.local_spaces || {})[0] || null;
-                if (_scLsId) Engine.enterLocalSpace(gameState, _scLsId);
+          // _startLocalSpacePurpose is a STARTUP-ONLY transient scratch field: written here,
+          // consumed and deleted unconditionally by Engine.enterSite. Never persists beyond this block.
+          {
+            const _scContainer = gameState.world.start_container;
+            let _scSlotFound = false;
+            let _scEnterSiteOk = false;
+            let _scEnterLsOk = null;
+            let _scSlot = null;
+
+            if (_scContainer && _scContainer !== 'L0') {
+              const _scPos = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
+              const _scCellKey = `LOC:${_scPos.mx},${_scPos.my}:${_scPos.lx},${_scPos.ly}`;
+              const _scCell = gameState.world.cells?.[_scCellKey];
+              _scSlot = (_scCell && Object.values(_scCell.sites || {}).find(s => s.enterable === true)) || null;
+              _scSlotFound = !!_scSlot;
+
+              if (_scSlot) {
+                // Write local_space_purpose to transient scratch before enterSite.
+                // STARTUP-ONLY: this field must not be set or read outside this block and Engine.enterSite.
+                if (_scContainer === 'L2' && _startCtx.local_space_purpose) {
+                  gameState.world._startLocalSpacePurpose = _startCtx.local_space_purpose;
+                }
+
+                // Phase A fix: object-form call (was positional — enterSite second arg is destructured object)
+                const _scSite = Engine.enterSite(gameState, { cell_key: _scCellKey, site_id: _scSlot.site_id, entry_dir: 'south' });
+                _scEnterSiteOk = !!_scSite;
+
+                if (_scSite && _scContainer === 'L2') {
+                  const _scLsId = _scSite.start_local_space_id
+                    || Object.keys(_scSite.local_spaces || {})[0] || null;
+                  if (_scLsId) {
+                    Engine.enterLocalSpace(gameState, _scLsId);
+                    _scEnterLsOk = !!gameState.world.active_local_space;
+                  } else {
+                    _scEnterLsOk = false;
+                  }
+                }
+
+                const _scDepthLabel = _scContainer === 'L2' ? 'inside a local space of' : 'inside';
+                gameState.world._engineMessage = `You begin ${_scDepthLabel} ${gameState.world.active_site?.name || 'an unnamed place'}.`;
+                console.log(`[START-CONTAINER] Routed to ${_scContainer}: ${gameState.world.active_site?.name || 'unnamed'}`);
               }
-              const _scDepthLabel = gameState.world.start_container === 'L2' ? 'inside a local space of' : 'inside';
-              gameState.world._engineMessage = `You begin ${_scDepthLabel} ${gameState.world.active_site?.name || 'an unnamed place'}.`;
-              console.log(`[START-CONTAINER] Routed to ${gameState.world.start_container}: ${gameState.world.active_site?.name || 'unnamed'}`);
+
+              // _startRoutingLog: committed structural facts only — no AI intermediaries.
+              const _scActiveSite = gameState.world.active_site;
+              gameState.world._startRoutingLog = {
+                start_container:           _scContainer,
+                slot_found:                _scSlotFound,
+                enter_site_success:        _scEnterSiteOk,
+                enter_local_space_success: _scEnterLsOk,
+                final_depth:               gameState.world.current_depth || 1,
+                site_name:                 _scActiveSite?.name || null,
+                site_size:                 _scSlot?.site_size ?? null,
+                grid_dims:                 _scActiveSite ? { w: _scActiveSite.width || null, h: _scActiveSite.height || null } : null
+              };
+              console.log('[START-CONTAINER] Routing log:', JSON.stringify(gameState.world._startRoutingLog));
             }
           }
         }
@@ -1982,7 +2032,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       npc_record_count: (gameState.world.current_depth || 1) === 3
         ? (gameState.world.active_local_space?.npcs || []).length
         : (gameState.world.active_site?.npcs || []).length,
-      start_container: gameState.world.start_container || 'L0'
+      start_container: gameState.world.start_container || 'L0',
+      start_routing_log: gameState.world._startRoutingLog || null
     };
 
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
