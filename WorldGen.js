@@ -132,20 +132,14 @@ function generateSiteName(siteId, worldSeed) {
 // =============================================================================
 
 /**
- * Get NPC count for site type
- * @param {string} siteType - Type of site
+ * Get NPC count for site size (1–10, engine-assigned).
+ * @param {number} site_size - Engine-assigned size integer
  * @returns {number} Number of NPCs to generate
  */
-function getNPCCountForSite(siteType) {
-  const counts = {
-    outpost: 3,
-    hamlet: 8,
-    village: 15,
-    town: 30,
-    city: 60,
-    metropolis: 120
-  };
-  return counts[siteType] || 10;
+function getNPCCountFromSize(site_size) {
+  // Linear scale: size 1→2, size 5→12, size 10→60
+  const counts = [0, 2, 4, 6, 8, 12, 16, 20, 30, 45, 60];
+  return counts[Math.max(1, Math.min(10, site_size ?? 3))] ?? 10;
 }
 
 // =============================================================================
@@ -227,13 +221,13 @@ function generateNPCInventory(profession, rng) {
 /**
  * Generate NPCs for a site with persistent IDs and quest-giver flags
  * @param {string} siteId - Unique site identifier
- * @param {string} siteType - Type of site
+ * @param {number} site_size - Engine-assigned site size (1–10)
  * @param {string} worldSeed - World seed for determinism
  * @param {object} npcModule - NPCs.js module (for generateNPC, TRAITS_CATALOG)
  * @returns {Array<object>} Array of generated NPCs with metadata
  */
-function generateL2NPCs(siteId, siteType, worldSeed, npcModule) {
-  const npcCount = getNPCCountForSite(siteType);
+function generateL2NPCs(siteId, site_size, worldSeed, npcModule) {
+  const npcCount = getNPCCountFromSize(site_size);
   const baseSeed = h32(`${worldSeed}|${siteId}|npcs`);
   const rng = mulberry32(baseSeed);
   
@@ -513,15 +507,15 @@ What location type should they START in? Choose one: village, town, city, outpos
   }
 }
 
-// --- Site size data (tier, grid dimensions, local space count) ---
-const SITE_SIZES = {
-  outpost:    { tier: 0, width: 3,  height: 3,  local_space_count: 2  },
-  hamlet:     { tier: 1, width: 5,  height: 5,  local_space_count: 4  },
-  village:    { tier: 2, width: 7,  height: 7,  local_space_count: 8  },
-  town:       { tier: 3, width: 9,  height: 9,  local_space_count: 12 },
-  city:       { tier: 4, width: 11, height: 11, local_space_count: 20 },
-  metropolis: { tier: 5, width: 13, height: 13, local_space_count: 30 }
-};
+// --- Site grid dimensions from engine-assigned size (1–10) ---
+function siteGridFromSize(site_size) {
+  const s = Math.max(1, Math.min(10, site_size ?? 3));
+  if (s === 1)  return { width:  5, height:  5, local_space_count:  2 };
+  if (s <= 3)   return { width:  7, height:  7, local_space_count:  4 };
+  if (s <= 7)   return { width: 11, height: 11, local_space_count: 10 };
+  if (s <= 9)   return { width: 15, height: 15, local_space_count: 20 };
+  /* s === 10 */ return { width: 21, height: 21, local_space_count: 40 };
+}
 
 // ─── World Bias Extraction ────────────────────────────────────────────────────
 // world_bias drives procedural generation (density, category weights, danger).
@@ -706,11 +700,16 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
     const commRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|community`))();
     const commProb = civPresence === 'high' ? 0.40 : civPresence === 'medium' ? 0.20 : 0.08;
     const is_community = enterable && (commRoll < commProb);
-    let community_size = 0;
+    // site_size: engine-assigned 1–3 for non-community, 2–9 for community (deterministic)
+    let site_size;
     if (is_community) {
-      const sizeMax = civPresence === 'high' ? 9 : civPresence === 'medium' ? 6 : 3;
-      const sizeRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|community_size`))();
-      community_size = Math.max(1, Math.ceil(sizeRoll * sizeMax));
+      const szMax = civPresence === 'high' ? 9 : civPresence === 'medium' ? 7 : 4;
+      const szMin = civPresence === 'high' ? 3 : 2;
+      const szRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|site_size`))();
+      site_size = Math.max(szMin, Math.min(szMax, szMin + Math.floor(szRoll * (szMax - szMin + 1))));
+    } else {
+      const szRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|site_size`))();
+      site_size = Math.max(1, Math.min(3, 1 + Math.floor(szRoll * 3)));
     }
 
     sites.push({
@@ -719,10 +718,9 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
       l0_ref:        { mx, my, lx, ly },
       enterable,
       is_community,
-      community_size,
+      site_size,
       is_filled:     false,
       name:          null,
-      identity:      null,
       description:   null,
       entered:       false,
       interior_key:  null,
@@ -2029,6 +2027,22 @@ async function generateWorldFromDescription(desc, worldSeed) {
     console.log(`[WORLD] Hydrology signals detected (strength ${hydroStrength}) — boosting river-support terrain`);
   }
 
+  // Detect start container level from player's description.
+  // L2 checked first (most specific — inside a local_space);
+  // L1 = inside a site; L0 = default (overworld).
+  const L2_KEYWORDS = ['work at', 'working at', 'wake up in', 'inside the', 'inside a',
+    'in the kitchen', 'in the shop', 'in the forge', 'in the tavern', 'in a cell',
+    'imprisoned in', 'living in a', 'sleeping in a'];
+  const L1_KEYWORDS = ['in the city', 'in town', 'in the market', 'in the square',
+    'walk through', 'in the plaza', 'in the district', 'in the village', 'in new york'];
+  let start_container = 'L0';
+  if (L2_KEYWORDS.some(kw => _descLower.includes(kw))) {
+    start_container = 'L2';
+  } else if (L1_KEYWORDS.some(kw => _descLower.includes(kw))) {
+    start_container = 'L1';
+  }
+  console.log(`[WORLD] Start container detected: ${start_container}`);
+
   const palette = BIOME_PALETTES[biome] || BIOME_PALETTES["rural"];
   const l0s = DEFAULTS.L0_SIZE;
   const macroCells = {};
@@ -2049,7 +2063,8 @@ async function generateWorldFromDescription(desc, worldSeed) {
     l0_size: l0s,
     cells: macroCells,
     sites: {},
-    hydro_strength: hydroStrength
+    hydro_strength: hydroStrength,
+    start_container
   };
 }
 
@@ -2097,14 +2112,14 @@ function generateL1FeatureDescription(site, worldSeed = "default") {
 /**
  * Generate L2 site with NPC persistence and metadata
  * @param {string} siteId - Site identifier
- * @param {string} siteType - Type of site
+ * @param {number} site_size - Engine-assigned site size (1–10)
  * @param {Array<object>} npc_array - Pre-generated NPC array (optional, for backward compatibility)
  * @param {string} worldSeed - World seed for determinism
  * @param {object} npcModule - NPCs.js module
  * @returns {object} Site layout with persistent NPCs and metadata
  */
-function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
-  const st = SITE_SIZES[siteType] || SITE_SIZES["village"];
+function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule) {
+  const st = siteGridFromSize(typeof site_size === 'number' ? site_size : 3);
   const seed = hashSeedFromLocationID(siteId);
   const rng = makeLCG(seed);
   const w = st.width, h = st.height;
@@ -2133,6 +2148,7 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
   // local spaces
   const local_spaces = {};
   const localSpaceCount = st.local_space_count;
+  let start_local_space_id = null;
   const localSpaceNamesByPurpose = {
     tavern: ["The Wanderer's Rest", "The Drunk Griffin", "The Ale House"],
     house: ["Homestead", "Cottage", "Dwelling", "Residence"],
@@ -2158,13 +2174,13 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
     local_spaces[local_space_id] = {
       name,
       purpose,
-      tier: st.tier,
       x: bx,
       y: by,
       width: 1,
       height: 1,
       npc_ids: []
     };
+    if (start_local_space_id === null) start_local_space_id = local_space_id;
   }
 
   // PHASE 3C: Generate or use existing NPCs with persistence
@@ -2174,7 +2190,7 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
     npcs = npc_array;
   } else if (npcModule) {
     // Generate new NPCs with persistence
-    npcs = generateL2NPCs(siteId, siteType, worldSeed || "default", npcModule);
+    npcs = generateL2NPCs(siteId, site_size, worldSeed || "default", npcModule);
   }
 
   // distribute NPCs
@@ -2214,14 +2230,14 @@ function generateL2Site(siteId, siteType, npc_array, worldSeed, npcModule) {
   return {
     id: siteId,
     name: siteName,
-    type: siteType,
+    site_size: typeof site_size === 'number' ? site_size : 3,
+    start_local_space_id,
     population: populationCount,
     width: w,
     height: h,
     grid,
     local_spaces,
     npcs: npcs, // PHASE 3C: Store NPC array for persistence
-    tier: st.tier,
     created_at: new Date().toISOString()
   };
 }
@@ -2270,7 +2286,8 @@ module.exports = {
   detectStartingLocationWithDeepSeek,
   // PHASE 3C: New exports
   generateSiteName,
-  getNPCCountForSite,
+  getNPCCountFromSize,
+  siteGridFromSize,
   generateNPCTraits,
   generateNPCInventory,
   generateL2NPCs,

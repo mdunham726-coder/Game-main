@@ -365,7 +365,8 @@ const diag = data.turn_history && data.turn_history.length > 0
         sample_cell_types: sampleCells,
         npc_record_count: auth.npc_record_count ?? 0,
         visible_npc_count: auth.visible_npc_count ?? 0,
-        visible_npc_names: auth.visible_npc_names || []
+        visible_npc_names: auth.visible_npc_names || [],
+        start_container: auth.start_container || 'L0'
       };
     })()
   : (data.diagnostics || {});
@@ -476,6 +477,7 @@ if (!_lrt) {
 diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.active_site_name || '(none)'}</div>
+  <div><strong>Start Container:</strong> ${diag.start_container || 'L0'}</div>
   ${diag.current_depth === 2 && diag.site_position ? `<div><strong>Site Position:</strong> (${diag.site_position.x},${diag.site_position.y})</div>` : diag.current_depth === 3 && diag.local_space_position ? `<div><strong>Local Space Position:</strong> (${diag.local_space_position.x},${diag.local_space_position.y})</div>` : ''}
   <div><strong>${diag.current_depth === 3 ? 'Parent Site (L1)' : diag.current_depth >= 2 ? 'Parent Cell (L0)' : 'Current Cell'}:</strong> Type: ${diag.cell_type || 'unknown'}${diag.cell_subtype && diag.cell_subtype !== 'unknown' ? ' | Terrain Variant: ' + diag.cell_subtype : ''}${diag.starting_location_hint ? ' | Starting Location: ' + diag.starting_location_hint : ''}</div>
   <div><strong>Biome:</strong> ${diag.macro_biome && diag.macro_biome !== 'UNDEFINED' ? diag.macro_biome : '<span style="color: #f00;">UNDEFINED</span>'}</div>

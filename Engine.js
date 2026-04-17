@@ -274,7 +274,7 @@ function recordSiteToCell(state, cellKey, site) {
       npcs:           [],
       is_stub:        true,
       is_community:   site.is_community ?? false,
-      community_size: site.community_size ?? 0,
+      site_size:      site.site_size ?? 3,
       mx:             cell.mx,
       my:             cell.my,
       lx:             cell.lx,
@@ -865,15 +865,15 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
   } else if (siteRecord && siteRecord.is_stub) {
     // Complete stub: generate NPCs and upgrade the existing stub object in-place.
     // world.sites[interior_key] is mutated directly so stored object == active object.
-    console.log(`[ENGINE] Completing stub for interior_key=${interior_key}, identity=${identity}`);
+    console.log(`[ENGINE] Completing stub for interior_key=${interior_key}, site_size=${site.site_size ?? 3}`);
 
-    const expectedNpcCount = WorldGen.getNPCCountForSite(identity);
+    const expectedNpcCount = WorldGen.getNPCCountFromSize(site.site_size ?? 3);
     if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
     let npcs_here = [];
     if (NPCs) {
       try {
-        npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
+        npcs_here = WorldGen.generateL2NPCs(interior_key, site.site_size ?? 3, state.rng_seed, NPCs);
       } catch (npcGenErr) {
         console.warn(`[ENGINE] NPC generation failed for stub ${interior_key}: ${npcGenErr.message} — site loads empty`);
       }
@@ -893,7 +893,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     const _stubName = siteRecord.name || null;  // Phase-5E name if already written
     const _stubMx = siteRecord.mx, _stubMy = siteRecord.my;
     const _stubLx = siteRecord.lx, _stubLy = siteRecord.ly;
-    siteRecord = WorldGen.generateL2Site(interior_key, identity, npcs_here, state.rng_seed);
+    siteRecord = WorldGen.generateL2Site(interior_key, site.site_size ?? 3, npcs_here, state.rng_seed);
     // Restore authoritative name: Phase-5E value takes precedence over generated fallback.
     if (_stubName) siteRecord.name = _stubName;
     siteRecord.mx = _stubMx; siteRecord.my = _stubMy;
@@ -920,13 +920,13 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 
   } else {
     // Fresh: no site record — generate and store. Exactly one generateL2Site call.
-    const expectedNpcCount = WorldGen.getNPCCountForSite(identity);
+    const expectedNpcCount = WorldGen.getNPCCountFromSize(site.site_size ?? 3);
     if (logger) logger.npc_spawn_attempted(interior_key, expectedNpcCount);
 
     let npcs_here = [];
     if (NPCs) {
       try {
-        npcs_here = WorldGen.generateL2NPCs(interior_key, identity, state.rng_seed, NPCs);
+        npcs_here = WorldGen.generateL2NPCs(interior_key, site.site_size ?? 3, state.rng_seed, NPCs);
       } catch (npcGenErr) {
         console.warn(`[ENGINE] NPC generation failed for fresh ${interior_key}: ${npcGenErr.message} — site loads empty`);
       }
@@ -940,7 +940,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     assignQuestGiverFlags(npcs_here, state.rng_seed, interior_key);
 
     const _freshStubName = site.name || null;  // Phase-5E name captured before entry
-    siteRecord = WorldGen.generateL2Site(interior_key, identity, npcs_here, state.rng_seed);
+    siteRecord = WorldGen.generateL2Site(interior_key, site.site_size ?? 3, npcs_here, state.rng_seed);
     if (_freshStubName) siteRecord.name = _freshStubName;
     siteRecord.category = site.category || null;  // carry category from cell.sites for count filtering
     state.world.sites[interior_key] = siteRecord;

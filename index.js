@@ -861,6 +861,7 @@ app.post('/narrate', async (req, res) => {
           // Phase 1: Persist generation bias and expressive context — frozen after this point
           gameState.world.world_bias    = worldData.world_bias;
           gameState.world.world_context = worldData.world_context;
+          gameState.world.start_container = worldData.start_container || 'L0';
           // Approach C: Store founding prompt for identity alignment — natural language, not a classification
           gameState.world.founding_prompt = inputObj.WORLD_PROMPT;
           _wLog('init', 'world_profile', { biome: worldData.biome, tone: worldData.worldTone, macro_palette: worldData.palette });
@@ -941,24 +942,28 @@ app.post('/narrate', async (req, res) => {
             const _commHash = WorldGen.h32(`${startingLocationCellKey}|start|community`);
             const _commProb = _civPresence === 'high' ? 0.70 : _civPresence === 'medium' ? 0.45 : 0.15;
             const _isCommunity = (_commHash % 1000) / 1000 < _commProb;
-            const _sizeMax = _civPresence === 'high' ? 9 : _civPresence === 'medium' ? 6 : 3;
-            const _sizeHash = WorldGen.h32(`${startingLocationCellKey}|start|community_size`);
-            const _communitySize = _isCommunity ? Math.max(1, (_sizeHash % _sizeMax) + 1) : 0;
+            const _szHash = WorldGen.h32(`${startingLocationCellKey}|start|site_size`);
+            const _szRoll = (_szHash % 1000) / 1000;
+            const _szMin = _civPresence === 'high' ? 3 : 2;
+            const _szMax = _civPresence === 'high' ? 9 : _civPresence === 'medium' ? 7 : 4;
+            const _siteSize = _isCommunity
+              ? Math.max(_szMin, Math.min(_szMax, _szMin + Math.floor(_szRoll * (_szMax - _szMin + 1))))
+              : Math.max(1, Math.min(3, 1 + Math.floor(_szRoll * 3)));
             Engine.recordSiteToCell(gameState, startingLocationCellKey, {
               site_id:          _startSiteId,
               parent_cell:      startingLocationCellKey,
               enterable:        true,
               is_community:     _isCommunity,
-              community_size:   _communitySize,
+              site_size:        _siteSize,
               is_filled:        false,
               created_at_turn:  gameState.turn_counter ?? 0,
               name:             null,
-              identity:         null,
               description:      null,
               entered:          false,
               interior_key:     null,
               is_starting_location: true,
             });
+            gameState.world.start_site_id = _startSiteId;
             console.log('[WORLD] [Phase6B] Injected starting site slot:', _startSiteId);
           } else {
             console.log('[WORLD] [Phase6B] Enterable site already present from Phase 4D — skipped injection.');
@@ -1006,6 +1011,26 @@ app.post('/narrate', async (req, res) => {
 
           // Phase 7: Legacy L2 stub block removed.
           // recordSiteToCell now stores the stub under the canonical site.interior_key.
+
+          // Start-container routing — L1/L2 players begin already inside a site/local_space.
+          // Runs once at turn-1 worldgen time only, guarded by start_container value.
+          if (gameState.world.start_container && gameState.world.start_container !== 'L0') {
+            const _scPos = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
+            const _scCellKey = `LOC:${_scPos.mx},${_scPos.my}:${_scPos.lx},${_scPos.ly}`;
+            const _scCell = gameState.world.cells?.[_scCellKey];
+            const _scSlot = _scCell && Object.values(_scCell.sites || {}).find(s => s.enterable === true);
+            if (_scSlot) {
+              const _scSite = Engine.enterSite(gameState, _scCellKey, _scSlot.site_id, 'south');
+              if (_scSite && gameState.world.start_container === 'L2') {
+                const _scLsId = _scSite.start_local_space_id
+                  || Object.keys(_scSite.local_spaces || {})[0] || null;
+                if (_scLsId) Engine.enterLocalSpace(gameState, _scLsId);
+              }
+              const _scDepthLabel = gameState.world.start_container === 'L2' ? 'inside a local space of' : 'inside';
+              gameState.world._engineMessage = `You begin ${_scDepthLabel} ${gameState.world.active_site?.name || 'an unnamed place'}.`;
+              console.log(`[START-CONTAINER] Routed to ${gameState.world.start_container}: ${gameState.world.active_site?.name || 'unnamed'}`);
+            }
+          }
         }
       }
       
@@ -1560,7 +1585,7 @@ app.post('/narrate', async (req, res) => {
     const _hasUnfilled = _narCellSites.some(s => !s.is_filled);
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
-        .map(s => `- site_id: ${s.site_id} | identity: ${s.identity ?? '(unfilled)'} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'} | is_community: ${s.is_community ? 'YES' : 'NO'}${s.is_community && s.community_size ? ` | community_size: ${s.community_size}` : ''}`)
+        .map(s => `- site_id: ${s.site_id} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'} | is_community: ${s.is_community ? 'YES' : 'NO'}${s.site_size != null ? ` | site_size: ${s.site_size}` : ''}`)
         .join('\n');
       let _instructionLines = '';
       if (_hasFilled && _hasUnfilled) {
@@ -1670,7 +1695,7 @@ app.post('/narrate', async (req, res) => {
       ? `The player described this world as: "${gameState.world.founding_prompt}". Site identities should feel consistent with that description — a site that would feel wrong or anachronistic given those words is wrong. `
       : '';
     const _phase5Instruction = _hasUnfilled
-      ? `- Phase 5: ${_foundingPromptClause}One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. Sites marked enterable: YES must receive an identity that can be physically entered and explored — a structure, cave, vault, ruin, or similar enclosed space. A standing stone, open marker, or natural terrain feature is not enterable. The identity must name the place itself, not a feature within it — it must describe what the whole site fundamentally is. A well, shrine, stall, signpost, or any other element that exists inside or around a place is a feature, not a place. If the surrounding context implies a community, name the community. If it implies a single enclosed structure, name the structure. Sites marked is_community: YES are confirmed by the engine to host a human community — assign an identity appropriate to a community of that scale (community_size 1 = outpost or hamlet, 9 = city). Sites marked is_community: NO must not be assumed to be communities unless the world description makes one clearly implied. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
+      ? `- Phase 5: ${_foundingPromptClause}One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. Sites marked enterable: YES must receive an identity that can be physically entered and explored — a structure, cave, vault, ruin, or similar enclosed space. A standing stone, open marker, or natural terrain feature is not enterable. The identity must name the place itself, not a feature within it — it must describe what the whole site fundamentally is. A well, shrine, stall, signpost, or any other element that exists inside or around a place is a feature, not a place. If the surrounding context implies a community, name the community. If it implies a single enclosed structure, name the structure. Sites marked is_community: YES are confirmed by the engine to host a human community — assign an identity appropriate to a community of that scale (site_size 2–3 = small settlement, 5–6 = moderate town, 8–9 = large city). Sites marked is_community: NO must not be assumed to be communities unless the world description makes one clearly implied. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
       : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
@@ -1956,7 +1981,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
       npc_record_count: (gameState.world.current_depth || 1) === 3
         ? (gameState.world.active_local_space?.npcs || []).length
-        : (gameState.world.active_site?.npcs || []).length
+        : (gameState.world.active_site?.npcs || []).length,
+      start_container: gameState.world.start_container || 'L0'
     };
 
     // Phase 9: Build visibilityPayload — authoritative structure for all diagnostic surfaces
