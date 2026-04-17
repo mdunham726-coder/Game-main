@@ -389,7 +389,7 @@ if (_curSites.length > 0) {
   _sitesHtml = _curSites.map(s => {
     const nameStr = s.name != null ? s.name : '<span style="color:#666">(unnamed)</span>';
     const descStr  = s.description != null ? s.description : '<span style="color:#444">(null)</span>';
-    return `<div style="margin-left:8px"><strong>${s.site_id}</strong> | ${s.identity ?? '(unfilled)'}<br>
+    return `<div style="margin-left:8px"><strong>${s.site_id}</strong> | size: ${s.site_size ?? '?'} | community: ${s.is_community ? 'yes' : 'no'}<br>
       &nbsp;&nbsp;name&nbsp;&nbsp;&nbsp;&nbsp;: ${nameStr}<br>
       &nbsp;&nbsp;is_filled: ${s.is_filled ? '<span style="color:#0f0">YES</span>' : '<span style="color:#666">NO</span>'}<br>
       &nbsp;&nbsp;desc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${descStr}<br>
@@ -1028,9 +1028,9 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
           const site = authState.current_site;
           siteSection = `
 -- Site
-Registered Name : ${site.name || '(unknown)'}
-Registered Type : ${site.type || '(unknown)'}
-NPC Count       : ${site.npcs?.length || 0}`;
+Name      : ${site.name || '(unknown)'}
+Site size : ${site.site_size ?? '?'}
+NPC Count : ${site.npcs?.length || 0}`;
         } else {
           siteSection = `
 -- Site

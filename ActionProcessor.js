@@ -320,6 +320,39 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     return;
   }
 
+  // ========== EXIT / LEAVE ==========
+  // Semantic exit: works at any depth. Directional edge-walk also triggers exit implicitly.
+  // L2 → exitLocalSpace → L1 | L1 → exitSite → L0 | L0 → no-op
+  if (act === 'exit' || act === 'leave') {
+    const depth = state.world.current_depth || 1;
+    if (depth === 3) {
+      const _lsName = state.world.active_local_space?.name || 'local space';
+      state.world.active_local_space = null;
+      state.world.current_depth = 2;
+      if (!state.player) state.player = {};
+      state.player.depth = 2;
+      if (state.world._ls_entry_pos) {
+        state.player.position = state.world._ls_entry_pos;
+        delete state.world._ls_entry_pos;
+      }
+      if (logger) logger.action_resolved(act, true, `exited local space "${_lsName}" to L1`);
+      console.log(`[ACTIONS] exit: exited local space "${_lsName}" back to L1`);
+    } else if (depth === 2) {
+      const _siteName = state.world.active_site?.name || 'site';
+      state.world.active_site = null;
+      state.world.current_depth = 1;
+      if (!state.player) state.player = {};
+      state.player.depth = 1;
+      if (logger) logger.action_resolved(act, true, `exited site "${_siteName}" to L0`);
+      console.log(`[ACTIONS] exit: exited site "${_siteName}" back to L0`);
+    } else {
+      // L0 — already at surface, no-op
+      if (logger) logger.action_resolved(act, false, 'already at L0, nothing to exit');
+      console.log('[ACTIONS] exit: already at L0, no-op');
+    }
+    return;
+  }
+
   // === PHASE 3C: Quest action execution ===
   if (['accept_quest', 'complete_quest'].includes(act)){
     const questSucceeded = updateNPCQuestState(actions, state, deltas, flags);
@@ -712,7 +745,8 @@ function validateAndQueueIntent(state, normalizedIntent){
     }
 
     // Lightweight checks / always-allow group
-    if (['sit','stand','wait','listen','look','inventory','help','enter','exit'].includes(action)){
+    // Note: 'exit' is NOT here — it has a real handler in applyPlayerActions.
+    if (['sit','stand','wait','listen','look','inventory','help','enter'].includes(action)){
       continue;
     }
 

@@ -1050,6 +1050,20 @@ app.post('/narrate', async (req, res) => {
                 const _scSite = Engine.enterSite(gameState, { cell_key: _scCellKey, site_id: _scSlot.site_id, entry_dir: 'south' });
                 _scEnterSiteOk = !!_scSite;
 
+                // Fix A: commit name + is_filled back to cell.sites slot at startup.
+                // enterSite writes the generated name to world.sites[interior_key] but never
+                // syncs it back to cell.sites[site_id]. Without this, Phase 5 sees is_filled:false
+                // every turn and mandates a [site_updates:] block, causing triple-identity conflict.
+                if (_scSite && _scSlot) {
+                  const _scCellRef = gameState.world.cells?.[_scCellKey];
+                  const _scSlotRef = _scCellRef?.sites?.[_scSlot.site_id];
+                  if (_scSlotRef && _scSite.name) {
+                    _scSlotRef.name = _scSite.name;
+                    _scSlotRef.is_filled = true;
+                    console.log(`[START-CONTAINER] Name committed to slot: "${_scSite.name}" | is_filled=true`);
+                  }
+                }
+
                 if (_scSite && _scContainer === 'L2') {
                   const _scLsId = _scSite.start_local_space_id
                     || Object.keys(_scSite.local_spaces || {})[0] || null;
@@ -1067,7 +1081,12 @@ app.post('/narrate', async (req, res) => {
               }
 
               // _startRoutingLog: committed structural facts only — no AI intermediaries.
+              // Fix B: for L2 starts use active_local_space dims (5×5); fall back to site dims for L1.
               const _scActiveSite = gameState.world.active_site;
+              const _scActiveLS = gameState.world.active_local_space;
+              const _scGridDims = _scActiveLS
+                ? { w: _scActiveLS.width || null, h: _scActiveLS.height || null }
+                : _scActiveSite ? { w: _scActiveSite.width || null, h: _scActiveSite.height || null } : null;
               gameState.world._startRoutingLog = {
                 start_container:           _scContainer,
                 slot_found:                _scSlotFound,
@@ -1076,7 +1095,7 @@ app.post('/narrate', async (req, res) => {
                 final_depth:               gameState.world.current_depth || 1,
                 site_name:                 _scActiveSite?.name || null,
                 site_size:                 _scSlot?.site_size ?? null,
-                grid_dims:                 _scActiveSite ? { w: _scActiveSite.width || null, h: _scActiveSite.height || null } : null
+                grid_dims:                 _scGridDims
               };
               console.log('[START-CONTAINER] Routing log:', JSON.stringify(gameState.world._startRoutingLog));
             }
