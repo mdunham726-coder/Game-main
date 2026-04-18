@@ -969,7 +969,15 @@ Community  : ${authState.current_site ? (authState.current_site.is_community ? '
         movementSection = `
 -- Movement
 From : ${fromCoord} ${movement.from_cell_type || '?'}
-To   : ${toCoord} ${movement.to_cell_type || '?'}`;
+To   : ${toCoord} ${movement.to_cell_type || '?'}${(() => {
+          const _diag = movement.l2_exit_diag || null;
+          if (!_diag) return '';
+          return '\n--- L2 EXIT DIAGNOSTIC ---'
+            + '\nentry_pos_stored : ' + (_diag.entry_pos_stored ? JSON.stringify(_diag.entry_pos_stored) : 'null')
+            + '\ndeparting_l2_pos : ' + (_diag.departing_l2_pos ? JSON.stringify(_diag.departing_l2_pos) : 'null')
+            + '\nrestore_method   : ' + (_diag.restore_method ?? '?')
+            + '\nrestored_to      : ' + (_diag.restored_to ? JSON.stringify(_diag.restored_to) : 'null');
+        })()}`;
       } else {
         movementSection = `
 -- Movement
@@ -1107,7 +1115,7 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
       if (!isSnapshot && _ctxLayer === 'L2' && _vis?.container?.kind === 'local_space') {
         const _lsCont = _vis.container;
         const _lsPos = authState.local_space_position;
-        localSpaceSection = `\n-- Active Local Space (L2)\nName      : ${_lsCont.name || '(unnamed)'}\nPurpose   : ${lastGameResponse?.state?.world?.active_local_space?.purpose || '?'}\nGrid      : ${_lsCont.width ?? 5}×${_lsCont.height ?? 5}\nDescription: ${lastGameResponse?.state?.world?.active_local_space?.description || '(none)'}\nVisible NPCs: ${authState.visible_npc_count ?? 0} [${(authState.visible_npc_names || []).join(', ') || 'none'}]${_lsPos ? '\nPosition  : (' + _lsPos.x + ',' + _lsPos.y + ')' : ''}`;
+        localSpaceSection = `\n-- Active Local Space (L2)\nName      : ${_lsCont.name || '(unnamed)'}\nSite Size : ${authState.current_site?.site_size ?? '?'}\nPurpose   : ${lastGameResponse?.state?.world?.active_local_space?.purpose || '?'}\nGrid      : ${_lsCont.width ?? 5}×${_lsCont.height ?? 5}\nDescription: ${lastGameResponse?.state?.world?.active_local_space?.description || '(none)'}\nVisible NPCs: ${authState.visible_npc_count ?? 0} [${(authState.visible_npc_names || []).join(', ') || 'none'}]${_lsPos ? '\nPosition  : (' + _lsPos.x + ',' + _lsPos.y + ')' : ''}`;
       }
 
       // -- NPC section (running only) --

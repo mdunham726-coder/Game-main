@@ -722,7 +722,7 @@
           }
           container.appendChild(rowEl);
         }
-        setStatus(`Local space: ${_activeLSData.name || '(unnamed)'} · L2 grid ${_lsW}×${_lsH} · pos (${_lsPos.x},${_lsPos.y})`);
+        setStatus(`Local space: ${_activeLSData.name || '(unnamed)'} · size ${state.world.active_site?.site_size ?? '?'} · L2 grid ${_lsW}×${_lsH} · pos (${_lsPos.x},${_lsPos.y})`);
         return;
       }
       // ── L1 site grid branch ────────────────────────────────────────────────

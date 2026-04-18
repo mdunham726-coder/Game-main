@@ -2273,7 +2273,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         direction: attemptData.direction || parsedIntent.direction,
         success: resolvedData.success || false,
         from_cell_type: locationChangedLog?.data?.from_cell_type,
-        to_cell_type: locationChangedLog?.data?.to_cell_type
+        to_cell_type: locationChangedLog?.data?.to_cell_type,
+        l2_exit_diag: toPos?.l2_exit_diag || null
       };
     }
     

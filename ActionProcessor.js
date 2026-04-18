@@ -185,10 +185,13 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         state.world.current_depth = 2;
         if (!state.player) state.player = {};
         state.player.depth = 2;
-        console.log('[L2-EXIT-DIAG] _ls_entry_pos:', JSON.stringify(state.world._ls_entry_pos), '| departing interior pos:', JSON.stringify(state.player?.position));
+        const _lsEntrySnapshot = state.world._ls_entry_pos ? { ...state.world._ls_entry_pos } : null;
+        const _lsDepartingPos = { x: _lsp.x, y: _lsp.y };
+        let _restoreMethod = 'failed';
         if (state.world._ls_entry_pos) {
           state.player.position = state.world._ls_entry_pos;
           delete state.world._ls_entry_pos;
+          _restoreMethod = 'entry_pos';
         } else {
           // Grid-scan fallback: find the local space tile on the parent site grid
           const _siteGrid = state.world.active_site?.grid;
@@ -202,6 +205,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
                 if (_t?.type === 'local_space' && _t?.local_space_id === _ls.local_space_id) {
                   state.player.position = { x: gx, y: gy };
                   _fallbackSet = true;
+                  _restoreMethod = 'grid_scan';
                   console.log('[L2-EXIT-FALLBACK] grid-scan placed player at:', { x: gx, y: gy });
                   break outer;
                 }
@@ -213,10 +217,18 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           }
         }
         if (logger) {
-          logger.player_move_resolved(true, 'local_space_exit', { layer: 'L1', exited: true });
+          logger.player_move_resolved(true, 'local_space_exit', {
+            layer: 'L1', exited: true,
+            l2_exit_diag: {
+              entry_pos_stored: _lsEntrySnapshot,
+              departing_l2_pos: _lsDepartingPos,
+              restore_method: _restoreMethod,
+              restored_to: state.player?.position ?? null
+            }
+          });
           logger.action_resolved('move', true, `exited local space via ${dir} edge`);
         }
-        console.log(`[ACTIONS] L2 edge exit: exited ${_ls.name || 'local space'} back to L1`);
+        console.log(`[ACTIONS] L2 edge exit: exited ${_ls.name || 'local space'} back to L1 (restore_method=${_restoreMethod})`);
       } else {
         if (logger) {
           logger.player_move_attempted(dir, { layer: 'L2', x: _lsp.x, y: _lsp.y }, { layer: 'L2', x: _lnx, y: _lny });
