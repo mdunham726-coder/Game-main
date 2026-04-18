@@ -600,14 +600,19 @@ function buildOutput(prevState, inputObj, logger) {
   }
 
   // Phase 10: Handle 'exit' action — site exit.
+  // Guard: ActionProcessor handles exit first via containment state; skip if already handled.
   if (actions.action === 'exit') {
-    state.world._engineMessage = null;
-    if (state.world.current_depth === 3) {
-      exitLocalSpace(state);
-    } else if (state.world.current_depth >= 2) {
-      exitSite(state);
+    if (state.world._exitHandledByAP) {
+      delete state.world._exitHandledByAP;
     } else {
-      state.world._engineMessage = 'You are not inside anything.';
+      state.world._engineMessage = null;
+      if (state.world.current_depth === 3) {
+        exitLocalSpace(state);
+      } else if (state.world.current_depth >= 2) {
+        exitSite(state);
+      } else {
+        state.world._engineMessage = 'You are not inside anything.';
+      }
     }
   }
 

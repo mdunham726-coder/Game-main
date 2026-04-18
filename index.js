@@ -1902,7 +1902,7 @@ ${_narDepth === 2 ? `- Your current tile type is '${_narTileType}'. Anchor all d
 - Do not invent landmarks, creatures, or locations not described above
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
-- NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set and the player learns the name this turn (direct introduction, conversation, overhearing, contextual recognition), append: [npc_updates: [{"id": "npc_id", "is_learned": true}]]. You decide when this is natural — do not force it. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
+- NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set, is_learned is false, and the NPC's proper name appears anywhere in your narration this turn — through self-introduction, dialogue, overhearing, or any other means — you MUST append [npc_updates: [{"id": "npc_id", "is_learned": true}]]. This is deterministic: if you used the name in narration while is_learned was false, the update is required. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
 ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
@@ -1956,7 +1956,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     // Phase 5D+E: Extract [site_updates: [...]] block, first-fill capture, legacy mirror sync
     {
-      const _suMatch = narrative.match(/\[site_updates:\s*([\s\S]*)\]\s*\n?/);
+      const _suMatch = narrative.match(/\[site_updates:\s*(\[[\s\S]*?\])\s*\]/);
       if (_suMatch) {
         // Always strip the block from narrative regardless of parse outcome
         narrative = (narrative.slice(0, _suMatch.index) + narrative.slice(_suMatch.index + _suMatch[0].length)).trim();
@@ -2005,7 +2005,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     // Phase 5F: Extract [npc_updates: [...]] block — NPC name and learning persistence
     {
-      const _nuMatch = narrative.match(/\[npc_updates:\s*([\s\S]*)\]\s*\n?/);
+      const _nuMatch = narrative.match(/\[npc_updates:\s*(\[[\s\S]*?\])\s*\]/);
       if (_nuMatch) {
         narrative = (narrative.slice(0, _nuMatch.index) + narrative.slice(_nuMatch.index + _nuMatch[0].length)).trim();
         const _nuCr = { detected: true, parseSuccess: false, updates: [], skipped_name: [], errors: [] };

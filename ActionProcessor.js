@@ -377,6 +377,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       }
       if (logger) logger.action_resolved(act, true, `exited local space "${_lsName}" to L1`);
       console.log(`[ACTIONS] exit: exited local space "${_lsName}" back to L1`);
+      state.world._exitHandledByAP = true;
     } else if (state.world.active_site) {
       // L1 → L0: exit site
       const _siteName = state.world.active_site.name || 'site';
@@ -386,6 +387,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       state.player.depth = 1;
       if (logger) logger.action_resolved(act, true, `exited site "${_siteName}" to L0`);
       console.log(`[ACTIONS] exit: exited site "${_siteName}" back to L0`);
+      state.world._exitHandledByAP = true;
     } else {
       // L0 — already at surface, no-op
       if (logger) logger.action_resolved(act, false, 'already at L0, nothing to exit');
