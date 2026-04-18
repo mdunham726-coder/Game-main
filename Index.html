@@ -1129,11 +1129,16 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
         // Defensive: authState.visible_npc_names may be absent on validation-rejection returns
         npcSection = `\n--- NPCs (Current Context) ---\nNPC Records : ${_recCount}\nVisible NPCs : ${_visCount} [${_visNames}]`;
         // Per-NPC detail with npc_name and is_learned
-        const _qaVisNpcs = lastGameResponse?.state?.world?.active_local_space?._visible_npcs || lastGameResponse?.state?.world?.active_site?._visible_npcs || [];
+        const _qaVisNpcs = authState.visible_npcs_snapshot
+          || lastGameResponse?.state?.world?.active_local_space?._visible_npcs
+          || lastGameResponse?.state?.world?.active_site?._visible_npcs
+          || [];
+        const _qaIsLive = !authState.visible_npcs_snapshot;
         if (_qaVisNpcs.length > 0) {
-          npcSection += '\n' + _qaVisNpcs.map(n => {
+          npcSection += (_qaIsLive ? ' (live)' : '') + '\n' + _qaVisNpcs.map(n => {
             const _qnName = n.npc_name != null ? `"${n.npc_name}"` : 'null';
-            return `  - ${n.job_category || n.id} | npc_name:${_qnName} | is_learned:${n.is_learned ?? false}`;
+            const _qnPos = (n.x != null && n.y != null) ? ` | pos:(${n.x},${n.y})` : '';
+            return `  - ${n.job_category || n.id} | npc_name:${_qnName} | is_learned:${n.is_learned ?? false}${_qnPos}`;
           }).join('\n');
         }
       }

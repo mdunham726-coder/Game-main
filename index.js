@@ -1722,6 +1722,7 @@ app.post('/narrate', async (req, res) => {
     if (!WorldGen.LAYER_TERRAIN_VOCAB.L0_GEOGRAPHY.includes(_narSceneType)) {
       _narSceneType = 'terrain';
     }
+    let _narTileType = 'open_area';
     if (_narDepth === 3 && gameState?.world?.active_local_space) {
       const _narActiveLS = gameState.world.active_local_space;
       _narSceneDesc = _narActiveLS.description || `The interior of ${_narActiveLS.name || 'a local space'}.`;
@@ -1758,6 +1759,7 @@ app.post('/narrate', async (req, res) => {
       if (_sp && _narActiveSite.grid) {
         const _gridCell = _narActiveSite.grid[_sp.y]?.[_sp.x] ?? null;
         const _cellType = _gridCell?.type || 'open_area';
+        _narTileType = _cellType;
         const _cellNpcIds = _gridCell?.npc_ids || [];
         const _cellNpcs = (_narActiveSite.npcs || []).filter(n => _cellNpcIds.includes(n.id)).map(n => n.name || n.id);
         const _bldInfo = _gridCell?.type === 'local_space' && _narActiveSite.local_spaces?.[_gridCell.local_space_id]
@@ -1865,7 +1867,7 @@ LAYER CONSTRAINT [MANDATORY]:
 ${_narDepth === 3
   ? `You are inside a local space (Layer L2). Describe the interior of this local space as indicated below.`
   : _narDepth >= 2
-  ? `You are inside a site (Layer L1). Describe the interior of the current site as indicated below.`
+  ? `You are navigating the open interior of ${_narActiveSite?.name || 'the site'} at Layer L1 — streets, paths, and open areas between buildings. You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2.`
   : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
 
 CORE INSTRUCTIONS:
@@ -1893,13 +1895,14 @@ The player has already moved. They are now in the location described above.
 - Do NOT narrate entering, approaching, or arriving at adjacent cells
 - Do NOT use the player's movement or action to justify describing other locations
 - Describe ONLY the current location as presented above
+${_narDepth === 2 ? `- Your current tile type is '${_narTileType}'. Anchor all description to this tile. Do not import flavor or description from adjacent tile types or nearby local spaces unless the player is standing on that tile.` : ''}
 - Write a vivid paragraph describing the player's current surroundings as they experience them now
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
-- NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If npc_name is null and you give the NPC a name in narration, append a machine-readable block at the END of your response: [npc_updates: [{"id": "npc_id", "npc_name": "Name"}]]. Name assignment and learning are independent — do NOT add is_learned to this entry unless the player also learns the name in this exact beat. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set and the player learns the name this turn (direct introduction, conversation, overhearing, contextual recognition), append: [npc_updates: [{"id": "npc_id", "is_learned": true}]]. You decide when this is natural — do not force it. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
+- NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set and the player learns the name this turn (direct introduction, conversation, overhearing, contextual recognition), append: [npc_updates: [{"id": "npc_id", "is_learned": true}]]. You decide when this is natural — do not force it. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
 ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
@@ -2119,6 +2122,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       visible_npc_names: gameState.world.active_local_space
         ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.job_category || n.id)
         : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
+      visible_npcs_snapshot: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || [])
+        .map(n => ({ id: n.id, job_category: n.job_category ?? null, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false, x: n.x ?? null, y: n.y ?? null })),
       npc_record_count: gameState.world.active_local_space
         ? (gameState.world.active_site?.npcs?.length ?? 0)
         : (gameState.world.active_site?.npcs || []).length,
