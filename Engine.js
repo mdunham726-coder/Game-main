@@ -1012,10 +1012,10 @@ function enterLocalSpace(state, local_space_id_short) {
   state.world.active_local_space = interior;
   state.world.current_depth = 3;
   state.player.depth = 3;
-  // Place player at center of the local space.
+  // Place player at south-center of the local space (bottom-center entry tile).
   const _lw = interior.width || 5;
   const _lh = interior.height || 5;
-  state.player.position = { x: Math.floor(_lw / 2), y: Math.floor(_lh / 2) };
+  state.player.position = { x: Math.floor(_lw / 2), y: _lh - 1 };
   // Compute visible NPCs at entry position (derived runtime field).
   interior._visible_npcs = Actions.computeVisibleNpcs(interior, state.player.position, site.npcs);
   console.log(`[ENGINE] [L2-ENTER] Entered ${interior.name || local_space_id_short} at (${state.player.position.x},${state.player.position.y})`);

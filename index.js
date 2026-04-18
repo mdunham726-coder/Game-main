@@ -1074,6 +1074,28 @@ app.post('/narrate', async (req, res) => {
                   if (_scLsId) {
                     Engine.enterLocalSpace(gameState, _scLsId);
                     _scEnterLsOk = !!gameState.world.active_local_space;
+                    if (_scEnterLsOk) {
+                      const _scSiteGrid = gameState.world.active_site?.grid;
+                      let _scEntryFixed = false;
+                      if (_scSiteGrid) {
+                        scanLoop: for (let _sgy = 0; _sgy < _scSiteGrid.length; _sgy++) {
+                          const _sgRow = _scSiteGrid[_sgy];
+                          if (!_sgRow) continue;
+                          for (let _sgx = 0; _sgx < _sgRow.length; _sgx++) {
+                            const _sgt = _sgRow[_sgx];
+                            if (_sgt?.type === 'local_space' && _sgt?.local_space_id === _scLsId) {
+                              gameState.world._ls_entry_pos = { x: _sgx, y: _sgy };
+                              _scEntryFixed = true;
+                              console.log('[START-CONTAINER] L2 startup: _ls_entry_pos corrected to', { x: _sgx, y: _sgy });
+                              break scanLoop;
+                            }
+                          }
+                        }
+                      }
+                      if (!_scEntryFixed) {
+                        console.warn('[START-CONTAINER] L2 startup: grid-scan found no matching tile for local_space_id:', _scLsId, '— _ls_entry_pos left as-is');
+                      }
+                    }
                   } else {
                     _scEnterLsOk = false;
                   }
@@ -1980,7 +2002,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     // Phase 5F: Extract [npc_updates: [...]] block — NPC name and learning persistence
     {
-      const _nuMatch = narrative.match(/\[npc_updates:\s*([\s\S]*?)\]\s*\n?/);
+      const _nuMatch = narrative.match(/\[npc_updates:\s*([\s\S]*)\]\s*\n?/);
       if (_nuMatch) {
         narrative = (narrative.slice(0, _nuMatch.index) + narrative.slice(_nuMatch.index + _nuMatch[0].length)).trim();
         const _nuCr = { detected: true, parseSuccess: false, updates: [], skipped_name: [], errors: [] };
