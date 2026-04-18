@@ -2054,7 +2054,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.job_category || n.id)
         : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
       npc_record_count: gameState.world.active_local_space
-        ? (gameState.world.active_local_space?.npcs || []).length
+        ? (gameState.world.active_site?.npcs?.length ?? 0)
         : (gameState.world.active_site?.npcs || []).length,
       start_container: gameState.world.start_container || 'L0',
       start_routing_log: gameState.world._startRoutingLog || null
@@ -2117,6 +2117,10 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
           width: _vpActiveLocalSpace.width || null,
           height: _vpActiveLocalSpace.height || null,
           local_space_id: _vpActiveLocalSpace.local_space_id || null,
+          cell_type: currentCell?.type || null,
+          biome: gameState.world.macro_biome || null,
+          cell_description: currentCell?.description || null,
+          cell_subtype: currentCell?.subtype || null,
           parent_site: _vpActiveSite ? {
             kind: 'site',
             name: _vpActiveSite.name || null,

@@ -185,6 +185,10 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         state.world.current_depth = 2;
         if (!state.player) state.player = {};
         state.player.depth = 2;
+        if (state.world._ls_entry_pos) {
+          state.player.position = state.world._ls_entry_pos;
+          delete state.world._ls_entry_pos;
+        }
         if (logger) {
           logger.player_move_resolved(true, 'local_space_exit', { layer: 'L1', exited: true });
           logger.action_resolved('move', true, `exited local space via ${dir} edge`);
