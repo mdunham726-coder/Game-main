@@ -502,6 +502,15 @@ diagLog.innerHTML = `
     <div style="color:#888; margin-bottom:4px;">NPCs (Current Context)</div>
     <div><strong>Records&nbsp;:</strong> ${diag.npc_record_count ?? 0}</div>
     <div><strong>Visible&nbsp;:</strong> ${diag.visible_npc_count ?? 0} [${(diag.visible_npc_names || []).length > 0 ? (diag.visible_npc_names || []).join(', ') : 'none'}]</div>
+    ${(() => {
+      const _vNpcs = data.state?.world?.active_local_space?._visible_npcs || data.state?.world?.active_site?._visible_npcs || [];
+      if (_vNpcs.length === 0) return '<div style="color:#555;margin-left:8px">(no visible NPCs)</div>';
+      return _vNpcs.map(n => {
+        const _nameStr = n.npc_name != null ? `<span style="color:#9f9">"${n.npc_name}"</span>` : '<span style="color:#555">null</span>';
+        const _learnedStr = n.is_learned ? '<span style="color:#0f0">true</span>' : '<span style="color:#666">false</span>';
+        return `<div style="margin-left:8px;margin-top:2px"><span style="color:#aaa">${n.job_category || n.id}</span> &nbsp;npc_name:${_nameStr} &nbsp;is_learned:${_learnedStr}</div>`;
+      }).join('');
+    })()}
   </div>
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">INIT-TIME WORLD GENERATION INPUTS (frozen)</div>
   <div><strong>phase3_seed:</strong> ${_p3s ?? '<span style="color:#666">(not set)</span>'}</div>
@@ -515,6 +524,22 @@ diagLog.innerHTML = `
   ${_sitesHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">PHASE 5 CAPTURE (last turn)</div>
   ${_captureHtml}
+  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">PHASE 5F NPC CAPTURE (last turn)</div>
+  ${(() => {
+    const _lnc = data.state?.world?._lastNpcCapture || null;
+    if (!_lnc || !_lnc.detected) return '<div style="margin-left:8px;color:#666">npc_updates detected : no</div>';
+    const _ncParseColor = _lnc.parseSuccess ? '#0f0' : '#f00';
+    const _ncUpdatesHtml = (_lnc.updates || []).map(u => {
+      const _ncName = u.npc_name_set != null ? ` npc_name=<span style="color:#9f9">"${u.npc_name_set}"</span>` : '';
+      const _ncLearned = u.is_learned_set ? ' is_learned=<span style="color:#0f0">true</span>' : '';
+      return `<div style="margin-left:16px;color:#aaa">${u.id}${_ncName}${_ncLearned}</div>`;
+    }).join('');
+    const _ncSkipped = (_lnc.skipped_name || []).length > 0 ? `<div style="margin-left:8px;color:#666">skipped (name frozen) : ${_lnc.skipped_name.join(', ')}</div>` : '';
+    const _ncErrors = (_lnc.errors || []).length > 0 ? `<div style="margin-left:8px;color:#f44">id not found : ${_lnc.errors.join(', ')}</div>` : '';
+    return `<div style="margin-left:8px">npc_updates detected : yes</div>
+    <div style="margin-left:8px">parse result : <span style="color:${_ncParseColor}">${_lnc.parseSuccess ? 'success' : 'FAILED'}</span></div>
+    ${_ncUpdatesHtml}${_ncSkipped}${_ncErrors}`;
+  })()}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">SITE INTERIOR LINK STATUS (world.sites vs cell.sites)</div>
   ${_mirrorHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">ENTRY RESOLVER (last turn)</div>
@@ -1046,6 +1071,23 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
         stateSection += '\n--- CURRENT CELL SITES (L0 / authoritative) ---\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
           + '\n--- PHASE 5 CAPTURE (last turn) ---\n' + _sCaptureTxt
           + '\n--- SITE INTERIOR LINK STATUS (world.sites vs cell.sites) ---\n' + _sMirrorTxt;
+        // Phase 5F NPC capture
+        const _sNlc = _vis?.last_npc_capture || null;
+        let _sNpcCaptureTxt = '';
+        if (!_sNlc || !_sNlc.detected) {
+          _sNpcCaptureTxt = '  npc_updates detected : no';
+        } else {
+          const _sNcParse = _sNlc.parseSuccess ? 'success' : 'FAILED';
+          const _sNcUpdates = (_sNlc.updates || []).map(u => {
+            const _sNcName = u.npc_name_set != null ? ` npc_name="${u.npc_name_set}"` : '';
+            const _sNcLearned = u.is_learned_set ? ' is_learned=true' : '';
+            return `    ${u.id}${_sNcName}${_sNcLearned}`;
+          }).join('\n');
+          const _sNcSkipped = (_sNlc.skipped_name || []).length > 0 ? '\n  skipped (name frozen) : ' + _sNlc.skipped_name.join(', ') : '';
+          const _sNcErrors = (_sNlc.errors || []).length > 0 ? '\n  id not found : ' + _sNlc.errors.join(', ') : '';
+          _sNpcCaptureTxt = `  detected : yes | parse : ${_sNcParse}${_sNcUpdates ? '\n' + _sNcUpdates : ''}${_sNcSkipped}${_sNcErrors}`;
+        }
+        stateSection += '\n--- PHASE 5F NPC CAPTURE (last turn) ---\n' + _sNpcCaptureTxt;
       }
 
       // -- Site block (running only) — labeled as Parent Site when at L2 --
@@ -1078,6 +1120,14 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
         const _recCount = authState.npc_record_count ?? 0;
         // Defensive: authState.visible_npc_names may be absent on validation-rejection returns
         npcSection = `\n--- NPCs (Current Context) ---\nNPC Records : ${_recCount}\nVisible NPCs : ${_visCount} [${_visNames}]`;
+        // Per-NPC detail with npc_name and is_learned
+        const _qaVisNpcs = lastGameResponse?.state?.world?.active_local_space?._visible_npcs || lastGameResponse?.state?.world?.active_site?._visible_npcs || [];
+        if (_qaVisNpcs.length > 0) {
+          npcSection += '\n' + _qaVisNpcs.map(n => {
+            const _qnName = n.npc_name != null ? `"${n.npc_name}"` : 'null';
+            return `  - ${n.job_category || n.id} | npc_name:${_qnName} | is_learned:${n.is_learned ?? false}`;
+          }).join('\n');
+        }
       }
 
       // -- Nearby cells --

@@ -1884,6 +1884,7 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
 
     // Reset capture tracking for this turn
     gameState.world._lastSiteCapture = { detected: false };
+    gameState.world._lastNpcCapture = { detected: false };
 
     const _makeNarCall = async () => {
       const _nCtrl = new AbortController();
@@ -1982,31 +1983,40 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       const _nuMatch = narrative.match(/\[npc_updates:\s*([\s\S]*?)\]\s*\n?/);
       if (_nuMatch) {
         narrative = (narrative.slice(0, _nuMatch.index) + narrative.slice(_nuMatch.index + _nuMatch[0].length)).trim();
+        const _nuCr = { detected: true, parseSuccess: false, updates: [], skipped_name: [], errors: [] };
         try {
           const _nuUpdates = JSON.parse(_nuMatch[1]);
+          _nuCr.parseSuccess = true;
           const _nuNpcs = gameState.world.active_site?.npcs || [];
           if (Array.isArray(_nuUpdates)) {
             for (const _nu of _nuUpdates) {
               if (!_nu?.id) continue;
               const _nuNpc = _nuNpcs.find(n => n.id === _nu.id);
-              if (!_nuNpc) { console.warn('[NPC_CAPTURE] id not found in active_site.npcs:', _nu.id); continue; }
+              if (!_nuNpc) { console.warn('[NPC_CAPTURE] id not found in active_site.npcs:', _nu.id); _nuCr.errors.push(_nu.id); continue; }
+              const _nuEntry = { id: _nu.id, npc_name_set: null, is_learned_set: null };
               // npc_name: freeze-guard — only write if currently null
               if (_nu.npc_name != null && _nuNpc.npc_name == null) {
                 _nuNpc.npc_name = _nu.npc_name;
+                _nuEntry.npc_name_set = _nu.npc_name;
                 console.log(`[NPC_CAPTURE] npc ${_nu.id} npc_name set to "${_nu.npc_name}"`);
               } else if (_nu.npc_name != null && _nuNpc.npc_name != null) {
+                _nuCr.skipped_name.push(_nu.id);
                 console.log(`[NPC_CAPTURE] skipped npc_name overwrite for ${_nu.id} (already "${_nuNpc.npc_name}")`);
               }
               // is_learned: one-way latch — only ever transitions to true
               if (_nu.is_learned === true && _nuNpc.is_learned !== true) {
                 _nuNpc.is_learned = true;
+                _nuEntry.is_learned_set = true;
                 console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true`);
               }
+              _nuCr.updates.push(_nuEntry);
             }
           }
         } catch (_nuErr) {
           console.warn('[PHASE5F] npc_updates parse failed:', _nuErr.message);
+          _nuCr.parseSuccess = false;
         }
+        gameState.world._lastNpcCapture = _nuCr;
       }
     }
 
@@ -2206,7 +2216,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         site_count: Object.values(currentCell?.sites || {}).length,
         site_position: _vpDepth === 2 ? (gameState.player?.position || null) : null,
         local_space_position: _vpDepth === 3 ? (gameState.player?.position || null) : null,
-        last_site_capture: gameState.world._lastSiteCapture || null
+        last_site_capture: gameState.world._lastSiteCapture || null,
+        last_npc_capture: gameState.world._lastNpcCapture || null
       };
     }
 
