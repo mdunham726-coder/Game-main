@@ -185,9 +185,32 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         state.world.current_depth = 2;
         if (!state.player) state.player = {};
         state.player.depth = 2;
+        console.log('[L2-EXIT-DIAG] _ls_entry_pos:', JSON.stringify(state.world._ls_entry_pos), '| departing interior pos:', JSON.stringify(state.player?.position));
         if (state.world._ls_entry_pos) {
           state.player.position = state.world._ls_entry_pos;
           delete state.world._ls_entry_pos;
+        } else {
+          // Grid-scan fallback: find the local space tile on the parent site grid
+          const _siteGrid = state.world.active_site?.grid;
+          let _fallbackSet = false;
+          if (_siteGrid && _ls.local_space_id) {
+            outer: for (let gy = 0; gy < _siteGrid.length; gy++) {
+              const _row = _siteGrid[gy];
+              if (!_row) continue;
+              for (let gx = 0; gx < _row.length; gx++) {
+                const _t = _row[gx];
+                if (_t?.type === 'local_space' && _t?.local_space_id === _ls.local_space_id) {
+                  state.player.position = { x: gx, y: gy };
+                  _fallbackSet = true;
+                  console.log('[L2-EXIT-FALLBACK] grid-scan placed player at:', { x: gx, y: gy });
+                  break outer;
+                }
+              }
+            }
+          }
+          if (!_fallbackSet) {
+            console.warn('[L2-EXIT-FALLBACK] grid-scan found no matching tile for local_space_id:', _ls.local_space_id);
+          }
         }
         if (logger) {
           logger.player_move_resolved(true, 'local_space_exit', { layer: 'L1', exited: true });
@@ -666,7 +689,8 @@ function resolveNPCTargetFromVisible(state, target) {
   if (!q) return { matches: visible }; // empty target = all visible
   const matches = visible.filter(n =>
     String(n?.job_category || '').toLowerCase() === q ||
-    String(n?.id || '').toLowerCase() === q
+    String(n?.id || '').toLowerCase() === q ||
+    (n?.is_learned === true && String(n?.npc_name || '').toLowerCase() === q)
   );
   // Colloquial fallback: if no exact match but exactly 1 NPC visible, resolve to them
   // (mirrors isNPCPresent single-NPC rule — "talk to the man" with 1 merchant present)
