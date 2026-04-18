@@ -2343,10 +2343,10 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
 }
 
 // --- L2: local space interior ---
-function generateLocalSpace(local_space_id, localSpaceData) {
-  // Interior is always 5×5 — localSpaceData.width/height is the L1 tile footprint (1×1), not the interior size.
-  const w = 5;
-  const h = 5;
+function generateLocalSpace(local_space_id, localSpaceData, siteSize = 1) {
+  // Interior dimensions scale with parent site_size via siteGridFromSize.
+  // localSpaceData.width/height is the L1 tile footprint (1×1), not the interior size.
+  const { width: w, height: h } = siteGridFromSize(siteSize);
   const grid = [];
   for (let y = 0; y < h; y++) {
     const row = [];

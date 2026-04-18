@@ -1002,7 +1002,7 @@ function enterLocalSpace(state, local_space_id_short) {
   // Generate once and cache on the site record — no drift on re-entry.
   if (!bld._generated_interior) {
     const full_id = `${site.site_id}_${local_space_id_short}`;
-    bld._generated_interior = WorldGen.generateLocalSpace(full_id, bld);
+    bld._generated_interior = WorldGen.generateLocalSpace(full_id, bld, site.site_size || 1);
     console.log(`[ENGINE] [L2-ENTER] Generated interior: ${full_id}`);
   }
   // Store the exact L1 tile position for restoration when the player exits.
@@ -1017,7 +1017,7 @@ function enterLocalSpace(state, local_space_id_short) {
   const _lh = interior.height || 5;
   state.player.position = { x: Math.floor(_lw / 2), y: Math.floor(_lh / 2) };
   // Compute visible NPCs at entry position (derived runtime field).
-  interior._visible_npcs = Actions.computeVisibleNpcs(interior, state.player.position);
+  interior._visible_npcs = Actions.computeVisibleNpcs(interior, state.player.position, site.npcs);
   console.log(`[ENGINE] [L2-ENTER] Entered ${interior.name || local_space_id_short} at (${state.player.position.x},${state.player.position.y})`);
   return interior;
 }

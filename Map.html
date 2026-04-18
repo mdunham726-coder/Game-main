@@ -224,6 +224,8 @@
       line-height: 1.7;
       flex: 1;
       overflow-y: auto;
+      word-break: break-word;
+      overflow-x: hidden;
     }
 
     .tree-node {
@@ -696,6 +698,26 @@
               <div class="cell-biome">${escapeHtml(String(col) + ',' + String(row))}</div>
               ${_tileNpcCount > 0 ? `<div class="cell-npc-badge">${_tileNpcCount}</div>` : ''}
             `;
+            el.addEventListener('click', () => {
+              if (selectedCell) selectedCell.classList.remove('selected');
+              el.classList.add('selected');
+              selectedCell = el;
+              const content = document.getElementById('inspector-content');
+              let _iHtml = '';
+              _iHtml += `<div class="inspector-field"><div class="inspector-label">Type</div><div class="inspector-value">${escapeHtml(typeLabel)}</div></div>`;
+              _iHtml += `<div class="inspector-field"><div class="inspector-label">x</div><div class="inspector-value">${col}</div></div>`;
+              _iHtml += `<div class="inspector-field"><div class="inspector-label">y</div><div class="inspector-value">${row}</div></div>`;
+              if (_tileNpcIds.length > 0) {
+                const _siteNpcs = state.world?.active_site?.npcs || [];
+                const _resolved = _tileNpcIds.map(id => { const n = _siteNpcs.find(x => x.id === id); return n ? (n.job_category || n.id) : id; });
+                _iHtml += `<hr class="inspector-divider">`;
+                _iHtml += `<div class="inspector-field"><div class="inspector-label">NPCs</div><div class="inspector-value">${escapeHtml(_resolved.join(', '))}</div></div>`;
+              } else {
+                _iHtml += `<div class="inspector-field"><div class="inspector-label">NPCs</div><div class="inspector-value empty">(none)</div></div>`;
+              }
+              content.innerHTML = _iHtml;
+              document.getElementById('inspector-panel').style.display = 'block';
+            });
             rowEl.appendChild(el);
           }
           container.appendChild(rowEl);

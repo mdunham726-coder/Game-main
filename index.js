@@ -1079,8 +1079,7 @@ app.post('/narrate', async (req, res) => {
                   }
                 }
 
-                const _scDepthLabel = _scContainer === 'L2' ? 'inside a local space of' : 'inside';
-                gameState.world._engineMessage = `You begin ${_scDepthLabel} ${gameState.world.active_site?.name || 'an unnamed place'}.`;
+                gameState.world._engineMessage = `You begin inside ${(_scContainer === 'L2' ? gameState.world.active_local_space?.name : gameState.world.active_site?.name) || 'an unnamed place'}.`;
                 console.log(`[START-CONTAINER] Routed to ${_scContainer}: ${gameState.world.active_site?.name || 'unnamed'}`);
               }
 
@@ -1686,7 +1685,7 @@ app.post('/narrate', async (req, res) => {
     if (_narDepth === 2 && _narActiveSite && gameState?.player?.position) {
       _narActiveSite._visible_npcs = Actions.computeVisibleNpcs(_narActiveSite, gameState.player.position);
     } else if (_narDepth === 3 && gameState?.world?.active_local_space && gameState?.player?.position) {
-      gameState.world.active_local_space._visible_npcs = Actions.computeVisibleNpcs(gameState.world.active_local_space, gameState.player.position);
+      gameState.world.active_local_space._visible_npcs = Actions.computeVisibleNpcs(gameState.world.active_local_space, gameState.player.position, gameState.world.active_site?.npcs || []);
     }
     console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, gameState?.player?.position, _narActiveSite?._visible_npcs?.length ?? 'n/a');
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
@@ -2115,6 +2114,8 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
         container: _vpDepth === 3 && _vpActiveLocalSpace ? {
           kind: 'local_space',
           name: _vpActiveLocalSpace.name || null,
+          width: _vpActiveLocalSpace.width || null,
+          height: _vpActiveLocalSpace.height || null,
           local_space_id: _vpActiveLocalSpace.local_space_id || null,
           parent_site: _vpActiveSite ? {
             kind: 'site',
@@ -2550,7 +2551,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     const _dbgLS = gameState.world.active_local_space;
     if (gameState.player?.position) {
       const Actions = require('./ActionProcessor.js');
-      _dbgLS._visible_npcs = Actions.computeVisibleNpcs(_dbgLS, gameState.player.position);
+      _dbgLS._visible_npcs = Actions.computeVisibleNpcs(_dbgLS, gameState.player.position, gameState.world.active_site?.npcs || []);
     }
     const _dbgVisible = _dbgLS._visible_npcs || [];
     context += `\n=== ACTIVE LOCAL SPACE (L2) ===\n`;

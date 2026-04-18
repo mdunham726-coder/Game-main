@@ -195,7 +195,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           logger.player_move_attempted(dir, { layer: 'L2', x: _lsp.x, y: _lsp.y }, { layer: 'L2', x: _lnx, y: _lny });
         }
         state.player.position = { x: _lnx, y: _lny };
-        _ls._visible_npcs = computeVisibleNpcs(_ls, state.player.position);
+        _ls._visible_npcs = computeVisibleNpcs(_ls, state.player.position, state.world.active_site?.npcs || []);
         if (logger) {
           logger.player_move_resolved(true, 'success', { layer: 'L2', x: _lnx, y: _lny });
           logger.action_resolved('move', true, `moved ${dir} to local space pos (${_lnx},${_lny})`);
@@ -774,10 +774,10 @@ function validateAndQueueIntent(state, normalizedIntent){
  * @param {object} playerPos - { x, y } site-local position
  * @returns {Array} resolved NPC objects (max MAX_VISIBLE_NPCS, deduplicated, same-site only)
  */
-function computeVisibleNpcs(site, playerPos) {
+function computeVisibleNpcs(site, playerPos, npcRegistry = site?.npcs || []) {
   const MAX_VISIBLE_NPCS = 5; // tunable — not a simulation rule
   if (!site || !playerPos) return [];
-  const { grid = [], npcs = [], site_id } = site;
+  const { grid = [], site_id } = site;
   const { x, y } = playerPos;
   const idSet = new Set();
   // Exact tile only — no adjacency radius
@@ -788,7 +788,7 @@ function computeVisibleNpcs(site, playerPos) {
     : (tile?.npc_ids || []);
   tileNpcIds.forEach(id => idSet.add(id));
   const resolved = [...idSet]
-    .map(id => npcs.find(n => n.id === id && (!site_id || n.site_id === site_id)))
+    .map(id => npcRegistry.find(n => n.id === id && (!site_id || n.site_id === site_id)))
     .filter(Boolean)
     .slice(0, MAX_VISIBLE_NPCS);
   const unresolvedCount = idSet.size - resolved.length;
