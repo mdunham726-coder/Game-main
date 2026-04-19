@@ -1948,6 +1948,24 @@ app.post('/narrate', async (req, res) => {
       ? `\nNARRATION TASK [MANDATORY]: This is an exit turn.\nThe player's authored action — "${_rawInput}" — is the narrative event.\nTheir phrasing describes how they exited. Use it.\nDo NOT replace it with a generic exit description.\nDo NOT open with environment description before the exit action.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
       : '';
 
+    // v1.53.0: Dynamic primary narration task bullet.
+    // Replaces the static "Write a vivid paragraph describing surroundings" bullet in the CORE INSTRUCTIONS
+    // bullet list with a turn-specific task definition. This is the upstream fix — the bullet is read
+    // before any tail block, so changing it here sets the model's primary deliverable correctly.
+    // Tail blocks (_movementTaskBlock etc.) remain as reinforcement layers.
+    const _primaryNarrationBullet = (() => {
+      if (_parsedAction === 'move') {
+        return `Write a vivid paragraph that opens with the player's specific movement. Their verb or manner from "${_rawInput}" is the first beat — the environment is encountered through that movement, not described before it. Do not lead with surroundings description.`;
+      }
+      if (_parsedAction === 'look') {
+        return `Write a vivid paragraph anchored to the player's act of looking. What they observe unfolds through their attention — do not open with surroundings as if no action occurred.`;
+      }
+      if (_parsedAction === 'exit') {
+        return `Write a vivid paragraph that opens with how the player exited. Their specific phrasing from "${_rawInput}" is the narrative event — do not open with the destination environment before the exit action.`;
+      }
+      return `Write a vivid paragraph describing the player's current surroundings as they experience them now`;
+    })();
+
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
 ---
@@ -2021,7 +2039,7 @@ The player has already moved. They are now in the location described above.
 - Describe ONLY the current location as presented above
 ${_narDepth === 2 ? `- Your current tile type is '${_narTileType}'. Anchor all description to this tile. Do not import flavor or description from adjacent tile types or nearby local spaces unless the player is standing on that tile.` : ''}
 ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the smell, atmosphere, or interior character of any listed local space, even if the player is standing near its entrance.` : ''}
-- Write a vivid paragraph describing the player's current surroundings as they experience them now
+- ${_primaryNarrationBullet}
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not invent landmarks, creatures, or locations not described above
@@ -2080,15 +2098,52 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     }
 
     // Phase 5D+E: Extract [site_updates: [...]] block, first-fill capture, legacy mirror sync
+    // v1.53.0: Bracket-counting unconditional strip (mirrors Phase 5F architecture).
+    // Handles model tag variants ([site_updates:] / [sites_updates:] / spacing deviations).
+    // Strip is always attempted first; JSON parse runs on the extracted raw string only.
     {
-      const _suMatch = narrative.match(/\[site_updates:\s*(\[[\s\S]*?\])\s*\]/);
-      if (_suMatch) {
-        // Always strip the block from narrative regardless of parse outcome
+      // Part 1: Bracket-counting strip — find tag, walk brackets, extract and remove from narrative.
+      const _suTagIdx = (() => {
+        const a = narrative.indexOf('[site_updates:');
+        const b = narrative.indexOf('[sites_updates:');
+        if (a === -1) return b;
+        if (b === -1) return a;
+        return Math.min(a, b);
+      })();
+      let _suRaw = null;
+      if (_suTagIdx !== -1) {
+        let _suDepth = 0, _suEnd = -1;
+        for (let _si = _suTagIdx; _si < narrative.length; _si++) {
+          if (narrative[_si] === '[') _suDepth++;
+          else if (narrative[_si] === ']') {
+            _suDepth--;
+            if (_suDepth === 0) { _suEnd = _si + 1; break; }
+          }
+        }
+        if (_suEnd !== -1) {
+          _suRaw = narrative.slice(_suTagIdx, _suEnd);
+          narrative = (narrative.slice(0, _suTagIdx) + narrative.slice(_suEnd)).trim();
+        } else {
+          // Unclosed bracket — strip tail to prevent leakage
+          _suRaw = narrative.slice(_suTagIdx);
+          narrative = narrative.slice(0, _suTagIdx).trim();
+          console.warn('[PHASE5D] unclosed [site_updates: bracket — stripped tail from narrative');
+        }
+      }
+      // Part 2: Regex+JSON parse on the extracted raw string (not on the cleaned narrative).
+      // Fallback regex also catches any edge cases the bracket-counter missed.
+      const _suMatch = _suRaw ? _suRaw.match(/\[sites?_updates:\s*(\[[\s\S]*?\])\s*\]/) : narrative.match(/\[sites?_updates:\s*(\[[\s\S]*?\])\s*\]/);
+      if (_suMatch && !_suRaw) {
+        // Regex caught something the bracket-counter missed — strip it now
         narrative = (narrative.slice(0, _suMatch.index) + narrative.slice(_suMatch.index + _suMatch[0].length)).trim();
+      }
+      if (_suRaw || _suMatch) {
         // Build capture tracking record
         const _cr = { detected: true, parseSuccess: false, updatesApplied: 0, skipped: 0, capturedNames: [], changes: [] };
         try {
-          const _updates = JSON.parse(_suMatch[1]);
+          const _suInner = _suMatch ? _suMatch[1] : null;
+          const _updates = _suInner ? JSON.parse(_suInner) : null;
+          if (!_updates) throw new Error('no inner array extracted');
           _cr.parseSuccess = true;
           const _capCell = gameState.world.cells?.[_narCellKey];
           if (Array.isArray(_updates) && _capCell?.sites) {
@@ -2637,6 +2692,8 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     debug.movement_task_active = _movementTaskBlock !== '';
     debug.look_task_active = _lookTaskBlock !== '';
     debug.exit_task_active = _exitTaskBlock !== '';
+    // v1.53.0: Primary narration bullet override observability
+    debug.primary_bullet_override = (_parsedAction === 'move' || _parsedAction === 'look' || _parsedAction === 'exit') ? _parsedAction : null;
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
