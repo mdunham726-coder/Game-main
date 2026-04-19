@@ -1857,10 +1857,10 @@ app.post('/narrate', async (req, res) => {
       ? `\nPLAYER EXPRESSION: "${_rawInput}"\nRender this concretely as the player's body language, posture, or physical expression in the scene. This is intentional player behavior and must appear in narration, but it does not create or modify game state.\n`
       : '';
 
-    // Phase 3 (v1.48.0): Movement arrival flavor — fires on movement turns to preserve authored entry style.
-    // Guard: Do channel + validated move action. Conditional framing avoids forcing structure on plain inputs.
+    // Phase 3 (v1.49.0): Movement arrival flavor — fires on movement turns to preserve authored entry style.
+    // Guard: Do channel + validated move action. Explicitly-defined condition; verbatim fidelity required.
     const _movementFlavorBlock = (resolvedChannel === 'do' && _parsedAction === 'move')
-      ? `\nMOVEMENT STYLE: "${_rawInput}"\nIf the input contains expressive movement, open the narration with the player's embodied arrival — their manner of movement, body language, or physical state should form the first beat. The scene description should follow through that entry. Do not begin with environment description when expressive movement is present.\n`
+      ? `\nMOVEMENT STYLE: "${_rawInput}"\nIf the input contains any movement verb, style word, or asterisk-wrapped emote describing how the player moves, the player's manner of arrival MUST appear in the opening beat of your narration. Use the player's exact word(s) — do not substitute or paraphrase. Scene description follows through that arrival, not before it. Movement verbs (run, creep, sashay, sneak, dance, etc.) describe expressive style only — not checks, not speed, not systems. Plain directional input ("go south") requires no special treatment.\n`
       : '';
 
     // NPC talk result instruction block (ambiguity / not-found control)
@@ -1899,7 +1899,8 @@ app.post('/narrate', async (req, res) => {
       resolvedChannel === 'do' &&
       !inputObj.degraded &&
       _parsedAction &&
-      _parsedAction !== 'wait'
+      _parsedAction !== 'wait' &&
+      _parsedAction !== 'move'
     )
       ? `\nPLAYER INTENT (for flavor only): "${_rawInput}"\nVALIDATED ACTION: ${_parsedAction}${_doIntentTarget ? ' \u2014 ' + _doIntentTarget : ''}\nUse the phrasing, tone, and body language from PLAYER INTENT freely to color how the moment feels. VALIDATED ACTION is the only mechanical reality — do NOT narrate any capability, outcome, or consequence for elements of PLAYER INTENT that are not reflected in VALIDATED ACTION. "Sneak," "run," "fly," and similar verbs describe expressive style only — not checks, not conditions, not systems.\n`
       : '';
@@ -1907,7 +1908,7 @@ app.post('/narrate', async (req, res) => {
     // Phase 3 (v1.46.0): Generalized emote block — fires on any channel when asterisk-wrapped gesture/body language is present.
     // Guard: any channel, no NPC match requirement. _narratorModeBlock dominates tone when both fire.
     const _emoteBlock = /\*[^*]+\*/.test(_rawInput)
-      ? `\nEMOTE DETECTED: The player's input contains asterisk-wrapped gesture or body language (*like this*). Render the emote concretely as physical expression (gesture, posture, or movement). Do not skip or reduce it to abstract description, but integrate it naturally into the narration.\n`
+      ? `\nEMOTE DETECTED: The player's input contains asterisk-wrapped gesture or body language (*like this*). Render the emote concretely as physical expression (gesture, posture, or movement). Do not skip or reduce it to abstract description, but integrate it naturally into the narration. Preserve the player's authored emote verbatim — use their specific word(s) exactly as written. Do not substitute or paraphrase.\n`
       : '';
 
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
