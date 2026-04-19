@@ -66,6 +66,32 @@
       font-weight: bold; letter-spacing: 1px;
     }
     #world-prompt-start-btn:hover { background: #e8c84a; }
+    /* ── Pending-say modal overlay ── */
+    #pendingSayPrompt {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.82); z-index: 300;
+      align-items: center; justify-content: center;
+    }
+    #pendingSayPrompt.active { display: flex; }
+    #pending-say-box {
+      background: #111; border: 2px solid #6a6adf;
+      width: 480px; padding: 28px 32px; box-sizing: border-box;
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    #pendingSayLabel { color: #aab; font-family: monospace; font-size: 14px; margin: 0; }
+    #pendingSayInput {
+      width: 100%; box-sizing: border-box; padding: 10px;
+      font-size: 15px; font-family: Georgia, serif;
+      background: #1a1a1a; color: #e0e0e0; border: 1px solid #556;
+    }
+    #pendingSayInput:focus { outline: none; border-color: #6a6adf; }
+    #pending-say-box button {
+      padding: 10px 20px; font-size: 14px; font-family: Georgia, serif; border: none; cursor: pointer;
+    }
+    #pendingSaySendBtn { background: #6a6adf; color: #fff; }
+    #pendingSaySendBtn:hover { background: #7a7aef; }
+    #pendingSayCancelBtn { background: #555; color: #ddd; }
+    #pendingSayCancelBtn:hover { background: #666; }
   </style>
 </head>
 <body>
@@ -93,18 +119,7 @@
         style="padding:10px 18px; font-size:15px; background:#6a6adf; color:#fff; border:none; cursor:pointer;">Say</button>
     </div>
 
-    <!-- Pending-Say Prompt (hidden until talk interception) -->
-    <div id="pendingSayPrompt" style="display:none; flex-direction:column; gap:6px; padding:10px; background:#1a1a2a; border:1px solid #6a6adf; border-radius:4px;">
-      <span id="pendingSayLabel" style="font-size:13px; color:#aab; font-family:monospace;">What would you like to say?</span>
-      <div style="display:flex; gap:6px;">
-        <input type="text" id="pendingSayInput" placeholder="Your words..." autocomplete="off"
-          style="flex:1; padding:8px; font-size:15px; background:#222; color:#e0e0e0; border:1px solid #556;">
-        <button onclick="confirmPendingSay()"
-          style="padding:8px 14px; font-size:14px; background:#6a6adf; color:#fff; border:none; cursor:pointer;">Send</button>
-        <button onclick="cancelPendingSay()"
-          style="padding:8px 14px; font-size:14px; background:#555; color:#ddd; border:none; cursor:pointer;">Cancel</button>
-      </div>
-    </div>
+
 
     <!-- Help Bar -->
     <div style="display:flex; gap:6px; align-items:center;">
@@ -174,6 +189,18 @@
 
   </div>
   <div id="loading">Loading narrative...</div>
+
+  <!-- Pending-Say Modal Overlay (shown on talk interception) -->
+  <div id="pendingSayPrompt">
+    <div id="pending-say-box">
+      <span id="pendingSayLabel">What would you like to say?</span>
+      <input type="text" id="pendingSayInput" placeholder="Your words..." autocomplete="off">
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:4px;">
+        <button id="pendingSayCancelBtn" onclick="cancelPendingSay()">Cancel</button>
+        <button id="pendingSaySendBtn" onclick="confirmPendingSay()">Send</button>
+      </div>
+    </div>
+  </div>
 
   <!-- World-Prompt Startup Modal -->
   <div id="world-prompt-modal">
@@ -422,7 +449,7 @@
             ? `What would you like to say to ${pendingSayNpcTarget}?`
             : 'What would you like to say?';
           document.getElementById('pendingSayLabel').textContent = label;
-          document.getElementById('pendingSayPrompt').style.display = 'flex';
+          document.getElementById('pendingSayPrompt').classList.add('active');
           document.getElementById('pendingSayInput').value = '';
           document.getElementById('pendingSayInput').focus();
           return;
@@ -684,7 +711,7 @@ diagLog.innerHTML = `
     async function confirmPendingSay() {
       const text = document.getElementById('pendingSayInput').value.trim();
       if (!text) return;
-      document.getElementById('pendingSayPrompt').style.display = 'none';
+      document.getElementById('pendingSayPrompt').classList.remove('active');
       document.getElementById('pendingSayInput').value = '';
       // Build body manually to include preserved npc_target
       const _sayChannel = 'say';
@@ -722,7 +749,7 @@ diagLog.innerHTML = `
     // Cancel pending-say: dismiss prompt, no turn consumed
     function cancelPendingSay() {
       _pendingSayActive = false;
-      document.getElementById('pendingSayPrompt').style.display = 'none';
+      document.getElementById('pendingSayPrompt').classList.remove('active');
       document.getElementById('pendingSayInput').value = '';
       pendingSayNpcTarget = null;
     }
@@ -759,6 +786,15 @@ diagLog.innerHTML = `
     });
     document.getElementById('pendingSayInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') confirmPendingSay();
+    });
+    document.getElementById('pendingSayPrompt').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { cancelPendingSay(); return; }
+      if (e.key === 'Tab') {
+        const focusable = Array.from(document.getElementById('pending-say-box').querySelectorAll('input, button'));
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (e.shiftKey) { if (document.activeElement === first) { e.preventDefault(); last.focus(); } }
+        else { if (document.activeElement === last) { e.preventDefault(); first.focus(); } }
+      }
     });
     document.getElementById('helpInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') submitHelp();
