@@ -1384,17 +1384,32 @@ app.post('/narrate', async (req, res) => {
             console.log(`[POINT-B-QUEUE] queue[${i}]:`, { action: qa.action, dir: qa.dir, target: qa.target });
           });
         }
+        let _degradedToFreeform = false;
         if (!validation.valid) {
-          _abortTurn(validation.reason);
-          return res.json({
-            sessionId: resolvedSessionId,
-            success: true,
-            narrative: `Action invalid: ${validation.reason}`,
-            state: gameState,
-            turn_history: gameState?.turn_history || null,
-            debug: { ...debug, parser: "semantic", error: "INVALID_ACTION", reason: validation.reason, validation: validation.stateValidation }
-          });
+          const _vReason = validation.reason;
+          if (_vReason === 'TARGET_NOT_FOUND_IN_CELL' || _vReason === 'TARGET_NOT_VISIBLE') {
+            const _dgAction = validation.queue?.[0];
+            const _dgRaw = [_dgAction?.action, _dgAction?.target].filter(Boolean).join(' ') || userInput;
+            inputObj = mapActionToInput(_dgRaw, 'FREEFORM');
+            inputObj.degraded = true;
+            inputObj.player_intent.channel = resolvedChannel;
+            debug.degraded_from = _vReason;
+            debug.path = 'DEGRADED_FREEFORM';
+            _degradedToFreeform = true;
+            console.log('[DEGRADE] degraded to FREEFORM from:', _vReason, 'raw:', _dgRaw);
+          } else {
+            _abortTurn(validation.reason);
+            return res.json({
+              sessionId: resolvedSessionId,
+              success: true,
+              narrative: `Action invalid: ${validation.reason}`,
+              state: gameState,
+              turn_history: gameState?.turn_history || null,
+              debug: { ...debug, parser: "semantic", error: "INVALID_ACTION", reason: validation.reason, validation: validation.stateValidation }
+            });
+          }
         }
+        if (!_degradedToFreeform) {
         const allResponses = [];
         for (const queuedAction of validation.queue) {
           const raw = [queuedAction.action, queuedAction.target].filter(Boolean).join(' ');
@@ -1517,6 +1532,7 @@ app.post('/narrate', async (req, res) => {
         }
         engineOutput = allResponses[allResponses.length - 1];
         debug = { ...debug, parser: "semantic", queue_length: validation.queue.length };
+        } // end if (!_degradedToFreeform)
       } else {
         // Fallback to legacy parser
         console.log('[PARSER] fallback_legacy input="%s"', userInput);
@@ -1901,7 +1917,7 @@ LAYER CONSTRAINT [MANDATORY]:
 ${_narDepth === 3
   ? `You are inside a local space (Layer L2). Describe the interior of this local space as indicated below.`
   : _narDepth >= 2
-  ? `You are navigating the open interior of ${_narActiveSite?.name || 'the site'} at Layer L1 — streets, paths, and open areas between buildings. You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2.`
+  ? `You are navigating the open interior of ${_narActiveSite?.name || 'the site'} at Layer L1 — streets, paths, and open areas between buildings. You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2. Any local spaces listed below are navigation references only — do NOT import their smell, atmosphere, or character into your description.`
   : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
 
 CORE INSTRUCTIONS:
@@ -1930,6 +1946,7 @@ The player has already moved. They are now in the location described above.
 - Do NOT use the player's movement or action to justify describing other locations
 - Describe ONLY the current location as presented above
 ${_narDepth === 2 ? `- Your current tile type is '${_narTileType}'. Anchor all description to this tile. Do not import flavor or description from adjacent tile types or nearby local spaces unless the player is standing on that tile.` : ''}
+${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the smell, atmosphere, or interior character of any listed local space, even if the player is standing near its entrance.` : ''}
 - Write a vivid paragraph describing the player's current surroundings as they experience them now
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
@@ -2065,42 +2082,65 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       }
       const _nuCr = { detected: !!_nuRaw, parseSuccess: false, updates: [], skipped_name: [], errors: [] };
       if (_nuRaw) {
-        const _nuMatch = _nuRaw.match(/\[npc_updates:\s*(\[[\s\S]*\])\s*\]/);
-        if (_nuMatch) {
-          try {
-            const _nuUpdates = JSON.parse(_nuMatch[1]);
-            _nuCr.parseSuccess = true;
-            const _nuNpcs = gameState.world.active_site?.npcs || [];
-            if (Array.isArray(_nuUpdates)) {
-              for (const _nu of _nuUpdates) {
-                if (!_nu?.id) continue;
-                const _nuNpc = _nuNpcs.find(n => n.id === _nu.id);
-                if (!_nuNpc) { console.warn('[NPC_CAPTURE] id not found in active_site.npcs:', _nu.id); _nuCr.errors.push(_nu.id); continue; }
-                const _nuEntry = { id: _nu.id, npc_name_set: null, is_learned_set: null };
-                // npc_name: freeze-guard — only write if currently null
-                if (_nu.npc_name != null && _nuNpc.npc_name == null) {
-                  _nuNpc.npc_name = _nu.npc_name;
-                  _nuEntry.npc_name_set = _nu.npc_name;
-                  console.log(`[NPC_CAPTURE] npc ${_nu.id} npc_name set to "${_nu.npc_name}"`);
-                } else if (_nu.npc_name != null && _nuNpc.npc_name != null) {
-                  _nuCr.skipped_name.push(_nu.id);
-                  console.log(`[NPC_CAPTURE] skipped npc_name overwrite for ${_nu.id} (already "${_nuNpc.npc_name}")`);
-                }
-                // is_learned: one-way latch — only ever transitions to true
-                if (_nu.is_learned === true && _nuNpc.is_learned !== true) {
-                  _nuNpc.is_learned = true;
-                  _nuEntry.is_learned_set = true;
-                  console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true`);
-                }
-                _nuCr.updates.push(_nuEntry);
+        // Phase 5F Part 2: second bracket-counting pass anchored at tag length.
+        // Strict whitespace-only skip (' ', '\t', '\n', '\r') before inner '['; any other character = clean failure.
+        {
+          const _nuTagLen = '[npc_updates:'.length; // 13
+          let _nuScan = _nuTagLen;
+          while (_nuScan < _nuRaw.length && (_nuRaw[_nuScan] === ' ' || _nuRaw[_nuScan] === '\t' || _nuRaw[_nuScan] === '\n' || _nuRaw[_nuScan] === '\r')) {
+            _nuScan++;
+          }
+          if (_nuScan >= _nuRaw.length || _nuRaw[_nuScan] !== '[') {
+            console.warn('[PHASE5F] npc_updates inner array not found — first non-whitespace after tag is not "[". Full raw:', _nuRaw);
+          } else {
+            const _nuInnerStart = _nuScan;
+            let _nuInnerDepth = 0;
+            let _nuInnerEnd = -1;
+            for (let _nj = _nuInnerStart; _nj < _nuRaw.length; _nj++) {
+              if (_nuRaw[_nj] === '[') _nuInnerDepth++;
+              else if (_nuRaw[_nj] === ']') {
+                _nuInnerDepth--;
+                if (_nuInnerDepth === 0) { _nuInnerEnd = _nj + 1; break; }
               }
             }
-          } catch (_nuErr) {
-            console.warn('[PHASE5F] npc_updates parse failed:', _nuErr.message);
-            _nuCr.parseSuccess = false;
+            if (_nuInnerEnd === -1) {
+              console.warn('[PHASE5F] npc_updates inner array bracket not closed. Full raw:', _nuRaw);
+            } else {
+              const _nuInner = _nuRaw.slice(_nuInnerStart, _nuInnerEnd);
+              try {
+                const _nuUpdates = JSON.parse(_nuInner);
+                _nuCr.parseSuccess = true;
+                const _nuNpcs = gameState.world.active_site?.npcs || [];
+                if (Array.isArray(_nuUpdates)) {
+                  for (const _nu of _nuUpdates) {
+                    if (!_nu?.id) continue;
+                    const _nuNpc = _nuNpcs.find(n => n.id === _nu.id);
+                    if (!_nuNpc) { console.warn('[NPC_CAPTURE] id not found in active_site.npcs:', _nu.id); _nuCr.errors.push(_nu.id); continue; }
+                    const _nuEntry = { id: _nu.id, npc_name_set: null, is_learned_set: null };
+                    // npc_name: freeze-guard — only write if currently null
+                    if (_nu.npc_name != null && _nuNpc.npc_name == null) {
+                      _nuNpc.npc_name = _nu.npc_name;
+                      _nuEntry.npc_name_set = _nu.npc_name;
+                      console.log(`[NPC_CAPTURE] npc ${_nu.id} npc_name set to "${_nu.npc_name}"`);
+                    } else if (_nu.npc_name != null && _nuNpc.npc_name != null) {
+                      _nuCr.skipped_name.push(_nu.id);
+                      console.log(`[NPC_CAPTURE] skipped npc_name overwrite for ${_nu.id} (already "${_nuNpc.npc_name}")`);
+                    }
+                    // is_learned: one-way latch — only ever transitions to true
+                    if (_nu.is_learned === true && _nuNpc.is_learned !== true) {
+                      _nuNpc.is_learned = true;
+                      _nuEntry.is_learned_set = true;
+                      console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true`);
+                    }
+                    _nuCr.updates.push(_nuEntry);
+                  }
+                }
+              } catch (_nuErr) {
+                console.warn('[PHASE5F] npc_updates JSON parse failed:', _nuErr.message, '— Full raw:', _nuRaw);
+                _nuCr.parseSuccess = false;
+              }
+            }
           }
-        } else {
-          console.warn('[PHASE5F] npc_updates block found but regex extraction failed on raw:', _nuRaw.slice(0, 120));
         }
         gameState.world._lastNpcCapture = _nuCr;
       }
