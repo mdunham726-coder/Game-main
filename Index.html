@@ -78,7 +78,7 @@
     <!-- Do Bar -->
     <div style="display:flex; gap:6px; align-items:center;">
       <span style="font-size:11px; color:#aaa; font-family:monospace; min-width:34px;">DO</span>
-      <input type="text" id="actionInput" placeholder="Do something..." autofocus
+      <input type="text" id="actionInput" placeholder="Do something..." autofocus autocomplete="off"
         style="flex:1; padding:10px; font-size:16px; background:#333; color:#e0e0e0; border:1px solid #666;">
       <button onclick="submitAction('do')"
         style="padding:10px 18px; font-size:15px; background:#d4af37; color:#1a1a1a; border:none; cursor:pointer;">Do</button>
@@ -87,7 +87,7 @@
     <!-- Say Bar -->
     <div style="display:flex; gap:6px; align-items:center;">
       <span style="font-size:11px; color:#aaa; font-family:monospace; min-width:34px;">SAY</span>
-      <input type="text" id="sayInput" placeholder="Say something..."
+      <input type="text" id="sayInput" placeholder="Say something..." autocomplete="off"
         style="flex:1; padding:10px; font-size:16px; background:#2a2a3a; color:#e0e0e0; border:1px solid #556;">
       <button onclick="submitAction('say')"
         style="padding:10px 18px; font-size:15px; background:#6a6adf; color:#fff; border:none; cursor:pointer;">Say</button>
@@ -97,7 +97,7 @@
     <div id="pendingSayPrompt" style="display:none; flex-direction:column; gap:6px; padding:10px; background:#1a1a2a; border:1px solid #6a6adf; border-radius:4px;">
       <span id="pendingSayLabel" style="font-size:13px; color:#aab; font-family:monospace;">What would you like to say?</span>
       <div style="display:flex; gap:6px;">
-        <input type="text" id="pendingSayInput" placeholder="Your words..."
+        <input type="text" id="pendingSayInput" placeholder="Your words..." autocomplete="off"
           style="flex:1; padding:8px; font-size:15px; background:#222; color:#e0e0e0; border:1px solid #556;">
         <button onclick="confirmPendingSay()"
           style="padding:8px 14px; font-size:14px; background:#6a6adf; color:#fff; border:none; cursor:pointer;">Send</button>
@@ -109,7 +109,7 @@
     <!-- Help Bar -->
     <div style="display:flex; gap:6px; align-items:center;">
       <span style="font-size:11px; color:#aaa; font-family:monospace; min-width:34px;">HELP</span>
-      <input type="text" id="helpInput" placeholder="Ask for help..."
+      <input type="text" id="helpInput" placeholder="Ask for help..." autocomplete="off"
         style="flex:1; padding:10px; font-size:16px; background:#1f2a1f; color:#e0e0e0; border:1px solid #3a5a3a;">
       <button id="helpBtn" onclick="submitHelp()"
         style="padding:10px 18px; font-size:15px; background:#4a8a4a; color:#fff; border:none; cursor:pointer;">Help</button>
@@ -180,7 +180,7 @@
     <div id="world-prompt-box">
       <h2>Ultimate Dungeon Master</h2>
       <p>Describe the world you want to enter. Be as brief or detailed as you like.</p>
-      <textarea id="worldPromptInput" placeholder="A dark fantasy kingdom on the edge of a frozen wasteland, ruled by a sorcerer-king..."></textarea>
+      <textarea id="worldPromptInput" autocomplete="off" placeholder="A dark fantasy kingdom on the edge of a frozen wasteland, ruled by a sorcerer-king..."></textarea>
       <button id="world-prompt-start-btn" onclick="startFromPrompt()">Enter World</button>
     </div>
   </div>
@@ -227,6 +227,7 @@
     let lastGameResponse = null;  // QA-014: Store full response for turn history
     window.lastGameResponse = null; // Exposed for Map.html cross-window access via window.opener.lastGameResponse
     let pendingSayNpcTarget = null; // Preserved from needs_say_input response
+    let _pendingSayActive = false;    // Blocks Do/Say input while pending-say prompt is open
     // A2: Running QA log tracking
     let qaExportHistory = [];
     let lastExportedTurn = -1;
@@ -326,6 +327,7 @@
       const inputId = channel === 'say' ? 'sayInput' : 'actionInput';
       const action = document.getElementById(inputId).value;
       if (!action) return;
+      if (_pendingSayActive) return;
       
       document.getElementById('loading').style.display = 'block';
       const _wgIsFirstTurn = lastGameResponse === null;
@@ -415,6 +417,7 @@
         if (data.needs_say_input) {
           document.getElementById(inputId).value = '';
           pendingSayNpcTarget = data.npc_target || null;
+          _pendingSayActive = true;
           const label = pendingSayNpcTarget
             ? `What would you like to say to ${pendingSayNpcTarget}?`
             : 'What would you like to say?';
@@ -599,6 +602,7 @@ if (!_lrt) {
 }
 diagLog.innerHTML = `
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
+  <div><strong>Channel:</strong> ${data.debug?.channel || 'do'}${data.state?.help_log?.length ? ` | Help queries this session: ${data.state.help_log.length}` : ''}</div>
   <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.container_name || '(missing)'}</div>
   <div><strong>Start Container:</strong> ${diag.start_container || 'L0'}</div>
   ${_srl ? `<div style="margin-top:4px; border:1px solid #444; padding:5px; background:#0a0a0a;">
@@ -682,8 +686,6 @@ diagLog.innerHTML = `
       if (!text) return;
       document.getElementById('pendingSayPrompt').style.display = 'none';
       document.getElementById('pendingSayInput').value = '';
-      // Inject into say bar so submitAction() reads it, then clear after
-      document.getElementById('sayInput').value = text;
       // Build body manually to include preserved npc_target
       const _sayChannel = 'say';
       const headers = { 'Content-Type': 'application/json' };
@@ -693,6 +695,7 @@ diagLog.innerHTML = `
         const body = { action: text, intent_channel: _sayChannel };
         if (pendingSayNpcTarget) body.npc_target = pendingSayNpcTarget;
         pendingSayNpcTarget = null;
+        _pendingSayActive = false;
         const response = await fetch('/narrate', { method: 'POST', headers, body: JSON.stringify(body) });
         const data = await response.json();
         if (data.sessionId) { currentSessionId = data.sessionId; }
@@ -718,6 +721,7 @@ diagLog.innerHTML = `
 
     // Cancel pending-say: dismiss prompt, no turn consumed
     function cancelPendingSay() {
+      _pendingSayActive = false;
       document.getElementById('pendingSayPrompt').style.display = 'none';
       document.getElementById('pendingSayInput').value = '';
       pendingSayNpcTarget = null;
@@ -1119,6 +1123,7 @@ diagLog.innerHTML = `
 -- SUMMARY
 Outcome   : rejected
 Reason    : ${turn.reason || '(unknown)'}
+Channel   : ${turn.intent_channel || 'do'}${turn.npc_target ? ' (npc: ' + turn.npc_target + ')' : ''}
 
 -- INPUT
 Raw Input : ${turn.input?.raw || '(none)'}
@@ -1150,6 +1155,7 @@ State      : ${cellType}`;
 -- SUMMARY
 Action     : ${parsedWithDirection}
 Confidence : ${confidence}${parsedIntentSource === 'fallback' ? ' (inferred)' : ''}
+Channel    : ${turn.intent_channel || 'do'}${turn.npc_target ? ' -> ' + turn.npc_target : ''}
 State      : ${cellType}
 Sites      : ${authState.site_count || 0}
 In Site    : ${authState.current_site ? 'YES (' + (authState.current_site.name || '(unnamed)') + ')' : 'NO'}
@@ -1479,7 +1485,14 @@ Total Turns Included: ${turnHistory.length}
 
           const fullRunLog = `${sessionHeader}
 
-${turnsBlock}
+${turnsBlock}${(() => {
+            const _helpLog = lastGameResponse?.state?.help_log || [];
+            if (_helpLog.length === 0) return '';
+            const _helpLines = _helpLog.map((h, i) =>
+              `[${i + 1}] Turn ${h.turn_counter_at_call} | ${new Date(h.timestamp).toLocaleTimeString()} | Q: "${h.question}"`
+            ).join('\n');
+            return `\n\n---------------------------------------------------------------------------------------\nHELP LOG (${_helpLog.length} ${_helpLog.length === 1 ? 'query' : 'queries'})\n\n${_helpLines}`;
+          })()}
 
 ---------------------------------------------------------------------------------------
 (End of QA running log)`;

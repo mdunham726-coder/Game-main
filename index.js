@@ -739,6 +739,8 @@ app.post('/narrate', async (req, res) => {
       turn_number: turnNumber,
       timestamp: new Date().toISOString(),
       input: { raw: action },
+      intent_channel: resolvedChannel,
+      npc_target: _rawNpcTarget || null,
       outcome: 'rejected',
       reason,
       logs
@@ -825,6 +827,20 @@ app.post('/narrate', async (req, res) => {
   // Before-turn debug info
   const beforeCells = Object.keys(gameState?.world?.cells || {}).length;
   console.log('[turn] cells_before=', beforeCells);
+
+  // Issue 5 — Option B: help-pattern routing with confidence threshold (Do channel, non-first turns only)
+  // If confidence < 0.40 AND input looks like a help request, return an engine_message without
+  // advancing turn, mutating state, or calling Engine.processTurn().
+  if (!isFirstTurn && resolvedChannel === 'do' && (parseResult?.confidence ?? 1) < 0.40 && /\bhelp\b|what do i|how do i|assist/i.test(userInput)) {
+    _abortTurn('HELP_REDIRECT');
+    console.log('[HELP_REDIRECT] Low-confidence help-pattern input redirected from Do channel:', userInput);
+    return res.json({
+      sessionId: resolvedSessionId,
+      engine_message: 'Use the Help bar below for questions about the world, your situation, or what you can do.',
+      state: gameState,
+      turn_history: gameState.turn_history
+    });
+  }
 
   // First turn: seed world using WORLD_PROMPT through Engine
   let engineOutput = null;
@@ -1403,7 +1419,7 @@ app.post('/narrate', async (req, res) => {
 
           // ── TALK INTERCEPTION (Do bar only, pre-engine guard) ─────────────────────
           if (resolvedChannel === 'do' && queuedAction.action === 'talk') {
-            if (logger) logger.abortTurn('NEEDS_SAY_INPUT');
+            _abortTurn('NEEDS_SAY_INPUT');
             return res.json({
               needs_say_input: true,
               npc_target: queuedAction.target || null,
@@ -2022,42 +2038,69 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
     }
 
     // Phase 5F: Extract [npc_updates: [...]] block — NPC name and learning persistence
+    // Part 1: Bracket-counting unconditional strip — removes block from narrative regardless of format.
+    // Part 2: Strict regex+JSON parse on the raw extracted block (not on the cleaned narrative).
+    // This ensures leakage cannot occur even when the model's JSON format deviates slightly.
     {
-      const _nuMatch = narrative.match(/\[npc_updates:\s*(\[[\s\S]*?\])\s*\]/);
-      if (_nuMatch) {
-        narrative = (narrative.slice(0, _nuMatch.index) + narrative.slice(_nuMatch.index + _nuMatch[0].length)).trim();
-        const _nuCr = { detected: true, parseSuccess: false, updates: [], skipped_name: [], errors: [] };
-        try {
-          const _nuUpdates = JSON.parse(_nuMatch[1]);
-          _nuCr.parseSuccess = true;
-          const _nuNpcs = gameState.world.active_site?.npcs || [];
-          if (Array.isArray(_nuUpdates)) {
-            for (const _nu of _nuUpdates) {
-              if (!_nu?.id) continue;
-              const _nuNpc = _nuNpcs.find(n => n.id === _nu.id);
-              if (!_nuNpc) { console.warn('[NPC_CAPTURE] id not found in active_site.npcs:', _nu.id); _nuCr.errors.push(_nu.id); continue; }
-              const _nuEntry = { id: _nu.id, npc_name_set: null, is_learned_set: null };
-              // npc_name: freeze-guard — only write if currently null
-              if (_nu.npc_name != null && _nuNpc.npc_name == null) {
-                _nuNpc.npc_name = _nu.npc_name;
-                _nuEntry.npc_name_set = _nu.npc_name;
-                console.log(`[NPC_CAPTURE] npc ${_nu.id} npc_name set to "${_nu.npc_name}"`);
-              } else if (_nu.npc_name != null && _nuNpc.npc_name != null) {
-                _nuCr.skipped_name.push(_nu.id);
-                console.log(`[NPC_CAPTURE] skipped npc_name overwrite for ${_nu.id} (already "${_nuNpc.npc_name}")`);
-              }
-              // is_learned: one-way latch — only ever transitions to true
-              if (_nu.is_learned === true && _nuNpc.is_learned !== true) {
-                _nuNpc.is_learned = true;
-                _nuEntry.is_learned_set = true;
-                console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true`);
-              }
-              _nuCr.updates.push(_nuEntry);
-            }
+      const _nuIdx = narrative.indexOf('[npc_updates:');
+      let _nuRaw = null;
+      if (_nuIdx !== -1) {
+        let _nuDepth = 0, _nuEnd = -1;
+        for (let _ni = _nuIdx; _ni < narrative.length; _ni++) {
+          if (narrative[_ni] === '[') _nuDepth++;
+          else if (narrative[_ni] === ']') {
+            _nuDepth--;
+            if (_nuDepth === 0) { _nuEnd = _ni + 1; break; }
           }
-        } catch (_nuErr) {
-          console.warn('[PHASE5F] npc_updates parse failed:', _nuErr.message);
-          _nuCr.parseSuccess = false;
+        }
+        if (_nuEnd !== -1) {
+          _nuRaw = narrative.slice(_nuIdx, _nuEnd);
+          narrative = (narrative.slice(0, _nuIdx) + narrative.slice(_nuEnd)).trim();
+        } else {
+          // Unclosed bracket — strip from opening tag to end of narrative to prevent leakage
+          _nuRaw = narrative.slice(_nuIdx);
+          narrative = narrative.slice(0, _nuIdx).trim();
+          console.warn('[PHASE5F] unclosed [npc_updates: bracket — stripped tail from narrative');
+        }
+      }
+      const _nuCr = { detected: !!_nuRaw, parseSuccess: false, updates: [], skipped_name: [], errors: [] };
+      if (_nuRaw) {
+        const _nuMatch = _nuRaw.match(/\[npc_updates:\s*(\[[\s\S]*\])\s*\]/);
+        if (_nuMatch) {
+          try {
+            const _nuUpdates = JSON.parse(_nuMatch[1]);
+            _nuCr.parseSuccess = true;
+            const _nuNpcs = gameState.world.active_site?.npcs || [];
+            if (Array.isArray(_nuUpdates)) {
+              for (const _nu of _nuUpdates) {
+                if (!_nu?.id) continue;
+                const _nuNpc = _nuNpcs.find(n => n.id === _nu.id);
+                if (!_nuNpc) { console.warn('[NPC_CAPTURE] id not found in active_site.npcs:', _nu.id); _nuCr.errors.push(_nu.id); continue; }
+                const _nuEntry = { id: _nu.id, npc_name_set: null, is_learned_set: null };
+                // npc_name: freeze-guard — only write if currently null
+                if (_nu.npc_name != null && _nuNpc.npc_name == null) {
+                  _nuNpc.npc_name = _nu.npc_name;
+                  _nuEntry.npc_name_set = _nu.npc_name;
+                  console.log(`[NPC_CAPTURE] npc ${_nu.id} npc_name set to "${_nu.npc_name}"`);
+                } else if (_nu.npc_name != null && _nuNpc.npc_name != null) {
+                  _nuCr.skipped_name.push(_nu.id);
+                  console.log(`[NPC_CAPTURE] skipped npc_name overwrite for ${_nu.id} (already "${_nuNpc.npc_name}")`);
+                }
+                // is_learned: one-way latch — only ever transitions to true
+                if (_nu.is_learned === true && _nuNpc.is_learned !== true) {
+                  _nuNpc.is_learned = true;
+                  _nuEntry.is_learned_set = true;
+                  console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true`);
+                }
+                _nuCr.updates.push(_nuEntry);
+              }
+            }
+          } catch (_nuErr) {
+            console.warn('[PHASE5F] npc_updates parse failed:', _nuErr.message);
+            _nuCr.parseSuccess = false;
+          }
+        } else {
+          console.warn('[PHASE5F] npc_updates block found but regex extraction failed on raw:', _nuRaw.slice(0, 120));
         }
         gameState.world._lastNpcCapture = _nuCr;
       }
@@ -2443,6 +2486,9 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}`;
       turn_number: turnNumber,
       timestamp: new Date().toISOString(),
       is_initialization: (turnNumber === 1),  // Special flag for Turn 1 world setup
+      intent_channel: resolvedChannel,
+      npc_target: _rawNpcTarget || null,
+      needs_say_triggered: false,
       input: { raw: action, parsed_intent: parsedIntent, parsed_intent_source: parsedIntentSource },
       authoritative_state: authoritativeState,
       visibility: visibilityPayload,
@@ -2876,9 +2922,22 @@ app.post('/help', async (req, res) => {
   }
 
   // Phase 4 placeholder — full narrator-persona DeepSeek call implemented in Phase 4.
+  if (!gameState.help_log) gameState.help_log = [];
+  const _helpEntry = {
+    timestamp: new Date().toISOString(),
+    turn_counter_at_call: gameState.turn_counter || 0,
+    question,
+    response: '(Help system coming soon.)'
+  };
+  gameState.help_log.push(_helpEntry);
+  const { sessionId: _helpResolvedId, isFirstTurn: _helpIsFirst, logger: _helpLogger } = getSessionState(sessionId);
+  // Persist updated help_log to session
+  const _helpSession = sessionStates.get(sessionId);
+  if (_helpSession) sessionStates.set(sessionId, { ..._helpSession, gameState });
   return res.json({
     sessionId,
-    answer: "(Help system coming soon. Full player-facing guidance will be available in Phase 4.)"
+    answer: "(Help system coming soon. Full player-facing guidance will be available in Phase 4.)",
+    debug: { help_log_entry: _helpEntry }
   });
 });
 
