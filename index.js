@@ -2008,7 +2008,15 @@ Environment Tone: ${_narEnvTone || '(unknown)'}
 
 LAYER CONSTRAINT [MANDATORY]:
 ${_narDepth === 3
-  ? `You are inside a local space (Layer L2). Describe the interior of this local space as indicated below.`
+  ? `You are inside a local space (Layer L2). The player is already within this environment — do NOT reintroduce or restate the room at the start of this turn.
+
+The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.
+
+Environment appears only as it is encountered, interacted with, or newly revealed through the action. Avoid repeating static descriptions (air, smell, walls, lighting, hum) unless something has changed or the player is actively examining their surroundings.${_parsedAction === 'move' ? `
+
+The player is moving. Use their exact phrasing in the first sentence. The environment is what they pass through — not what they stop to describe.` : (_parsedAction === 'look' || _parsedAction === 'examine') ? `
+
+The player is actively observing — environment description is warranted here. Describe in detail what their attention finds, grounded in the space around them.` : ''}`
   : _narDepth >= 2
   ? `You are navigating the open interior of ${_narActiveSite?.name || 'the site'} at Layer L1 — streets, paths, and open areas between buildings. You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2. Any local spaces listed below are navigation references only — do NOT import their smell, atmosphere, or character into your description.`
   : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
@@ -2651,6 +2659,12 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     }
     
     // QA-016 follow-up: Create turn object with initialization flag for Turn 1
+    // v1.54.0: Pre-compute narration block flags so they can be included in turnObject for QA export
+    const _nbPrimaryBullet = (_parsedAction === 'move' || _parsedAction === 'look' || _parsedAction === 'exit') ? _parsedAction : null;
+    const _nbMovementTask = _movementTaskBlock !== '';
+    const _nbMovementFlavor = _movementFlavorBlock !== '';
+    const _nbNarratorMode = !!_narratorModeBlock;
+    const _nbSoliloquy = _soliloquyBlock !== '';
     const turnObject = {
       turn_number: turnNumber,
       timestamp: new Date().toISOString(),
@@ -2665,6 +2679,13 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       nearby_cells: nearbyCellsSnapshot,
       narrative: narrative,
       diagnostics: diagnostics,
+      narration_debug: {
+        primary_bullet_override: _nbPrimaryBullet,
+        movement_task_active: _nbMovementTask,
+        movement_flavor_active: _nbMovementFlavor,
+        narrator_mode_active: _nbNarratorMode,
+        soliloquy_active: _nbSoliloquy
+      },
       logs: turnLogs
     };
     

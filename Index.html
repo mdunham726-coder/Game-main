@@ -1423,6 +1423,17 @@ W: ${nearbyCells.West?.type || '?'} (${nearbyCells.West?.subtype || ''})`;
 Raw Input  : ${rawInput}
 Parsed     : ${parsedAction}${direction !== '(none)' ? ' ' + direction : ''}
 Confidence : ${confidence}${source}`;
+        // v1.54.0: Narration block debug visibility
+        const nd = turn.narration_debug;
+        if (nd) {
+          intentSection += `
+-- Narration Blocks
+primary_bullet : ${nd.primary_bullet_override || '(none)'}
+movement_task  : ${nd.movement_task_active}
+movement_flavor: ${nd.movement_flavor_active}
+narrator_mode  : ${nd.narrator_mode_active}
+soliloquy      : ${nd.soliloquy_active}`;
+        }
       }
 
       // -- Diagnostics (both modes, only when flags exist) --
