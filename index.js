@@ -1933,6 +1933,21 @@ app.post('/narrate', async (req, res) => {
       ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nNo specific NPC is being addressed. Narrate the player's words as self-expression — muttering, exclaiming, or speaking into the space. Do not treat this as a failed dialogue attempt.\n`
       : '';
 
+    // v1.52.0: Narration Task Override — task-replacement blocks for move/look/exit turns.
+    // Pattern mirrors _narratorModeBlock: each block replaces (not modifies) the default narration task.
+    // Mutually exclusive by _parsedAction value. Injected after all secondary blocks.
+    const _movementTaskBlock = (_parsedAction === 'move')
+      ? `\nNARRATION TASK [MANDATORY]: This is a movement turn.\nThe player's authored action — "${_rawInput}" — is the narrative event.\nLead with how the player arrives or moves.\nThe environment is encountered as a result of movement, not the primary subject.\nDo NOT open with a room or environment description.\nIf the input contains movement style or an emote, use the exact wording.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
+      : '';
+
+    const _lookTaskBlock = (_parsedAction === 'look')
+      ? `\nNARRATION TASK [MANDATORY]: This is a look turn.\nThe player's authored action — "${_rawInput}" — is the narrative event.\nLead with the act of looking.\nWhat is seen unfolds through the player's attention.\nDo NOT begin with environment description as if no action occurred.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
+      : '';
+
+    const _exitTaskBlock = (_parsedAction === 'exit')
+      ? `\nNARRATION TASK [MANDATORY]: This is an exit turn.\nThe player's authored action — "${_rawInput}" — is the narrative event.\nTheir phrasing describes how they exited. Use it.\nDo NOT replace it with a generic exit description.\nDo NOT open with environment description before the exit action.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
+      : '';
+
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
 
 ---
@@ -2013,7 +2028,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set, is_learned is false, and the NPC's proper name appears anywhere in your narration this turn — through self-introduction, dialogue, overhearing, or any other means — you MUST append [npc_updates: [{"id": "npc_id", "is_learned": true}]]. This is deterministic: if you used the name in narration while is_learned was false, the update is required. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
-${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}`;
+${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -2618,6 +2633,10 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     debug.freeform_block_active = _freeformBlock !== '';
     debug.movement_flavor_active = _movementFlavorBlock !== '';
     debug.soliloquy_active = _soliloquyBlock !== '';
+    // v1.52.0: Narration task override observability
+    debug.movement_task_active = _movementTaskBlock !== '';
+    debug.look_task_active = _lookTaskBlock !== '';
+    debug.exit_task_active = _exitTaskBlock !== '';
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
