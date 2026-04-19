@@ -1397,6 +1397,12 @@ app.post('/narrate', async (req, res) => {
             debug.path = 'DEGRADED_FREEFORM';
             _degradedToFreeform = true;
             console.log('[DEGRADE] degraded to FREEFORM from:', _vReason, 'raw:', _dgRaw);
+          } else if (_vReason === 'NPC_NOT_PRESENT' && resolvedChannel === 'say') {
+            // v1.51.0: Say-alone graceful degrade — no NPC bound, route to soliloquy narration instead of hard abort
+            debug.degraded_from = _vReason;
+            debug.path = 'SAY_SOLILOQUY';
+            _degradedToFreeform = true;
+            console.log('[DEGRADE] Say channel NPC_NOT_PRESENT — routing to soliloquy path');
           } else {
             _abortTurn(validation.reason);
             return res.json({
@@ -1872,10 +1878,14 @@ app.post('/narrate', async (req, res) => {
         return `\nSYSTEM: The player attempted to talk to "${role}" but ${count} NPCs with that role are present. Do NOT pick one arbitrarily. Narrate the ambiguity and instruct the player to be more specific — e.g. "There are ${count} ${role}s here. Which one did you mean?"\n`;
       }
       if (_npcTalkResult.outcome === 'not_found') {
+        // v1.51.0: Suppress on Say channel — _soliloquyBlock handles unbound Say turns
+        if (resolvedChannel === 'say') return '';
         const t = _npcTalkResult.target || 'that person';
         return `\nSYSTEM: The player attempted to talk to "${t}" but no matching NPC is visible at their current position. Narrate that no such person is here.\n`;
       }
       if (_npcTalkResult.outcome === 'not_in_site') {
+        // v1.51.0: Suppress on Say channel — _soliloquyBlock handles unbound Say turns
+        if (resolvedChannel === 'say') return '';
         return `\nSYSTEM: The player attempted to talk to someone but is not currently inside a site. Narrate that there is no one here to speak with.\n`;
       }
       return '';
@@ -1905,10 +1915,22 @@ app.post('/narrate', async (req, res) => {
       ? `\nPLAYER INTENT (for flavor only): "${_rawInput}"\nVALIDATED ACTION: ${_parsedAction}${_doIntentTarget ? ' \u2014 ' + _doIntentTarget : ''}\nUse the phrasing, tone, and body language from PLAYER INTENT freely to color how the moment feels. VALIDATED ACTION is the only mechanical reality — do NOT narrate any capability, outcome, or consequence for elements of PLAYER INTENT that are not reflected in VALIDATED ACTION. "Sneak," "run," "fly," and similar verbs describe expressive style only — not checks, not conditions, not systems.\n`
       : '';
 
-    // Phase 3 (v1.46.0): Generalized emote block — fires on any channel when asterisk-wrapped gesture/body language is present.
+    // Phase 3 (v1.51.0): Generalized emote block — fires on any channel when asterisk-wrapped gesture/body language is present.
     // Guard: any channel, no NPC match requirement. _narratorModeBlock dominates tone when both fire.
+    // v1.51.0: Removed creative-license phrase "render as physical expression" — replaced with explicit anti-substitution wording.
     const _emoteBlock = /\*[^*]+\*/.test(_rawInput)
-      ? `\nEMOTE DETECTED: The player's input contains asterisk-wrapped gesture or body language (*like this*). Render the emote concretely as physical expression (gesture, posture, or movement). Do not skip or reduce it to abstract description, but integrate it naturally into the narration. Preserve the player's authored emote verbatim — use their specific word(s) exactly as written. Do not substitute or paraphrase.\n`
+      ? `\nEMOTE DETECTED: The player's input contains asterisk-wrapped gesture or body language (*like this*). The player's authored emote is the action. Use their exact word(s) as written in the narration — do not reinterpret, replace, or substitute it with a different gesture. Integrate it naturally but do not invent an alternative.\n`
+      : '';
+
+    // v1.51.0: Soliloquy block — fires on Say channel when no NPC is successfully bound.
+    // Covers: NPC_NOT_PRESENT degrade, target:null, not_found, not_in_site outcomes.
+    // Mutually exclusive with _narratorModeBlock (which requires matched NPC).
+    const _soliloquyBlock = (
+      resolvedChannel === 'say' &&
+      !_rawNpcTarget &&
+      _npcTalkResult?.outcome !== 'matched'
+    )
+      ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nNo specific NPC is being addressed. Narrate the player's words as self-expression — muttering, exclaiming, or speaking into the space. Do not treat this as a failed dialogue attempt.\n`
       : '';
 
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
@@ -1935,7 +1957,7 @@ Don't pull the camera away to re-explain the world. Keep it where the action is.
 
 Let the environment support the moment, not replace it. Use only the details that matter now. If something hasn't changed, let it stay unsaid.
 
-When the player enters somewhere new, lead with how they arrive. If their input describes movement style, that style is the opening beat and the environment follows through it. When the player pauses to look around, widen the view freely. Otherwise, stay with the flow of the scene.
+When the player moves or navigates — entering somewhere new or moving through a space — lead with how they arrive or move. If their input describes movement style, that style is the opening beat and the environment follows through it. When the player looks around or examines their surroundings, anchor to the act of looking — what they observe unfolds through their attention, not before it. Otherwise, stay with the flow of the scene.
 
 Above all, move the moment forward. Each response should feel like the next beat in the same unfolding experience.
 
@@ -1991,7 +2013,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set, is_learned is false, and the NPC's proper name appears anywhere in your narration this turn — through self-introduction, dialogue, overhearing, or any other means — you MUST append [npc_updates: [{"id": "npc_id", "is_learned": true}]]. This is deterministic: if you used the name in narration while is_learned was false, the update is required. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
-${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_movementFlavorBlock}${_narratorModeBlock}`;
+${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -2595,6 +2617,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     debug.expressive_block_active = _expressiveBlock !== '';
     debug.freeform_block_active = _freeformBlock !== '';
     debug.movement_flavor_active = _movementFlavorBlock !== '';
+    debug.soliloquy_active = _soliloquyBlock !== '';
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
