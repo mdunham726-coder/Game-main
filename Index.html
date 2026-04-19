@@ -113,7 +113,7 @@
     <!-- Say Bar -->
     <div style="display:flex; gap:6px; align-items:center;">
       <span style="font-size:11px; color:#aaa; font-family:monospace; min-width:34px;">SAY</span>
-      <input type="text" id="sayInput" placeholder="Say something..." autocomplete="off"
+      <input type="text" id="sayInput" placeholder="Use asterisks to emote. Example *smile* *dance* etc..." autocomplete="off"
         style="flex:1; padding:10px; font-size:16px; background:#2a2a3a; color:#e0e0e0; border:1px solid #556;">
       <button onclick="submitAction('say')"
         style="padding:10px 18px; font-size:15px; background:#6a6adf; color:#fff; border:none; cursor:pointer;">Say</button>
@@ -254,6 +254,7 @@
     let lastGameResponse = null;  // QA-014: Store full response for turn history
     window.lastGameResponse = null; // Exposed for Map.html cross-window access via window.opener.lastGameResponse
     let pendingSayNpcTarget = null; // Preserved from needs_say_input response
+    let pendingSayPreSpeech = null;   // Original Do input captured at interception for pre-speech context (B1)
     let _pendingSayActive = false;    // Blocks Do/Say input while pending-say prompt is open
     // A2: Running QA log tracking
     let qaExportHistory = [];
@@ -444,6 +445,7 @@
         if (data.needs_say_input) {
           document.getElementById(inputId).value = '';
           pendingSayNpcTarget = data.npc_target || null;
+          pendingSayPreSpeech = action || null; // B1: capture original Do phrasing for pre-speech context
           _pendingSayActive = true;
           const label = pendingSayNpcTarget
             ? `What would you like to say to ${pendingSayNpcTarget}?`
@@ -721,7 +723,9 @@ diagLog.innerHTML = `
       try {
         const body = { action: text, intent_channel: _sayChannel };
         if (pendingSayNpcTarget) body.npc_target = pendingSayNpcTarget;
+        if (pendingSayPreSpeech) body.pre_speech_context = pendingSayPreSpeech; // B1: forward original Do phrasing
         pendingSayNpcTarget = null;
+        pendingSayPreSpeech = null;
         _pendingSayActive = false;
         const response = await fetch('/narrate', { method: 'POST', headers, body: JSON.stringify(body) });
         const data = await response.json();
@@ -752,6 +756,7 @@ diagLog.innerHTML = `
       document.getElementById('pendingSayPrompt').classList.remove('active');
       document.getElementById('pendingSayInput').value = '';
       pendingSayNpcTarget = null;
+      pendingSayPreSpeech = null; // B1: clear on cancel
     }
 
     // Help bar: POST to /help (read-only, no turn consumed)

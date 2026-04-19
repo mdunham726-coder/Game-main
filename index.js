@@ -1849,6 +1849,7 @@ app.post('/narrate', async (req, res) => {
     // parsedIntent is populated AFTER narration — do not reference here.
     const _parsedAction = engineOutput?.actions?.action || '';
     const _rawInput = (action || '').trim();
+    const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
     const _isFreeform = (inputObj?.player_intent?.kind === 'FREEFORM') ||
       (_parsedAction === 'wait' && _rawInput.toLowerCase() !== 'wait' && _rawInput !== '');
     const _freeformBlock = _isFreeform
@@ -1881,7 +1882,7 @@ app.post('/narrate', async (req, res) => {
       !_npcTalkBlock &&
       (_rawNpcTarget || _npcTalkResult?.outcome === 'matched')
     )
-      ? `\nNARRATOR MODE [MANDATORY]: This is a dialogue turn. The player is addressing ${_npcRef}.\nPLAYER SAYS: "${_rawInput}"\n- Do NOT re-describe the surrounding environment or scene unless it directly affects this exchange\n- Anchor entirely to the NPC's reaction: their words, expression, posture, and immediate response to the player\n- The player's words are the event. The NPC's response is the scene.\n- Text in asterisks (*like this*) represents player gesture or body language — weave it into the NPC's reaction naturally\n- Social and conversational detail takes absolute priority over environmental description on dialogue turns\n- All NPC name rules still apply — emit [npc_updates:] if required by the rules above\n`
+      ? `\nNARRATOR MODE [MANDATORY]: This is a dialogue turn. The player is addressing ${_npcRef}.\n${_rawPreSpeech ? 'PLAYER APPROACH: "' + _rawPreSpeech + '"\nDo not summarize or omit the expressive actions in PLAYER APPROACH. Preserve those beats concretely in narration before the speech act.\n' : ''}PLAYER SAYS: "${_rawInput}"\n- Text in asterisks (*like this*) represents player gesture or body language — weave it into the NPC's reaction; do not skip or summarize it\n- Do NOT re-describe the surrounding environment or scene unless it directly affects this exchange\n- Anchor entirely to the NPC's reaction: their words, expression, posture, and immediate response to the player\n- The player's words are the event. The NPC's response is the scene.\n- Social and conversational detail takes absolute priority over environmental description on dialogue turns\n- All NPC name rules still apply — emit [npc_updates:] if required by the rules above\n`
       : '';
 
     // Phase 3: Do-channel PLAYER INTENT — non-authoritative flavor injection.
@@ -1894,6 +1895,12 @@ app.post('/narrate', async (req, res) => {
       _parsedAction !== 'wait'
     )
       ? `\nPLAYER INTENT (for flavor only): "${_rawInput}"\nVALIDATED ACTION: ${_parsedAction}${_doIntentTarget ? ' \u2014 ' + _doIntentTarget : ''}\nUse the phrasing, tone, and body language from PLAYER INTENT freely to color how the moment feels. VALIDATED ACTION is the only mechanical reality — do NOT narrate any capability, outcome, or consequence for elements of PLAYER INTENT that are not reflected in VALIDATED ACTION. "Sneak," "run," "fly," and similar verbs describe expressive style only — not checks, not conditions, not systems.\n`
+      : '';
+
+    // Phase 3 (v1.46.0): Generalized emote block — fires on any channel when asterisk-wrapped gesture/body language is present.
+    // Guard: any channel, no NPC match requirement. _narratorModeBlock dominates tone when both fire.
+    const _emoteBlock = /\*[^*]+\*/.test(_rawInput)
+      ? `\nEMOTE DETECTED: The player's input contains asterisk-wrapped gesture or body language (*like this*). Render the emote concretely as physical expression (gesture, posture, or movement). Do not skip or reduce it to abstract description, but integrate it naturally into the narration.\n`
       : '';
 
     const narrationContent = `You are narrating an interactive roguelike game. Use the world tone to guide your descriptions.
@@ -1976,7 +1983,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set, is_learned is false, and the NPC's proper name appears anywhere in your narration this turn — through self-introduction, dialogue, overhearing, or any other means — you MUST append [npc_updates: [{"id": "npc_id", "is_learned": true}]]. This is deterministic: if you used the name in narration while is_learned was false, the update is required. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
-${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}${_narratorModeBlock}`;
+${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_narratorModeBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -2568,6 +2575,14 @@ ${_freeformBlock}${_npcTalkBlock}${_phase5Instruction}${_narratorModeBlock}`;
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
 
     // [DIAG-1] Log before returning response
+    // C1 (v1.46.0): Phase 3/5b debug instrumentation — narrator mode, emote, do-intent, say target source, pre-speech
+    debug.narrator_mode_active = !!_narratorModeBlock;
+    debug.do_intent_active = !!_doIntentBlock;
+    debug.emote_detected = /\*[^*]+\*/.test(_rawInput);
+    debug.say_target_source = resolvedChannel === 'say'
+      ? (_rawNpcTarget ? 'interceptor' : (_npcTalkResult?.outcome === 'matched' ? 'parser' : null))
+      : null;
+    debug.pre_speech_context_present = !!_rawPreSpeech;
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
