@@ -1,7 +1,61 @@
-# Session Summary: Problem Discovery → Logging Infrastructure Implementation
+# Session Summary
 
-**Session Date:** March 26-27, 2026  
-**Duration:** Extended development session  
+---
+
+## Session: QA Bug-Fix Pass v2 (v1.44.0)
+
+**Session Date:** April 19, 2026
+**Outcome:** v1.44.0 complete — four runtime QA failures fixed, pending-say converted to true modal overlay
+
+### Issues Fixed
+
+**Phase 1 — NPC bracket-counting parse (index.js Phase 5F)**
+- Root cause: regex `/\[npc_updates:\s*(\[[\s\S]*\])\s*\]/` failed when model emitted non-whitespace between inner `]` and outer `]`. NPC name updates silently discarded.
+- Fix: second bracket-counting pass anchored at tag index 13. Strict whitespace-only skip before inner `[`. Clean failure + full `_nuRaw` log on any other character. `JSON.parse` on counted inner slice directly.
+
+**Phase 2 — Do-path FREEFORM degradation (index.js validation gate)**
+- Root cause: `TARGET_NOT_FOUND_IN_CELL` and `TARGET_NOT_VISIBLE` caused unconditional `_abortTurn` → `"Action invalid: reason"` with no narration.
+- Fix: intercept those two codes only, reclassify to FREEFORM, skip queue loop via `_degradedToFreeform` flag, fall through to `if (!engineOutput)` guard → `Engine.buildOutput`. Talk intercept unaffected (it lives inside the skipped queue loop).
+
+**Phase 3 — L1 narration local-space flavor bleed (index.js narration prompt)**
+- Root cause: model imported smell/atmosphere from `_siteContextBlock` local spaces into outdoor L1 description.
+- Fix: P3-A extended LAYER CONSTRAINT string; P3-B added L1-conditional bottom bullet. Both target `_narDepth >= 2` / `_narDepth === 2` respectively.
+
+**Phase 4 — Parser talk/enter ambiguity (SemanticParser.js buildPrompt)**
+- Root cause: zero `talk` pattern examples; `enter` had explicit "to [X]" examples; "walk over and talk to X" → `enter X`.
+- Fix: `enter` guardrail (person target → `talk`; object target → `examine`/`take`); new `talk` pattern line with three concrete examples.
+
+**Phase 5 — Pending-say true modal overlay (Index.html)**
+- Root cause: `#pendingSayPrompt` was an inline widget inside `#inputBars` — no backdrop, no focus trap, no Escape.
+- Fix: converted to `position: fixed` full-screen overlay (z-index 300). Focus-trapped via `keydown` listener. Toggled via `.active` class. Removed from input bar DOM entirely.
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `index.js` | Phase 5F NPC parse block; validation gate; L1 LAYER CONSTRAINT; L1 bottom bullet |
+| `SemanticParser.js` | `buildPrompt` USER_TEXT — `enter` guardrail + `talk` pattern line |
+| `Index.html` | CSS pending-say modal rules; HTML structure; `classList` toggle; `keydown` focus-trap listener |
+
+---
+
+## Session: QA Bug-Fix Pass v1 (v1.42.0 / v1.43.0)
+
+**Session Date:** April 2026
+**Outcome:** Six runtime failures fixed; three-channel pipeline shipped; world-prompt modal added
+
+### Issues Fixed
+1. `_pendingSayActive` flag — Do/Say gated while pending-say open
+2. Orphaned `sayInput.value` line removed
+3. `autocomplete="off"` on all 5 inputs
+4. Phase 5F robust bracket-counting strip
+5. Option B help routing
+6. QA logging instrumentation (`intent_channel`, `npc_target`, `needs_say_triggered`, `help_log`)
+
+---
+
+## Session: Problem Discovery → Logging Infrastructure (Phase A)
+
+**Session Date:** March 26-27, 2026
 **Outcome:** Phase A logging infrastructure complete and deployed
 
 ---
