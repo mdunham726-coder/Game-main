@@ -2018,8 +2018,24 @@ The player is moving. Use their exact phrasing in the first sentence. The enviro
 
 The player is actively observing — environment description is warranted here. Describe in detail what their attention finds, grounded in the space around them.` : ''}`
   : _narDepth >= 2
-  ? `You are navigating the open interior of ${_narActiveSite?.name || 'the site'} at Layer L1 — streets, paths, and open areas between buildings. You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2. Any local spaces listed below are navigation references only — do NOT import their smell, atmosphere, or character into your description.`
-  : `You are in the OVERWORLD (Layer L0). You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks in the distance — do NOT narrate arrival or entry into them.`}
+  ? `You are narrating Layer L1 — the open interior of ${_narActiveSite?.name || 'the site'}: streets, paths, and open areas between buildings. The player is traversing this site. Their action is the opening beat of this turn — streets and paths are what they move through, not a scene to re-establish each turn. Do not open with a description of the ground, air, or ambient sounds as if the player is standing still. Do not repeat static environmental phrases from prior turns.
+
+The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.${_parsedAction === 'move' ? `
+
+The player is moving through the site. Use their exact phrasing in the first sentence. The street or path is what they pass through — not what they stop to describe.` : (_parsedAction === 'look' || _parsedAction === 'examine') ? `
+
+The player is actively observing. Observation is warranted here — describe what their attention finds in the site around them.` : ''}
+
+You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2. Any local spaces listed below are navigation references only — do NOT import their smell, atmosphere, or character into your description.`
+  : `You are narrating Layer L0 — the overworld. The player is traversing open terrain. Their action is the opening beat of this turn — terrain is the medium they are moving through, not the primary subject of the narration. Do not open with a description of the landscape as if the player is standing still surveying it. Do not repeat static terrain phrases from prior turns.
+
+The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.${_parsedAction === 'move' ? `
+
+The player is moving across terrain. Use their exact phrasing in the first sentence. The terrain and landscape are what they pass through — not what they stop to describe.` : (_parsedAction === 'look' || _parsedAction === 'examine') ? `
+
+The player is actively observing. Observation is warranted here — describe what their attention finds across the terrain around them.` : ''}
+
+You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks — do NOT narrate arrival or entry into them.`}
 
 CORE INSTRUCTIONS:
 - Let the world tone guide your descriptions and atmosphere
