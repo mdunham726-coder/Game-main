@@ -35,6 +35,37 @@
     .wg-step-ms { color: #666; min-width: 48px; text-align: right; flex-shrink: 0; }
     .wg-step-name { color: #7ecbff; min-width: 140px; flex-shrink: 0; }
     .wg-step-data { color: #888; font-size: 10px; word-break: break-all; }
+    /* ── World-prompt startup modal ── */
+    #world-prompt-modal {
+      display: flex; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.95); z-index: 200;
+      align-items: center; justify-content: center;
+    }
+    #world-prompt-box {
+      background: #111; border: 2px solid #d4af37;
+      width: 560px; padding: 32px 36px; box-sizing: border-box;
+      display: flex; flex-direction: column; gap: 18px;
+    }
+    #world-prompt-box h2 {
+      margin: 0; color: #d4af37; font-family: Georgia, serif;
+      font-size: 22px; text-align: center; letter-spacing: 1px;
+    }
+    #world-prompt-box p {
+      margin: 0; color: #888; font-size: 13px; text-align: center; line-height: 1.5;
+    }
+    #worldPromptInput {
+      width: 100%; box-sizing: border-box; padding: 12px;
+      font-size: 15px; font-family: Georgia, serif;
+      background: #1a1a1a; color: #e0e0e0; border: 1px solid #555;
+      resize: vertical; min-height: 100px;
+    }
+    #worldPromptInput:focus { outline: none; border-color: #d4af37; }
+    #world-prompt-start-btn {
+      padding: 12px; font-size: 16px; background: #d4af37;
+      color: #1a1a1a; border: none; cursor: pointer; font-family: Georgia, serif;
+      font-weight: bold; letter-spacing: 1px;
+    }
+    #world-prompt-start-btn:hover { background: #e8c84a; }
   </style>
 </head>
 <body>
@@ -144,6 +175,16 @@
   </div>
   <div id="loading">Loading narrative...</div>
 
+  <!-- World-Prompt Startup Modal -->
+  <div id="world-prompt-modal">
+    <div id="world-prompt-box">
+      <h2>Ultimate Dungeon Master</h2>
+      <p>Describe the world you want to enter. Be as brief or detailed as you like.</p>
+      <textarea id="worldPromptInput" placeholder="A dark fantasy kingdom on the edge of a frozen wasteland, ruled by a sorcerer-king..."></textarea>
+      <button id="world-prompt-start-btn" onclick="startFromPrompt()">Enter World</button>
+    </div>
+  </div>
+
   <div id="worldgen-overlay">
     <div id="worldgen-box">
       <div id="worldgen-box-head">
@@ -160,6 +201,25 @@
   </div>
 
   <script>
+    // ── World-prompt startup modal ──────────────────────────────────────────────
+    function startFromPrompt() {
+      const prompt = document.getElementById('worldPromptInput').value.trim();
+      if (!prompt) {
+        document.getElementById('worldPromptInput').focus();
+        return;
+      }
+      document.getElementById('world-prompt-modal').style.display = 'none';
+      document.getElementById('actionInput').value = prompt;
+      submitAction('do');
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      document.getElementById('worldPromptInput').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { startFromPrompt(); }
+      });
+      document.getElementById('worldPromptInput').focus();
+    });
+
     // Store session ID across page loads
     let currentSessionId = null;
     let lastNarrative = "";
