@@ -709,7 +709,8 @@ app.post('/narrate', async (req, res) => {
   let gameState = sessionGameState;
   let isFirstTurn = sessionIsFirstTurn;
   
-  const { action } = req.body;
+  const { action, intent_channel: _rawChannel, npc_target: _rawNpcTarget } = req.body;
+  const resolvedChannel = ['do', 'say'].includes(_rawChannel) ? _rawChannel : 'do';
   if (!action) {
     return res.status(400).json({ 
       sessionId: resolvedSessionId,
@@ -796,7 +797,7 @@ app.post('/narrate', async (req, res) => {
   // (Preserving all existing code below this point)
   let parseResult = null;
   try {
-    parseResult = await normalizeUserIntent(userInput, gameContext);
+    parseResult = await normalizeUserIntent(userInput, gameContext, resolvedChannel);
   } catch (e) {
     parseResult = { success: false, error: 'LLM_UNAVAILABLE', intent: null };
     console.warn('[PARSER] exception in semantic parser:', e?.message);
@@ -804,6 +805,7 @@ app.post('/narrate', async (req, res) => {
   let debug = {
     parser: "none",
     input: userInput,
+    channel: resolvedChannel,
     intent: (parseResult && parseResult.intent) ? parseResult.intent : null,
     confidence: (parseResult && typeof parseResult.confidence === 'number') ? parseResult.confidence : 0,
     clarification: null
@@ -831,6 +833,7 @@ app.post('/narrate', async (req, res) => {
     isFirstTurn = false;
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
     inputObj = mapActionToInput(action, "WORLD_PROMPT");
+    inputObj.player_intent.channel = 'do';
     
     if (logger) logger.worldPromptReceived(inputObj.WORLD_PROMPT);
     
@@ -1394,6 +1397,20 @@ app.post('/narrate', async (req, res) => {
           // [POINT-C] Log mapped input structure for movement diagnosis (now with complete data)
           console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
 
+          // ── CHANNEL STAMP ─────────────────────────────────────────────────────────
+          mapped.player_intent.channel = resolvedChannel;
+          if (!mapped.player_intent.target && _rawNpcTarget) mapped.player_intent.target = _rawNpcTarget;
+
+          // ── TALK INTERCEPTION (Do bar only, pre-engine guard) ─────────────────────
+          if (resolvedChannel === 'do' && queuedAction.action === 'talk') {
+            if (logger) logger.abortTurn('NEEDS_SAY_INPUT');
+            return res.json({
+              needs_say_input: true,
+              npc_target: queuedAction.target || null,
+              sessionId: resolvedSessionId
+            });
+          }
+
           // ── HYBRID ENTRY RESOLVER ─────────────────────────────────────────────────
           // Runs BEFORE buildOutput so Engine receives annotated player_intent.
           // Only fires on 'enter' with a non-empty target phrase.
@@ -1491,6 +1508,7 @@ app.post('/narrate', async (req, res) => {
         const parsed = Actions.parseIntent(action);
         const inferredKind = (parsed && parsed.action === "move") ? "MOVE" : "FREEFORM";
         inputObj = mapActionToInput(action, inferredKind);
+        inputObj.player_intent.channel = resolvedChannel;
         if (parsed && parsed.action === "move" && parsed.dir) {
           inputObj.player_intent.dir = parsed.dir;
         }
@@ -2826,6 +2844,42 @@ app.post('/test-context', (req, res) => {
       message: err.message
     });
   }
+});
+
+// =============================================================================
+// /help — Player-facing help endpoint (Phase 4 placeholder)
+// Read-only. Bypasses Engine.processTurn(). No state mutation.
+// Full implementation in Phase 4.
+// =============================================================================
+app.post('/help', async (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+  const { question } = req.body;
+
+  if (!question) {
+    return res.json({ sessionId: sessionId || null, answer: "What would you like help with?" });
+  }
+
+  if (!sessionId) {
+    return res.json({ sessionId: null, answer: "No game is currently active. Start a game first." });
+  }
+
+  let gameState = null;
+  try {
+    const session = getSessionState(sessionId);
+    gameState = session.gameState;
+  } catch (err) {
+    return res.json({ sessionId, answer: "No game is currently active. Start a game first." });
+  }
+
+  if (!gameState) {
+    return res.json({ sessionId, answer: "No game is currently active. Start a game first." });
+  }
+
+  // Phase 4 placeholder — full narrator-persona DeepSeek call implemented in Phase 4.
+  return res.json({
+    sessionId,
+    answer: "(Help system coming soon. Full player-facing guidance will be available in Phase 4.)"
+  });
 });
 
 app.post('/ask-deepseek', async (req, res) => {

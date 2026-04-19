@@ -62,13 +62,14 @@ function setToCache(key, value, ttlMs = CACHE_TTL_MS) {
   _cache.set(key, { value, expiresAt: _now() + ttlMs });
 }
 
-function buildPrompt(userInput, contextStr) {
+function buildPrompt(userInput, contextStr, channel = 'do') {
   const SYSTEM_TEXT = "You are a text adventure game parser. Convert player intent to JSON.";
   const USER_TEXT = [
     contextStr,
     "",
     // === PHASE 3C: Quest actions added to valid actions list ===
-    "Valid actions: move, take, drop, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, help",
+    // NOTE: 'help' removed — Help channel bypasses parser entirely (Phase 1/5a)
+    "Valid actions: move, take, drop, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory",
     "",
     "Directions: north, south, east, west, up, down",
     "Only assign action='move' when the player clearly intends to travel to a new location. Do not infer movement from body-part words (e.g., 'right foot', 'left hand') or positional language used in non-travel contexts.",
@@ -156,19 +157,19 @@ function safeParseJSON(text) {
  * @param {object} gameContext
  * @returns {Promise<{success:boolean, intent?:object|null, error?:string, confidence?:number}>}
  */
-async function normalizeUserIntent(userInput, gameContext) {
+async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
   const raw = (typeof userInput === "string") ? userInput.trim() : "";
   if (!raw) {
     return { success: false, error: "EMPTY_INPUT" };
   }
 
   const contextStr = serializeContext(gameContext);
-  const cacheKey = hashKey(`${raw}|${contextStr}`);
+  const cacheKey = hashKey(`${channel}|${raw}|${contextStr}`);
 
   const cached = getFromCache(cacheKey);
   if (cached) return cached;
 
-  const messages = buildPrompt(raw, contextStr);
+  const messages = buildPrompt(raw, contextStr, channel);
   const llm = await callDeepSeek(messages);
   if (!llm.ok) {
     const out = { success: false, error: llm.error, intent: null };

@@ -9,7 +9,7 @@
     h1 { color: #d4af37; text-align: center; }
     #narrative { background: #0d0d0d; border: 2px solid #d4af37; padding: 20px; min-height: 200px; margin: 20px 0; line-height: 1.6; }
     input { width: 80%; padding: 10px; font-size: 16px; background: #333; color: #e0e0e0; border: 1px solid #666; }
-    button { width: 15%; padding: 10px; font-size: 16px; background: #d4af37; color: #1a1a1a; border: none; cursor: pointer; }
+    button { padding: 10px; font-size: 16px; background: #d4af37; color: #1a1a1a; border: none; cursor: pointer; }
     #loading { display: none; color: #d4af37; }
     /* ── Worldgen overlay ── */
     #worldgen-overlay {
@@ -40,9 +40,54 @@
 <body>
   <h1>Ultimate Dungeon Master</h1>
   <div id="narrative"><p>You stand at the edge of a vast dungeon...</p></div>
-  <div>
-    <input type="text" id="actionInput" placeholder="What do you do?" autofocus>
-    <button onclick="submitAction()">Submit</button>
+
+  <!-- Three-Channel Input Bars -->
+  <div id="inputBars" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px;">
+
+    <!-- Do Bar -->
+    <div style="display:flex; gap:6px; align-items:center;">
+      <span style="font-size:11px; color:#aaa; font-family:monospace; min-width:34px;">DO</span>
+      <input type="text" id="actionInput" placeholder="Do something..." autofocus
+        style="flex:1; padding:10px; font-size:16px; background:#333; color:#e0e0e0; border:1px solid #666;">
+      <button onclick="submitAction('do')"
+        style="padding:10px 18px; font-size:15px; background:#d4af37; color:#1a1a1a; border:none; cursor:pointer;">Do</button>
+    </div>
+
+    <!-- Say Bar -->
+    <div style="display:flex; gap:6px; align-items:center;">
+      <span style="font-size:11px; color:#aaa; font-family:monospace; min-width:34px;">SAY</span>
+      <input type="text" id="sayInput" placeholder="Say something..."
+        style="flex:1; padding:10px; font-size:16px; background:#2a2a3a; color:#e0e0e0; border:1px solid #556;">
+      <button onclick="submitAction('say')"
+        style="padding:10px 18px; font-size:15px; background:#6a6adf; color:#fff; border:none; cursor:pointer;">Say</button>
+    </div>
+
+    <!-- Pending-Say Prompt (hidden until talk interception) -->
+    <div id="pendingSayPrompt" style="display:none; flex-direction:column; gap:6px; padding:10px; background:#1a1a2a; border:1px solid #6a6adf; border-radius:4px;">
+      <span id="pendingSayLabel" style="font-size:13px; color:#aab; font-family:monospace;">What would you like to say?</span>
+      <div style="display:flex; gap:6px;">
+        <input type="text" id="pendingSayInput" placeholder="Your words..."
+          style="flex:1; padding:8px; font-size:15px; background:#222; color:#e0e0e0; border:1px solid #556;">
+        <button onclick="confirmPendingSay()"
+          style="padding:8px 14px; font-size:14px; background:#6a6adf; color:#fff; border:none; cursor:pointer;">Send</button>
+        <button onclick="cancelPendingSay()"
+          style="padding:8px 14px; font-size:14px; background:#555; color:#ddd; border:none; cursor:pointer;">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Help Bar -->
+    <div style="display:flex; gap:6px; align-items:center;">
+      <span style="font-size:11px; color:#aaa; font-family:monospace; min-width:34px;">HELP</span>
+      <input type="text" id="helpInput" placeholder="Ask for help..."
+        style="flex:1; padding:10px; font-size:16px; background:#1f2a1f; color:#e0e0e0; border:1px solid #3a5a3a;">
+      <button id="helpBtn" onclick="submitHelp()"
+        style="padding:10px 18px; font-size:15px; background:#4a8a4a; color:#fff; border:none; cursor:pointer;">Help</button>
+    </div>
+
+    <!-- Help Response Area -->
+    <div id="helpResponse" style="display:none; padding:10px; background:#111; border:1px solid #3a5a3a; border-radius:3px; color:#bdb; font-size:14px; line-height:1.5; font-style:italic;"></div>
+
+  </div>
 <!-- Diagnostic Panel -->
 <div id="diagnostics" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #333; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #0f0;">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -121,6 +166,7 @@
     let lastTurnCounter = 0;
     let lastGameResponse = null;  // QA-014: Store full response for turn history
     window.lastGameResponse = null; // Exposed for Map.html cross-window access via window.opener.lastGameResponse
+    let pendingSayNpcTarget = null; // Preserved from needs_say_input response
     // A2: Running QA log tracking
     let qaExportHistory = [];
     let lastExportedTurn = -1;
@@ -216,8 +262,9 @@
     let _stepDisplayIdx = -1;
     let _stepTickInterval = null;
 
-    async function submitAction() {
-      const action = document.getElementById('actionInput').value;
+    async function submitAction(channel) {
+      const inputId = channel === 'say' ? 'sayInput' : 'actionInput';
+      const action = document.getElementById(inputId).value;
       if (!action) return;
       
       document.getElementById('loading').style.display = 'block';
@@ -276,7 +323,7 @@
         const response = await fetch('/narrate', {
           method: 'POST',
           headers: headers,
-          body: JSON.stringify({ action: action })
+          body: JSON.stringify({ action: action, intent_channel: channel })
         });
         
         const data = await response.json();
@@ -304,6 +351,19 @@
         lastTurnCounter = data.state?.turn_counter ?? 0;
         
         // QA-014: Store full game response for turn history access
+        // CHANNEL: intercept needs_say_input BEFORE lastGameResponse assignment or narrative render
+        if (data.needs_say_input) {
+          document.getElementById(inputId).value = '';
+          pendingSayNpcTarget = data.npc_target || null;
+          const label = pendingSayNpcTarget
+            ? `What would you like to say to ${pendingSayNpcTarget}?`
+            : 'What would you like to say?';
+          document.getElementById('pendingSayLabel').textContent = label;
+          document.getElementById('pendingSayPrompt').style.display = 'flex';
+          document.getElementById('pendingSayInput').value = '';
+          document.getElementById('pendingSayInput').focus();
+          return;
+        }
         lastGameResponse = data;
         window.lastGameResponse = data; // Keep window-exposed copy in sync for Map.html
         if (_wgIsFirstTurn) populateWgOverlay(data.worldgen_log || null);
@@ -324,6 +384,7 @@ if (engineMsg) {
   document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
 }
 document.getElementById('actionInput').value = '';
+document.getElementById('sayInput').value = '';
 
 // Display diagnostics (rebind to authoritative turn_history state)
 const diagLog = document.getElementById('diagnostic-log');
@@ -554,9 +615,89 @@ diagLog.innerHTML = `
         document.getElementById('loading').style.display = 'none';
       }
     }
+
+    // Confirm pending-say: follow-up Say turn after Do-bar talk interception
+    async function confirmPendingSay() {
+      const text = document.getElementById('pendingSayInput').value.trim();
+      if (!text) return;
+      document.getElementById('pendingSayPrompt').style.display = 'none';
+      document.getElementById('pendingSayInput').value = '';
+      // Inject into say bar so submitAction() reads it, then clear after
+      document.getElementById('sayInput').value = text;
+      // Build body manually to include preserved npc_target
+      const _sayChannel = 'say';
+      const headers = { 'Content-Type': 'application/json' };
+      if (currentSessionId) headers['x-session-id'] = currentSessionId;
+      document.getElementById('loading').style.display = 'block';
+      try {
+        const body = { action: text, intent_channel: _sayChannel };
+        if (pendingSayNpcTarget) body.npc_target = pendingSayNpcTarget;
+        pendingSayNpcTarget = null;
+        const response = await fetch('/narrate', { method: 'POST', headers, body: JSON.stringify(body) });
+        const data = await response.json();
+        if (data.sessionId) { currentSessionId = data.sessionId; }
+        if (data.needs_say_input) { return; } // Guard: shouldn't happen on say channel
+        lastGameResponse = data;
+        window.lastGameResponse = data;
+        const narrative = data.narrative || data.error || 'No response from server';
+        const engineMsg = data.engine_message;
+        if (engineMsg) {
+          document.getElementById('narrative').innerHTML = `<div style="border:1px solid #f90; padding:4px 10px; margin-bottom:6px; color:#f90; font-size:0.85em; border-radius:3px;">&#9888; ${engineMsg}</div><p>${narrative}</p>`;
+        } else {
+          document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
+        }
+        document.getElementById('sayInput').value = '';
+        if (data.narrative) lastNarrative = data.narrative;
+        lastTurnCounter = data.state?.turn_counter ?? 0;
+      } catch (err) {
+        document.getElementById('narrative').innerHTML = `<p>Error: ${err.message}</p>`;
+      } finally {
+        document.getElementById('loading').style.display = 'none';
+      }
+    }
+
+    // Cancel pending-say: dismiss prompt, no turn consumed
+    function cancelPendingSay() {
+      document.getElementById('pendingSayPrompt').style.display = 'none';
+      document.getElementById('pendingSayInput').value = '';
+      pendingSayNpcTarget = null;
+    }
+
+    // Help bar: POST to /help (read-only, no turn consumed)
+    async function submitHelp() {
+      const question = document.getElementById('helpInput').value.trim();
+      if (!question) return;
+      if (!currentSessionId) {
+        document.getElementById('helpResponse').textContent = 'Start a game first before asking for help.';
+        document.getElementById('helpResponse').style.display = 'block';
+        return;
+      }
+      document.getElementById('helpResponse').textContent = 'Asking...';
+      document.getElementById('helpResponse').style.display = 'block';
+      try {
+        const response = await fetch('/help', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-session-id': currentSessionId },
+          body: JSON.stringify({ question })
+        });
+        const data = await response.json();
+        document.getElementById('helpResponse').textContent = data.answer || '(No answer)';
+      } catch (err) {
+        document.getElementById('helpResponse').textContent = `Error: ${err.message}`;
+      }
+    }
     
     document.getElementById('actionInput').addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') submitAction();
+      if (e.key === 'Enter') submitAction('do');
+    });
+    document.getElementById('sayInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') submitAction('say');
+    });
+    document.getElementById('pendingSayInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') confirmPendingSay();
+    });
+    document.getElementById('helpInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') submitHelp();
     });
 
     // DeepSeek Debug Console Function
