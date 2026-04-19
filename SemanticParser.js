@@ -64,9 +64,10 @@ function setToCache(key, value, ttlMs = CACHE_TTL_MS) {
 
 function buildPrompt(userInput, contextStr, channel = 'do') {
   const SYSTEM_TEXT = "You are a text adventure game parser. Convert player intent to JSON.";
-  const USER_TEXT = [
-    contextStr,
-    "",
+
+  // === PHASE 5b: Channel-aware instruction sets ===
+  // Do channel: unchanged from pre-5b behavior
+  const _doInstructions = [
     // === PHASE 3C: Quest actions added to valid actions list ===
     // NOTE: 'help' removed — Help channel bypasses parser entirely (Phase 1/5a)
     "Valid actions: move, take, drop, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory",
@@ -81,12 +82,37 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
     "",
     // === PHASE 3C: Quest-specific parsing context ===
     "Quest actions:",
-    "- accept_quest: Player accepts quest from NPC (e.g., 'accept quest from guard', 'take the quest', 'yes I'll help')",
+    "- accept_quest: Player accepts quest from NPC (e.g., 'accept quest from guard', 'take the quest', 'yes I\'ll help')",
     "- complete_quest: Player completes quest with NPC (e.g., 'complete quest with guard', 'turn in quest', 'report back')",
     "- ask_about_quest: Player inquires about quest from NPC (e.g., 'ask guard about quest', 'what quests do you have', 'any work available')",
     "For quest actions, 'target' should be the NPC name/identifier.",
     "",
     "Modifiers: carefully, sneakily, gently, forcefully, angrily, etc.",
+  ];
+
+  // Say channel: social-only instruction set (Phase 5b)
+  const _sayInstructions = [
+    "SAY CHANNEL — The player is directing speech at an NPC. This is a dialogue or social turn, not a mechanical action.",
+    "",
+    "Valid actions for SAY channel: talk, accept_quest, complete_quest, ask_about_quest, wait",
+    "NEVER classify SAY channel input as: move, take, drop, examine, enter, exit, attack, sneak, cast, or any physical/mechanical action.",
+    "",
+    "Determine the social action that best fits the player's words:",
+    "- talk: any conversational speech, greeting, statement, question, threat, plea, or general NPC interaction",
+    "- accept_quest: player clearly agrees to take a task (e.g., 'I\'ll do it', 'yes I\'ll help', 'count me in')",
+    "- complete_quest: player reports task completion (e.g., 'it\'s done', 'I found them', 'here\'s what you asked for')",
+    "- ask_about_quest: player asks about available work or tasks (e.g., 'any jobs?', 'what do you need?', 'do you have work?')",
+    "- wait: use ONLY when the input cannot be interpreted as social interaction at all",
+    "",
+    "Default to action='talk' when in doubt. Set confidence 0.95 for talk and quest actions; 0.3 for wait.",
+    "Target should be the NPC being addressed if identifiable from context; otherwise null.",
+    "Text wrapped in asterisks (*like this*) indicates player gesture or body language — this is still action='talk'. Include the full raw input as-is in your interpretation.",
+  ];
+
+  const USER_TEXT = [
+    contextStr,
+    "",
+    ...(channel === 'say' ? _sayInstructions : _doInstructions),
     "",
     `Player input: "${String(userInput)}"`,
     "",
