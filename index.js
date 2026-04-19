@@ -1857,6 +1857,12 @@ app.post('/narrate', async (req, res) => {
       ? `\nPLAYER EXPRESSION: "${_rawInput}"\nRender this concretely as the player's body language, posture, or physical expression in the scene. This is intentional player behavior and must appear in narration, but it does not create or modify game state.\n`
       : '';
 
+    // Phase 3 (v1.48.0): Movement arrival flavor — fires on movement turns to preserve authored entry style.
+    // Guard: Do channel + validated move action. Conditional framing avoids forcing structure on plain inputs.
+    const _movementFlavorBlock = (resolvedChannel === 'do' && _parsedAction === 'move')
+      ? `\nMOVEMENT STYLE: "${_rawInput}"\nIf the input contains expressive movement, open the narration with the player's embodied arrival — their manner of movement, body language, or physical state should form the first beat. The scene description should follow through that entry. Do not begin with environment description when expressive movement is present.\n`
+      : '';
+
     // NPC talk result instruction block (ambiguity / not-found control)
     const _npcTalkBlock = (() => {
       if (!_npcTalkResult) return '';
@@ -1984,7 +1990,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set, is_learned is false, and the NPC's proper name appears anywhere in your narration this turn — through self-introduction, dialogue, overhearing, or any other means — you MUST append [npc_updates: [{"id": "npc_id", "is_learned": true}]]. This is deterministic: if you used the name in narration while is_learned was false, the update is required. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
-${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_narratorModeBlock}`;
+${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_movementFlavorBlock}${_narratorModeBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
