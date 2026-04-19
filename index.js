@@ -1935,7 +1935,7 @@ Don't pull the camera away to re-explain the world. Keep it where the action is.
 
 Let the environment support the moment, not replace it. Use only the details that matter now. If something hasn't changed, let it stay unsaid.
 
-When the player enters somewhere new, or pauses to look around, you can widen the view again. Otherwise, stay with the flow of the scene.
+When the player enters somewhere new, lead with how they arrive. If their input describes movement style, that style is the opening beat and the environment follows through it. When the player pauses to look around, widen the view freely. Otherwise, stay with the flow of the scene.
 
 Above all, move the moment forward. Each response should feel like the next beat in the same unfolding experience.
 
@@ -2591,6 +2591,10 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       ? (_rawNpcTarget ? 'interceptor' : (_npcTalkResult?.outcome === 'matched' ? 'parser' : null))
       : null;
     debug.pre_speech_context_present = !!_rawPreSpeech;
+    // v1.50.0: Observability for v1.47.0–1.49.0 narration blocks
+    debug.expressive_block_active = _expressiveBlock !== '';
+    debug.freeform_block_active = _freeformBlock !== '';
+    debug.movement_flavor_active = _movementFlavorBlock !== '';
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
