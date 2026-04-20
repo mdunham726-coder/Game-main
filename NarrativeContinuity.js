@@ -162,13 +162,30 @@ function checkEviction(gameState) {
   const localSpaceMismatch = ac.local_space_id_when_set !== currentLocalSpaceId;
 
   if (depthMismatch || siteMismatch || localSpaceMismatch) {
+    // Archive before nulling — memories persist with provenance across layer crossings
+    if (!Array.isArray(gameState.world.narrative_memory)) {
+      gameState.world.narrative_memory = [];
+    }
+    const archiveDepth = ac.depth_when_set;
+    const siteName = gameState.world.active_site?.name || null;
+    const localSpaceName = gameState.world.active_local_space?.name || null;
+    let layerLabel;
+    if (archiveDepth === 3) layerLabel = `Inside ${ac.local_space_name_when_set || localSpaceName || 'interior'} (L3)`;
+    else if (archiveDepth === 2) layerLabel = `Inside ${ac.site_name_when_set || siteName || 'site'} (L2)`;
+    else layerLabel = 'Overworld (L1)';
+    gameState.world.narrative_memory.push({
+      ...ac,
+      layer_label: layerLabel,
+      site_name_when_set: ac.site_name_when_set || siteName,
+      local_space_name_when_set: ac.local_space_name_when_set || localSpaceName
+    });
     gameState.world.active_continuity = null;
     const reasonParts = [];
     if (depthMismatch) reasonParts.push('depth');
     if (siteMismatch) reasonParts.push('site');
     if (localSpaceMismatch) reasonParts.push('local_space');
     const reason = reasonParts.join('+');
-    console.log(`[CONTINUITY] evicted (${reason})`);
+    console.log(`[CONTINUITY] archived to narrative_memory + evicted (${reason}), total archived: ${gameState.world.narrative_memory.length}`);
     return { evicted: true, reason };
   }
 
@@ -312,6 +329,11 @@ async function runContinuityExtraction(narrationText, gameState) {
 function freezeContinuityState(extraction, gameState) {
   if (!extraction) return;
 
+  // Ensure narrative_memory array is initialized
+  if (!Array.isArray(gameState.world.narrative_memory)) {
+    gameState.world.narrative_memory = [];
+  }
+
   const currentDepth = gameState.world.active_local_space ? 3
     : gameState.world.active_site ? 2
     : 1;
@@ -322,7 +344,9 @@ function freezeContinuityState(extraction, gameState) {
     ...extraction.active_continuity,
     depth_when_set: currentDepth,
     site_id_when_set: gameState.world.active_site?.site_id || null,
+    site_name_when_set: gameState.world.active_site?.name || null,
     local_space_id_when_set: gameState.world.active_local_space?.local_space_id || null,
+    local_space_name_when_set: gameState.world.active_local_space?.name || null,
     turn_when_set: turnCount,
     dialogue_state_ref: null,    // Phase 2 hook — reserved
     rolling_summary_ref: null    // Phase 2 hook — reserved
@@ -405,90 +429,123 @@ function freezeContinuityState(extraction, gameState) {
 // -----------------------------------------------------------------------------
 function buildContinuityBlock(gameState) {
   const ac = gameState.world.active_continuity;
-  if (!ac) return '';
+  const priorMemories = Array.isArray(gameState.world.narrative_memory) ? gameState.world.narrative_memory : [];
 
-  const lines = ['[NARRATIVE CONTINUITY]', ''];
+  if (!ac && priorMemories.length === 0) return '';
 
-  // Scene Focus section
-  const sfLines = [];
-  if (ac.scene_focus_primary) {
-    sfLines.push(`- Primary: ${ac.scene_focus_primary}`);
-  }
-  if (ac.scene_focus_tier && typeof ac.scene_focus_tier === 'object') {
-    const secondaries = Object.entries(ac.scene_focus_tier)
-      .filter(([, tier]) => tier === 'secondary')
-      .map(([name]) => name);
-    if (secondaries.length > 0) {
-      sfLines.push(`- Secondary: ${secondaries.join(', ')}`);
+  const lines = [];
+
+  if (ac) {
+    lines.push('[NARRATIVE CONTINUITY]', '');
+
+    // Scene Focus section
+    const sfLines = [];
+    if (ac.scene_focus_primary) {
+      sfLines.push(`- Primary: ${ac.scene_focus_primary}`);
     }
-  }
-  if (ac.environment_continuity) {
-    sfLines.push(`- Location: ${ac.environment_continuity}`);
-  }
-  if (sfLines.length > 0) {
-    lines.push('Scene Focus:');
-    lines.push(...sfLines);
-    lines.push('');
-  }
-
-  // Player State section
-  const psLines = [];
-  if (ac.player_locomotion) psLines.push(`- Locomotion: ${ac.player_locomotion}`);
-  if (ac.player_physical_state) psLines.push(`- Physical state: ${ac.player_physical_state}`);
-  if (psLines.length > 0) {
-    lines.push('Player State:');
-    lines.push(...psLines);
-    lines.push('');
-  }
-
-  // Interaction section
-  const intLines = [];
-  if (ac.interaction_mode && ac.interaction_mode !== 'none') {
-    intLines.push(`- Mode: ${ac.interaction_mode} (${ac.interaction_status || 'unknown'})`);
-  }
-  if (ac.tone) intLines.push(`- Tone: ${ac.tone}`);
-  if (ac.active_interaction) intLines.push(`- Active: ${ac.active_interaction}`);
-  if (Array.isArray(ac.unresolved_threads) && ac.unresolved_threads.length > 0) {
-    for (const thread of ac.unresolved_threads) {
-      intLines.push(`- Unresolved: ${thread}`);
+    if (ac.scene_focus_tier && typeof ac.scene_focus_tier === 'object') {
+      const secondaries = Object.entries(ac.scene_focus_tier)
+        .filter(([, tier]) => tier === 'secondary')
+        .map(([name]) => name);
+      if (secondaries.length > 0) {
+        sfLines.push(`- Secondary: ${secondaries.join(', ')}`);
+      }
     }
+    if (ac.environment_continuity) {
+      sfLines.push(`- Location: ${ac.environment_continuity}`);
+    }
+    if (sfLines.length > 0) {
+      lines.push('Scene Focus:');
+      lines.push(...sfLines);
+      lines.push('');
+    }
+
+    // Player State section
+    const psLines = [];
+    if (ac.player_locomotion) psLines.push(`- Locomotion: ${ac.player_locomotion}`);
+    if (ac.player_physical_state) psLines.push(`- Physical state: ${ac.player_physical_state}`);
+    if (psLines.length > 0) {
+      lines.push('Player State:');
+      lines.push(...psLines);
+      lines.push('');
+    }
+
+    // Interaction section
+    const intLines = [];
+    if (ac.interaction_mode && ac.interaction_mode !== 'none') {
+      intLines.push(`- Mode: ${ac.interaction_mode} (${ac.interaction_status || 'unknown'})`);
+    }
+    if (ac.tone) intLines.push(`- Tone: ${ac.tone}`);
+    if (ac.active_interaction) intLines.push(`- Active: ${ac.active_interaction}`);
+    if (Array.isArray(ac.unresolved_threads) && ac.unresolved_threads.length > 0) {
+      for (const thread of ac.unresolved_threads) {
+        intLines.push(`- Unresolved: ${thread}`);
+      }
+    }
+    if (intLines.length > 0) {
+      lines.push('Interaction:');
+      lines.push(...intLines);
+      lines.push('');
+    }
+
+    // Entity State sections — one per visible NPC with narrative_state
+    const visibleNpcs = gameState.world.active_local_space
+      ? (gameState.world.active_local_space._visible_npcs || [])
+      : gameState.world.active_site
+      ? (gameState.world.active_site._visible_npcs || [])
+      : [];
+
+    for (const npc of visibleNpcs) {
+      if (!npc.narrative_state) continue;
+      const ns = npc.narrative_state;
+      const hasAnyField = ns.wearing || ns.holding || ns.posture || ns.activity || ns.relative_position || ns.emotional_state;
+      if (!hasAnyField) continue;
+
+      const label = (npc.is_learned && npc.npc_name) ? npc.npc_name : (npc.job_category || npc.id);
+      const entityLines = [];
+      if (ns.wearing) entityLines.push(`  - Wearing: ${ns.wearing}`);
+      if (ns.holding) entityLines.push(`  - Holding: ${ns.holding}`);
+      if (ns.posture) entityLines.push(`  - Posture: ${ns.posture}`);
+      if (ns.activity) entityLines.push(`  - Activity: ${ns.activity}`);
+      if (ns.relative_position) entityLines.push(`  - Position: ${ns.relative_position}`);
+      if (ns.emotional_state) entityLines.push(`  - Emotional state: ${ns.emotional_state}`);
+
+      if (entityLines.length > 0) {
+        lines.push(`Entity State (${label}):`);
+        lines.push(...entityLines);
+        lines.push('');
+      }
+    }
+
+    lines.push('[Do NOT reintroduce the scene. Do NOT change established details. Continue from this state.]');
   }
-  if (intLines.length > 0) {
-    lines.push('Interaction:');
-    lines.push(...intLines);
+
+  // Append archived prior location memories (most recent first)
+  if (priorMemories.length > 0) {
     lines.push('');
-  }
-
-  // Entity State sections — one per visible NPC with narrative_state
-  const visibleNpcs = gameState.world.active_local_space
-    ? (gameState.world.active_local_space._visible_npcs || [])
-    : gameState.world.active_site
-    ? (gameState.world.active_site._visible_npcs || [])
-    : [];
-
-  for (const npc of visibleNpcs) {
-    if (!npc.narrative_state) continue;
-    const ns = npc.narrative_state;
-    const hasAnyField = ns.wearing || ns.holding || ns.posture || ns.activity || ns.relative_position || ns.emotional_state;
-    if (!hasAnyField) continue;
-
-    const label = (npc.is_learned && npc.npc_name) ? npc.npc_name : (npc.job_category || npc.id);
-    const entityLines = [];
-    if (ns.wearing) entityLines.push(`  - Wearing: ${ns.wearing}`);
-    if (ns.holding) entityLines.push(`  - Holding: ${ns.holding}`);
-    if (ns.posture) entityLines.push(`  - Posture: ${ns.posture}`);
-    if (ns.activity) entityLines.push(`  - Activity: ${ns.activity}`);
-    if (ns.relative_position) entityLines.push(`  - Position: ${ns.relative_position}`);
-    if (ns.emotional_state) entityLines.push(`  - Emotional state: ${ns.emotional_state}`);
-
-    if (entityLines.length > 0) {
-      lines.push(`Entity State (${label}):`);
-      lines.push(...entityLines);
+    lines.push('[PRIOR LOCATION MEMORY]');
+    lines.push('These facts were established in previous locations. They remain true. Do NOT contradict them.');
+    lines.push('');
+    for (let i = priorMemories.length - 1; i >= 0; i--) {
+      const pm = priorMemories[i];
+      const turnLabel = pm.turn_when_set ? `Turn ${pm.turn_when_set}` : 'Earlier';
+      lines.push(`[${turnLabel} — ${pm.layer_label || 'unknown location'}]`);
+      if (pm.scene_focus_primary) lines.push(`  Scene focus: ${pm.scene_focus_primary}`);
+      if (pm.player_locomotion) lines.push(`  Locomotion: ${pm.player_locomotion}`);
+      if (pm.player_physical_state) lines.push(`  Physical state: ${pm.player_physical_state}`);
+      if (pm.interaction_mode && pm.interaction_mode !== 'none') {
+        lines.push(`  Interaction: ${pm.interaction_mode} (${pm.interaction_status || 'unknown'})`);
+      }
+      if (pm.active_interaction) lines.push(`  Active: ${pm.active_interaction}`);
+      if (Array.isArray(pm.unresolved_threads) && pm.unresolved_threads.length > 0) {
+        for (const thread of pm.unresolved_threads) {
+          lines.push(`  Unresolved: ${thread}`);
+        }
+      }
+      if (pm.tone) lines.push(`  Tone: ${pm.tone}`);
       lines.push('');
     }
   }
-
-  lines.push('[Do NOT reintroduce the scene. Do NOT change established details. Continue from this state.]');
 
   const block = lines.join('\n');
   console.log(`[CONTINUITY] block: ${block.length} chars`);

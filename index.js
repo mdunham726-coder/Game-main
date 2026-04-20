@@ -1930,6 +1930,10 @@ app.post('/narrate', async (req, res) => {
     // parsedIntent is populated AFTER narration — do not reference here.
     const _parsedAction = engineOutput?.actions?.action || '';
     const _rawInput = (action || '').trim();
+    const _DIRECTION_SHORTHAND = {n:'north',s:'south',e:'east',w:'west',ne:'northeast',nw:'northwest',se:'southeast',sw:'southwest',u:'up',d:'down'};
+    const _movementDisplayInput = (_parsedAction === 'move' && _DIRECTION_SHORTHAND[_rawInput.toLowerCase()])
+      ? _DIRECTION_SHORTHAND[_rawInput.toLowerCase()]
+      : _rawInput;
     const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
       ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`
@@ -1941,7 +1945,7 @@ app.post('/narrate', async (req, res) => {
     // Phase 3 (v1.49.0): Movement arrival flavor — fires on movement turns to preserve authored entry style.
     // Guard: Do channel + validated move action. Explicitly-defined condition; verbatim fidelity required.
     const _movementFlavorBlock = (resolvedChannel === 'do' && _parsedAction === 'move')
-      ? `\nMOVEMENT STYLE: "${_rawInput}"\nIf the input contains any movement verb, style word, or asterisk-wrapped emote describing how the player moves, the player's manner of arrival MUST appear in the opening beat of your narration. Use the player's exact word(s) — do not substitute or paraphrase. Scene description follows through that arrival, not before it. Movement verbs (run, creep, sashay, sneak, dance, etc.) describe expressive style only — not checks, not speed, not systems. Plain directional input ("go south") requires no special treatment.\n`
+      ? `\nMOVEMENT STYLE: "${_movementDisplayInput}"\nIf the input contains any movement verb, style word, or asterisk-wrapped emote describing how the player moves, the player's manner of arrival MUST appear in the opening beat of your narration. Use the player's exact word(s) — do not substitute or paraphrase. Scene description follows through that arrival, not before it. Movement verbs (run, creep, sashay, sneak, dance, etc.) describe expressive style only — not checks, not speed, not systems. Plain directional input ("go south") requires no special treatment.\n`
       : '';
 
     // NPC talk result instruction block (ambiguity / not-found control)
@@ -2012,7 +2016,7 @@ app.post('/narrate', async (req, res) => {
     // Pattern mirrors _narratorModeBlock: each block replaces (not modifies) the default narration task.
     // Mutually exclusive by _parsedAction value. Injected after all secondary blocks.
     const _movementTaskBlock = (_parsedAction === 'move')
-      ? `\nNARRATION TASK [MANDATORY]: This is a movement turn.\nThe player's authored action — "${_rawInput}" — is the narrative event.\nLead with how the player arrives or moves.\nThe environment is encountered as a result of movement, not the primary subject.\nDo NOT open with a room or environment description.\nIf the input contains movement style or an emote, use the exact wording.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
+      ? `\nNARRATION TASK [MANDATORY]: This is a movement turn.\nThe player's authored action — "${_movementDisplayInput}" — is the narrative event.\nLead with how the player arrives or moves.\nThe environment is encountered as a result of movement, not the primary subject.\nDo NOT open with a room or environment description.\nIf the input contains movement style or an emote, use the exact wording.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
       : '';
 
     const _lookTaskBlock = (_parsedAction === 'look')
@@ -2030,7 +2034,7 @@ app.post('/narrate', async (req, res) => {
     // Tail blocks (_movementTaskBlock etc.) remain as reinforcement layers.
     const _primaryNarrationBullet = (() => {
       if (_parsedAction === 'move') {
-        return `Write a vivid paragraph that opens with the player's specific movement. Their verb or manner from "${_rawInput}" is the first beat — the environment is encountered through that movement, not described before it. Do not lead with surroundings description.`;
+        return `Write a vivid paragraph that opens with the player's specific movement. Their verb or manner from "${_movementDisplayInput}" is the first beat — the environment is encountered through that movement, not described before it. Do not lead with surroundings description.`;
       }
       if (_parsedAction === 'look') {
         return `Write a vivid paragraph anchored to the player's act of looking. What they observe unfolds through their attention — do not open with surroundings as if no action occurred.`;

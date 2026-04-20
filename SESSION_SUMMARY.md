@@ -2,6 +2,92 @@
 
 ---
 
+## Session: Narration Diagnostics Enhancement (v1.61.0)
+
+**Session Date:** April 20, 2026
+**Outcome:** v1.61.0 complete — live narration pipeline visibility and real-time diagnostics monitor added to existing diagnostics panel
+
+### What Was Built
+
+**Diagnostics Monitor (pinned top of diagnostics panel)**
+- Runs cross-field mismatch checks every turn against `turn_history[last]`, `narration_debug`, `debug`, and `movement` objects
+- Two visual tiers: `VIOLATION` (red, hard contradictions/failures) and `NOTICE` (amber, informational states)
+- Violations checked:
+  - Executed move path (not degraded, not legacy, not freeform) with no `movement` object in response
+  - `continuity_extraction_success === false` (strict equality — `null` is treated as n/a, not failure)
+  - `continuity_injected === false` on `turn_number > 1`
+  - `say` channel + `freeform_block_active` simultaneously (contradictory)
+  - `do` channel + `narrator_mode_active` simultaneously (contradictory)
+  - `soliloquy_active` + `narrator_mode_active` simultaneously (mutually exclusive)
+  - QA-017 `severity === 'high'` items from `turn_history[last].diagnostics`
+- Notices surfaced:
+  - `movement.success === false` — engine rejected movement, may be expected (blocked travel)
+  - `debug.degraded_from` set — degraded path with reason
+  - `debug.parser === 'legacy'` — legacy parser path
+  - Visible NPCs with `npc_name === null` and no `npc_updates` emitted — observational, not accusatory
+  - QA-017 medium/low severity items
+- Green "No violations or notices" when all checks pass
+
+**Narration Pipeline Section (appended at bottom of diagnostics panel)**
+- Routing row: `channel → parser → action (confidence) → path`, e.g. `do → semantic → move (0.87) → SEMANTIC_PARSER_PATH` or `do → semantic → examine (0.41) → DEGRADED_FREEFORM [TARGET_NOT_FOUND]`
+- 5-pill flag matrix (green = active, grey = inactive): `FREEFORM` | `NARRATOR_MODE` | `SOLILOQUY` | `MOVE_TASK` | `DEGRADED`
+- Movement resolution row (move turns only, hidden otherwise): `raw: "n" → resolved: north → (45,62) → (45,63)` — shows `movement.from`, `movement.to`, `movement.direction` against raw input
+- Continuity throughput row (non-first turns): `injected: 1240 chars | extract: OK | evicted: 0 | locomotion: traversing | mode: ambient` — derives from `narration_debug` fields
+
+### Design Decisions
+- Panel naming discipline: "violations" only for genuine contradictions/failures; informational states labelled "NOTICE" throughout — no mixed-weight presentation
+- `movement.success === false` demoted to NOTICE (not violation) — blocked travel is a valid resolved outcome, not a system error
+- NPC name notice is observational only — unnamed visible NPCs are legitimate depending on turn timing
+- `continuity_extraction_success` treated as boolean ternary: `=== false` = FAIL, `=== null` = n/a, `=== true` = OK
+- 5-pill set instead of 12 — pills chosen for immediate diagnostic meaning: `FREEFORM`, `NARRATOR_MODE`, `SOLILOQUY`, `MOVE_TASK`, `DEGRADED`. All others (emote, do_intent, pre_speech, etc.) are derivable from routing row or too niche for first-class visual weight
+- Parser degraded / legacy surfaced as NOTICE, not violation — a degraded path is sometimes correct behavior under imperfect input
+- NPC name leak string search cut — brittle, false positives, deferred indefinitely
+- FREEFORM blue badge cut — redundant with routing row
+- No server changes — all data was already in the response payload
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `Index.html` | Before `diagLog.innerHTML` — compute block for `_monitorHtml` + `_pipelineHtml`; `diagLog.innerHTML` template — `${_monitorHtml}` prepended, `${_pipelineHtml}` appended after ENTRY RESOLVER section |
+
+---
+
+## Session: Copy Story Chronological Fix (v1.60.0)
+
+**Session Date:** April 20, 2026
+**Outcome:** v1.60.0 complete — single-line fix; copy story now outputs turns in correct play order
+
+### What Was Built
+
+- Removed `.reverse()` from `copyStory()` in `Index.html`
+- `turn_history` is push-ordered (T1 at index 0, TN at last index) — the reverse was producing a newest-first anti-chronological transcript
+- Pasted story now reads T1 → TN in correct play order
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `Index.html` | `copyStory()` — removed `[...turnHistory].reverse()`, now iterates `turnHistory` directly |
+
+---
+
+## Session: Body Size + Player Input Fixes (v1.59.1)
+
+**Session Date:** April 20, 2026
+**Outcome:** v1.59.1 complete — two small fixes shipped alongside v1.59.0
+
+### What Was Built
+
+- `express.json` body size limit raised to `10mb` in `index.js` — prevents payload rejection when `client_state` (full serialized gameState) is included in request body after session persistence was added in v1.59.0
+- `copyStory()` includes player input lines (`> input`) before each narrative paragraph — story transcript now shows what the player typed, not just the narration responses
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `index.js` | `express.json` middleware — limit raised from default to `'10mb'` |
+| `Index.html` | `copyStory()` — added `input?.raw` prefix line per turn |
+
+---
+
 ## Session: Spatial Authority Enforcement + Session Persistence (v1.59.0)
 
 **Session Date:** April 20, 2026
