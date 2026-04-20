@@ -172,7 +172,7 @@ function checkEviction(gameState) {
     let layerLabel;
     if (archiveDepth === 3) layerLabel = `Inside ${ac.local_space_name_when_set || localSpaceName || 'interior'} (L3)`;
     else if (archiveDepth === 2) layerLabel = `Inside ${ac.site_name_when_set || siteName || 'site'} (L2)`;
-    else layerLabel = 'Overworld (L1)';
+    else layerLabel = 'Overworld (L0)';
     gameState.world.narrative_memory.push({
       ...ac,
       layer_label: layerLabel,
@@ -548,7 +548,7 @@ function buildContinuityBlock(gameState) {
   }
 
   const block = lines.join('\n');
-  console.log(`[CONTINUITY] block: ${block.length} chars`);
+  console.log(`[CONTINUITY] block: ${block.length} chars, prior memories total: ${priorMemories.length}, rendered: ${priorMemories.length}`);
   return block;
 }
 

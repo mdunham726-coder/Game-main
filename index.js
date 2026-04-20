@@ -1589,6 +1589,7 @@ app.post('/narrate', async (req, res) => {
         const inferredKind = (parsed && parsed.action === "move") ? "MOVE" : "FREEFORM";
         inputObj = mapActionToInput(action, inferredKind);
         inputObj.player_intent.channel = resolvedChannel;
+        if (parsed) inputObj.player_intent.action = parsed.action; // mirror what semantic path sets explicitly
         if (parsed && parsed.action === "move" && parsed.dir) {
           inputObj.player_intent.dir = parsed.dir;
         }
@@ -1913,7 +1914,8 @@ app.post('/narrate', async (req, res) => {
     const _engineMsgBlock = _engineMsg ? `\nSYSTEM NOTE: ${_engineMsg}\n` : '';
 
     // Fix 6: When player moved (action === 'move') and is at L0, clarify new cell context.
-    const _actionType = engineOutput?.actions?.action || '';
+    // Source: inputObj.player_intent.action — engineOutput never carries an actions field.
+    const _actionType = inputObj?.player_intent?.action || '';
     const _movedNote = (_actionType === 'move' && _narDepth === 1)
       ? '\nNOTE: Player moved to a new overworld cell. Any sites visible here belong to this cell — they are not changes to the previous location.\n'
       : '';
@@ -1928,7 +1930,8 @@ app.post('/narrate', async (req, res) => {
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
     // parsedIntent is populated AFTER narration — do not reference here.
-    const _parsedAction = engineOutput?.actions?.action || '';
+    // Source: inputObj.player_intent.action — engineOutput never carries an actions field.
+    const _parsedAction = inputObj?.player_intent?.action || '';
     const _rawInput = (action || '').trim();
     const _DIRECTION_SHORTHAND = {n:'north',s:'south',e:'east',w:'west',ne:'northeast',nw:'northwest',se:'southeast',sw:'southwest',u:'up',d:'down'};
     const _movementDisplayInput = (_parsedAction === 'move' && _DIRECTION_SHORTHAND[_rawInput.toLowerCase()])
