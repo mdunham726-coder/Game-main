@@ -669,7 +669,127 @@ if (!_lrt) {
     <div style="margin-left:8px;color:#0af">-> Resolver: ${_summary}</div>
   `;
 }
+// ── Narration Pipeline + Diagnostics Monitor ─────────────────────────────────
+const _lastTurnFull = data.turn_history?.[data.turn_history.length - 1] || {};
+const _narDebug = _lastTurnFull.narration_debug || {};
+const _parsedIntent = _lastTurnFull.input?.parsed_intent || {};
+const _mvData = _lastTurnFull.movement || null;
+const _qa017Data = _lastTurnFull.diagnostics || [];
+const _dbgData = data.debug || {};
+const _isFirstTurnDiag = _lastTurnFull.is_initialization || false;
+const _turnNumDiag = _lastTurnFull.turn_number ?? diag.turn_counter ?? 0;
+const _pAction = _parsedIntent.parsed_action || '';
+const _isParserDegraded = !!_dbgData.degraded_from;
+const _isParserLegacy = _dbgData.parser === 'legacy';
+const _isFreeformActive = !!_dbgData.freeform_block_active;
+
+const _diagViolations = [];
+if (_pAction === 'move' && !_isParserDegraded && !_isFreeformActive && !_isParserLegacy && _mvData === null) {
+  _diagViolations.push('executed move path produced no movement object');
+}
+if (_narDebug.continuity_extraction_success === false) {
+  _diagViolations.push('continuity state not captured (extraction failed)');
+}
+if (_narDebug.continuity_injected === false && !_isFirstTurnDiag && _turnNumDiag > 1) {
+  _diagViolations.push('narrator sent no continuity context');
+}
+if (_dbgData.channel === 'say' && _isFreeformActive) {
+  _diagViolations.push('say channel + FREEFORM block active (contradictory)');
+}
+if (_dbgData.channel === 'do' && _narDebug.narrator_mode_active) {
+  _diagViolations.push('do channel + NARRATOR_MODE active (contradictory)');
+}
+if (_narDebug.soliloquy_active && _narDebug.narrator_mode_active) {
+  _diagViolations.push('SOLILOQUY + NARRATOR_MODE both active (mutually exclusive)');
+}
+_qa017Data.filter(q => q.severity === 'high').forEach(q => _diagViolations.push('[QA-017] ' + q.type + (q.detail ? ': ' + q.detail : '')));
+
+const _diagNotices = [];
+if (_mvData && _mvData.success === false) {
+  _diagNotices.push('engine rejected movement \u2014 may be expected (blocked travel)');
+}
+if (_isParserDegraded) _diagNotices.push('degraded from: ' + _dbgData.degraded_from);
+if (_isParserLegacy) _diagNotices.push('legacy parser path');
+const _vNpcsMonitor = data.state?.world?.active_local_space?._visible_npcs || data.state?.world?.active_site?._visible_npcs || [];
+const _npcNullCountM = _vNpcsMonitor.filter(n => n.npc_name === null).length;
+const _lncMonitor = data.state?.world?._lastNpcCapture || null;
+if (_npcNullCountM > 0 && (!_lncMonitor || !_lncMonitor.detected)) {
+  _diagNotices.push(_npcNullCountM + ' visible NPC(s) with no name in registry');
+}
+_qa017Data.filter(q => q.severity === 'medium' || q.severity === 'low')
+  .forEach(q => _diagNotices.push('[QA-017] ' + q.type + (q.detail ? ': ' + q.detail : '')));
+
+const _monitorHtml = (() => {
+  const _vH = _diagViolations.map(v => '<div style="color:#e74c3c;margin-left:4px">&#x2717; VIOLATION: ' + _escHtml(v) + '</div>').join('');
+  const _nH = _diagNotices.map(n => '<div style="color:#f39c12;margin-left:4px">&#x26A0; NOTICE: ' + _escHtml(n) + '</div>').join('');
+  if (_diagViolations.length || _diagNotices.length) {
+    return '<div style="margin-bottom:6px;border:1px solid #553333;padding:5px;background:#0d0808">'
+      + '<div style="color:#aaa;margin-bottom:3px;font-size:0.8em;letter-spacing:0.06em;text-transform:uppercase">Diagnostics Monitor</div>'
+      + _vH + _nH + '</div>';
+  }
+  return '<div style="margin-bottom:6px;border:1px solid #1a3a1a;padding:5px;background:#080d08">'
+    + '<div style="color:#aaa;margin-bottom:3px;font-size:0.8em;letter-spacing:0.06em;text-transform:uppercase">Diagnostics Monitor</div>'
+    + '<div style="color:#2ecc71;margin-left:4px">&#x2713; No violations or notices</div></div>';
+})();
+
+const _pipelineHtml = (() => {
+  const _rPath = _isParserDegraded
+    ? ('DEGRADED_FREEFORM [' + (_dbgData.degraded_from || '?') + ']')
+    : (_isParserLegacy ? 'FALLBACK_LEGACY_PATH' : (_pAction ? 'SEMANTIC_PARSER_PATH' : 'n/a'));
+  const _conf = _parsedIntent.confidence != null
+    ? (' (' + (typeof _parsedIntent.confidence === 'number' ? _parsedIntent.confidence.toFixed(2) : _parsedIntent.confidence) + ')')
+    : '';
+  const _rRow = (_dbgData.channel || 'do') + ' \u2192 ' + (_dbgData.parser || 'n/a') + ' \u2192 ' + (_pAction || 'n/a') + _conf + ' \u2192 ' + _rPath;
+  const _pillDefs = [
+    { label: 'FREEFORM',      active: _isFreeformActive },
+    { label: 'NARRATOR_MODE', active: !!_narDebug.narrator_mode_active },
+    { label: 'SOLILOQUY',     active: !!_narDebug.soliloquy_active },
+    { label: 'MOVE_TASK',     active: !!_narDebug.movement_task_active },
+    { label: 'DEGRADED',      active: _isParserDegraded },
+  ];
+  const _pillsHtml = _pillDefs.map(p =>
+    '<span style="display:inline-block;padding:1px 7px;margin-right:3px;border-radius:3px;font-size:0.78em;'
+    + 'background:' + (p.active ? '#1a472a' : '#151515') + ';'
+    + 'color:' + (p.active ? '#2ecc71' : '#444') + ';'
+    + 'border:1px solid ' + (p.active ? '#2ecc71' : '#2a2a2a') + '">'
+    + p.label + '</span>'
+  ).join('');
+  let _mvRow = '';
+  if (_pAction === 'move' && _mvData) {
+    const _rawIn = _escHtml(_parsedIntent.raw_input || _dbgData.input || '?');
+    const _res   = _escHtml(_mvData.direction || '?');
+    const _fromC = _mvData.from
+      ? '(' + (_mvData.from.lx ?? _mvData.from.x ?? '?') + ',' + (_mvData.from.ly ?? _mvData.from.y ?? '?') + ')'
+      : '(?)';
+    const _toC   = _mvData.to
+      ? '(' + (_mvData.to.lx ?? _mvData.to.x ?? '?') + ',' + (_mvData.to.ly ?? _mvData.to.y ?? '?') + ')'
+      : '(?)';
+    _mvRow = '<div style="margin-top:3px;color:#aaa;font-size:0.85em">movement: raw: &quot;' + _rawIn + '&quot; \u2192 resolved: ' + _res + ' \u2192 ' + _fromC + ' \u2192 ' + _toC + '</div>';
+  } else if (_pAction === 'move') {
+    _mvRow = '<div style="margin-top:3px;color:#555;font-size:0.85em">movement: (no movement object this turn)</div>';
+  }
+  let _cRow = '';
+  if (!_isFirstTurnDiag) {
+    const _exOk  = _narDebug.continuity_extraction_success;
+    const _exStr = _exOk === true  ? '<span style="color:#2ecc71">OK</span>'
+      : _exOk === false ? '<span style="color:#e74c3c">FAIL</span>'
+      : '<span style="color:#666">n/a</span>';
+    const _injStr = _narDebug.continuity_injected === false
+      ? '<span style="color:#e74c3c">none</span>'
+      : ((_narDebug.continuity_block_chars != null ? _narDebug.continuity_block_chars : '?') + ' chars');
+    const _evicted = _narDebug.continuity_evicted ?? 0;
+    const _loco = _escHtml(_narDebug.continuity_snapshot?.player_locomotion || '(unknown)');
+    const _mode = _escHtml(_narDebug.continuity_snapshot?.interaction_mode || '(unknown)');
+    _cRow = '<div style="margin-top:3px;color:#aaa;font-size:0.85em">continuity: injected: ' + _injStr + ' | extract: ' + _exStr + ' | evicted: ' + _evicted + ' | locomotion: ' + _loco + ' | mode: ' + _mode + '</div>';
+  }
+  return '<div style="margin-top:6px;border-top:1px solid #333;padding-top:4px;color:#888">NARRATION PIPELINE (this turn)</div>'
+    + '<div style="font-family:monospace;font-size:0.85em;color:#bbb;margin-bottom:4px">' + _escHtml(_rRow) + '</div>'
+    + '<div style="margin-bottom:4px">' + _pillsHtml + '</div>'
+    + _mvRow + _cRow;
+})();
+
 diagLog.innerHTML = `
+  ${_monitorHtml}
   <div><strong>Turn:</strong> ${diag.first_turn ? 'FIRST' : 'ongoing'} (Counter: ${diag.turn_counter ?? 0})</div>
   <div><strong>Channel:</strong> ${data.debug?.channel || 'do'}${data.state?.help_log?.length ? ` | Help queries this session: ${data.state.help_log.length}` : ''}</div>
   <div><strong>Position:</strong> Macro: ${diag.position_macro || 'unknown'} | Local: ${diag.position_local || 'unknown'} | Layer: ${{ 1: 'L0', 2: 'L1', 3: 'L2', 4: 'L3' }[diag.current_depth] || 'L0'} | Container: ${diag.container_name || '(missing)'}</div>
@@ -738,6 +858,7 @@ diagLog.innerHTML = `
   ${_mirrorHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">ENTRY RESOLVER (last turn)</div>
   ${_resolverHtml}
+  ${_pipelineHtml}
 `;
 
       } catch (err) {
