@@ -2,6 +2,69 @@
 
 ---
 
+## Session: Movement Fix + Narrative Memory Persistence — Bug Triage (v1.62.1)
+
+**Session Date:** April 20, 2026
+**Outcome:** v1.62.1 complete — fixed critical `_parsedAction` source bug (movement prompt blocks never firing), corrected L0 layer label in narrative memory, and added observability logging for stress testing
+
+### What Was Built
+
+**Critical fix: `_parsedAction` and `_actionType` source (`index.js`)**
+- Both were reading `engineOutput?.actions?.action` — a structurally impossible path. `Engine.buildOutput` returns `{ blocks, state }` only; it never includes an `actions` field. Both were always `''`.
+- Movement prompt blocks (`_movementFlavorBlock`, `_movementTaskBlock`, `_primaryNarrationBullet`) and the `_movedNote` overworld cell clarification were silently disabled since the day they were written.
+- The bug was latent for over a month. The model compensated via scene inference (position changed, cell type changed → infer movement). Continuity injection exposed it: `Locomotion: standing` from prior turn now injected with "do not change established details" — model obeyed continuity over absent movement blocks → "You stand still."
+- Fix: both now read `inputObj?.player_intent?.action`, which the semantic path sets explicitly at line 1466.
+
+**Legacy parser path gap closed (`index.js`)**
+- Legacy fallback set `kind: 'MOVE'` on `inputObj` but never set `.action`. Added `if (parsed) inputObj.player_intent.action = parsed.action;` — mirrors what the semantic path does explicitly.
+
+**Label bug: `'Overworld (L1)'` → `'Overworld (L0)'` (`NarrativeContinuity.js`)**
+- `checkEviction` archive label for `archiveDepth === 1` was `'Overworld (L1)'`. Depth 1 = L0 in the engine's layer convention (`_engineSpatialBlock` at same depth says `Layer: L0`). Memory labels now consistent with all other engine output.
+
+**Observability for stress testing (`NarrativeContinuity.js`)**
+- `buildContinuityBlock` console.log expanded: now reports `block: N chars, prior memories total: M, rendered: M`. Enables correlating token cost (chars) vs. memory entry count during stress testing of unbounded injection (Option A).
+
+### Continuity of Architectural Decision
+- Option A (inject all memories, no cap) confirmed as the working policy. A render cap was considered and rejected — it recreates memory loss with a longer fuse, which violates the governing principle (layer crossing is not a reason to lose memory). Real limits will be determined empirically from observed model behavior under load.
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `index.js` | Line ~1916 `_actionType` — source changed to `inputObj?.player_intent?.action`; Line ~1931 `_parsedAction` — same; Legacy fallback block — added `.action` stamp |
+| `NarrativeContinuity.js` | `checkEviction` — `'Overworld (L1)'` → `'Overworld (L0)'`; `buildContinuityBlock` — log expanded with memory count |
+
+---
+
+## Session: Movement Direction Fix + Narrative Memory Persistence (v1.62.0)
+
+**Session Date:** April 20, 2026
+**Outcome:** v1.62.0 complete — two independent fixes: bare direction shorthand narration bug patched; continuity eviction redesigned as archive-before-null with full provenance
+
+### What Was Built
+
+**Part A — Movement direction shorthand fix (`index.js`)**
+- Bare shorthands (`s`, `n`, `e`, `w`, `ne`, `nw`, `se`, `sw`, `u`, `d`) were being passed verbatim into movement prompt blocks instructing the narrator to "use the player's exact words" → narrator rendered "you press the s key" or "you move in the s direction"
+- `_movementDisplayInput` added after `_rawInput`: maps bare shorthand keys to full cardinal words (`s` → `south`). Rich phrases (`sneak east`, `run north`) don't match any key and pass through unchanged.
+- Three substitutions: `_movementFlavorBlock`, `_movementTaskBlock`, `_primaryNarrationBullet` — all now reference `_movementDisplayInput` instead of `_rawInput`
+- Bug was pre-existing since v1.49.0/v1.53.0, not caused by recent changes
+
+**Part B — Narrative memory persistence (`NarrativeContinuity.js`)**
+- Old behavior: `checkEviction` deleted `active_continuity` on layer/container crossing. People do not forget they were inside a building because they stepped outside — eviction was architecturally wrong.
+- New behavior: archive before null. Before nulling, push full `active_continuity` snapshot into `gameState.world.narrative_memory[]` with provenance fields:
+  - `layer_label` — human-readable: `"Overworld (L0)"`, `"Inside The Rusty Flagon (L2)"`, `"Inside common room (L3)"`
+  - `site_name_when_set`, `local_space_name_when_set` — captured at freeze time so labels are accurate after world state shifts
+- `freezeContinuityState`: now writes `site_name_when_set` and `local_space_name_when_set` directly into `active_continuity` at write time; initializes `narrative_memory = []` if absent
+- `buildContinuityBlock`: no longer returns `''` when `active_continuity` is null if prior memories exist. Renders `[PRIOR LOCATION MEMORY]` section (most recent first) beneath current scene. Each entry labeled `[Turn N — Inside The Rusty Flagon (L2)]` with scene focus, locomotion, physical state, interaction, unresolved threads, tone.
+- `narrative_memory` array never pruned — grows indefinitely. Render policy (if any cap is ever needed) is a `buildContinuityBlock` concern, not an architectural cap on the array.
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `index.js` | After `_rawInput` — `_DIRECTION_SHORTHAND` map + `_movementDisplayInput`; `_movementFlavorBlock` — `_rawInput` → `_movementDisplayInput`; `_movementTaskBlock` — same; `_primaryNarrationBullet` move branch — same |
+| `NarrativeContinuity.js` | `checkEviction` — archive block before null; `freezeContinuityState` — `site_name_when_set`/`local_space_name_when_set` added + `narrative_memory` init guard; `buildContinuityBlock` — guard changed, prior memory render section added |
+
+---
+
 ## Session: Narration Diagnostics Enhancement (v1.61.0)
 
 **Session Date:** April 20, 2026
