@@ -1772,9 +1772,14 @@ app.post('/narrate', async (req, res) => {
     }
     console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, gameState?.player?.position, _narActiveSite?._visible_npcs?.length ?? 'n/a');
     // v1.56.0: Eviction check + continuity block pre-build (after computeVisibleNpcs for fresh _visible_npcs)
-    const { evicted: _continuityEvicted } = NC.checkEviction(gameState);
+    NC.resetDiagnostics();
+    const { evicted: _continuityEvicted, reason: _continuityEvictionReason } = NC.checkEviction(gameState);
+    if (_continuityEvicted) {
+      NC.pushAlert({ severity: 'Info', type: 'continuity_eviction', description: `Continuity evicted (${_continuityEvictionReason})`, entity_ref: null, turn: (gameState.turn_history ? gameState.turn_history.length : 0) + 1 });
+    }
     const _continuityInjected = gameState.world.active_continuity !== null;
     const _continuityBlock = NC.buildContinuityBlock(gameState);
+    const _continuityBlockSnapshot = gameState.world.active_continuity ? JSON.parse(JSON.stringify(gameState.world.active_continuity)) : null;
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
     const _engineMsg = gameState?.world?._engineMessage || null;
     if (_engineMsg) gameState.world._engineMessage = null;
@@ -2310,6 +2315,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
                           console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true ("${_guardName}" confirmed in narration)`);
                         } else {
                           console.warn(`[NAME GUARD] Rejected is_learned flip for "${_guardName}" (${_nu.id}) — name absent from narration`);
+                          NC.pushAlert({ severity: 'Critical', type: 'learned_name_violation', description: `is_learned flip rejected — "${_guardName}" not in narration`, entity_ref: `${_guardName} (${_nu.id})`, turn: (gameState.turn_history ? gameState.turn_history.length : 0) + 1 });
                         }
                       } else {
                         // npc_name not yet assigned — no name to validate against, allow flip
@@ -2745,7 +2751,9 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         continuity_injected: _continuityInjected,
         continuity_extraction_success: _continuityExtractionSuccess,
         continuity_evicted: _continuityEvicted,
-        continuity_block_chars: _continuityBlock.length
+        continuity_block_chars: _continuityBlock.length,
+        continuity_snapshot: _continuityBlockSnapshot,
+        continuity_diagnostics: NC.getLastRunDiagnostics()
       },
       logs: turnLogs
     };

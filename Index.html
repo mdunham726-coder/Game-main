@@ -143,6 +143,14 @@
   <div id="diagnostic-log"></div>
 </div>
 
+<!-- Continuity Panel -->
+<div id="continuityPanel" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #3498db; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #ccc;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+    <h3 style="margin: 0; color: #3498db;">CONTINUITY</h3>
+  </div>
+  <div id="continuity-live" style="color: #555; font-size: 11px;">(no continuity data yet)</div>
+</div>
+
 <!-- DeepSeek Debug Console -->
 <div id="debugConsole" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #4a90e2; border-radius: 4px;">
   <h3 style="margin: 0 0 10px 0; color: #4a90e2;">ASK DEEPSEEK</h3>
@@ -183,8 +191,20 @@
   <div style="margin-bottom: 10px;">
     <button onclick="window.open('Map.html', 'GameMap')" style="width: 100%; padding: 10px; font-size: 14px; background: #8e44ad; color: white; border: none; cursor: pointer; border-radius: 3px;">Open Map</button>
   </div>
+  <div style="margin-bottom: 10px;">
+    <button onclick="copyStory()" style="width: 100%; padding: 10px; font-size: 14px; background: #2c3e50; color: white; border: none; cursor: pointer; border-radius: 3px;">Copy Story</button>
+  </div>
   <div id="logsLoading" style="display: none; color: #2ecc71; margin-top: 10px; font-size: 12px;">Processing logs...</div>
   <div id="logsResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #2ecc71; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.4; max-height: 500px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word; font-family: monospace;"></div>
+</div>
+
+<!-- Continuity Logs Panel -->
+<div id="continuityLogsPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #3498db; border-radius: 4px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+    <h3 style="margin: 0; color: #3498db;">CONTINUITY LOG</h3>
+    <button onclick="navigator.clipboard.writeText(_continuityLogBuffer.join('\n'))" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Continuity Log</button>
+  </div>
+  <div id="continuity-log" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #0f0;"></div>
 </div>
 
   </div>
@@ -459,6 +479,8 @@
         lastGameResponse = data;
         window.lastGameResponse = data; // Keep window-exposed copy in sync for Map.html
         if (_wgIsFirstTurn) populateWgOverlay(data.worldgen_log || null);
+        renderContinuityPanel(data);
+        appendContinuityLogEntry(data);
 
         // A2: Reset QA export history on new game
         if (data.diagnostics?.first_turn) {
@@ -466,6 +488,14 @@
           lastExportedTurn = -1;
           firstSessionTimestamp = null;
           console.log('[QA] New game detected, reset export history');
+          // v1.58.0: Continuity session cleanup
+          _continuityLogBuffer = [];
+          _entityDisplayCache = {};
+          _continuityAlertHistory = new Set();
+          const _clDom = document.getElementById('continuity-log');
+          if (_clDom) _clDom.innerHTML = '';
+          const _clive = document.getElementById('continuity-live');
+          if (_clive) _clive.innerHTML = '<span style="color:#555">(no continuity data yet)</span>';
         }
 
 const narrative = data.narrative || data.error || 'No response from server';
@@ -1432,7 +1462,15 @@ primary_bullet : ${nd.primary_bullet_override || '(none)'}
 movement_task  : ${nd.movement_task_active}
 movement_flavor: ${nd.movement_flavor_active}
 narrator_mode  : ${nd.narrator_mode_active}
-soliloquy      : ${nd.soliloquy_active}`;
+soliloquy      : ${nd.soliloquy_active}
+-- Continuity
+injected       : ${nd.continuity_injected}
+evicted        : ${nd.continuity_evicted}
+block_chars    : ${nd.continuity_block_chars ?? 0}
+extraction     : ${nd.continuity_extraction_success === true ? 'OK' : nd.continuity_extraction_success === false ? 'FAIL' : 'n/a'}${nd.continuity_diagnostics?.rejection_reason ? ' (' + nd.continuity_diagnostics.rejection_reason + ')' : ''}
+alerts         : ${(nd.continuity_diagnostics?.alerts?.length ?? 0)}${(nd.continuity_diagnostics?.alerts?.length > 0) ? ' [' + nd.continuity_diagnostics.alerts.map(a => a.severity + '/' + a.type).join(', ') + ']' : ''}
+entities_upd   : ${(nd.continuity_diagnostics?.entity_updates_applied || []).join(', ') || '(none)'}
+entities_clr   : ${(nd.continuity_diagnostics?.entity_continuity_cleared || []).join(', ') || '(none)'}`;
         }
       }
 
@@ -1596,6 +1634,186 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         logsResponse.style.color = '#e74c3c';
       }
     }
+
+    // ========== v1.58.0: NARRATIVE CONTINUITY OBSERVABILITY ==========
+
+    // State vars
+    let _continuityLogBuffer = [];      // rolling text entries, capped at 1000
+    let _entityDisplayCache = {};       // { npc_id: { turnNumber, posture, activity, ... } }
+    let _continuityAlertHistory = new Set(); // alert keys from prev turn (for lifecycle New/Ongoing/Resolved)
+
+    function renderContinuityPanel(data) {
+      const liveDom = document.getElementById('continuity-live');
+      if (!liveDom) return;
+      const turnHistory = data.turn_history || [];
+      if (turnHistory.length === 0) return;
+      const turn = turnHistory[turnHistory.length - 1];
+      const nd = turn.narration_debug || {};
+      const diag = nd.continuity_diagnostics || {};
+      const snap = nd.continuity_snapshot;
+      const turnNumber = turn.turn_number || turnHistory.length;
+      const extractionSuccess = nd.continuity_extraction_success;
+      const rejectionReason = diag.rejection_reason || null;
+      const updatedIds = diag.entity_updates_applied || [];
+      const clearedIds = diag.entity_continuity_cleared || [];
+      const currentAlerts = diag.alerts || [];
+
+      // Update entity display cache with NPC data from the site
+      const allNpcs = data.state?.world?.active_local_space?.npcs
+        || data.state?.world?.active_site?.npcs
+        || [];
+      for (const npcId of updatedIds) {
+        const npc = allNpcs.find(n => n.id === npcId);
+        if (npc && npc.narrative_state) {
+          _entityDisplayCache[npcId] = { turnNumber, npc_id: npcId, ...npc.narrative_state };
+        } else {
+          _entityDisplayCache[npcId] = { turnNumber, npc_id: npcId };
+        }
+      }
+
+      // Alert lifecycle management
+      const currentKeys = new Set(currentAlerts.map(a => `${a.type}:${a.entity_ref || ''}`));
+      const resolvedKeys = [..._continuityAlertHistory].filter(k => !currentKeys.has(k));
+      const alertsForDisplay = [
+        ...currentAlerts.map(a => ({
+          ...a,
+          lifecycle: _continuityAlertHistory.has(`${a.type}:${a.entity_ref || ''}`) ? 'Ongoing' : 'New'
+        })),
+        ...resolvedKeys.map(k => {
+          const colonIdx = k.indexOf(':');
+          const type = k.slice(0, colonIdx);
+          const entity_ref = k.slice(colonIdx + 1) || null;
+          return { type, entity_ref, severity: 'Info', description: '(cleared)', lifecycle: 'Resolved' };
+        })
+      ];
+
+      let html = '';
+
+      // Status row
+      const exColor = extractionSuccess === true ? '#2ecc71' : extractionSuccess === false ? '#e74c3c' : '#888';
+      const exLabel = extractionSuccess === true ? 'OK' : extractionSuccess === false ? `FAIL${rejectionReason ? ' (' + rejectionReason + ')' : ''}` : 'n/a';
+      const injColor = nd.continuity_injected ? '#2ecc71' : '#888';
+      const evColor = nd.continuity_evicted ? '#e67e22' : '#888';
+      html += `<div style="margin-bottom:8px; display:flex; gap:12px; flex-wrap:wrap; font-size:11px;">`;
+      html += `<span style="color:${exColor}">Extraction: ${exLabel}</span>`;
+      html += `<span style="color:${injColor}">Injected: ${nd.continuity_injected ? 'YES' : 'NO'} (${nd.continuity_block_chars ?? 0} chars)</span>`;
+      html += `<span style="color:${evColor}">Evicted: ${nd.continuity_evicted ? 'YES' : 'NO'}</span>`;
+      html += `</div>`;
+
+      // Active continuity snapshot fields
+      if (snap) {
+        html += `<div style="margin-bottom:6px; background:#111; padding:6px; border-radius:3px; font-size:11px;">`;
+        html += `<div style="color:#3498db; margin-bottom:3px;">ACTIVE CONTINUITY (turn ${turnNumber})</div>`;
+        html += `<div>locomotion&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${snap.player_locomotion || 'n/a'}</span></div>`;
+        html += `<div>physical_state&nbsp;&nbsp;: <span style="color:#ccc">${snap.player_physical_state || 'n/a'}</span></div>`;
+        html += `<div>tone&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${snap.tone || 'n/a'}</span></div>`;
+        html += `<div>interaction_mode : <span style="color:#ccc">${snap.interaction_mode || 'n/a'}</span></div>`;
+        html += `<div>int_status&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${snap.interaction_status || 'n/a'}</span></div>`;
+        if (snap.scene_focus_primary) {
+          let focusStr = snap.scene_focus_primary;
+          if (snap.scene_focus_tier) {
+            const secs = Object.entries(snap.scene_focus_tier).filter(([, v]) => v === 'secondary').map(([k]) => k);
+            if (secs.length) focusStr += ` | sec: ${secs.join(', ')}`;
+          }
+          html += `<div>scene_focus&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${focusStr}</span></div>`;
+        }
+        html += `</div>`;
+      } else {
+        html += `<div style="color:#555; font-size:11px; margin-bottom:6px;">(no active_continuity snapshot)</div>`;
+      }
+
+      // Entity update/clear summary
+      if (updatedIds.length > 0 || clearedIds.length > 0) {
+        html += `<div style="margin-bottom:6px; font-size:11px;">`;
+        if (updatedIds.length > 0) html += `<div style="color:#3498db;">Updated: ${updatedIds.join(', ')}</div>`;
+        if (clearedIds.length > 0) html += `<div style="color:#888;">Cleared: ${clearedIds.join(', ')}</div>`;
+        html += `</div>`;
+      }
+
+      // Alerts with lifecycle badges
+      if (alertsForDisplay.length > 0) {
+        html += `<div style="font-size:11px; margin-bottom:4px; color:#888; border-top:1px solid #333; padding-top:4px;">ALERTS</div>`;
+        for (const a of alertsForDisplay) {
+          const sevColor = a.severity === 'Critical' ? '#e74c3c' : a.severity === 'Warning' ? '#e67e22' : '#3498db';
+          const lcColor = a.lifecycle === 'New' ? '#2ecc71' : a.lifecycle === 'Ongoing' ? '#f39c12' : '#666';
+          html += `<div style="margin-bottom:3px; padding:3px 5px; background:#111; border-left:3px solid ${sevColor}; font-size:11px;">`;
+          html += `<span style="color:${sevColor}; font-weight:bold;">${a.severity}</span> `;
+          html += `<span style="background:${lcColor}; color:#000; padding:0 4px; border-radius:2px; font-size:10px;">${a.lifecycle}</span> `;
+          html += `<span style="color:#ccc;">${a.type}</span>`;
+          if (a.entity_ref) html += ` <span style="color:#888;">[${a.entity_ref}]</span>`;
+          html += `<div style="color:#aaa; margin-left:8px;">${a.description}</div>`;
+          html += `</div>`;
+        }
+      }
+
+      // Entity display cache — "last seen N turns ago"
+      const cachedEntities = Object.values(_entityDisplayCache);
+      if (cachedEntities.length > 0) {
+        html += `<div style="font-size:11px; margin-top:6px; color:#888; border-top:1px solid #333; padding-top:4px;">ENTITY CACHE (${cachedEntities.length})</div>`;
+        for (const e of cachedEntities) {
+          const turnsAgo = turnNumber - e.turnNumber;
+          const color = turnsAgo === 0 ? '#2ecc71' : '#888';
+          const detail = e.posture || e.activity || e.emotional_state || '?';
+          html += `<div style="font-size:10px; color:${color}; margin-left:4px;">${e.npc_id} — ${turnsAgo === 0 ? 'this turn' : `${turnsAgo} turn${turnsAgo !== 1 ? 's' : ''} ago`}: ${detail}</div>`;
+        }
+      }
+
+      liveDom.innerHTML = html;
+      _continuityAlertHistory = currentKeys;
+    }
+
+    function appendContinuityLogEntry(data) {
+      const logDom = document.getElementById('continuity-log');
+      const turnHistory = data.turn_history || [];
+      if (turnHistory.length === 0) return;
+      const turn = turnHistory[turnHistory.length - 1];
+      const nd = turn.narration_debug || {};
+      const diag = nd.continuity_diagnostics || {};
+      const turnNumber = turn.turn_number || turnHistory.length;
+      const extractionSuccess = nd.continuity_extraction_success;
+      const rejectionReason = diag.rejection_reason || null;
+      const alerts = diag.alerts || [];
+      const updatedIds = diag.entity_updates_applied || [];
+      const clearedIds = diag.entity_continuity_cleared || [];
+
+      const statusStr = extractionSuccess === true ? 'OK'
+        : extractionSuccess === false ? `FAIL:${rejectionReason || 'unknown'}` : 'n/a';
+      const alertStr = alerts.length > 0
+        ? ' | ALT:' + alerts.map(a => `${a.severity}/${a.type}`).join(',')
+        : '';
+      const entityStr = (updatedIds.length > 0 || clearedIds.length > 0)
+        ? ` | upd:[${updatedIds.join(',')}] clr:[${clearedIds.join(',')}]`
+        : '';
+      const entry = `T${turnNumber} | extract:${statusStr}${alertStr}${entityStr}`;
+
+      _continuityLogBuffer.push(entry);
+      if (_continuityLogBuffer.length > 1000) { _continuityLogBuffer.shift(); }
+
+      if (!logDom) return;
+      const displayEntries = _continuityLogBuffer.slice(-200);
+      logDom.innerHTML = displayEntries.map(e => {
+        const color = e.includes('FAIL') ? '#e74c3c' : e.includes('ALT:') ? '#e67e22' : '#0f0';
+        return `<div style="color:${color}; font-size:11px;">${e}</div>`;
+      }).join('');
+      logDom.scrollTop = logDom.scrollHeight;
+    }
+
+    async function copyStory() {
+      const turnHistory = lastGameResponse?.turn_history;
+      if (!turnHistory || turnHistory.length === 0) {
+        alert('No story yet. Start a game first!');
+        return;
+      }
+      const reversed = [...turnHistory].reverse();
+      const storyLines = reversed.map(t => t.narrative || '').filter(Boolean);
+      const story = storyLines.join('\n\n---\n\n');
+      try {
+        await navigator.clipboard.writeText(story);
+      } catch (err) {
+        alert('Copy failed: ' + err.message);
+      }
+    }
+
   </script>
 </body>
 </html>

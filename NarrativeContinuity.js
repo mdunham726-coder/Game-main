@@ -1,6 +1,6 @@
 'use strict';
 // =============================================================================
-// NarrativeContinuity.js — v1.56.0
+// NarrativeContinuity.js — v1.58.0
 // =============================================================================
 // Owner of all narrative continuity logic.
 // index.js is a consumer only — it calls these functions but owns nothing here.
@@ -12,9 +12,65 @@
 //
 // Phase 1 scope: Active Continuity + Entity Continuity
 // Phase 2 hooks: dialogue_state_ref, rolling_summary_ref (reserved null in schema)
+//
+// v1.58.0: Diagnostic API added — alert accumulator, rejection reason tracking,
+//   entity update/clear tracking, getLastRunDiagnostics() export.
 // =============================================================================
 
 const axios = require('axios');
+
+// -----------------------------------------------------------------------------
+// DIAGNOSTIC ACCUMULATOR
+// Resets every turn via resetDiagnostics(). Hard invariant — index.js calls this
+// exactly once per turn before any continuity logic executes.
+// No previous_ac_snapshot — delta is computed client-side from narration_debug
+// continuity_snapshot fields in turn_history. Single source of truth, no desync.
+// -----------------------------------------------------------------------------
+let _diagnostics = {
+  alerts: [],
+  rejection_reason: null,
+  entity_updates_applied: [],
+  entity_continuity_cleared: []
+};
+
+// -----------------------------------------------------------------------------
+// resetDiagnostics()
+// Hard overwrite — no partial reuse, no fallback state.
+// MUST be called exactly once per turn, before checkEviction.
+// -----------------------------------------------------------------------------
+function resetDiagnostics() {
+  _diagnostics = {
+    alerts: [],
+    rejection_reason: null,
+    entity_updates_applied: [],
+    entity_continuity_cleared: []
+  };
+}
+
+// -----------------------------------------------------------------------------
+// pushAlert(alert)
+// Called by index.js for engine-owned alert events (eviction, name guard).
+// Also called internally for Critical-class extraction failures.
+// Alert shape: { severity: 'Critical'|'Warning'|'Info', type: string,
+//               description: string, entity_ref: string|null, turn: number }
+// -----------------------------------------------------------------------------
+function pushAlert(alert) {
+  _diagnostics.alerts.push(alert);
+}
+
+// -----------------------------------------------------------------------------
+// getLastRunDiagnostics()
+// Returns the full diagnostic accumulator for this turn.
+// Called by index.js after extraction+freeze, injected into narration_debug.
+// -----------------------------------------------------------------------------
+function getLastRunDiagnostics() {
+  return {
+    alerts: [..._diagnostics.alerts],
+    rejection_reason: _diagnostics.rejection_reason,
+    entity_updates_applied: [..._diagnostics.entity_updates_applied],
+    entity_continuity_cleared: [..._diagnostics.entity_continuity_cleared]
+  };
+}
 
 // -----------------------------------------------------------------------------
 // EXTRACTION SYSTEM PROMPT
@@ -107,11 +163,16 @@ function checkEviction(gameState) {
 
   if (depthMismatch || siteMismatch || localSpaceMismatch) {
     gameState.world.active_continuity = null;
-    console.log(`[CONTINUITY] evicted (depth:${depthMismatch}, site:${siteMismatch}, ls:${localSpaceMismatch})`);
-    return { evicted: true };
+    const reasonParts = [];
+    if (depthMismatch) reasonParts.push('depth');
+    if (siteMismatch) reasonParts.push('site');
+    if (localSpaceMismatch) reasonParts.push('local_space');
+    const reason = reasonParts.join('+');
+    console.log(`[CONTINUITY] evicted (${reason})`);
+    return { evicted: true, reason };
   }
 
-  return { evicted: false };
+  return { evicted: false, reason: null };
 }
 
 // -----------------------------------------------------------------------------
@@ -166,6 +227,7 @@ async function runContinuityExtraction(narrationText, gameState) {
     const raw = response?.data?.choices?.[0]?.message?.content;
     if (!raw) {
       console.warn('[CONTINUITY] extraction: empty response from API');
+      _diagnostics.rejection_reason = 'empty_response';
       return null;
     }
 
@@ -177,19 +239,20 @@ async function runContinuityExtraction(narrationText, gameState) {
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
       console.warn('[CONTINUITY] extraction: JSON parse failed:', parseErr.message);
+      _diagnostics.rejection_reason = 'json_parse_failed';
       return null;
     }
 
     // Validate required top-level fields
     const ac = parsed?.active_continuity;
-    if (!ac) { console.warn('[CONTINUITY] extraction: missing active_continuity key'); return null; }
-    if (!ac.player_locomotion) { console.warn('[CONTINUITY] extraction: missing required player_locomotion'); return null; }
-    if (!ac.player_physical_state) { console.warn('[CONTINUITY] extraction: missing required player_physical_state'); return null; }
-    if (!ac.tone) { console.warn('[CONTINUITY] extraction: missing required tone'); return null; }
-    if (!ac.interaction_mode) { console.warn('[CONTINUITY] extraction: missing required interaction_mode'); return null; }
-    if (!ac.interaction_status) { console.warn('[CONTINUITY] extraction: missing required interaction_status'); return null; }
-    if (!ac.environment_continuity) { console.warn('[CONTINUITY] extraction: missing required environment_continuity'); return null; }
-    if (!Array.isArray(parsed?.entity_updates)) { console.warn('[CONTINUITY] extraction: missing entity_updates array'); return null; }
+    if (!ac) { console.warn('[CONTINUITY] extraction: missing active_continuity key'); _diagnostics.rejection_reason = 'missing_required_field:active_continuity'; return null; }
+    if (!ac.player_locomotion) { console.warn('[CONTINUITY] extraction: missing required player_locomotion'); _diagnostics.rejection_reason = 'missing_required_field:player_locomotion'; return null; }
+    if (!ac.player_physical_state) { console.warn('[CONTINUITY] extraction: missing required player_physical_state'); _diagnostics.rejection_reason = 'missing_required_field:player_physical_state'; return null; }
+    if (!ac.tone) { console.warn('[CONTINUITY] extraction: missing required tone'); _diagnostics.rejection_reason = 'missing_required_field:tone'; return null; }
+    if (!ac.interaction_mode) { console.warn('[CONTINUITY] extraction: missing required interaction_mode'); _diagnostics.rejection_reason = 'missing_required_field:interaction_mode'; return null; }
+    if (!ac.interaction_status) { console.warn('[CONTINUITY] extraction: missing required interaction_status'); _diagnostics.rejection_reason = 'missing_required_field:interaction_status'; return null; }
+    if (!ac.environment_continuity) { console.warn('[CONTINUITY] extraction: missing required environment_continuity'); _diagnostics.rejection_reason = 'missing_required_field:environment_continuity'; return null; }
+    if (!Array.isArray(parsed?.entity_updates)) { console.warn('[CONTINUITY] extraction: missing entity_updates array'); _diagnostics.rejection_reason = 'missing_required_field:entity_updates'; return null; }
 
     // Focus integrity: strict reject mode — any mismatch = extraction invalid, return null.
     // scene_focus_primary MUST match the entity keyed 'primary' in scene_focus_tier.
@@ -198,6 +261,8 @@ async function runContinuityExtraction(narrationText, gameState) {
       const primaryKey = Object.keys(ac.scene_focus_tier).find(k => ac.scene_focus_tier[k] === 'primary');
       if (primaryKey && ac.scene_focus_primary !== primaryKey) {
         console.warn(`[CONTINUITY] focus integrity mismatch — extraction rejected (scene_focus_primary "${ac.scene_focus_primary}" ≠ tier key "${primaryKey}")`);
+        _diagnostics.rejection_reason = 'focus_integrity_mismatch';
+        _diagnostics.alerts.push({ severity: 'Critical', type: 'focus_integrity_mismatch', description: `scene_focus_primary "${ac.scene_focus_primary}" ≠ tier key "${primaryKey}"`, entity_ref: null, turn: null });
         return null;
       }
       // Ensure unresolved_threads is always an array
@@ -211,7 +276,13 @@ async function runContinuityExtraction(narrationText, gameState) {
 
   } catch (err) {
     clearTimeout(timeoutHandle);
-    console.warn('[CONTINUITY] extraction failed:', err.message);
+    if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+      console.warn('[CONTINUITY] extraction failed (timeout):', err.message);
+      _diagnostics.rejection_reason = 'api_timeout';
+    } else {
+      console.warn('[CONTINUITY] extraction failed:', err.message);
+      _diagnostics.rejection_reason = 'api_error';
+    }
     return null;
   }
 }
@@ -268,6 +339,7 @@ function freezeContinuityState(extraction, gameState) {
       last_seen_turn: turnCount
     };
     updatedIds.add(entry.npc_id);
+    _diagnostics.entity_updates_applied.push(entry.npc_id);
     updatedCount++;
   }
 
@@ -282,6 +354,7 @@ function freezeContinuityState(extraction, gameState) {
   for (const npc of visibleNpcs) {
     if (!updatedIds.has(npc.id) && npc.narrative_state !== undefined) {
       npc.narrative_state = null;
+      _diagnostics.entity_continuity_cleared.push(npc.id);
       clearedCount++;
     }
   }
@@ -399,5 +472,8 @@ module.exports = {
   checkEviction,
   runContinuityExtraction,
   freezeContinuityState,
-  buildContinuityBlock
+  buildContinuityBlock,
+  resetDiagnostics,
+  pushAlert,
+  getLastRunDiagnostics
 };
