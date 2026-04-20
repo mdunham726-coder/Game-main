@@ -10,6 +10,7 @@ const Actions = require('./ActionProcessor.js');
 
 const { validateAndQueueIntent, parseIntent } = require('./ActionProcessor.js');
 const { normalizeUserIntent, resolveEnterTarget } = require('./SemanticParser.js');
+const NC = require('./NarrativeContinuity');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -727,6 +728,10 @@ app.post('/narrate', async (req, res) => {
   // QA-014: Initialize turn history and begin turn scope for log capture
   if (!gameState.turn_history) {
     gameState.turn_history = [];
+  }
+  // v1.56.0: Initialize active_continuity field if not yet present on this gameState
+  if (gameState.world && gameState.world.active_continuity === undefined) {
+    NC.initContinuityState(gameState);
   }
   const turnNumber = gameState.turn_history.length + 1;
   if (logger) {
@@ -1766,6 +1771,10 @@ app.post('/narrate', async (req, res) => {
       gameState.world.active_local_space._visible_npcs = Actions.computeVisibleNpcs(gameState.world.active_local_space, gameState.player.position, gameState.world.active_site?.npcs || []);
     }
     console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, gameState?.player?.position, _narActiveSite?._visible_npcs?.length ?? 'n/a');
+    // v1.56.0: Eviction check + continuity block pre-build (after computeVisibleNpcs for fresh _visible_npcs)
+    const { evicted: _continuityEvicted } = NC.checkEviction(gameState);
+    const _continuityInjected = gameState.world.active_continuity !== null;
+    const _continuityBlock = NC.buildContinuityBlock(gameState);
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
     const _engineMsg = gameState?.world?._engineMessage || null;
     if (_engineMsg) gameState.world._engineMessage = null;
@@ -1786,7 +1795,11 @@ app.post('/narrate', async (req, res) => {
       const _lsNpcs = _narActiveLS._visible_npcs || [];
       const _lsNpcNames = _lsNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
       if (_lsNpcs.length > 0) {
-        npcsStr = JSON.stringify(_lsNpcs.map(n => ({ id: n.id, job: n.job_category, tier: n.tier, gender: n.gender, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false })));
+        npcsStr = JSON.stringify(_lsNpcs.map(n => {
+          const _ne = { id: n.id, job: n.job_category, tier: n.tier, gender: n.gender, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false };
+          if (n.narrative_state) Object.assign(_ne, n.narrative_state);
+          return _ne;
+        }));
       } else {
         npcsStr = '(None visible)';
       }
@@ -1806,7 +1819,11 @@ app.post('/narrate', async (req, res) => {
       const _siteNpcNames = _siteNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
       // Sync npcsStr with visible NPCs — this is the hard authority boundary for narration
       if (_siteNpcs.length > 0) {
-        npcsStr = JSON.stringify(_siteNpcs.map(n => ({ id: n.id, job: n.job_category, tier: n.tier, gender: n.gender, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false })));
+        npcsStr = JSON.stringify(_siteNpcs.map(n => {
+          const _ne = { id: n.id, job: n.job_category, tier: n.tier, gender: n.gender, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false };
+          if (n.narrative_state) Object.assign(_ne, n.narrative_state);
+          return _ne;
+        }));
       } else {
         npcsStr = '(None visible)';
       }
@@ -2037,7 +2054,7 @@ The player is actively observing. Observation is warranted here — describe wha
 
 You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks — do NOT narrate arrival or entry into them.`}
 
-CORE INSTRUCTIONS:
+${_continuityBlock ? _continuityBlock + '\n\n' : ''}CORE INSTRUCTIONS:
 - Let the world tone guide your descriptions and atmosphere
 - Expand on the location description with vivid sensory details matching the tone
 - React to the player's action naturally within the world
@@ -2314,6 +2331,14 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
           }
         }
       }
+    }
+
+    // v1.56.0: Continuity extraction — runs after narrative is finalized (all update blocks stripped)
+    let _continuityExtractionSuccess = false;
+    {
+      const _continuityExtraction = await NC.runContinuityExtraction(narrative, gameState);
+      NC.freezeContinuityState(_continuityExtraction, gameState);
+      _continuityExtractionSuccess = _continuityExtraction !== null;
     }
 
     // Log narration generation
@@ -2700,7 +2725,11 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         movement_task_active: _nbMovementTask,
         movement_flavor_active: _nbMovementFlavor,
         narrator_mode_active: _nbNarratorMode,
-        soliloquy_active: _nbSoliloquy
+        soliloquy_active: _nbSoliloquy,
+        continuity_injected: _continuityInjected,
+        continuity_extraction_success: _continuityExtractionSuccess,
+        continuity_evicted: _continuityEvicted,
+        continuity_block_chars: _continuityBlock.length
       },
       logs: turnLogs
     };
