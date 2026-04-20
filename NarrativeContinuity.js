@@ -40,7 +40,7 @@ REQUIRED OUTPUT SCHEMA:
     "interaction_mode": "REQUIRED string, never null — one of: 'conversation', 'exploration', 'combat', 'none'",
     "interaction_status": "REQUIRED string, never null — one of: 'active', 'concluded', 'none'",
     "active_interaction": "string or null — brief factual description of the active interaction if any. Null if interaction_mode is 'none'.",
-    "environment_continuity": "REQUIRED string, never null — concise factual description of the specific environment the player occupies right now.",
+    "environment_continuity": "REQUIRED string, never null — concise factual description of the specific environment the player occupies right now. Prefer generic descriptive language ('small concrete building off the road', 'open dirt road through sparse terrain') over narrator-invented proper nouns. If the narration introduced a named building, business, or organization not found in the provided site context, omit that proper noun and describe the physical setting only.",
     "unresolved_threads": "array of strings — [] if nothing is unresolved. Max 3 items. Max 15 words each. Only genuinely unresolved narrative elements."
   },
   "entity_updates": [
@@ -60,14 +60,16 @@ REQUIRED OUTPUT SCHEMA:
 }
 
 CRITICAL RULES:
-1. scene_focus_primary MUST equal the key marked 'primary' in scene_focus_tier. If they would conflict, correct scene_focus_primary to match the tier map.
+1. scene_focus_primary MUST equal the key marked 'primary' in scene_focus_tier. If they conflict, the extraction is INVALID — do not attempt to reconcile them. Output a consistent, non-conflicting scene_focus_primary that matches your tier map from the start.
 2. Exactly one entity in scene_focus_tier must have value 'primary'. No more. No less. (Unless scene_focus_tier is empty {}, in which case scene_focus_primary must be null.)
 3. entity_updates: include ONLY NPCs explicitly described or present in the narration. Do not include NPCs not mentioned.
 4. All narrative_state fields (wearing, holding, posture, activity, relative_position, emotional_state): set to null if not explicitly stated in the narration. Do not infer or guess.
 5. unresolved_threads: max 3 items, each max 15 words. Use [] if nothing is unresolved.
 6. interaction_mode and interaction_status: use 'none' if no active interaction is occurring.
 7. Missing any REQUIRED field makes the entire extraction invalid — do not omit them.
-8. Do not invent, interpret, or add content not present in the narration.`;
+8. Do not invent, interpret, or add content not present in the narration.
+9. environment_continuity must NOT freeze narrator-invented named entities (buildings, businesses, organizations) not present in the provided site context. If the narration named a building not in the site data, describe the physical setting generically — omit the invented proper noun entirely.
+10. entity_updates MUST NOT include is_learned, npc_name, or any identity or social-knowledge fields. Name learning authority belongs to the engine exclusively — do not output these fields in any form.`;
 
 // -----------------------------------------------------------------------------
 // 1. initContinuityState(gameState)
@@ -134,7 +136,7 @@ async function runContinuityExtraction(narrationText, gameState) {
     : [];
 
   const npcContext = visibleNpcs.length > 0
-    ? visibleNpcs.map(n => `${n.id} (${n.npc_name || n.job_category || 'unknown'})`).join(', ')
+    ? visibleNpcs.map(n => `${n.id} (${n.is_learned ? n.npc_name : (n.job_category || 'unknown')})`).join(', ')
     : 'none';
 
   const userMessage = `NARRATION:\n${narrationText}\n\nCONTEXT:\nLayer depth: ${depth} (1=overworld L0, 2=site interior L1, 3=local space interior L2)\nActive site: ${siteId ? `${siteName || siteId} (id: ${siteId})` : 'none'}\nVisible NPCs: ${npcContext}`;
@@ -189,13 +191,14 @@ async function runContinuityExtraction(narrationText, gameState) {
     if (!ac.environment_continuity) { console.warn('[CONTINUITY] extraction: missing required environment_continuity'); return null; }
     if (!Array.isArray(parsed?.entity_updates)) { console.warn('[CONTINUITY] extraction: missing entity_updates array'); return null; }
 
-    // Validate and heal focus integrity:
-    // scene_focus_primary MUST match the entity keyed 'primary' in scene_focus_tier
+    // Focus integrity: strict reject mode — any mismatch = extraction invalid, return null.
+    // scene_focus_primary MUST match the entity keyed 'primary' in scene_focus_tier.
+    // No healing: model must output consistent state. Inconsistency surfaces the bug.
     if (ac.scene_focus_tier && typeof ac.scene_focus_tier === 'object') {
       const primaryKey = Object.keys(ac.scene_focus_tier).find(k => ac.scene_focus_tier[k] === 'primary');
       if (primaryKey && ac.scene_focus_primary !== primaryKey) {
-        console.warn(`[CONTINUITY] focus conflict healed — scene_focus_primary "${ac.scene_focus_primary}" → "${primaryKey}"`);
-        ac.scene_focus_primary = primaryKey;
+        console.warn(`[CONTINUITY] focus integrity mismatch — extraction rejected (scene_focus_primary "${ac.scene_focus_primary}" ≠ tier key "${primaryKey}")`);
+        return null;
       }
       // Ensure unresolved_threads is always an array
       if (!Array.isArray(ac.unresolved_threads)) {

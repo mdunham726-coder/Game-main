@@ -2083,7 +2083,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - ${_primaryNarrationBullet}
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
-- Do not invent landmarks, creatures, or locations not described above
+- Do not assign specific proper names, business names, or official designations to any building, organization, or landmark unless that entity is explicitly listed in the site data above. Treat this as a strict world-truth constraint — the narrator describes what the engine has established, not the reverse. Generic architectural description is permitted; narrator-invented proper nouns are not.
 - Do NOT describe, mention, or imply the presence of any persons, individuals, crowds, or human activity unless they explicitly appear in the NPCs PRESENT list above. Treat this as a strict system constraint. The NPCs PRESENT list is the engine's authoritative visible set at the player's current position. Under no circumstances describe any person, crowd, or human figure not in this list. If NPCs PRESENT is '(None visible)', the location is empty of visible persons — do not describe ambient activity, implied crowds, or background figures.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set, is_learned is false, and the NPC's proper name appears anywhere in your narration this turn — through self-introduction, dialogue, overhearing, or any other means — you MUST append [npc_updates: [{"id": "npc_id", "is_learned": true}]]. This is deterministic: if you used the name in narration while is_learned was false, the update is required. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
@@ -2296,11 +2296,27 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
                       _nuCr.skipped_name.push(_nu.id);
                       console.log(`[NPC_CAPTURE] skipped npc_name overwrite for ${_nu.id} (already "${_nuNpc.npc_name}")`);
                     }
-                    // is_learned: one-way latch — only ever transitions to true
+                    // is_learned: one-way latch — transitions to true ONLY if name appears in narration
+                    // Engine-side guard: model compliance is not trusted — engine validates independently.
+                    // Word-boundary match prevents substring false positives (e.g. "Mara" ≠ "Marathon").
                     if (_nu.is_learned === true && _nuNpc.is_learned !== true) {
-                      _nuNpc.is_learned = true;
-                      _nuEntry.is_learned_set = true;
-                      console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true`);
+                      const _guardName = _nuNpc.npc_name;
+                      if (_guardName) {
+                        const _escaped = _guardName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const _nameRegex = new RegExp('\\b' + _escaped + '\\b', 'i');
+                        if (_nameRegex.test(narrative)) {
+                          _nuNpc.is_learned = true;
+                          _nuEntry.is_learned_set = true;
+                          console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true ("${_guardName}" confirmed in narration)`);
+                        } else {
+                          console.warn(`[NAME GUARD] Rejected is_learned flip for "${_guardName}" (${_nu.id}) — name absent from narration`);
+                        }
+                      } else {
+                        // npc_name not yet assigned — no name to validate against, allow flip
+                        _nuNpc.is_learned = true;
+                        _nuEntry.is_learned_set = true;
+                        console.log(`[NPC_CAPTURE] npc ${_nu.id} is_learned set to true (no name to check)`);
+                      }
                     }
                     _nuCr.updates.push(_nuEntry);
                   }
