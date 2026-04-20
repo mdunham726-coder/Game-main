@@ -1780,6 +1780,22 @@ app.post('/narrate', async (req, res) => {
     const _continuityInjected = gameState.world.active_continuity !== null;
     const _continuityBlock = NC.buildContinuityBlock(gameState);
     const _continuityBlockSnapshot = gameState.world.active_continuity ? JSON.parse(JSON.stringify(gameState.world.active_continuity)) : null;
+    // v1.59.0: Build _engineSpatialBlock — engine-confirmed spatial authority injected AFTER continuity block
+    let _engineSpatialBlock = '';
+    {
+      const _esPos = gameState.world.position;
+      const _esCellKey = _esPos ? `LOC:${_esPos.mx},${_esPos.my}:${_esPos.lx},${_esPos.ly}` : null;
+      const _esCellSites = (_esCellKey && gameState.world.cells?.[_esCellKey]?.sites) ? gameState.world.cells[_esCellKey].sites : {};
+      const _esUnentered = Object.values(_esCellSites).filter(s => !s.entered);
+      if (_narDepth === 1) {
+        const _esNames = _esUnentered.map(s => s.name || s.site_id).filter(Boolean).join(', ');
+        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L0\nEntered: false\nThe player is NOT inside any structure.\nAny narration describing interior occupancy is INVALID.\n${_esNames ? `Structures visible but NOT entered: ${_esNames}` : 'No structures present.'}`;
+      } else if (_narDepth === 2 && _narActiveSite) {
+        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L1 (open site area — ${_narActiveSite.name || _narActiveSite.site_id})\nThe player is NOT inside any building or local space.`;
+      } else if (_narDepth === 3 && gameState.world.active_local_space) {
+        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L2. Player is inside ${gameState.world.active_local_space.name || gameState.world.active_local_space.local_space_id}. Interior narration is confirmed.`;
+      }
+    }
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
     const _engineMsg = gameState?.world?._engineMessage || null;
     if (_engineMsg) gameState.world._engineMessage = null;
@@ -2059,7 +2075,7 @@ The player is actively observing. Observation is warranted here — describe wha
 
 You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks — do NOT narrate arrival or entry into them.`}
 
-${_continuityBlock ? _continuityBlock + '\n\n' : ''}CORE INSTRUCTIONS:
+${_continuityBlock ? _continuityBlock + '\n\n' : ''}${_engineSpatialBlock ? _engineSpatialBlock + '\n\n' : ''}CORE INSTRUCTIONS:
 - Let the world tone guide your descriptions and atmosphere
 - Expand on the location description with vivid sensory details matching the tone
 - React to the player's action naturally within the world
@@ -2753,7 +2769,8 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         continuity_evicted: _continuityEvicted,
         continuity_block_chars: _continuityBlock.length,
         continuity_snapshot: _continuityBlockSnapshot,
-        continuity_diagnostics: NC.getLastRunDiagnostics()
+        continuity_diagnostics: NC.getLastRunDiagnostics(),
+        engine_spatial_notes: _engineSpatialBlock || null
       },
       logs: turnLogs
     };

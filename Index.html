@@ -134,6 +134,14 @@
     <div id="helpResponse" style="display:none; padding:10px; background:#111; border:1px solid #3a5a3a; border-radius:3px; color:#bdb; font-size:14px; line-height:1.5; font-style:italic;"></div>
 
   </div>
+<!-- Continuity Panel (v1.59.0: moved before diagnostics) -->
+<div id="continuityPanel" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #3498db; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #ccc;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+    <h3 style="margin: 0; color: #3498db;">CONTINUITY</h3>
+  </div>
+  <div id="continuity-live" style="color: #555; font-size: 11px;">(no continuity data yet)</div>
+</div>
+
 <!-- Diagnostic Panel -->
 <div id="diagnostics" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #333; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #0f0;">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -141,14 +149,6 @@
     <button onclick="navigator.clipboard.writeText(document.getElementById('diagnostic-log').innerText)" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Diagnostics</button>
   </div>
   <div id="diagnostic-log"></div>
-</div>
-
-<!-- Continuity Panel -->
-<div id="continuityPanel" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #3498db; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #ccc;">
-  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-    <h3 style="margin: 0; color: #3498db;">CONTINUITY</h3>
-  </div>
-  <div id="continuity-live" style="color: #555; font-size: 11px;">(no continuity data yet)</div>
 </div>
 
 <!-- DeepSeek Debug Console -->
@@ -1784,7 +1784,11 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       const entityStr = (updatedIds.length > 0 || clearedIds.length > 0)
         ? ` | upd:[${updatedIds.join(',')}] clr:[${clearedIds.join(',')}]`
         : '';
-      const entry = `T${turnNumber} | extract:${statusStr}${alertStr}${entityStr}`;
+      const snap = nd.continuity_snapshot;
+      const snapStr = snap
+        ? ` | loco:${snap.player_locomotion || '?'} | mode:${snap.interaction_mode || '?'} | focus:${snap.scene_focus_primary || '(none)'}`
+        : '';
+      const entry = `T${turnNumber} | extract:${statusStr}${snapStr}${alertStr}${entityStr}`;
 
       _continuityLogBuffer.push(entry);
       if (_continuityLogBuffer.length > 1000) { _continuityLogBuffer.shift(); }
@@ -1809,6 +1813,13 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       const story = storyLines.join('\n\n---\n\n');
       try {
         await navigator.clipboard.writeText(story);
+        const logsResponse = document.getElementById('logsResponse');
+        if (logsResponse) {
+          logsResponse.textContent = `Story copied! (${storyLines.length} turns)`;
+          logsResponse.style.color = '#2ecc71';
+          logsResponse.style.display = 'block';
+          setTimeout(() => { logsResponse.style.display = 'none'; }, 3000);
+        }
       } catch (err) {
         alert('Copy failed: ' + err.message);
       }

@@ -200,7 +200,19 @@ async function runContinuityExtraction(narrationText, gameState) {
     ? visibleNpcs.map(n => `${n.id} (${n.is_learned ? n.npc_name : (n.job_category || 'unknown')})`).join(', ')
     : 'none';
 
-  const userMessage = `NARRATION:\n${narrationText}\n\nCONTEXT:\nLayer depth: ${depth} (1=overworld L0, 2=site interior L1, 3=local space interior L2)\nActive site: ${siteId ? `${siteName || siteId} (id: ${siteId})` : 'none'}\nVisible NPCs: ${npcContext}`;
+  // v1.59.0: Build SPATIAL AUTHORITY prefix — absolute, not advisory
+  let spatialAuthorityNote = '';
+  if (depth === 1) {
+    const _saPos = gameState.world.position;
+    const _saCellKey = _saPos ? `LOC:${_saPos.mx},${_saPos.my}:${_saPos.lx},${_saPos.ly}` : null;
+    const _saCellSites = (_saCellKey && gameState.world.cells?.[_saCellKey]?.sites) ? gameState.world.cells[_saCellKey].sites : {};
+    const _saUnenteredNames = Object.values(_saCellSites).filter(s => !s.entered).map(s => s.name || s.site_id).filter(Boolean).join(', ') || 'none';
+    spatialAuthorityNote = `SPATIAL AUTHORITY:\nLayer: L0. Player is OUTDOORS. No site entry confirmed.\nAny interior descriptions in the narration below are narrator errors.\nExtract only outdoor state. Do NOT record interior spatial data.\nStructures visible, NOT entered: ${_saUnenteredNames}`;
+  } else if (depth === 2) {
+    spatialAuthorityNote = `SPATIAL AUTHORITY:\nLayer: L1 (open site area — ${siteName || siteId}). Player is NOT inside any local space or building.`;
+  }
+
+  const userMessage = `${spatialAuthorityNote ? spatialAuthorityNote + '\n\n' : ''}NARRATION:\n${narrationText}\n\nCONTEXT:\nLayer depth: ${depth} (1=overworld L0, 2=site interior L1, 3=local space interior L2)\nActive site: ${siteId ? `${siteName || siteId} (id: ${siteId})` : 'none'}\nVisible NPCs: ${npcContext}`;
 
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), 30000);
@@ -315,6 +327,26 @@ function freezeContinuityState(extraction, gameState) {
     dialogue_state_ref: null,    // Phase 2 hook — reserved
     rolling_summary_ref: null    // Phase 2 hook — reserved
   };
+
+  // v1.59.0: Hard spatial guard — system layer, not prompt layer.
+  // If engine confirms L0 + unentered sites, override interaction fields and
+  // environment_continuity regardless of what extraction returned.
+  // Kills both the interaction-layer fix AND the environmental frame bleed-through.
+  if (currentDepth === 1) {
+    const _sgPos = gameState.world.position;
+    const _sgCellKey = _sgPos ? `LOC:${_sgPos.mx},${_sgPos.my}:${_sgPos.lx},${_sgPos.ly}` : null;
+    const _sgHasUnentered = Object.values(gameState.world.cells?.[_sgCellKey]?.sites || {}).some(s => !s.entered);
+    if (_sgHasUnentered) {
+      const _ac = gameState.world.active_continuity;
+      if (_ac) {
+        _ac.interaction_mode = 'none';
+        _ac.interaction_status = 'none';
+        _ac.active_interaction = null;
+        _ac.environment_continuity = null; // strip interior-flavored env frame entirely
+      }
+      console.log('[SPATIAL GUARD] L0+unentered — forced interaction + env_continuity to outdoor defaults');
+    }
+  }
 
   // Write narrative_state per entity_updates entry
   const allNpcs = gameState.world.active_site?.npcs || [];

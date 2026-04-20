@@ -2,6 +2,59 @@
 
 ---
 
+## Session: Narrative Continuity Observability System (v1.58.0)
+
+**Session Date:** April 19, 2026
+**Outcome:** v1.58.0 complete — full-stack diagnostic visibility for the Narrative Continuity System shipped across three files
+
+### What Was Built
+
+**NarrativeContinuity.js — Diagnostic API (Phase A)**
+- Module-level `_diagnostics` accumulator: `{ alerts[], rejection_reason, entity_updates_applied[], entity_continuity_cleared[] }`
+- `resetDiagnostics()` — hard overwrite per turn; no carry-forward; called exactly once by index.js before checkEviction
+- `pushAlert(alert)` — shared entry point for engine-owned events (index.js) and Critical-class extraction failures (internal)
+- `getLastRunDiagnostics()` — returns frozen copy of all 4 fields; called by index.js after freeze to inject into narration_debug
+- `checkEviction` return extended: `{ evicted: bool, reason: string|null }` — reason built from `reasonParts.join('+')`
+- All `runContinuityExtraction` `return null` paths now classify and record `rejection_reason`:
+  - Critical (+ pushAlert): `focus_integrity_mismatch`, `missing_required_field:active_continuity`, `missing_required_field:player_locomotion`, `missing_required_field:player_physical_state`, `missing_required_field:tone`, `missing_required_field:interaction_mode`, `missing_required_field:interaction_status`, `missing_required_field:environment_continuity`, `missing_required_field:entity_updates`
+  - Warning (rejection_reason only): `empty_response`, `json_parse_failed`, `api_timeout`, `api_error`
+- `freezeContinuityState` — entity update loop pushes npc_id to `entity_updates_applied`; ephemeral clear loop pushes to `entity_continuity_cleared`
+- `module.exports` extended: adds `resetDiagnostics`, `pushAlert`, `getLastRunDiagnostics`
+
+**index.js — 5 Touch Points (Phase B)**
+- `NC.resetDiagnostics()` before `checkEviction` — hard invariant: exactly once per turn
+- `checkEviction` destructure: `{ evicted: _continuityEvicted, reason: _continuityEvictionReason }` + eviction pushAlert (severity: Info)
+- `_continuityBlockSnapshot` captured immediately after `buildContinuityBlock` — `JSON.parse(JSON.stringify(active_continuity))` or null
+- NAME GUARD reject: added `NC.pushAlert({ severity: 'Critical', type: 'learned_name_violation', entity_ref: `${name} (${id})` })` after existing `console.warn`
+- `narration_debug` in turnObject extended: `continuity_snapshot: _continuityBlockSnapshot`, `continuity_diagnostics: NC.getLastRunDiagnostics()`
+
+**Index.html — Panels, Functions, Cleanup (Phase C)**
+- `#continuityPanel` (below `#diagnostics`): extraction status row, active_continuity field summary (7 fields), entity update/clear ids, alert lifecycle badges (New/Ongoing/Resolved), entity display cache (last seen N turns ago)
+- `#continuityLogsPanel` (below `#logsPanel`): rolling one-line log per turn; buffer 1000 entries (shift); DOM renders last 200; Copy Continuity Log button
+- "Copy Story" button in `#logsPanel`: `[...turn_history].reverse()` → extract `.narrative` → join with `---` separator
+- `renderContinuityPanel(data)` — rebuilds `#continuity-live` each turn; owns alert lifecycle management
+- `appendContinuityLogEntry(data)` — appends text entry to buffer, re-renders DOM
+- `_entityDisplayCache` — `{}` keyed by npc_id; retains last narrative_state even after ephemeral clears; shows "N turns ago"
+- `_continuityAlertHistory` — Set of `type:entity_ref` keys; drives New/Ongoing/Resolved badge per turn
+- Session cleanup hook in `data.diagnostics?.first_turn`: resets buffer, cache, alert history, clears both DOM panels
+- `buildTurnBlock` narration_debug section extended: `-- Continuity` section with extraction result, rejection reason, alert count + types, entity ids
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `NarrativeContinuity.js` | Header; new diagnostic accumulator + 3 functions; `checkEviction` return; `runContinuityExtraction` all null paths; `freezeContinuityState` entity loops; `module.exports` |
+| `index.js` | Before `checkEviction`; `checkEviction` destructure; after `_continuityBlock` build; NAME GUARD block; `narration_debug` in turnObject |
+| `Index.html` | `#continuityPanel` HTML; `#continuityLogsPanel` HTML; Copy Story button; `renderContinuityPanel()`; `appendContinuityLogEntry()`; `copyStory()`; state vars; session cleanup; `buildTurnBlock` narration_debug extension |
+
+### Research Findings (Pre-Implementation)
+- `active_continuity` reaches the frontend via `response.state.world` — immediately available client-side
+- 4 NC debug fields in `narration_debug` (injected/extraction_success/evicted/block_chars) were already present
+- Server console logs are not forwarded to frontend — diagnostic accumulator is the correct bridging mechanism
+- No per-turn snapshot existed before this version — `continuity_snapshot` in narration_debug is the first implementation
+- Rejection reasons were fully invisible to the frontend before this version
+
+---
+
 ## Session: QA Bug-Fix Pass v2 (v1.44.0)
 
 **Session Date:** April 19, 2026
