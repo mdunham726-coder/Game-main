@@ -1815,8 +1815,10 @@ app.post('/narrate', async (req, res) => {
     if (_continuityEvicted) {
       NC.pushAlert({ severity: 'Info', type: 'continuity_eviction', description: `Continuity evicted (${_continuityEvictionReason})`, entity_ref: null, turn: (gameState.turn_history ? gameState.turn_history.length : 0) + 1 });
     }
-    const _continuityInjected = gameState.world.active_continuity !== null;
     const _continuityBlock = NC.buildContinuityBlock(gameState);
+    // v1.63.0: reflects actual block output — true when narrator received any continuity content
+    // (active_continuity OR narrative_memory entries), not just active_continuity presence
+    const _continuityInjected = _continuityBlock.length > 0;
     const _continuityBlockSnapshot = gameState.world.active_continuity ? JSON.parse(JSON.stringify(gameState.world.active_continuity)) : null;
     // v1.59.0: Build _engineSpatialBlock — engine-confirmed spatial authority injected AFTER continuity block
     let _engineSpatialBlock = '';

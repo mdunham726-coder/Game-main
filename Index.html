@@ -199,12 +199,12 @@
 </div>
 
 <!-- Continuity Logs Panel -->
-<div id="continuityLogsPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #3498db; border-radius: 4px;">
+<div id="continuityLogsPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #3498db; border-radius: 4px; max-height: 460px; overflow: hidden;">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
     <h3 style="margin: 0; color: #3498db;">CONTINUITY LOG</h3>
     <button onclick="navigator.clipboard.writeText(_continuityLogBuffer.join('\n'))" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Continuity Log</button>
   </div>
-  <div id="continuity-log" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #0f0;"></div>
+  <div id="continuity-log" style="height: 380px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #0f0;"></div>
 </div>
 
   </div>
@@ -689,9 +689,6 @@ if (_pAction === 'move' && !_isParserDegraded && !_isFreeformActive && !_isParse
 }
 if (_narDebug.continuity_extraction_success === false) {
   _diagViolations.push('continuity state not captured (extraction failed)');
-}
-if (_narDebug.continuity_injected === false && !_isFirstTurnDiag && _turnNumDiag > 1) {
-  _diagViolations.push('narrator sent no continuity context');
 }
 if (_dbgData.channel === 'say' && _isFreeformActive) {
   _diagViolations.push('say channel + FREEFORM block active (contradictory)');
@@ -1831,6 +1828,11 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       html += `<span style="color:${evColor}">Evicted: ${nd.continuity_evicted ? 'YES' : 'NO'}</span>`;
       html += `</div>`;
 
+      // Inline notice: genuine continuity gap (no block, no eviction, not turn 1)
+      if (!nd.continuity_injected && !nd.continuity_evicted && turnNumber > 1) {
+        html += `<div style="margin-bottom:6px; padding:4px 8px; background:#2d1a00; border-left:3px solid #e67e22; font-size:11px; color:#e67e22;">&#9888; No continuity context injected this turn (no active state, no prior memories)</div>`;
+      }
+
       // Active continuity snapshot fields
       if (snap) {
         html += `<div style="margin-bottom:6px; background:#111; padding:6px; border-radius:3px; font-size:11px;">`;
@@ -1909,6 +1911,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
 
       const statusStr = extractionSuccess === true ? 'OK'
         : extractionSuccess === false ? `FAIL:${rejectionReason || 'unknown'}` : 'n/a';
+      const charsStr = ` | chars:${nd.continuity_block_chars ?? 0}`;
       const alertStr = alerts.length > 0
         ? ' | ALT:' + alerts.map(a => `${a.severity}/${a.type}`).join(',')
         : '';
@@ -1916,10 +1919,19 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         ? ` | upd:[${updatedIds.join(',')}] clr:[${clearedIds.join(',')}]`
         : '';
       const snap = nd.continuity_snapshot;
-      const snapStr = snap
-        ? ` | loco:${snap.player_locomotion || '?'} | mode:${snap.interaction_mode || '?'} | focus:${snap.scene_focus_primary || '(none)'}`
-        : '';
-      const entry = `T${turnNumber} | extract:${statusStr}${snapStr}${alertStr}${entityStr}`;
+      // On eviction turns snap is null — fall back to last narrative_memory entry for provenance
+      const isEvicted = nd.continuity_evicted === true;
+      const priorMemories = data.state?.world?.narrative_memory || [];
+      const lastMem = priorMemories.length > 0 ? priorMemories[priorMemories.length - 1] : null;
+      let snapStr = '';
+      if (snap) {
+        const threads = Array.isArray(snap.unresolved_threads) && snap.unresolved_threads.length > 0
+          ? ` | threads:${snap.unresolved_threads.length}` : '';
+        snapStr = ` | loco:${snap.player_locomotion || '?'} | mode:${snap.interaction_mode || '?'} | focus:${snap.scene_focus_primary || '(none)'}${threads}`;
+      } else if (isEvicted && lastMem) {
+        snapStr = ` | EVICTED → archived:${lastMem.layer_label || 'unknown'} | mem:${priorMemories.length} | loco:${lastMem.player_locomotion || '?'} | mode:${lastMem.interaction_mode || '?'}`;
+      }
+      const entry = `T${turnNumber} | extract:${statusStr}${charsStr}${snapStr}${alertStr}${entityStr}`;
 
       _continuityLogBuffer.push(entry);
       if (_continuityLogBuffer.length > 1000) { _continuityLogBuffer.shift(); }
@@ -1927,8 +1939,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       if (!logDom) return;
       const displayEntries = _continuityLogBuffer.slice(-200);
       logDom.innerHTML = displayEntries.map(e => {
-        const color = e.includes('FAIL') ? '#e74c3c' : e.includes('ALT:') ? '#e67e22' : '#0f0';
-        return `<div style="color:${color}; font-size:11px;">${e}</div>`;
+        const color = e.includes('FAIL') ? '#e74c3c' : e.includes('EVICTED') ? '#e67e22' : e.includes('ALT:') ? '#e67e22' : '#0f0';
+        return `<div style="color:${color}; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${e}</div>`;
       }).join('');
       logDom.scrollTop = logDom.scrollHeight;
     }
