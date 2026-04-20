@@ -1818,8 +1818,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         alert('No story yet. Start a game first!');
         return;
       }
-      const reversed = [...turnHistory].reverse();
-      const storyLines = reversed
+      const storyLines = [...turnHistory]
         .filter(t => t.narrative)
         .map(t => {
           const input = t.input?.raw;
