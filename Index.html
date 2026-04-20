@@ -268,7 +268,7 @@
     });
 
     // Store session ID across page loads
-    let currentSessionId = null;
+    let currentSessionId = sessionStorage.getItem('gameSessionId') || null;
     let lastNarrative = "";
     let lastTurnCounter = 0;
     let lastGameResponse = null;  // QA-014: Store full response for turn history
@@ -433,7 +433,12 @@
         const response = await fetch('/narrate', {
           method: 'POST',
           headers: headers,
-          body: JSON.stringify({ action: action, intent_channel: channel })
+          body: JSON.stringify({
+            action: action,
+            intent_channel: channel,
+            // v1.59.0: Send stored state so server can self-heal after Render sleep/restart
+            client_state: currentSessionId ? (() => { try { const s = localStorage.getItem('gameState_' + currentSessionId); return s ? JSON.parse(s) : null; } catch(_) { return null; } })() : null
+          })
         });
         
         const data = await response.json();
@@ -449,7 +454,12 @@
         // Store sessionId from response (important for subsequent turns!)
         if (data.sessionId) {
           currentSessionId = data.sessionId;
+          sessionStorage.setItem('gameSessionId', currentSessionId);
           console.log('[SESSION] SessionId stored:', currentSessionId);
+          // v1.59.0: Persist gameState to localStorage so Render wakes can self-restore
+          if (data.state) {
+            try { localStorage.setItem('gameState_' + currentSessionId, JSON.stringify(data.state)); } catch(_) {}
+          }
         } else {
           console.log('[SESSION] WARNING: No sessionId in response, currentSessionId remains:', currentSessionId);
         }

@@ -696,6 +696,40 @@ async function detectSystemCommand(input, sessionId, currentGameState, sessionSt
 // MODIFIED /NARRATE ENDPOINT WITH SYSTEM COMMAND INTEGRATION
 // =============================================================================
 
+// v1.59.0: Autosave path — isolated slot, never counts toward the 5-save cap
+function getAutosavePath(sessionId) {
+  return path.join(__dirname, 'saves', sessionId, 'autosave.json');
+}
+
+// v1.59.0: Restore session from autosave if the server lost it (e.g. restart).
+// Only fires when the client sends a known sessionId that's no longer in the Map.
+// Async — awaited at the top of the /narrate route before getSessionState.
+// clientState: optional gameState sent by browser from localStorage (primary for Render,
+//              where the filesystem is wiped on wake). Disk autosave is secondary fallback.
+async function restoreAutosaveIfAvailable(sessionId, clientState) {
+  if (!sessionId || sessionStates.has(sessionId)) return; // nothing to do
+  // Primary: restore from client-provided state (survives Render sleep)
+  if (clientState && typeof clientState === 'object' && clientState.world) {
+    const logger = createLogger({ sessionId });
+    sessionStates.set(sessionId, { gameState: clientState, isFirstTurn: false, logger });
+    console.log('[AUTOSAVE] Restored session', sessionId, 'from client_state — turn', clientState?.turn_history?.length ?? '?');
+    return;
+  }
+  // Secondary: restore from disk autosave (survives process restart on persistent filesystem)
+  const autosavePath = getAutosavePath(sessionId);
+  try {
+    await fsPromises.access(autosavePath);
+    const raw = await fsPromises.readFile(autosavePath, 'utf8');
+    const data = JSON.parse(raw);
+    if (!data?.gameState) return;
+    const logger = createLogger({ sessionId });
+    sessionStates.set(sessionId, { gameState: data.gameState, isFirstTurn: false, logger });
+    console.log('[AUTOSAVE] Restored session', sessionId, 'from disk autosave — turn', data.gameState?.turn_history?.length ?? '?');
+  } catch (_) {
+    // No autosave or unreadable — fall through to normal new-session creation
+  }
+}
+
 // Existing narrate endpoint begins here
 app.post('/narrate', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
@@ -704,6 +738,9 @@ app.post('/narrate', async (req, res) => {
   console.log('[DIAG-2-SERVER-REQUEST-ENTRY] req.headers["x-session-id"]:', sessionId);
   console.log('[DIAG-2-SERVER-REQUEST-ENTRY] Type:', typeof sessionId);
   console.log('[DIAG-2-SERVER-REQUEST-ENTRY] Is truthy?', !!sessionId);
+
+  // v1.59.0: Restore from autosave before session lookup, so server restarts are transparent
+  await restoreAutosaveIfAvailable(sessionId, req.body?.client_state);
   
   const { sessionId: resolvedSessionId, gameState: sessionGameState, isFirstTurn: sessionIsFirstTurn, logger } = getSessionState(sessionId);
   
@@ -2780,6 +2817,14 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     
     // Persist updated gameState with turn history
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+
+    // v1.59.0: Background autosave — transparent recovery if server restarts mid-session
+    fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
+      .then(() => fsPromises.writeFile(
+        getAutosavePath(resolvedSessionId),
+        JSON.stringify({ gameState, sessionId: resolvedSessionId, timestamp: new Date().toISOString() })
+      ))
+      .catch(err => console.warn('[AUTOSAVE] write failed:', err.message));
 
     // [DIAG-1] Log before returning response
     // C1 (v1.46.0): Phase 3/5b debug instrumentation — narrator mode, emote, do-intent, say target source, pre-speech
