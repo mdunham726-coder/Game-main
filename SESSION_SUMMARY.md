@@ -2,6 +2,61 @@
 
 ---
 
+## Session: Spatial Authority Enforcement + Session Persistence (v1.59.0)
+
+**Session Date:** April 20, 2026
+**Outcome:** v1.59.0 complete — two independent features: spatial authority 3-layer enforcement and Render-safe session persistence
+
+### What Was Built
+
+**Spatial Authority Enforcement — Phase A: `_engineSpatialBlock` (`index.js`)**
+- New `_engineSpatialBlock` string built after `_continuityBlockSnapshot` each turn from engine-confirmed state
+- 4 conditional variants: L0+unentered sites (lists names), L0+no sites, L1 (open site area), L2 (interior confirmed)
+- Language is pure declarative fact — no "MUST NOT" or instruction phrasing: `The player is NOT inside any structure. / Any narration describing interior occupancy is INVALID.`
+- Injected in `narrationContent` AFTER continuity block, BEFORE CORE INSTRUCTIONS — prompt ordering is the authority mechanism
+- Stored as `engine_spatial_notes` in `narration_debug` for QA export visibility
+
+**Spatial Authority Enforcement — Phase B: Extraction prefix + freeze guard (`NarrativeContinuity.js`)**
+- `runContinuityExtraction` userMessage now opens with `SPATIAL AUTHORITY:` block before `NARRATION:`
+  - Depth 1: absolute — "narrator errors / Extract only outdoor state / Do NOT record interior spatial data / Structures visible, NOT entered: [names]"
+  - Depth 2: calibrated L1 statement; Depth 3: no prefix (interior confirmed)
+- Hard freeze guard in `freezeContinuityState` after `active_continuity` write, before entity loop:
+  - Condition: `currentDepth === 1 && hasUnenteredSites` (pure engine-state check, no keyword matching)
+  - Forces: `interaction_mode='none'`, `interaction_status='none'`, `active_interaction=null`, `environment_continuity=null`
+  - `environment_continuity` nulled — kills "warm shop air" interior-feel bleed-through
+  - Logs: `[SPATIAL GUARD] L0+unentered — forced interaction + env_continuity to outdoor defaults`
+
+**Spatial Authority Enforcement — Phase C: UX fixes (`Index.html`)**
+- `#continuityPanel` DOM node moved before `#diagnostics` (between input bars and diagnostics — user-confirmed)
+- `appendContinuityLogEntry` enriched: adds `| loco:X | mode:X | focus:X` from `continuity_snapshot` each turn
+- `copyStory()`: after clipboard write, sets `#logsResponse` to `"Story copied! (N turns)"` in green (`#2ecc71`), auto-hides after 3s
+
+**Session Persistence — Render-safe (`index.js` + `Index.html`)**
+- Client: `currentSessionId` initialized from `sessionStorage` on load; written back on every response — survives idle indefinitely, clears on tab close/refresh
+- Client: `data.state` (full gameState) stored in `localStorage` as `gameState_<sessionId>` after every turn — primary recovery source for Render (container filesystem wiped on wake)
+- Client: `client_state` field included in every `/narrate` request body after first turn — passes full localStorage gameState to server
+- Server: `getAutosavePath(sessionId)` helper — isolated `autosave.json` slot per session, never counts toward 5-save cap
+- Server: `restoreAutosaveIfAvailable(sessionId, clientState)` — two-tier restore:
+  - Primary: if `client_state` in request body is valid gameState → restores instantly (covers Render wake)
+  - Secondary: reads `saves/<sessionId>/autosave.json` from disk (covers process restart on persistent FS)
+- Server: background non-blocking autosave write (`fsPromises.writeFile`, no await) after every turn `sessionStates.set`
+
+### Files Changed
+| File | Sections |
+|---|---|
+| `NarrativeContinuity.js` | `runContinuityExtraction` userMessage — SPATIAL AUTHORITY prefix build logic; `freezeContinuityState` — hard spatial guard after active_continuity write |
+| `index.js` | After `_continuityBlockSnapshot` — `_engineSpatialBlock` build (4 variants); `narrationContent` — injection point; `narration_debug` — `engine_spatial_notes` field; before `/narrate` handler — `getAutosavePath`, `restoreAutosaveIfAvailable`; top of `/narrate` — `await restoreAutosaveIfAvailable(sessionId, req.body?.client_state)`; after turn save — background autosave write |
+| `Index.html` | `currentSessionId` init from `sessionStorage`; `sessionStorage.setItem` on receive; `localStorage.setItem` gameState after turn; `client_state` in fetch body; `#continuityPanel` DOM position swapped; `appendContinuityLogEntry` enriched; `copyStory()` confirmation |
+
+### Key Design Decisions
+- `environment_continuity = null` on guard fire — partial interior frame (env flavored but no interaction) still bleeds; null is the correct blunt fix
+- Guard condition is pure engine state (`depth === 1 && hasUnenteredSites`) — not keyword matching, not heuristic
+- Broader spatial invariant (L1→L2 violations, sub-container crossings) deferred to v1.60.0
+- `sessionStorage` for sessionId (clears on refresh = deliberate fresh start); `localStorage` for gameState (survives Render sleep)
+- Disk autosave retained as secondary — works on non-Render persistent FS deployments
+
+---
+
 ## Session: Narrative Continuity Observability System (v1.58.0)
 
 **Session Date:** April 19, 2026

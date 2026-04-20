@@ -1819,7 +1819,12 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         return;
       }
       const reversed = [...turnHistory].reverse();
-      const storyLines = reversed.map(t => t.narrative || '').filter(Boolean);
+      const storyLines = reversed
+        .filter(t => t.narrative)
+        .map(t => {
+          const input = t.input?.raw;
+          return (input ? `> ${input}\n\n` : '') + t.narrative;
+        });
       const story = storyLines.join('\n\n---\n\n');
       try {
         await navigator.clipboard.writeText(story);
