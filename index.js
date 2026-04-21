@@ -2858,7 +2858,55 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] resolvedSessionId:', resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
-    
+
+    // Emit to SSE diagnostics stream (diagnostics.js terminal flight recorder)
+    emitDiagnostics({
+      type: 'turn',
+      turn: turnNumber,
+      raw_input: action,
+      channel: resolvedChannel,
+      parsed_action: _parsedAction,
+      parsed_dir: inputObj?.player_intent?.dir || null,
+      confidence: debug.confidence || null,
+      parser: debug.parser,
+      degraded: _isAborted ? null : (debug.degraded_from || null),
+      spatial: {
+        depth: gameState.world.active_local_space ? 3 : gameState.world.active_site ? 2 : 1,
+        position: gameState.world.position || null,
+        site_name: gameState.world.active_site?.name || null,
+        local_space_name: gameState.world.active_local_space?.name || null
+      },
+      movement: movement || null,
+      continuity: {
+        injected: _continuityInjected,
+        block_chars: _continuityBlock.length,
+        evicted: _continuityEvicted,
+        eviction_reason: _continuityEvictionReason || null,
+        extraction_success: _continuityExtractionSuccess,
+        rejection_reason: NC.getLastRunDiagnostics()?.rejection_reason || null,
+        memory_count: (gameState.world.narrative_memory || []).length,
+        snapshot: _continuityBlockSnapshot,
+        alerts: NC.getLastRunDiagnostics()?.alerts || [],
+        entity_updates: NC.getLastRunDiagnostics()?.entity_updates_applied || [],
+        entity_cleared: NC.getLastRunDiagnostics()?.entity_continuity_cleared || []
+      },
+      entities: {
+        visible: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || []).map(n => ({ id: n.id, job: n.job_category || null, name: n.npc_name || null }))
+      },
+      narration_length: narrative?.length || 0,
+      engine_message: _engineMsg || null,
+      violations: (() => {
+        const v = [];
+        if (_parsedAction === 'move' && debug.parser !== 'legacy' && !debug.degraded_from && !debug.freeform_block_active && !movement) v.push('move: no movement object');
+        if (_continuityExtractionSuccess === false) v.push('continuity extraction failed');
+        if (!_continuityInjected && !_continuityEvicted && turnNumber > 1) v.push('no continuity context (not eviction)');
+        if (resolvedChannel === 'say' && debug.freeform_block_active) v.push('say + FREEFORM contradiction');
+        if (resolvedChannel === 'do' && debug.narrator_mode_active) v.push('do + NARRATOR_MODE contradiction');
+        if (debug.soliloquy_active && debug.narrator_mode_active) v.push('SOLILOQUY + NARRATOR_MODE contradiction');
+        return v;
+      })()
+    });
+
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative, 
@@ -3596,6 +3644,32 @@ app.get('/logs/download/:sessionId', (req, res) => {
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// =============================================================================
+// SSE DIAGNOSTICS STREAM — /diagnostics/stream
+// Emits a structured payload after every narration turn.
+// diagnostics.js connects here to render the terminal flight recorder.
+// =============================================================================
+const _sseClients = new Set();
+
+app.get('/diagnostics/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+  res.write('data: {"type":"connected"}\n\n');
+  _sseClients.add(res);
+  req.on('close', () => _sseClients.delete(res));
+});
+
+function emitDiagnostics(payload) {
+  if (_sseClients.size === 0) return;
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const client of _sseClients) {
+    try { client.write(data); } catch (_) { _sseClients.delete(client); }
+  }
+}
 // Allow heavy prompts (e.g. "critique my game") to complete before Node kills the socket.
 // headersTimeout and requestTimeout must exceed the outbound axios timeout (120s).
 server.headersTimeout = 130000;
