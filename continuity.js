@@ -69,7 +69,8 @@ function render(d) {
 
   // ── Injected block ──────────────────────────────────────────────────────────
   const blockChars = d.rendered_block ? d.rendered_block.length : 0;
-  push(hr(`INJECTED BLOCK  (${blockChars}ch  ~${Math.round(blockChars / 4)}tok)`));
+  push(hr(`INJECTED BLOCK  (${blockChars}ch  ~${Math.round(blockChars / 4)}tok)  \u2190 fed to model this turn`));
+  push(dim(`  (built from previous turn's extraction — reflects state entering this narration)`));
   push('');
   if (d.rendered_block) {
     d.rendered_block.split('\n').forEach(l => push('  ' + l));
@@ -79,7 +80,7 @@ function render(d) {
   push('');
 
   // ── Extraction result ───────────────────────────────────────────────────────
-  push(hr('EXTRACTION RESULT'));
+  push(hr('EXTRACTION RESULT  \u2192 will be injected next turn'));
   push('');
   const ac = d.active_continuity;
   if (ac) {
@@ -88,7 +89,7 @@ function render(d) {
     push(field('player_physical_state',  ac.player_physical_state));
     push(field('scene_focus_primary',    ac.scene_focus_primary));
     push(field('tone',                   ac.tone));
-    push(field('interaction_mode',       ac.interaction_mode ? `${ac.interaction_mode} (${ac.interaction_status || '—'})` : null));
+    push(field('interaction_mode',       ac.interaction_mode));
     push(field('active_interaction',     ac.active_interaction));
     push(field('environment_continuity', ac.environment_continuity));
     push(field('unresolved_threads',     threads.length ? `${threads.length} active` : 'none'));
