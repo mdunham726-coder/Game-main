@@ -88,19 +88,18 @@ Return ONLY valid JSON matching the exact schema below. No markdown. No explanat
 REQUIRED OUTPUT SCHEMA:
 {
   "active_continuity": {
-    "player_locomotion": "REQUIRED string, never null — exact locomotion described: 'walking south', 'standing still', 'running north', 'driving', 'crouching', etc.",
-    "player_physical_state": "REQUIRED string, never null — overall physical state: 'moving', 'stationary', 'interacting', 'fleeing', etc.",
+    "player_locomotion": "REQUIRED string, never null — format: <verb> <direction> OR 'standing still'. Max 3 words. Must reflect resolved movement this turn, not narration tone.",
+    "player_physical_state": "REQUIRED string, never null — must be exactly one of: 'moving', 'stationary', 'observing', 'interacting'. No other values permitted.",
     "scene_focus_primary": "string or null — the single entity or location this scene is primarily about. MUST exactly match the key marked 'primary' in scene_focus_tier. Null only if no clear primary focus.",
     "scene_focus_tier": "object — map of entity name to tier string. Exactly one entry must have value 'primary'. Others use 'secondary' or 'background'. Example: {\"Corinne\": \"primary\", \"bartender\": \"secondary\"}. Empty object {} if no entities.",
-    "tone": "REQUIRED string, never null — current emotional/atmospheric tone: 'tense', 'casual', 'ominous', 'tense and controlled', 'hostile', 'warm', etc.",
+    "tone": "REQUIRED string, never null — one emotional descriptor + one environmental descriptor, 2–4 words total. Diagnostic only, not prose. Example: 'tense cold', 'uneasy torchlit', 'calm open'.",
     "interaction_mode": "REQUIRED string, never null — one of: 'conversation', 'exploration', 'combat', 'none'",
-    "interaction_status": "REQUIRED string, never null — one of: 'active', 'concluded', 'none'",
-    "active_interaction": "string or null — brief factual description of the active interaction if any. Null if interaction_mode is 'none'.",
-    "environment_continuity": "REQUIRED string, never null — concise factual description of the specific environment the player occupies right now. Prefer generic descriptive language ('small concrete building off the road', 'open dirt road through sparse terrain') over narrator-invented proper nouns. If the narration introduced a named building, business, or organization not found in the provided site context, omit that proper noun and describe the physical setting only.",
-    "unresolved_threads": "array of strings — [] if nothing is unresolved. Max 3 items. Max 15 words each. Situational or environmental unresolved elements ONLY — not NPC states (those are tracked separately).",
-    "spine_scene": "REQUIRED string, never null — 1 to 2 sentences describing the current location with concrete, distinguishing details. Include spatial transitions if the player just moved. Current location only, not history. Do not echo previous spine_scene phrasing verbatim.",
-    "spine_atmosphere": "REQUIRED string, never null — exactly 1 sentence combining the current emotional tone and sensory or environmental feel. Avoid generic filler like 'tense atmosphere' alone — anchor it to something specific in the scene.",
-    "spine_player": "REQUIRED string, never null — exactly 1 sentence describing the player's current action or physical state. No filler. No duplication of scene detail."
+    "active_interaction": "string or null — max 6–8 words, concrete description only. Must be null if interaction_mode is 'none' or no clear interaction exists.",
+    "environment_continuity": "REQUIRED string, never null — max 12–16 words. Physical description only — no mood, no narrative flourish. Must reflect current spatial state, not generic location type. No narrator-invented proper nouns.",
+    "unresolved_threads": "array of strings — [] if nothing is unresolved. Max 3 items. Max 10–12 words each. Persistent situational or environmental facts only — not NPC states, not narrative fluff.",
+    "spine_scene": "REQUIRED string, never null — 1 to 2 sentences. Must reflect current position after this turn. Must include concrete distinguishing details. Must not default to prior scene description. environment_continuity is the compact physical anchor — spine_scene may expand it but must not contradict it.",
+    "spine_atmosphere": "REQUIRED string, never null — exactly 1 sentence. Must include emotional tone and at least one sensory or environmental anchor. Must expand on 'tone', not duplicate it verbatim.",
+    "spine_player": "REQUIRED string, never null — exactly 1 sentence. Must reflect current turn outcome. Must not lag behind player_locomotion or player_physical_state."
   },
   "entity_updates": [
     {
@@ -123,15 +122,20 @@ CRITICAL RULES:
 2. Exactly one entity in scene_focus_tier must have value 'primary'. No more. No less. (Unless scene_focus_tier is empty {}, in which case scene_focus_primary must be null.)
 3. entity_updates: include ONLY NPCs explicitly described or present in the narration. Do not include NPCs not mentioned.
 4. All narrative_state fields (wearing, holding, posture, activity, relative_position, emotional_state): set to null if not explicitly stated in the narration. Do not infer or guess.
-5. unresolved_threads: max 3 items, each max 15 words. Use [] if nothing is unresolved.
-6. interaction_mode and interaction_status: use 'none' if no active interaction is occurring.
+5. unresolved_threads: max 3 items, each max 10–12 words. Persistent situational or environmental facts only — not narrative fluff or NPC states. Use [] if nothing is unresolved.
+6. interaction_mode: use 'none' if no active interaction is occurring.
 7. Missing any REQUIRED field makes the entire extraction invalid — do not omit them.
 8. Do not invent, interpret, or add content not present in the narration.
 9. environment_continuity must NOT freeze narrator-invented named entities (buildings, businesses, organizations) not present in the provided site context. If the narration named a building not in the site data, describe the physical setting generically — omit the invented proper noun entirely.
 10. entity_updates MUST NOT include is_learned, npc_name, or any identity or social-knowledge fields. Name learning authority belongs to the engine exclusively — do not output these fields in any form.
-11. spine_scene: 1–2 sentences only. Describe the current location as it exists right now. Do not summarize prior locations or mix in history. Never null.
-12. spine_atmosphere: 1 sentence only. Combine emotional tone with a sensory or environmental detail specific to this moment. Do not use a generic tone label alone. Never null.
-13. spine_player: 1 sentence only. State what the player is doing or their physical state right now. Never null.`;
+11. spine_scene: 1–2 sentences. Must reflect current position after this turn. environment_continuity is the compact physical anchor — spine_scene may expand it but must not contradict it. Never null.
+12. spine_atmosphere: 1 sentence. Must include emotional tone and at least one sensory/environmental anchor. Must expand on 'tone', not duplicate it. Never null.
+13. spine_player: 1 sentence. Must reflect current turn outcome. Must not lag behind player_locomotion or player_physical_state. Never null.
+14. spine_player must not contradict player_locomotion or player_physical_state. If spine_player implies a different movement state than player_locomotion or player_physical_state, the extraction is INVALID.
+15. environment_continuity is the compact physical anchor; spine_scene may expand it, but must not contradict it (same location, same spatial context).
+16. spine_atmosphere may expand 'tone' but must not conflict with it in emotional direction.
+17. If interaction_mode is 'none', active_interaction MUST be null. Any non-null value with interaction_mode 'none' makes the extraction INVALID.
+18. player_physical_state MUST be exactly one of: 'moving', 'stationary', 'observing', 'interacting'. Any other value makes the extraction INVALID.`;
 
 // -----------------------------------------------------------------------------
 // 1. initContinuityState(gameState)
@@ -283,14 +287,22 @@ async function runContinuityExtraction(narrationText, gameState) {
     if (!ac) { console.warn('[CONTINUITY] extraction: missing active_continuity key'); _diagnostics.rejection_reason = 'missing_required_field:active_continuity'; return null; }
     if (!ac.player_locomotion) { console.warn('[CONTINUITY] extraction: missing required player_locomotion'); _diagnostics.rejection_reason = 'missing_required_field:player_locomotion'; return null; }
     if (!ac.player_physical_state) { console.warn('[CONTINUITY] extraction: missing required player_physical_state'); _diagnostics.rejection_reason = 'missing_required_field:player_physical_state'; return null; }
+    const VALID_PHYSICAL_STATES = ['moving', 'stationary', 'observing', 'interacting'];
+    if (!VALID_PHYSICAL_STATES.includes(ac.player_physical_state)) { console.warn(`[CONTINUITY] extraction: invalid player_physical_state value: "${ac.player_physical_state}"`); _diagnostics.rejection_reason = 'invalid_enum:player_physical_state'; return null; }
     if (!ac.tone) { console.warn('[CONTINUITY] extraction: missing required tone'); _diagnostics.rejection_reason = 'missing_required_field:tone'; return null; }
     if (!ac.interaction_mode) { console.warn('[CONTINUITY] extraction: missing required interaction_mode'); _diagnostics.rejection_reason = 'missing_required_field:interaction_mode'; return null; }
-    if (!ac.interaction_status) { console.warn('[CONTINUITY] extraction: missing required interaction_status'); _diagnostics.rejection_reason = 'missing_required_field:interaction_status'; return null; }
     if (!ac.environment_continuity) { console.warn('[CONTINUITY] extraction: missing required environment_continuity'); _diagnostics.rejection_reason = 'missing_required_field:environment_continuity'; return null; }
     if (!Array.isArray(parsed?.entity_updates)) { console.warn('[CONTINUITY] extraction: missing entity_updates array'); _diagnostics.rejection_reason = 'missing_required_field:entity_updates'; return null; }
     if (!ac.spine_scene)       { console.warn('[CONTINUITY] extraction: missing required spine_scene');       _diagnostics.rejection_reason = 'missing_required_field:spine_scene';       return null; }
     if (!ac.spine_atmosphere)  { console.warn('[CONTINUITY] extraction: missing required spine_atmosphere');  _diagnostics.rejection_reason = 'missing_required_field:spine_atmosphere';  return null; }
     if (!ac.spine_player)      { console.warn('[CONTINUITY] extraction: missing required spine_player');      _diagnostics.rejection_reason = 'missing_required_field:spine_player';      return null; }
+
+    // Cross-field consistency (Rule 17): interaction_mode 'none' requires null active_interaction
+    if (ac.interaction_mode === 'none' && ac.active_interaction != null) {
+      console.warn(`[CONTINUITY] extraction: active_interaction must be null when interaction_mode is 'none' (value: "${ac.active_interaction}")`);
+      _diagnostics.rejection_reason = 'cross_field:active_interaction_with_none_mode';
+      return null;
+    }
 
     // Focus integrity: strict reject mode — any mismatch = extraction invalid, return null.
     // scene_focus_primary MUST match the entity keyed 'primary' in scene_focus_tier.
