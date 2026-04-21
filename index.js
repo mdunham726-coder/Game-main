@@ -846,6 +846,7 @@ app.post('/narrate', async (req, res) => {
     parseResult = { success: false, error: 'LLM_UNAVAILABLE', intent: null };
     console.warn('[PARSER] exception in semantic parser:', e?.message);
   }
+  const _parserUsage = parseResult?.parser_usage || null;
   let debug = {
     parser: "none",
     input: userInput,
@@ -1816,6 +1817,8 @@ app.post('/narrate', async (req, res) => {
       NC.pushAlert({ severity: 'Info', type: 'continuity_eviction', description: `Continuity evicted (${_continuityEvictionReason})`, entity_ref: null, turn: (gameState.turn_history ? gameState.turn_history.length : 0) + 1 });
     }
     const _continuityBlock = NC.buildContinuityBlock(gameState);
+    _lastRenderedBlock = _continuityBlock; // cache for /diagnostics/continuity
+    _lastGameState = gameState;            // cache for /diagnostics/continuity
     // v1.63.0: reflects actual block output — true when narrator received any continuity content
     // (active_continuity OR narrative_memory entries), not just active_continuity presence
     const _continuityInjected = _continuityBlock.length > 0;
@@ -2197,10 +2200,12 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
 
     // Safely extract narrative
     let narrative = "The engine processes your action.";
+    let _narratorUsage = null;
     try {
       if (response?.data?.choices?.[0]?.message?.content) {
         narrative = String(response.data.choices[0].message.content);
       }
+      _narratorUsage = response?.data?.usage || null;
     } catch (parseErr) {
       console.error('Failed to parse DeepSeek response:', parseErr.message);
     }
@@ -2859,7 +2864,41 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Type:', typeof resolvedSessionId);
     console.log('[DIAG-1-SERVER-BEFORE-RESPONSE] Will be included in response JSON');
 
+    // ── Token accounting (v1.64.x) ──────────────────────────────────────────
+    // Prompt section char measurement (all variables in scope here)
+    const _promptContinuityChars = _continuityBlock.length;
+    const _promptSpatialChars    = (_engineSpatialBlock || '').length;
+    const _promptTotalChars      = narrationContent ? narrationContent.length : 0;
+    const _promptBaseChars       = _promptTotalChars - _promptContinuityChars - _promptSpatialChars;
+
+    // System totals (null-safe — falls back to char/4 estimate in renderer)
+    const _narratorTok  = _narratorUsage?.total_tokens    ?? null;
+    const _parserTok    = _parserUsage?.total_tokens      ?? null;
+    const _systemTokTotal = _narratorTok !== null ? _narratorTok + (_parserTok || 0) : null; // parser null = cached = 0 cost
+    const _contGrowthChars = _continuityBlock.length;
+    const _priorMemCount   = (gameState.world.narrative_memory || []).length;
+    const _priorMemChars   = (gameState.world.narrative_memory || []).reduce((s, m) => {
+      try { return s + JSON.stringify(m).length; } catch (_) { return s; }
+    }, 0);
+
+    // Delta and rolling average from history
+    const _prevEntry       = _diagHistory.length > 0 ? _diagHistory[_diagHistory.length - 1] : null;
+    const _deltaTok        = (_systemTokTotal !== null && _prevEntry?.system_total != null) ? _systemTokTotal - _prevEntry.system_total : null;
+    const _deltaContChars  = _prevEntry != null ? _contGrowthChars - _prevEntry.cont_chars : null;
+    const _last5           = _diagHistory.slice(-5).filter(e => e.system_total != null);
+    const _avg5            = _last5.length > 0 ? Math.round(_last5.reduce((s, e) => s + e.system_total, 0) / _last5.length) : null;
+
     // Emit to SSE diagnostics stream (diagnostics.js terminal flight recorder)
+    const _turnViolations = (() => {
+      const v = [];
+      if (_parsedAction === 'move' && debug.parser !== 'legacy' && !debug.degraded_from && !debug.freeform_block_active && !movement) v.push('move: no movement object');
+      if (_continuityExtractionSuccess === false) v.push('continuity extraction failed');
+      if (!_continuityInjected && !_continuityEvicted && turnNumber > 1) v.push('no continuity context (not eviction)');
+      if (resolvedChannel === 'say' && debug.freeform_block_active) v.push('say + FREEFORM contradiction');
+      if (resolvedChannel === 'do' && debug.narrator_mode_active) v.push('do + NARRATOR_MODE contradiction');
+      if (debug.soliloquy_active && debug.narrator_mode_active) v.push('SOLILOQUY + NARRATOR_MODE contradiction');
+      return v;
+    })();
     emitDiagnostics({
       type: 'turn',
       turn: turnNumber,
@@ -2869,7 +2908,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       parsed_dir: inputObj?.player_intent?.dir || null,
       confidence: debug.confidence || null,
       parser: debug.parser,
-      degraded: _isAborted ? null : (debug.degraded_from || null),
+      degraded: debug.degraded_from || null,
       spatial: {
         depth: gameState.world.active_local_space ? 3 : gameState.world.active_site ? 2 : 1,
         position: gameState.world.position || null,
@@ -2884,28 +2923,61 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         eviction_reason: _continuityEvictionReason || null,
         extraction_success: _continuityExtractionSuccess,
         rejection_reason: NC.getLastRunDiagnostics()?.rejection_reason || null,
-        memory_count: (gameState.world.narrative_memory || []).length,
+        prior_memory_count: _priorMemCount,
         snapshot: _continuityBlockSnapshot,
         alerts: NC.getLastRunDiagnostics()?.alerts || [],
         entity_updates: NC.getLastRunDiagnostics()?.entity_updates_applied || [],
         entity_cleared: NC.getLastRunDiagnostics()?.entity_continuity_cleared || []
+      },
+      tokens: {
+        narrator: {
+          prompt:     _narratorUsage?.prompt_tokens     ?? null,
+          completion: _narratorUsage?.completion_tokens ?? null,
+          total:      _narratorUsage?.total_tokens      ?? null
+        },
+        parser: {
+          prompt:     _parserUsage?.prompt_tokens     ?? null,
+          completion: _parserUsage?.completion_tokens ?? null,
+          total:      _parserUsage?.total_tokens      ?? null
+        },
+        system_total: _systemTokTotal,
+        delta:        _deltaTok,
+        avg5:         _avg5,
+        breakdown: {
+          base_chars:        Math.max(0, _promptBaseChars),
+          continuity_chars:  _promptContinuityChars,
+          spatial_chars:     _promptSpatialChars,
+          output_chars:      narrative?.length || 0
+        }
+      },
+      continuity_growth: {
+        block_chars:         _contGrowthChars,
+        block_tokens_est:    Math.round(_contGrowthChars / 4),
+        delta_chars:         _deltaContChars,
+        prior_memory_count:  _priorMemCount,
+        prior_memory_chars:  _priorMemChars
       },
       entities: {
         visible: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || []).map(n => ({ id: n.id, job: n.job_category || null, name: n.npc_name || null }))
       },
       narration_length: narrative?.length || 0,
       engine_message: _engineMsg || null,
-      violations: (() => {
-        const v = [];
-        if (_parsedAction === 'move' && debug.parser !== 'legacy' && !debug.degraded_from && !debug.freeform_block_active && !movement) v.push('move: no movement object');
-        if (_continuityExtractionSuccess === false) v.push('continuity extraction failed');
-        if (!_continuityInjected && !_continuityEvicted && turnNumber > 1) v.push('no continuity context (not eviction)');
-        if (resolvedChannel === 'say' && debug.freeform_block_active) v.push('say + FREEFORM contradiction');
-        if (resolvedChannel === 'do' && debug.narrator_mode_active) v.push('do + NARRATOR_MODE contradiction');
-        if (debug.soliloquy_active && debug.narrator_mode_active) v.push('SOLILOQUY + NARRATOR_MODE contradiction');
-        return v;
-      })()
+      violations: _turnViolations
     });
+
+    // Update rolling history for delta/avg computation next turn
+    _diagHistory.push({
+      turn_number:         turnNumber,
+      narrator_total:      _narratorUsage?.total_tokens      ?? null,
+      narrator_prompt:     _narratorUsage?.prompt_tokens     ?? null,
+      narrator_completion: _narratorUsage?.completion_tokens ?? null,
+      parser_total:        _parserUsage?.total_tokens        ?? null,
+      parser_cached:       _parserUsage === null,
+      system_total:        _systemTokTotal,
+      cont_chars:          _contGrowthChars,
+      violations:          _turnViolations
+    });
+    if (_diagHistory.length > 200) _diagHistory.shift();
 
     return res.json({ 
       sessionId: resolvedSessionId,
@@ -3651,6 +3723,10 @@ const server = app.listen(PORT, () => {
 // diagnostics.js connects here to render the terminal flight recorder.
 // =============================================================================
 const _sseClients = new Set();
+let _lastDiagnosticPayload = null; // replayed to new connections so they show current state immediately
+let _diagHistory = []; // rolling per-turn cost history for delta/avg and session summary (max 200 entries)
+let _lastRenderedBlock = null; // cache of the exact continuity text injected into the model each turn
+let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
 
 app.get('/diagnostics/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -3658,16 +3734,114 @@ app.get('/diagnostics/stream', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.flushHeaders();
+  req.socket.setTimeout(0);
+  req.socket.setNoDelay(true); // disable Nagle — flush every write immediately
   res.write('data: {"type":"connected"}\n\n');
+  // Replay last turn immediately so reconnects don't show stale data
+  if (_lastDiagnosticPayload) {
+    try { res.write(`data: ${JSON.stringify(_lastDiagnosticPayload)}\n\n`); } catch (_) {}
+  }
   _sseClients.add(res);
-  req.on('close', () => _sseClients.delete(res));
+  const keepalive = setInterval(() => {
+    if (res.writableEnded || res.destroyed) {
+      clearInterval(keepalive);
+      _sseClients.delete(res);
+      return;
+    }
+    try { res.write(': keepalive\n\n'); } catch (_) {
+      clearInterval(keepalive);
+      _sseClients.delete(res);
+    }
+  }, 15000);
+  req.on('close', () => {
+    clearInterval(keepalive);
+    _sseClients.delete(res);
+  });
+});
+
+// On-demand continuity inspector — GET /diagnostics/continuity?turns=N
+// Returns the exact injected continuity block text, structured extraction state,
+// prior location memories, and the last N narrations from the archive.
+app.get('/diagnostics/continuity', (req, res) => {
+  if (!_lastGameState || _lastRenderedBlock === null) {
+    return res.json({ no_data: true, reason: 'No turns played yet — start the game and take at least one action.' });
+  }
+  const history = _lastGameState.turn_history || [];
+  const total = history.length;
+  const turnsParam = req.query.turns;
+  let count;
+  if (turnsParam === 'all') {
+    count = total;
+  } else {
+    count = parseInt(turnsParam, 10);
+    if (!Number.isFinite(count) || count < 1) count = 3;
+  }
+  const slice = history.slice(-count).map(t => ({
+    turn_number: t.turn_number,
+    narrative: t.narrative,
+    continuity_block_chars: t.narration_debug?.continuity_block_chars ?? null
+  }));
+  res.json({
+    turn: total,
+    rendered_block: _lastRenderedBlock,
+    active_continuity: _lastGameState.world.active_continuity
+      ? JSON.parse(JSON.stringify(_lastGameState.world.active_continuity))
+      : null,
+    narrative_memory: _lastGameState.world.narrative_memory || [],
+    narrative_archive_total: total,
+    last_narrations: slice
+  });
+});
+
+// On-demand session summary — GET /diagnostics/summary
+// Returns aggregate stats over _diagHistory (since last server restart).
+app.get('/diagnostics/summary', (req, res) => {
+  const valid        = _diagHistory.filter(e => e.system_total != null);
+  const turns        = _diagHistory.length;
+  const avgSystem    = valid.length ? Math.round(valid.reduce((s, e) => s + e.system_total, 0) / valid.length) : null;
+  const avgNarrator  = valid.length ? Math.round(valid.reduce((s, e) => s + (e.narrator_total || 0), 0) / valid.length) : null;
+  const avgParser    = valid.length ? Math.round(valid.reduce((s, e) => s + (e.parser_total  || 0), 0) / valid.length) : null;
+  const totalSpent   = valid.reduce((s, e) => s + e.system_total, 0);
+  const peakEntry    = valid.reduce((m, e) => (e.system_total > (m?.system_total || 0) ? e : m), null);
+  const cachedTurns  = _diagHistory.filter(e => e.parser_cached).length;
+  const violationCounts = {};
+  _diagHistory.forEach(e => (e.violations || []).forEach(v => { violationCounts[v] = (violationCounts[v] || 0) + 1; }));
+  res.json({
+    turns,
+    avg_system:        avgSystem,
+    avg_narrator:      avgNarrator,
+    avg_parser:        avgParser,
+    total_spent:       totalSpent,
+    peak_entry:        peakEntry,
+    cached_turns:      cachedTurns,
+    cont_chars_first:  _diagHistory[0]?.cont_chars ?? null,
+    cont_chars_last:   _diagHistory[_diagHistory.length - 1]?.cont_chars ?? null,
+    violation_counts:  violationCounts
+  });
 });
 
 function emitDiagnostics(payload) {
-  if (_sseClients.size === 0) return;
-  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  let data;
+  try {
+    data = `data: ${JSON.stringify(payload)}\n\n`;
+  } catch (err) {
+    console.error('[EMIT_DIAG] JSON.stringify failed:', err.message);
+    return;
+  }
+  _lastDiagnosticPayload = payload; // cache for replay on reconnect
+  console.log(`[EMIT_DIAG] turn=${payload.turn} clients=${_sseClients.size}`);
   for (const client of _sseClients) {
-    try { client.write(data); } catch (_) { _sseClients.delete(client); }
+    if (client.writableEnded || client.destroyed) {
+      _sseClients.delete(client);
+      continue;
+    }
+    try {
+      client.write(data);
+      if (client.socket) client.socket.uncork();
+    } catch (err) {
+      console.error('[EMIT_DIAG] write failed:', err.message);
+      _sseClients.delete(client);
+    }
   }
 }
 // Allow heavy prompts (e.g. "critique my game") to complete before Node kills the socket.

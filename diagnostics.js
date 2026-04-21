@@ -7,11 +7,12 @@
 'use strict';
 
 const http = require('http');
+const { spawn } = require('child_process');
 
 const HOST = 'localhost';
 const PORT = 3000;
 const PATH = '/diagnostics/stream';
-const RECONNECT_MS = 2500;
+const RECONNECT_MS = 500;
 
 // ── ANSI helpers ────────────────────────────────────────────────────────────
 const R  = '\x1b[0m';
@@ -25,7 +26,7 @@ const MAG= '\x1b[35m';
 const CYN= '\x1b[36m';
 const WHT= '\x1b[37m';
 
-function clr()  { process.stdout.write('\x1Bc'); }
+function clr()  { process.stdout.write('\x1b[H\x1b[2J\x1b[3J'); }
 function pad(s, w) { s = String(s ?? ''); return s.length >= w ? s.slice(0, w) : s + ' '.repeat(w - s.length); }
 function rpad(s, w) { s = String(s ?? ''); return s.length >= w ? s.slice(0, w) : ' '.repeat(w - s.length) + s; }
 function bar(char, w) { return char.repeat(w); }
@@ -79,7 +80,7 @@ function render(p) {
   push(divider('SPATIAL'));
   const sp = p.spatial || {};
   const depth = ['—','OVERWORLD','SITE','LOCAL'][sp.depth ?? 0] || String(sp.depth);
-  const pos   = sp.position ? `(${sp.position.x ?? '?'}, ${sp.position.y ?? '?'})` : '(—)';
+  const pos   = sp.position ? `(${sp.position.lx ?? sp.position.x ?? '?'}, ${sp.position.ly ?? sp.position.y ?? '?'})` : '(—)';
   const site  = sp.site_name || '—';
   const local = sp.local_space_name || '—';
   push(`${bold('DEPTH')} ${mag(pad(depth, 12))}  ${bold('POS')} ${pad(pos, 12)}  ${bold('SITE')} ${pad(site, 24)}  ${bold('LOCALSPACE')} ${local}`);
@@ -102,15 +103,20 @@ function render(p) {
   // Continuity
   push(divider('CONTINUITY'));
   const co = p.continuity || {};
-  const injRow   = `${bold('INJECTED')}     ${yn(co.injected)}`;
-  const evictRow = `${bold('EVICTED')}      ${yn(co.evicted)}${co.eviction_reason ? `  ${dim(co.eviction_reason.slice(0, 40))}` : ''}`;
-  const extrRow  = `${bold('EXTRACTION')}   ${ok(co.extraction_success !== false)}${co.rejection_reason ? `  ${amber(co.rejection_reason.slice(0, 50))}` : ''}`;
-  const memRow   = `${bold('MEMORY COUNT')} ${cyan(String(co.memory_count ?? '—'))}`;
-  const charRow  = `${bold('BLOCK CHARS')}  ${cyan(String(co.block_chars ?? 0))}`;
+  const injChars  = co.injected ? (co.block_chars || 0) : 0;
+  const injTokEst = Math.round(injChars / 4);
+  const injLabel  = co.injected
+    ? `${grn('YES')} ${dim(`(chars:${injChars} | ~${injTokEst}tok)`)}`
+    : `${red('NO')}`;
+  const injRow   = `${bold('INJECTED')}       ${injLabel}`;
+  const evictRow = `${bold('EVICTED')}        ${yn(co.evicted)}${co.eviction_reason ? `  ${dim(co.eviction_reason.slice(0, 40))}` : ''}`;
+  const extrRow  = `${bold('EXTRACTION')}     ${ok(co.extraction_success !== false)}${co.rejection_reason ? `  ${amber(co.rejection_reason.slice(0, 50))}` : ''}`;
+  const memRow   = `${bold('PRIOR MEMORIES')} ${cyan(String(co.prior_memory_count ?? co.memory_count ?? '—'))} ${dim('(archived)')}`;
   push(injRow + '   ' + evictRow);
-  push(extrRow + '   ' + memRow + '   ' + charRow);
+  push(extrRow + '   ' + memRow);
   if (co.snapshot) {
-    const snip = co.snapshot.slice(0, WIDTH - 4).replace(/\n/g, ' ');
+    const snipSrc = typeof co.snapshot === 'string' ? co.snapshot : JSON.stringify(co.snapshot);
+    const snip = snipSrc.slice(0, WIDTH - 4).replace(/\n/g, ' ');
     push(dim(`  ↳ "${snip}"`));
   }
   if (co.alerts && co.alerts.length) {
@@ -119,6 +125,67 @@ function render(p) {
   if (co.entity_updates && co.entity_updates.length) {
     push(`  ${grn('ENTITY UPDATES')} ${co.entity_updates.slice(0, 4).map(u => `${u.id || u}`).join(', ')}`);
   }
+  push('');
+
+  // Tokens
+  push(divider('TOKENS'));
+  const tok = p.tokens  || {};
+  const cg  = p.continuity_growth || {};
+  const fmtN   = (n, sfx = 'tok') => n != null ? `${Number(n).toLocaleString()}${sfx}` : null;
+  const fmtEst = (chars) => `~${Math.round((chars || 0) / 4).toLocaleString()}tok`;
+
+  // Narrator row
+  const narTot    = tok.narrator?.total;
+  const narStr    = narTot != null
+    ? `${bold('NARRATOR')}  prompt:${cyan(fmtN(tok.narrator.prompt))}  compl:${cyan(fmtN(tok.narrator.completion))}  total:${cyan(fmtN(narTot))}`
+    : `${bold('NARRATOR')}  ${dim(fmtEst(tok.breakdown?.base_chars || 0) + ' (est — no usage returned)')}`;
+
+  // Parser row
+  const parTot    = tok.parser?.total;
+  const parStr    = parTot != null
+    ? `${bold('PARSER')}    prompt:${cyan(fmtN(tok.parser.prompt))}  compl:${cyan(fmtN(tok.parser.completion))}  total:${cyan(fmtN(parTot))}`
+    : p.parser === 'none'
+      ? `${bold('PARSER')}    ${dim('(not invoked — low confidence or fallback)')}`
+      : `${bold('PARSER')}    ${dim('(cached — no usage data)')}`;
+
+  // System total + trend
+  const sysTot   = tok.system_total;
+  const delta    = tok.delta;
+  const avg5     = tok.avg5;
+  let deltaStr   = '';
+  if (delta != null) {
+    const sign = delta > 0 ? '+' : '';
+    const col  = delta > 0 ? red : delta < 0 ? grn : amber;
+    deltaStr   = `  ${bold('Δ')}${col(`${sign}${delta.toLocaleString()}`)}`;
+  }
+  const avg5Str   = avg5  != null ? `  ${bold('AVG/5')} ${dim(avg5.toLocaleString() + 'tok')}` : '';
+  const sysTotStr = sysTot != null ? `${bold('SYSTEM')}    ${cyan(fmtN(sysTot))}` : `${bold('SYSTEM')}    ${dim('—')}`;
+
+  // Breakdown (always estimated from section char lengths)
+  const bd    = tok.breakdown || {};
+  const outTokEst = fmtEst(bd.output_chars);
+  const outChars   = bd.output_chars != null ? `(${bd.output_chars.toLocaleString()}ch)` : '';
+  const bdStr = `${bold('BREAKDOWN')}  base:${dim(fmtEst(bd.base_chars))}  continuity:${dim(fmtEst(bd.continuity_chars))}  spatial:${dim(fmtEst(bd.spatial_chars))}  output:${dim(outTokEst + ' ' + outChars)}`;
+
+  push(narStr);
+  push(parStr);
+  push(sysTotStr + deltaStr + avg5Str);
+  push(bdStr);
+  push('');
+
+  // Continuity Growth
+  push(divider('CONTINUITY GROWTH'));
+  const cgChars      = cg.block_chars ?? 0;
+  const cgTokEst2    = cg.block_tokens_est ?? Math.round(cgChars / 4);
+  const cgDelta      = cg.delta_chars;
+  let cgDeltaStr     = '';
+  if (cgDelta != null) {
+    const col = cgDelta > 0 ? red : cgDelta < 0 ? grn : amber;
+    cgDeltaStr = `  ${bold('Δ')}${col((cgDelta > 0 ? '+' : '') + cgDelta + 'ch')}`;
+  }
+  const cgPrior      = cg.prior_memory_count ?? 0;
+  const cgPriorChars = cg.prior_memory_chars ?? 0;
+  push(`${bold('BLOCK')} ${cyan(cgChars + 'ch')} ${dim('(~' + cgTokEst2 + 'tok)')}${cgDeltaStr}   ${bold('PRIOR MEMORIES')} ${cyan(String(cgPrior))} entries ${dim('(' + cgPriorChars + 'ch total)')}`);
   push('');
 
   // Entities in scene
@@ -155,7 +222,7 @@ function render(p) {
   }
 
   // Footer
-  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  press Ctrl+C to exit`));
+  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] continuity  Ctrl+C exit`));
 
   clr();
   process.stdout.write(lines.join('\n') + '\n');
@@ -166,6 +233,8 @@ function connect() {
   process.stdout.write(`${DIM}[flight-recorder] connecting to http://${HOST}:${PORT}${PATH}…${R}\n`);
 
   const req = http.get({ host: HOST, port: PORT, path: PATH, headers: { Accept: 'text/event-stream' } }, res => {
+    req.socket.setTimeout(0);
+    req.socket.setNoDelay(true);
     if (res.statusCode !== 200) {
       process.stdout.write(`${RED}[flight-recorder] HTTP ${res.statusCode} — will retry in ${RECONNECT_MS}ms${R}\n`);
       res.resume();
@@ -184,10 +253,20 @@ function connect() {
       for (const block of parts) {
         for (const line of block.split('\n')) {
           if (!line.startsWith('data:')) continue;
+          let payload;
           try {
-            const payload = JSON.parse(line.slice(5).trim());
-            if (payload.type === 'turn') render(payload);
-          } catch (_) { /* ignore malformed */ }
+            payload = JSON.parse(line.slice(5).trim());
+          } catch (e) {
+            process.stdout.write(`${RED}[PARSE ERR] ${e.message.slice(0, 80)}${R}\n`);
+            continue;
+          }
+          if (payload.type !== 'turn') continue;
+          process.stdout.write(`${DIM}[recv T-${payload.turn}]${R}\n`);
+          try {
+            render(payload);
+          } catch (e) {
+            process.stdout.write(`${RED}[RENDER ERR T-${payload.turn}] ${e.message}\n${e.stack || ''}${R}\n`);
+          }
         }
       }
     });
@@ -212,3 +291,30 @@ function connect() {
 }
 
 connect();
+
+// ── Hotkeys ─────────────────────────────────────────────────────────────────
+// S → open session summary in a persistent CMD window
+// C → open continuity inspector in a persistent CMD window
+// Ctrl+C → exit
+if (process.stdin.isTTY) {
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', key => {
+    if (key === '\u0003') { process.exit(); } // Ctrl+C
+    if (key === 's' || key === 'S') {
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node summary.js'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    }
+    if (key === 'c' || key === 'C') {
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node continuity.js'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    }
+  });
+}

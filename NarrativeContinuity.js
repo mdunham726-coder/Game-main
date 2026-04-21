@@ -97,7 +97,10 @@ REQUIRED OUTPUT SCHEMA:
     "interaction_status": "REQUIRED string, never null — one of: 'active', 'concluded', 'none'",
     "active_interaction": "string or null — brief factual description of the active interaction if any. Null if interaction_mode is 'none'.",
     "environment_continuity": "REQUIRED string, never null — concise factual description of the specific environment the player occupies right now. Prefer generic descriptive language ('small concrete building off the road', 'open dirt road through sparse terrain') over narrator-invented proper nouns. If the narration introduced a named building, business, or organization not found in the provided site context, omit that proper noun and describe the physical setting only.",
-    "unresolved_threads": "array of strings — [] if nothing is unresolved. Max 3 items. Max 15 words each. Only genuinely unresolved narrative elements."
+    "unresolved_threads": "array of strings — [] if nothing is unresolved. Max 3 items. Max 15 words each. Situational or environmental unresolved elements ONLY — not NPC states (those are tracked separately).",
+    "spine_scene": "REQUIRED string, never null — 1 to 2 sentences describing the current location with concrete, distinguishing details. Include spatial transitions if the player just moved. Current location only, not history. Do not echo previous spine_scene phrasing verbatim.",
+    "spine_atmosphere": "REQUIRED string, never null — exactly 1 sentence combining the current emotional tone and sensory or environmental feel. Avoid generic filler like 'tense atmosphere' alone — anchor it to something specific in the scene.",
+    "spine_player": "REQUIRED string, never null — exactly 1 sentence describing the player's current action or physical state. No filler. No duplication of scene detail."
   },
   "entity_updates": [
     {
@@ -125,7 +128,10 @@ CRITICAL RULES:
 7. Missing any REQUIRED field makes the entire extraction invalid — do not omit them.
 8. Do not invent, interpret, or add content not present in the narration.
 9. environment_continuity must NOT freeze narrator-invented named entities (buildings, businesses, organizations) not present in the provided site context. If the narration named a building not in the site data, describe the physical setting generically — omit the invented proper noun entirely.
-10. entity_updates MUST NOT include is_learned, npc_name, or any identity or social-knowledge fields. Name learning authority belongs to the engine exclusively — do not output these fields in any form.`;
+10. entity_updates MUST NOT include is_learned, npc_name, or any identity or social-knowledge fields. Name learning authority belongs to the engine exclusively — do not output these fields in any form.
+11. spine_scene: 1–2 sentences only. Describe the current location as it exists right now. Do not summarize prior locations or mix in history. Never null.
+12. spine_atmosphere: 1 sentence only. Combine emotional tone with a sensory or environmental detail specific to this moment. Do not use a generic tone label alone. Never null.
+13. spine_player: 1 sentence only. State what the player is doing or their physical state right now. Never null.`;
 
 // -----------------------------------------------------------------------------
 // 1. initContinuityState(gameState)
@@ -282,6 +288,9 @@ async function runContinuityExtraction(narrationText, gameState) {
     if (!ac.interaction_status) { console.warn('[CONTINUITY] extraction: missing required interaction_status'); _diagnostics.rejection_reason = 'missing_required_field:interaction_status'; return null; }
     if (!ac.environment_continuity) { console.warn('[CONTINUITY] extraction: missing required environment_continuity'); _diagnostics.rejection_reason = 'missing_required_field:environment_continuity'; return null; }
     if (!Array.isArray(parsed?.entity_updates)) { console.warn('[CONTINUITY] extraction: missing entity_updates array'); _diagnostics.rejection_reason = 'missing_required_field:entity_updates'; return null; }
+    if (!ac.spine_scene)       { console.warn('[CONTINUITY] extraction: missing required spine_scene');       _diagnostics.rejection_reason = 'missing_required_field:spine_scene';       return null; }
+    if (!ac.spine_atmosphere)  { console.warn('[CONTINUITY] extraction: missing required spine_atmosphere');  _diagnostics.rejection_reason = 'missing_required_field:spine_atmosphere';  return null; }
+    if (!ac.spine_player)      { console.warn('[CONTINUITY] extraction: missing required spine_player');      _diagnostics.rejection_reason = 'missing_required_field:spine_player';      return null; }
 
     // Focus integrity: strict reject mode — any mismatch = extraction invalid, return null.
     // scene_focus_primary MUST match the entity keyed 'primary' in scene_focus_tier.
@@ -367,8 +376,9 @@ function freezeContinuityState(extraction, gameState) {
         _ac.interaction_status = 'none';
         _ac.active_interaction = null;
         _ac.environment_continuity = null; // strip interior-flavored env frame entirely
+        _ac.spine_scene = null;            // prevent interior-flavored scene from entering Packet 1
       }
-      console.log('[SPATIAL GUARD] L0+unentered — forced interaction + env_continuity to outdoor defaults');
+      console.log('[SPATIAL GUARD] L0+unentered — forced interaction + env_continuity + spine_scene to outdoor defaults');
     }
   }
 
@@ -429,126 +439,44 @@ function freezeContinuityState(extraction, gameState) {
 // -----------------------------------------------------------------------------
 function buildContinuityBlock(gameState) {
   const ac = gameState.world.active_continuity;
-  const priorMemories = Array.isArray(gameState.world.narrative_memory) ? gameState.world.narrative_memory : [];
 
-  if (!ac && priorMemories.length === 0) return '';
-
-  const lines = [];
-
-  if (ac) {
-    lines.push('[NARRATIVE CONTINUITY]', '');
-
-    // Scene Focus section
-    const sfLines = [];
-    if (ac.scene_focus_primary) {
-      sfLines.push(`- Primary: ${ac.scene_focus_primary}`);
-    }
-    if (ac.scene_focus_tier && typeof ac.scene_focus_tier === 'object') {
-      const secondaries = Object.entries(ac.scene_focus_tier)
-        .filter(([, tier]) => tier === 'secondary')
-        .map(([name]) => name);
-      if (secondaries.length > 0) {
-        sfLines.push(`- Secondary: ${secondaries.join(', ')}`);
-      }
-    }
-    if (ac.environment_continuity) {
-      sfLines.push(`- Location: ${ac.environment_continuity}`);
-    }
-    if (sfLines.length > 0) {
-      lines.push('Scene Focus:');
-      lines.push(...sfLines);
-      lines.push('');
-    }
-
-    // Player State section
-    const psLines = [];
-    if (ac.player_locomotion) psLines.push(`- Locomotion: ${ac.player_locomotion}`);
-    if (ac.player_physical_state) psLines.push(`- Physical state: ${ac.player_physical_state}`);
-    if (psLines.length > 0) {
-      lines.push('Player State:');
-      lines.push(...psLines);
-      lines.push('');
-    }
-
-    // Interaction section
-    const intLines = [];
-    if (ac.interaction_mode && ac.interaction_mode !== 'none') {
-      intLines.push(`- Mode: ${ac.interaction_mode} (${ac.interaction_status || 'unknown'})`);
-    }
-    if (ac.tone) intLines.push(`- Tone: ${ac.tone}`);
-    if (ac.active_interaction) intLines.push(`- Active: ${ac.active_interaction}`);
-    if (Array.isArray(ac.unresolved_threads) && ac.unresolved_threads.length > 0) {
-      for (const thread of ac.unresolved_threads) {
-        intLines.push(`- Unresolved: ${thread}`);
-      }
-    }
-    if (intLines.length > 0) {
-      lines.push('Interaction:');
-      lines.push(...intLines);
-      lines.push('');
-    }
-
-    // Entity State sections — one per visible NPC with narrative_state
-    const visibleNpcs = gameState.world.active_local_space
-      ? (gameState.world.active_local_space._visible_npcs || [])
-      : gameState.world.active_site
-      ? (gameState.world.active_site._visible_npcs || [])
-      : [];
-
-    for (const npc of visibleNpcs) {
-      if (!npc.narrative_state) continue;
-      const ns = npc.narrative_state;
-      const hasAnyField = ns.wearing || ns.holding || ns.posture || ns.activity || ns.relative_position || ns.emotional_state;
-      if (!hasAnyField) continue;
-
-      const label = (npc.is_learned && npc.npc_name) ? npc.npc_name : (npc.job_category || npc.id);
-      const entityLines = [];
-      if (ns.wearing) entityLines.push(`  - Wearing: ${ns.wearing}`);
-      if (ns.holding) entityLines.push(`  - Holding: ${ns.holding}`);
-      if (ns.posture) entityLines.push(`  - Posture: ${ns.posture}`);
-      if (ns.activity) entityLines.push(`  - Activity: ${ns.activity}`);
-      if (ns.relative_position) entityLines.push(`  - Position: ${ns.relative_position}`);
-      if (ns.emotional_state) entityLines.push(`  - Emotional state: ${ns.emotional_state}`);
-
-      if (entityLines.length > 0) {
-        lines.push(`Entity State (${label}):`);
-        lines.push(...entityLines);
-        lines.push('');
-      }
-    }
-
-    lines.push('[Do NOT reintroduce the scene. Do NOT change established details. Continue from this state.]');
+  // No active continuity → nothing to inject
+  if (!ac) {
+    console.log('[CONTINUITY] block: 0 chars (no active_continuity)');
+    return '';
   }
 
-  // Append archived prior location memories (most recent first)
-  if (priorMemories.length > 0) {
-    lines.push('');
-    lines.push('[PRIOR LOCATION MEMORY]');
-    lines.push('These facts were established in previous locations. They remain true. Do NOT contradict them.');
-    lines.push('');
-    for (let i = priorMemories.length - 1; i >= 0; i--) {
-      const pm = priorMemories[i];
-      const turnLabel = pm.turn_when_set ? `Turn ${pm.turn_when_set}` : 'Earlier';
-      lines.push(`[${turnLabel} — ${pm.layer_label || 'unknown location'}]`);
-      if (pm.scene_focus_primary) lines.push(`  Scene focus: ${pm.scene_focus_primary}`);
-      if (pm.player_locomotion) lines.push(`  Locomotion: ${pm.player_locomotion}`);
-      if (pm.player_physical_state) lines.push(`  Physical state: ${pm.player_physical_state}`);
-      if (pm.interaction_mode && pm.interaction_mode !== 'none') {
-        lines.push(`  Interaction: ${pm.interaction_mode} (${pm.interaction_status || 'unknown'})`);
-      }
-      if (pm.active_interaction) lines.push(`  Active: ${pm.active_interaction}`);
-      if (Array.isArray(pm.unresolved_threads) && pm.unresolved_threads.length > 0) {
-        for (const thread of pm.unresolved_threads) {
-          lines.push(`  Unresolved: ${thread}`);
-        }
-      }
-      if (pm.tone) lines.push(`  Tone: ${pm.tone}`);
-      lines.push('');
-    }
+  // Spine fields missing (stale pre-v1.65 data, or spatial guard nulled spine_scene) → inject nothing
+  // Better: no continuity than wrong-format continuity
+  if (!ac.spine_scene || !ac.spine_atmosphere || !ac.spine_player) {
+    console.log('[CONTINUITY] block: 0 chars (spine fields absent — graceful degradation)');
+    return '';
   }
 
-  const block = lines.join('\n');
-  console.log(`[CONTINUITY] block: ${block.length} chars, prior memories total: ${priorMemories.length}, rendered: ${priorMemories.length}`);
+  // Build Active Threads section
+  const threads = Array.isArray(ac.unresolved_threads) && ac.unresolved_threads.length > 0
+    ? ac.unresolved_threads.join('\n')
+    : 'none';
+
+  const block = [
+    '[NARRATIVE CONTINUITY — SCENE SPINE]',
+    '',
+    'Scene:',
+    ac.spine_scene,
+    '',
+    'Atmosphere:',
+    ac.spine_atmosphere,
+    '',
+    'Player:',
+    ac.spine_player,
+    '',
+    'Active Threads:',
+    threads,
+    '',
+    '[Continue from this exact state. Do not reset or generalize the scene.]'
+  ].join('\n');
+
+  console.log(`[CONTINUITY] block: ${block.length} chars (Scene Spine)`);
   return block;
 }
 

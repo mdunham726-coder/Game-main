@@ -159,9 +159,10 @@ async function callDeepSeek(messages) {
     );
     const content = resp?.data?.choices?.[0]?.message?.content;
     if (typeof content !== "string" || content.length === 0) {
-      return { ok: false, error: "PARSE_FAILED", content: null };
+      return { ok: false, error: "PARSE_FAILED", content: null, usage: null };
     }
-    return { ok: true, error: null, content };
+    const usage = resp?.data?.usage || null;
+    return { ok: true, error: null, content, usage };
   } catch (err) {
     log("error", `error=LLM_UNAVAILABLE detail=${err?.message ?? "unknown"}`);
     return { ok: false, error: "LLM_UNAVAILABLE", content: null };
@@ -241,7 +242,7 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
 
   log("info", `input="${raw}" action="${primaryAction.action}" confidence=${confidence}`);
 
-  const result = { success: true, intent, confidence };
+  const result = { success: true, intent, confidence, parser_usage: llm.usage || null };
   setToCache(cacheKey, result);
   return result;
 }
