@@ -106,6 +106,23 @@ function render(d) {
   }
   push('');
 
+  // ── DM Note ────────────────────────────────────────────────────────────────
+  {
+    const noteStatus = d.dm_note_status ?? null;
+    const statusLabel = noteStatus === 'updated'           ? grn('UPDATED this turn')
+                      : noteStatus === 'preserved_missing' ? red('PRESERVED — extraction provided no note')
+                      : noteStatus === 'new_game'          ? amber('NEW GAME — no note yet')
+                      : dim('unknown');
+    push(hr(`DM HANDOFF NOTE  (verbatim — model reads this exact text next turn)  status: ${statusLabel}`));
+    push('');
+    if (d.dm_note) {
+      d.dm_note.split('\n').forEach(l => push('  ' + l));
+    } else {
+      push(dim('  (none — no DM note generated yet)'));
+    }
+    push('');
+  }
+
   // ── Prior location memories ────────────────────────────────────────────────
   const mems = d.narrative_memory || [];
   push(hr(`PRIOR LOCATION MEMORIES (${mems.length})`));

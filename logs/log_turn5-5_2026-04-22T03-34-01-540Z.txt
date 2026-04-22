@@ -1,0 +1,64 @@
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 5 | 4/21/2026, 11:32:57 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               jump out and startle the miller
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             4998
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has initiated contact with the miller (npc_site_4aa9a547/l2_40) via a theatrical leap, startling her but 
+    eliciting amused recognition rather than alarm. Elara remains in her doorway, her posture softened and now fully pre
+    sent, having been drawn from her stargazing. The scene's mood has shifted from solitary observation to a shared, qui
+    etly amused interaction. The player's intent appears to be engaging the miller directly, having chosen the path of a
+    ctive, playful confrontation over passive watching. The environmental anchors of the gravel path, still waterwheel, 
+    and damp earth scent remain, now framing this new dynamic.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  799ch
+  You step forward, gravel crunching underfoot, and give a sudden, theatrical leap toward the millhouse doorway.
+
+  The miller—Elara—jolts, her serene gaze snapping down from the stars. A soft puff of flour rises from her apron as she
+   presses a hand to her chest, her eyes wide for a heartbeat before they settle on you. A slow, knowing smile spreads a
+  cross her face, not one of alarm, but of amused recognition, as if you’ve just completed a familiar, silly ritual.
+
+  “Well,” she says, her voice warm and dusted with laughter. “The evening’s entertainment has come to me, I see.” She do
+  esn’t move from the doorway, but her posture softens, now fully present. The quiet of the path feels different—shared,
+   rather than observed. The still waterwheel and the scent of damp earth frame her like a stage set.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch

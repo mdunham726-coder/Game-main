@@ -222,7 +222,7 @@ function render(p) {
   }
 
   // Footer
-  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] continuity  Ctrl+C exit`));
+  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] continuity  [L] log  [D] dm letter  Ctrl+C exit`));
 
   clr();
   process.stdout.write(lines.join('\n') + '\n');
@@ -311,6 +311,20 @@ if (process.stdin.isTTY) {
     }
     if (key === 'c' || key === 'C') {
       spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node continuity.js'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    }
+    if (key === 'l' || key === 'L') {
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node logging.js'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    }
+    if (key === 'd' || key === 'D') {
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node dmletter.js'], {
         cwd: __dirname,
         detached: true,
         stdio: 'ignore'

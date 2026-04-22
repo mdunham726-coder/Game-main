@@ -20,6 +20,11 @@ app.use(express.static(__dirname));
 // Session state management
 const sessionStates = new Map();
 
+// Consult DeepSeek — rolling conversation history per session
+// Stored as exchange objects so future trimming/summarization touches only exchanges[]
+// Shape: Map<sessionId, { exchanges: [{userQ, aiR, ts}], created, lastUsed }>
+const _consultHistory = new Map();
+
 // ── Real-time init progress bus (for first-turn progress polling) ─────────────
 const _initProgress = new Map();
 function _pushProgress(token, step, pct, detail = {}) {
@@ -2424,10 +2429,19 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
 
     // v1.56.0: Continuity extraction — runs after narrative is finalized (all update blocks stripped)
     let _continuityExtractionSuccess = false;
+    let _extractionPacket = null;   // v1.66.0: post-freeze canonical archive record (NOT pre-freeze)
+    let _dmNoteArchived   = null;   // v1.66.0: dm_note verbatim at turn completion
+    let _dmNoteStatus     = 'new_game'; // v1.66.0: 'updated' | 'preserved_missing' | 'new_game'
     {
       const _continuityExtraction = await NC.runContinuityExtraction(narrative, gameState);
-      NC.freezeContinuityState(_continuityExtraction, gameState);
+      const _freezeResult = NC.freezeContinuityState(_continuityExtraction, gameState);
       _continuityExtractionSuccess = _continuityExtraction !== null;
+      _dmNoteStatus = _freezeResult?.dm_note_status ?? 'new_game';
+      // Capture post-freeze state — extraction_packet is the canonical archived truth for this turn
+      if (gameState.world.active_continuity) {
+        _extractionPacket = JSON.parse(JSON.stringify(gameState.world.active_continuity));
+      }
+      _dmNoteArchived = gameState.world.dm_note || null;
     }
 
     // Log narration generation
@@ -2821,7 +2835,10 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         continuity_block_chars: _continuityBlock.length,
         continuity_snapshot: _continuityBlockSnapshot,
         continuity_diagnostics: NC.getLastRunDiagnostics(),
-        engine_spatial_notes: _engineSpatialBlock || null
+        engine_spatial_notes: _engineSpatialBlock || null,
+        extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
+        dm_note_archived:  _dmNoteArchived,       // v1.66.0: dm_note verbatim at turn completion
+        dm_note_status:    _dmNoteStatus          // v1.66.0: 'updated' | 'preserved_missing' | 'new_game'
       },
       logs: turnLogs
     };
@@ -2975,7 +2992,9 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       parser_cached:       _parserUsage === null,
       system_total:        _systemTokTotal,
       cont_chars:          _contGrowthChars,
-      violations:          _turnViolations
+      violations:          _turnViolations,
+      dm_note_chars:       (gameState.world.dm_note || '').length,
+      history_turns:       (gameState.turn_history || []).filter(t => t.narration_debug?.extraction_packet != null).length
     });
     if (_diagHistory.length > 200) _diagHistory.shift();
 
@@ -3141,6 +3160,47 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   const currentCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
   const currentCell = gameState.world.cells?.[currentCellKey];
 
+  // =========================================================================
+  // AUTHORITATIVE PLAY SPACE — always first, always highest priority
+  // =========================================================================
+  {
+    const _aDepth = gameState.world.current_depth ?? 1;
+    const _aSite  = gameState.world.active_site || null;
+    const _aLS    = gameState.world.active_local_space || null;
+
+    let _aLayerLabel, _aContainer, _aPosStr;
+    if (_aDepth >= 3 && _aLS) {
+      _aLayerLabel = 'L2 (building interior)';
+      _aContainer  = _aLS.name || '(unnamed local space)';
+      _aPosStr     = `(${gameState.player?.position?.x ?? '?'}, ${gameState.player?.position?.y ?? '?'}) — site-local coords`;
+    } else if (_aDepth >= 2 && _aSite) {
+      _aLayerLabel = 'L1 (site)';
+      _aContainer  = _aSite.name || '(unnamed site)';
+      _aPosStr     = `(${gameState.player?.position?.x ?? '?'}, ${gameState.player?.position?.y ?? '?'}) — site-local coords`;
+    } else {
+      _aLayerLabel = 'L0 (overworld)';
+      _aContainer  = `Macro(${pos.mx},${pos.my}) cell`;
+      _aPosStr     = `Local(${pos.lx},${pos.ly}) — world grid coords`;
+    }
+
+    // Visible NPCs with name when learned
+    const _aVisibleSrc = _aDepth >= 3 && _aLS ? (_aLS._visible_npcs || [])
+                       : _aDepth >= 2 && _aSite ? (_aSite._visible_npcs || [])
+                       : [];
+    const _aVisibleLines = _aVisibleSrc.map(npc => {
+      const _namePart = npc.is_learned && npc.npc_name ? ` name:"${npc.npc_name}"` : '';
+      return `  - ${npc.job_category || npc.id || 'unknown'}${_namePart} [tier:${npc.tier ?? '?'}, gender:${npc.gender ?? '?'}, is_learned:${npc.is_learned ?? false}]`;
+    });
+
+    context += `\n=== CURRENT AUTHORITATIVE PLAY SPACE ===\n`;
+    context += `!! Active layer/container and visible entities below override any biome, terrain, macro, or\n`;
+    context += `!! flattened coordinate data shown later for debugging/reference.\n`;
+    context += `Active Layer : ${_aLayerLabel}\n`;
+    context += `Container    : ${_aContainer}\n`;
+    context += `Position     : ${_aPosStr}\n`;
+    context += `Visible NPCs : ${_aVisibleLines.length > 0 ? _aVisibleLines.length + ' visible\n' + _aVisibleLines.join('\n') : '(none at current tile)'}\n`;
+  }
+
   // === BASIC LEVEL ===
   context += `\n=== CURRENT LOCATION ===\n`;
   context += `Position: Macro(${pos.mx},${pos.my}) -> Local(${pos.lx},${pos.ly})\n`;
@@ -3172,7 +3232,8 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `\n=== NEARBY NPCS ===\n`;
     if (_dbgVisible.length > 0) {
       _dbgVisible.forEach(npc => {
-        context += `- ${npc.job_category || npc.id || 'Unknown'} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}]\n`;
+        const _npcNamePart = npc.is_learned && npc.npc_name ? ` name:"${npc.npc_name}"` : '';
+        context += `- ${npc.job_category || npc.id || 'Unknown'}${_npcNamePart} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}, is_learned:${npc.is_learned ?? false}]\n`;
       });
     } else {
       context += `(None visible at current tile)\n`;
@@ -3195,7 +3256,8 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     // L1: use visible NPCs only — no overworld fallback
     if (_dbgVisible.length > 0) {
       _dbgVisible.forEach(npc => {
-        context += `- ${npc.job_category || npc.id || 'Unknown'} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}]\n`;
+        const _npcNamePart = npc.is_learned && npc.npc_name ? ` name:"${npc.npc_name}"` : '';
+        context += `- ${npc.job_category || npc.id || 'Unknown'}${_npcNamePart} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}, is_learned:${npc.is_learned ?? false}]\n`;
       });
     } else {
       context += `(None visible at current tile)\n`;
@@ -3292,6 +3354,38 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       });
     } else {
       context += `(No cells in current macro)\n`;
+    }
+
+    // === DM NOTE ===
+    const _ctxDmNote    = gameState.world.dm_note || null;
+    const _ctxDmStatus  = (() => {
+      const _th = gameState.turn_history;
+      if (!_th || !_th.length) return null;
+      return _th[_th.length - 1]?.narration_debug?.dm_note_status || null;
+    })();
+    context += `\n=== DM NOTE ===\n`;
+    if (_ctxDmNote) {
+      context += `Status : ${_ctxDmStatus || '(unknown)'}\n`;
+      context += `Note   : ${_ctxDmNote}\n`;
+    } else {
+      context += `(none — no DM note has been written yet)\n`;
+    }
+
+    // === RECENT CONTINUITY (last 5 turns — thin format) ===
+    context += `\n=== RECENT CONTINUITY (last 5 turns) ===\n`;
+    const _ctxHistory = (gameState.turn_history || [])
+      .filter(t => t?.narration_debug?.extraction_packet != null)
+      .slice(-5);
+    if (_ctxHistory.length === 0) {
+      context += `(no extraction history yet)\n`;
+    } else {
+      _ctxHistory.forEach(t => {
+        const ep = t.narration_debug.extraction_packet;
+        const tn = t.turn_number ?? '?';
+        context += `[T-${tn}] focus:${ep.scene_focus_primary || '—'}  tone:${ep.tone || '—'}  interaction:${ep.interaction_mode || '—'}  active:${ep.active_interaction || '—'}\n`;
+        if (ep.spine_scene) context += `  scene   : ${ep.spine_scene.slice(0, 120)}${ep.spine_scene.length > 120 ? '…' : ''}\n`;
+        if (ep.spine_atmosphere) context += `  atmos   : ${ep.spine_atmosphere.slice(0, 80)}${ep.spine_atmosphere.length > 80 ? '…' : ''}\n`;
+      });
     }
   }
 
@@ -3574,6 +3668,138 @@ app.post('/ask-deepseek', async (req, res) => {
 });
 
 // =============================================================================
+// CONSULT DEEPSEEK — rolling conversation endpoint (v1.68.0)
+// History is logically unlimited (entire session). Stored as exchange objects
+// so future trimming/summarization only touches exchanges[] without redesign.
+// =============================================================================
+
+app.post('/consult-deepseek', async (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+  const { question, debugLevel = 'detailed' } = req.body;
+
+  if (!question) {
+    return res.json({ error: 'no_question', message: 'Please provide a question.' });
+  }
+  if (!sessionId) {
+    return res.json({ error: 'no_session', message: 'No session ID. Start a game first.' });
+  }
+
+  let gameState = null;
+  try {
+    const session = getSessionState(sessionId);
+    gameState = session.gameState;
+  } catch (err) {
+    return res.json({ error: 'session_fetch_failed', message: err.message });
+  }
+  if (!gameState) {
+    return res.json({ error: 'no_game_state', message: 'No game state found.' });
+  }
+
+  if (!process.env.DEEPSEEK_API_KEY) {
+    return res.json({ error: 'no_api_key', message: 'DeepSeek API key not configured.' });
+  }
+
+  // Build context (same Phase-1 overhaul that Ask uses)
+  let context = '';
+  try {
+    context = buildDebugContext(gameState, debugLevel);
+  } catch (err) {
+    return res.json({ error: 'context_build_failed', message: err.message });
+  }
+
+  // Retrieve or create history for this session
+  if (!_consultHistory.has(sessionId)) {
+    _consultHistory.set(sessionId, { exchanges: [], created: new Date().toISOString(), lastUsed: null });
+  }
+  const _hist = _consultHistory.get(sessionId);
+  _hist.lastUsed = new Date().toISOString();
+
+  // Flatten stored exchanges into DeepSeek message format
+  // System message includes full context so every response is grounded in current truth
+  const _systemMsg = {
+    role: 'system',
+    content: `You are a grounded in-world analyst for an AI-driven roguelike game engine. ` +
+      `You may be conversational and interpretive, but you must never contradict authoritative engine data ` +
+      `provided in the context. The CURRENT AUTHORITATIVE PLAY SPACE section always takes precedence over ` +
+      `any terrain, biome, or coordinate data shown below it.\n\n` +
+      `Current game state context:\n${context}`
+  };
+
+  const _historyMessages = _hist.exchanges.flatMap(ex => [
+    { role: 'user',      content: ex.userQ },
+    { role: 'assistant', content: ex.aiR   }
+  ]);
+
+  const _messages = [_systemMsg, ..._historyMessages, { role: 'user', content: question }];
+
+  try {
+    const _ctrl = new AbortController();
+    const _wall = setTimeout(() => _ctrl.abort(), 120000);
+    let _resp;
+    try {
+      _resp = await axios.post(
+        'https://api.deepseek.com/v1/chat/completions',
+        { model: 'deepseek-chat', messages: _messages, temperature: 0.7, max_tokens: 2000 },
+        {
+          headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+          timeout: 120000,
+          signal: _ctrl.signal
+        }
+      );
+    } catch (_firstErr) {
+      if (_firstErr?.code === 'ECONNRESET') {
+        _resp = await axios.post(
+          'https://api.deepseek.com/v1/chat/completions',
+          { model: 'deepseek-chat', messages: _messages, temperature: 0.7, max_tokens: 2000 },
+          {
+            headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+            timeout: 120000
+          }
+        );
+      } else { throw _firstErr; }
+    } finally {
+      clearTimeout(_wall);
+    }
+
+    const _aiText = _resp?.data?.choices?.[0]?.message?.content;
+    if (!_aiText) {
+      return res.json({ error: 'empty_response', message: 'DeepSeek returned no content.' });
+    }
+
+    // Store exchange
+    _hist.exchanges.push({ userQ: question, aiR: _aiText, ts: new Date().toISOString() });
+
+    return res.json({
+      sessionId,
+      question,
+      response: _aiText,
+      exchangeCount: _hist.exchanges.length,
+      contextLength: context.length,
+      timestamp: new Date().toISOString(),
+      turnNotAdvanced: true
+    });
+  } catch (err) {
+    return res.json({
+      sessionId,
+      error: err?.code || 'consult_failed',
+      message: err?.message || 'Failed to query DeepSeek',
+      details: err?.response?.data || null,
+      question,
+      contextLength: context.length
+    });
+  }
+});
+
+app.delete('/consult-deepseek/clear', (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+  if (!sessionId) {
+    return res.json({ error: 'no_session', message: 'No session ID.' });
+  }
+  _consultHistory.delete(sessionId);
+  return res.json({ cleared: true, sessionId, timestamp: new Date().toISOString() });
+});
+
+// =============================================================================
 // LOGS ENDPOINT: Flush session logs to disk
 // =============================================================================
 app.post('/logs/flush', (req, res) => {
@@ -3787,10 +4013,87 @@ app.get('/diagnostics/continuity', (req, res) => {
     active_continuity: _lastGameState.world.active_continuity
       ? JSON.parse(JSON.stringify(_lastGameState.world.active_continuity))
       : null,
+    dm_note: _lastGameState.world.dm_note || null,
+    dm_note_status: (_lastGameState.turn_history || []).slice(-1)[0]?.narration_debug?.dm_note_status ?? null,
     narrative_memory: _lastGameState.world.narrative_memory || [],
     narrative_archive_total: total,
     last_narrations: slice
   });
+});
+
+// On-demand turn log — GET /diagnostics/log?from=N&to=M
+// Returns full narration_debug per turn from turn_history.
+// Parameters: from (1-based turn_number, inclusive), to (inclusive). Omit for full session.
+// This endpoint is the sole authoritative source for logging.js range/copy operations.
+app.get('/diagnostics/log', (req, res) => {
+  if (!_lastGameState) {
+    return res.json({ no_data: true, reason: 'No turns played yet.' });
+  }
+  const history = _lastGameState.turn_history || [];
+  if (history.length === 0) {
+    return res.json({ no_data: true, reason: 'No turns in history yet.' });
+  }
+
+  const fromParam = req.query.from !== undefined ? parseInt(req.query.from, 10) : null;
+  const toParam   = req.query.to   !== undefined ? parseInt(req.query.to,   10) : null;
+
+  const filtered = history.filter(t => {
+    const n = t.turn_number;
+    if (fromParam !== null && n < fromParam) return false;
+    if (toParam   !== null && n > toParam)   return false;
+    return true;
+  });
+
+  const turns = filtered.map(t => {
+    const nd = t.narration_debug || {};
+    const cd = nd.continuity_diagnostics || {};
+    return {
+      turn_number:              t.turn_number,
+      timestamp:                t.timestamp,
+      // Input / parser
+      channel:                  t.intent_channel,
+      raw_input:                t.input?.raw ?? null,
+      parsed_action:            t.input?.parsed_intent?.action ?? null,
+      parsed_dir:               t.input?.parsed_intent?.dir ?? null,
+      parsed_intent_source:     t.input?.parsed_intent_source ?? null,
+      // Spatial
+      spatial: {
+        depth:            t.authoritative_state?.current_depth ?? null,
+        position:         t.authoritative_state?.position ?? null,
+        site_name:        t.authoritative_state?.active_site_name ?? null,
+        local_space_name: t.authoritative_state?.local_space_name ?? null,
+      },
+      // Movement
+      movement: t.movement ?? null,
+      // Continuity
+      continuity: {
+        injected:              nd.continuity_injected ?? null,
+        block_chars:           nd.continuity_block_chars ?? null,
+        evicted:               nd.continuity_evicted ?? null,
+        extraction_success:    nd.continuity_extraction_success ?? null,
+        rejection_reason:      cd.rejection_reason ?? null,
+        prior_memory_count:    null, // not stored per-turn; available via /diagnostics/continuity
+        alerts:                cd.alerts ?? [],
+        entity_updates:        cd.entity_updates_applied ?? [],
+        entity_cleared:        cd.entity_continuity_cleared ?? [],
+        extraction_packet_present: nd.extraction_packet != null,
+      },
+      // DM note — verbatim stored strings only
+      dm_note_archived:  nd.dm_note_archived  ?? null,
+      dm_note_status:    nd.dm_note_status    ?? null,
+      // Narration
+      narrative:         t.narrative ?? null,
+      engine_message:    null, // not stored per-turn; available via SSE
+      // Entities
+      entities_visible:  t.authoritative_state?.visible_npcs_snapshot ?? [],
+      // Violations
+      violations:        t.diagnostics?.filter(d => d?.type === 'violation').map(d => d.message) ?? [],
+      // Engine spatial notes
+      engine_spatial_notes: nd.engine_spatial_notes ?? null,
+    };
+  });
+
+  res.json({ turns, total_turns: history.length });
 });
 
 // On-demand session summary — GET /diagnostics/summary

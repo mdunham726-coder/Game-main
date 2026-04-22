@@ -174,6 +174,27 @@
   <div id="debugResponse" style="margin-top: 4px; padding: 10px; background: #1a1a1a; border: 1px solid #4a90e2; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 600px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word;"></div>
 </div>
 
+<!-- Consult DeepSeek — rolling conversation panel -->
+<div id="consultConsole" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #9b59b6; border-radius: 4px;">
+  <h3 style="margin: 0 0 4px 0; color: #9b59b6;">CONSULT DEEPSEEK <span style="font-size: 12px; font-weight: normal; color: #888;">(session)</span></h3>
+  <p style="font-size: 12px; color: #888; margin: 0 0 10px 0;">Rolling conversation — DeepSeek remembers your prior questions this session. Turn will NOT advance.</p>
+  <div style="margin-bottom: 10px;">
+    <input type="text" id="consultQuestion" placeholder="Ask a follow-up question..." style="width: 70%; padding: 10px; font-size: 14px; background: #333; color: #e0e0e0; border: 1px solid #666; margin-right: 10px;">
+    <select id="consultLevel" style="width: 18%; padding: 10px; font-size: 14px; background: #333; color: #e0e0e0; border: 1px solid #666;">
+      <option value="basic">Basic</option>
+      <option value="detailed" selected>Detailed</option>
+      <option value="full">Full</option>
+    </select>
+  </div>
+  <div style="margin-bottom: 10px;">
+    <button onclick="consultDeepSeek()" style="width: 74%; padding: 10px; font-size: 14px; background: #9b59b6; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 2%;">Consult</button>
+    <button onclick="clearConsultSession()" style="width: 24%; padding: 10px; font-size: 14px; background: #555; color: #ccc; border: none; cursor: pointer; border-radius: 3px;">Clear Session</button>
+  </div>
+  <div id="consultLoading" style="display: none; color: #9b59b6; margin-top: 10px; font-size: 12px;">Consulting...</div>
+  <div id="consultThread" style="margin-top: 10px; padding: 10px; background: #1a1a1a; border: 1px solid #9b59b6; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 700px; overflow-y: auto; display: none;"></div>
+  <div id="consultFooter" style="margin-top: 4px; font-size: 11px; color: #666; display: none;"></div>
+</div>
+
 <!-- Logs Panel -->
 <div id="logsPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #2ecc71; border-radius: 4px;">
   <h3 style="margin: 0 0 10px 0; color: #2ecc71;">SESSION LOGS (Phase A)</h3>
@@ -1040,6 +1061,97 @@ diagLog.innerHTML = `
     // Allow Enter key in debug question field
     document.getElementById('debugQuestion').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') askDeepSeek();
+    });
+
+    // ── Consult DeepSeek (rolling conversation) ────────────────────────────
+    const _consultThreadEl  = () => document.getElementById('consultThread');
+    const _consultFooterEl  = () => document.getElementById('consultFooter');
+    const _consultLoadingEl = () => document.getElementById('consultLoading');
+
+    function _consultAppendEntry(role, text, meta) {
+      const el = _consultThreadEl();
+      el.style.display = 'block';
+      const _isUser = role === 'user';
+      const _color  = _isUser ? '#9b59b6' : '#e0e0e0';
+      const _label  = _isUser ? 'You' : 'DeepSeek';
+      const _div = document.createElement('div');
+      _div.style.cssText = `margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #2a2a2a;`;
+      _div.innerHTML = `<div style="font-size: 11px; color: ${_color}; font-weight: bold; margin-bottom: 4px;">${_label}:</div>` +
+        `<div style="white-space: pre-wrap; word-wrap: break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')}</div>` +
+        (meta ? `<div style="font-size: 10px; color: #555; margin-top: 4px;">${meta}</div>` : '');
+      el.appendChild(_div);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function consultDeepSeek() {
+      const question  = document.getElementById('consultQuestion').value.trim();
+      const debugLevel = document.getElementById('consultLevel').value;
+
+      if (!question) { alert('Please enter a question'); return; }
+      if (!currentSessionId) { alert('No active game session. Start a game first!'); return; }
+
+      const loadEl   = _consultLoadingEl();
+      const footerEl = _consultFooterEl();
+      loadEl.style.display = 'block';
+
+      // Append user message immediately
+      _consultAppendEntry('user', question);
+      document.getElementById('consultQuestion').value = '';
+
+      try {
+        const _ctrl  = new AbortController();
+        const _timer = setTimeout(() => _ctrl.abort(), 125000);
+        let response;
+        try {
+          response = await fetch('/consult-deepseek', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-session-id': currentSessionId },
+            body: JSON.stringify({ question, debugLevel }),
+            signal: _ctrl.signal
+          });
+        } finally {
+          clearTimeout(_timer);
+        }
+
+        const data = await response.json();
+
+        if (data.error) {
+          _consultAppendEntry('assistant', `[Error: ${data.error}] ${data.message || ''}`);
+        } else if (data.response) {
+          _consultAppendEntry('assistant', data.response);
+          footerEl.style.display = 'block';
+          footerEl.textContent = `Exchange ${data.exchangeCount} | Context: ${data.contextLength || 0} chars | ${data.timestamp}`;
+        } else {
+          _consultAppendEntry('assistant', '[Unexpected response format] ' + JSON.stringify(data));
+        }
+      } catch (err) {
+        const _msg = err.name === 'AbortError'
+          ? '[Request timed out] Try a shorter or more specific question.'
+          : `[Network error] ${err.message}`;
+        _consultAppendEntry('assistant', _msg);
+      } finally {
+        loadEl.style.display = 'none';
+      }
+    }
+
+    async function clearConsultSession() {
+      if (!currentSessionId) { alert('No active session.'); return; }
+      try {
+        await fetch('/consult-deepseek/clear', {
+          method: 'DELETE',
+          headers: { 'x-session-id': currentSessionId }
+        });
+      } catch (_) { /* best-effort */ }
+      // Clear thread display
+      const el = _consultThreadEl();
+      el.innerHTML = '';
+      el.style.display = 'none';
+      _consultFooterEl().style.display = 'none';
+      _consultFooterEl().textContent = '';
+    }
+
+    document.getElementById('consultQuestion').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') consultDeepSeek();
     });
 
     // Test Context Function (diagnose context building without calling DeepSeek)

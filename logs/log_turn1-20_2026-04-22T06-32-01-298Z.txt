@@ -1,0 +1,1318 @@
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 1 | 4/21/2026, 11:03:42 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               a night at the movies
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           none
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   LOCAL
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                NO
+  block_chars             0
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          none
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player is alone in the theater, standing still and observing the environment. The scene is set with strong senso
+    ry details: the cool air, the scent of popcorn and wood, the visual of the sloping seats and silver screen. Key unre
+    solved elements are the rhythmic clicking of a projector warming up behind the curtains and the colored light filter
+    ing from the marquee outside. The overall mood is one of quiet, expectant anticipation, as if the space itself is wa
+    iting for a show to start. There is no active interaction with NPCs or objects at this moment.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  1121ch
+  The phrase hangs in the air, a quiet intention, and the space around you seems to soften in acknowledgment. You are st
+  anding in the gentle gloom of the theater proper, the vast room sloping down toward a silver screen that holds a faint
+  , expectant sheen. Rows of plush, crimson velvet seats, each one slightly worn at the armrests from decades of shared 
+  reverie, descend like terraced fields. The air is cool and carries the faint, comforting scent of old popcorn oil and 
+  polished wood—not stale, but preserved, like a memory kept in a cedar chest. A single aisle runner, a faded gold carpe
+  t, cuts a path through the center, its fibers whispering underfoot. From somewhere behind the heavy curtains flanking 
+  the screen, you hear the soft, rhythmic click-click-click of a projector warming up, a sound as familiar and steady as
+   a heartbeat. The marquee’s neon glow from outside filters through the small, high windows in streaks of diluted ruby 
+  and amber, painting slow-moving bands of color across the empty seats. It feels like the room itself is holding its br
+  eath, waiting for the lights to dim and the magic to begin.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  none visible
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 2 | 4/21/2026, 11:13:13 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               stand still and look around
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   LOCAL
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             2332
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          none
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player continues to stand and observe the theater's detailed interior, with no movement or interaction initiated
+    . The sensory atmosphere remains strong, anchored by the steady clicking from behind the screen and the shifting col
+    ored light from the marquee. Two clear environmental threads are active: the persistent mechanical sound and the vis
+    ual effect of the external neon. The mood is one of deep, quiet observation, with the player absorbing the space's d
+    etails—the concession stand, the archway—without acting upon them. The scene is primed for the player to choose a di
+    rection: investigate the sound, the archway, or the concession stand.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  1137ch
+  You stand still, letting your gaze drift slowly across the theater’s gentle gloom. The worn crimson velvet of the seat
+  s seems to drink the light, each row descending like a soft, tiered wave toward the faintly gleaming silver screen. Yo
+  ur eyes trace the faded gold runner of the center aisle, its path worn thin by countless feet in anticipation.
+
+  The rhythmic clicking from behind the screen curtains is steady, a mechanical heartbeat. Above, the high windows are a
+  live with shifting bands of color—ruby, sapphire, and amber—as the marquee’s neon glow outside bleeds through, paintin
+  g the ceiling with a slow, silent parade. Dust motes dance in these colored shafts, turning them into rivers of slow-m
+  oving light.
+
+  To your left, a small, glass-fronted concession stand sits dark and silent, its counter polished to a soft sheen. On t
+  he right, a heavy curtain of deep burgundy is drawn back, revealing a shadowed archway that must lead deeper into the 
+  building. The air remains cool, carrying that comforting, timeless scent of buttery popcorn and old, polished wood—a s
+  mell that feels like waiting, like a promise just before it’s kept.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  none visible
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 3 | 4/21/2026, 11:22:15 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               s
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Direction               south
+  Destination             —
+  Valid                   —
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             2754
+  Evicted                 YES
+  Extraction              success
+  History Block           present
+  Alerts:
+    ⚠ [continuity_eviction] Continuity evicted (depth)
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has moved south from the cinema, transitioning the scene to the path between buildings near the millhouse
+    . The miller (npc_site_4aa9a547/l2_40) is present but not interacting, standing in her doorway gazing at the night, 
+    absorbed and unaware of the player. The atmosphere is now quiet and cool, anchored by the scent of damp earth and th
+    e visual of the still millhouse. The player's intent appears to be exploration, moving along the path with two clear
+     directional choices ahead: continuing south toward the grasslands or veering east into the meadow.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  857ch
+  You head south, the crunch of your footsteps on the gravel path a soft percussion against the quiet evening. The path 
+  curves gently, leading you away from the warm, humming glow of the cinema’s marquee and into the deeper shadows betwee
+  n buildings.
+
+  Here, the air is cooler, carrying the faint, clean scent of damp earth from a recent watering. You pass the solid, squ
+  ared-off silhouette of a millhouse, its large waterwheel still and silent against the starlit sky. A figure is standin
+  g in the open doorway, backlit by the soft amber light from within—a woman in a flour-dusted apron, her arms crossed a
+  s she gazes thoughtfully up at the night. She doesn’t seem to notice you, absorbed in her own quiet moment.
+
+  The path continues south, promising the open grasslands beyond the cluster of buildings, while to the east, the land o
+  pens into a gentle meadow.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 4 | 4/21/2026, 11:27:38 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               observe the miller
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             4138
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has stopped moving and is now observing the miller (npc_site_4aa9a547/l2_40) from the path. The miller re
+    mains in her doorway, relaxed against the frame, gazing at the night sky, wearing a flour-dusted apron, and is entir
+    ely unaware of the player. The scene's quiet, cool atmosphere is anchored by the scent of damp earth, the still mill
+    house, and the starlight. The player's intent seems to be assessing the miller and the environment, with the clear d
+    irectional choices of the path south to grasslands and east to meadow remaining open and unresolved.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  932ch
+  You slow your walk, your attention settling on the figure in the millhouse doorway. She is a woman in a flour-dusted a
+  pron, her posture relaxed against the frame as she gazes thoughtfully up at the night sky. The soft starlight catches 
+  the pale dust on her sleeves and the calm, absorbed expression on her face. She seems entirely wrapped in her own quie
+  t moment, unaware of your presence on the path. Behind her, the dark bulk of the millhouse stands silent, its great wa
+  terwheel still against the stonework, holding the memory of the day’s labor in its worn wood.
+
+  The gravel crunches softly under your boots as you stop. To the south, the path continues into open grasslands under a
+   wider sky. To the east, the land opens into a gentle meadow, silvered by the same stars she watches. The cool, quiet 
+  mood of the evening holds, carrying the scent of damp earth from the millrace and the distant, dry sweetness of the me
+  adow grass.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 5 | 4/21/2026, 11:32:57 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               jump out and startle the miller
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             4998
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has initiated contact with the miller (npc_site_4aa9a547/l2_40) via a theatrical leap, startling her but 
+    eliciting amused recognition rather than alarm. Elara remains in her doorway, her posture softened and now fully pre
+    sent, having been drawn from her stargazing. The scene's mood has shifted from solitary observation to a shared, qui
+    etly amused interaction. The player's intent appears to be engaging the miller directly, having chosen the path of a
+    ctive, playful confrontation over passive watching. The environmental anchors of the gravel path, still waterwheel, 
+    and damp earth scent remain, now framing this new dynamic.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  799ch
+  You step forward, gravel crunching underfoot, and give a sudden, theatrical leap toward the millhouse doorway.
+
+  The miller—Elara—jolts, her serene gaze snapping down from the stars. A soft puff of flour rises from her apron as she
+   presses a hand to her chest, her eyes wide for a heartbeat before they settle on you. A slow, knowing smile spreads a
+  cross her face, not one of alarm, but of amused recognition, as if you’ve just completed a familiar, silly ritual.
+
+  “Well,” she says, her voice warm and dusted with laughter. “The evening’s entertainment has come to me, I see.” She do
+  esn’t move from the doorway, but her posture softens, now fully present. The quiet of the path feels different—shared,
+   rather than observed. The still waterwheel and the scent of damp earth frame her like a stage set.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 6 | 4/21/2026, 11:42:53 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               glad i could amuse you. what are you doing out here? it's dangerous for you to be alone at night. 
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             5667
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    Elara remains leaning in her doorway, thoughtful and amused, her focus shifting between the player and the distant c
+    inema glow. The conversation has deepened from startled greeting to a shared reflection on the night and the town's 
+    'dream.' The player's intent seems to be building rapport, listening to Elara's perspective. The scene mood is intim
+    ate and warm, anchored by the physical stillness of the path and the contrasting distant activity. The unresolved th
+    read is the nature of this new connection and where Elara's philosophical observation might lead.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  658ch
+  Elara’s smile doesn’t fade, but it softens into something more thoughtful. She leans a shoulder against the doorframe,
+   the flour on her apron catching the faint starlight like pale dust.
+
+  “Dangerous?” she repeats, her voice low and warm. “The night’s quieter than the millstones in the off-season. And a si
+  ght more honest.” She glances past you toward the distant, cozy glow of the cinema marquee. “I like the air out here w
+  hen the pictures are running. You can feel the whole place… humming. Everyone’s in there, sharing the same dream.” Her
+   eyes return to you, amused. “But someone has to be out here to make sure the dream doesn’t wander off, don’t they?”
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 7 | 4/21/2026, 11:57:41 PM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               it was nice to meet you. i gotta go see a man about a horse
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             6266
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    Elara has concluded the conversation, shifting her posture to signal its end while remaining outside her home. She h
+    as offered a respectful nod and a release, framing the player's business as their own. The mood has shifted from int
+    imate reflection to a warm, concluded farewell. The player's intent now seems to be at a decision point: to depart o
+    r to initiate a new topic as the conversation door is held open.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  699ch
+  Elara’s thoughtful expression breaks into a soft, knowing smile. She straightens from the doorframe, brushing a trace 
+  of flour from her apron.
+
+  “And it was nice to be met,” she says, her voice warm with amusement. “Even by a leaping stranger.” Her eyes flick tow
+  ard the distant cinema glow, then back to you, holding a glint of understanding. “A man about a horse… an old saying f
+  or an honest errand. Or a discreet one.” She gives a slight, respectful nod. “The night’s still young. Don’t let me ke
+  ep you from your business.”
+
+  She doesn’t move to go inside, but her posture shifts, releasing you from the conversation. The warm, thoughtful quiet
+   between you settles into a simple, pleasant farewell.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 8 | 4/22/2026, 12:01:32 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               saunter east
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Direction               east
+  Destination             —
+  Valid                   —
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             6869
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          none
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has departed from Elara's location and is now moving east through the meadow, leaving the millhouse and c
+    oncluded conversation behind. The scene is now one of solitary nocturnal exploration, with the distant cinema glow p
+    roviding the only notable light source. The player's intent appears to be pure travel or exploration, with no active
+     interactions. The mood is serene and quiet, focused on the sensory details of the night meadow. The path forward is
+     open, with the player's direction of travel established.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  608ch
+  You saunter east, the gravel of the path giving way to softer, dewy earth as you leave the millhouse and its quiet far
+  ewell behind. Your steps carry you off the main track and into the silvered meadow, the long grass whispering against 
+  your legs. The distant, cozy glow of the cinema marquee now paints the backs of the buildings to your west, casting th
+  eir long, distorted shadows ahead of you across the field. The air here is cooler, sweet with the scent of clover and 
+  night-blooming flowers, and the only sound is the soft crunch of your own passage and the gentle rustle of the breeze 
+  through the grass.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  none visible
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 9 | 4/22/2026, 12:04:41 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               e
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Direction               east
+  Destination             —
+  Valid                   —
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             7891
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_32
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has transitioned from the open meadow into the narrower backstreets of Newvale, arriving at a point where
+     the lane widens before a closed stall. A man is present, leaning against the stall's post and watching the lane, in
+    troducing a potential point of interaction in an otherwise quiet scene. The player's intent remains exploratory, mov
+    ing east, but the environment has shifted to a more confined, shadowy urban space. The mood is now one of quiet obse
+    rvation, with the man's detached presence creating a subtle point of tension or interest.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  578ch
+  You continue east, the soft crunch of your steps shifting from damp earth to the packed, dry dirt of a narrow lane bet
+  ween buildings, the silvered meadow giving way to the quiet backstreets of Newvale. The cozy marquee glow is now a mut
+  ed wash of color on the western faces of the structures around you, their shadows long and deep. Ahead, the lane widen
+  s slightly before a small, shuttered stall, its wooden counter closed and a single lantern hanging dark from its eaves
+  . A man leans against the stall's post, his silhouette still, watching the empty lane with a detached air.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Corin (npc_site_4aa9a547/l2_32) [unemployed]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 10 | 4/22/2026, 12:05:38 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               watch the man
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             8811
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_32
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has stopped moving and is now closely observing the man at the stall, focusing on his appearance and the 
+    immediate environment. The man remains unaware of the player, his attention fixed down the empty lane, maintaining a
+     posture of detached waiting. The scene is quiet and still, with the only noted motion being the slight sway of the 
+    dark, unlit lantern. The player's intent appears to be one of careful assessment before any potential interaction, w
+    ith the mood defined by the man's patient, almost melancholic presence and the sensory details of the old wooden sta
+    ll.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  682ch
+  You watch the man, your gaze settling on his still form as he leans against the weathered post of the shuttered stall.
+   He doesn’t seem to notice you; his attention is fixed down the empty lane, his expression one of detached observation
+  . The dark lantern hanging above him sways slightly in a night breeze you can’t feel, casting no light. Up close, you 
+  see the fine grain of the stall’s wooden shutters, the faint scent of old sawdust and linseed oil clinging to them. Hi
+  s clothes are simple and well-worn, a homespun shirt and trousers faded to soft grays, and his posture suggests a long
+   familiarity with this spot—less a guard, more someone waiting for a sight that never comes.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Corin (npc_site_4aa9a547/l2_32) [unemployed]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 11 | 4/22/2026, 12:19:43 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               sneak up behind him, scream in his ear as loudly as you can, than perform a jig (do so with a level of vigor equal to that of them mans reactoin)
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             9416
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_32
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has just executed a startling, aggressive greeting, screaming directly into Corin's ear and launching int
+    o a chaotic jig. Corin's initial shock and outrage have settled into profound, weary bewilderment; he is now staring
+     at the player, trying to process the absurdity. The immediate tension from the physical startle has passed, replace
+    d by a confused standoff as Corin speaks. The player's intent appears to be disruptive testing or provocation, shift
+    ing the mood from patient stillness to jarring, bewildered confrontation. The scene's sensory anchors are the scuffe
+    d dust, the creaking lantern, and Corin's dry, rasping voice.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  1447ch
+  You close the distance with a predator’s silence, the packed dirt of the lane swallowing your steps. The man, Corin, r
+  emains a statue of patient waiting, his gaze fixed down the shadowed lane. You draw a breath, lean in—
+
+  And unleash a raw, piercing scream directly into his ear.
+
+  The effect is instantaneous and electric. He doesn’t jump so much as *uncoil*, a full-bodied flinch that slams his sho
+  ulder into the stall’s post with a solid *thump*. The dark lantern above jangles wildly. He stumbles a half-step into 
+  the lane, whirling around, one hand clapped to his ear, his face a masterpiece of shock and dawning outrage.
+
+  Seizing the moment, you launch into a jig. It’s a vigorous, stomping affair, your boots scuffing up pale dust from the
+   lane, your arms swinging with a merry lack of grace that matches the sheer, startled vigor of his reaction. For a few
+   chaotic seconds, the quiet backstreet is filled with the sound of your shuffling steps, the creak of the swinging lan
+  tern, and Corin’s sharp, indrawn breath.
+
+  He straightens slowly, lowering his hand from his ear. The shock melts into a look of profound, weary bewilderment. He
+   stares at you, then at the empty lane, then back at you, as if trying to decide if you’re a particularly absurd hallu
+  cination.
+
+  “Well,” he says, his voice a dry rasp scratched from the silence. “That’s one way to say hello.” He rubs his ear again
+  , wincing slightly. “The pictures let out early, did they?”
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Corin (npc_site_4aa9a547/l2_32) [unemployed]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 12 | 4/22/2026, 12:31:11 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               *laugh like old king cole* i greet you in the name of cheesecake, and thank you for the dill. 
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             10253
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_32
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    Corin has moved from shocked bewilderment to a state of profound, exhausted confusion, having processed the player's
+     absurd statements about cheesecake and dill. He has identified himself by name, straightened his jacket with a resi
+    gned tug, and is now hinting at a desire for the night to return to quiet, his eyes glancing toward the lane's shado
+    ws. The player's provocative testing seems to have concluded, leaving a standoff that is weary rather than tense. Th
+    e sensory anchors remain the dust, the faint scent of herbs on Corin's sigh, and the creaking lantern light. The sce
+    ne is poised for a shift, either toward disengagement or a new, quieter line of inquiry from the player.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  1031ch
+  Your laughter, a booming, theatrical sound that echoes briefly in the narrow lane, seems to hang in the air between yo
+  u. Corin doesn’t flinch this time. He just stares, his expression of weary bewilderment deepening into something like 
+  profound, exhausted confusion. He blinks slowly, as if trying to parse a language made of nonsense.
+
+  “Cheesecake,” he repeats, his dry voice flat. “And… dill.” He looks down at his own empty hands, then back at you, his
+   shoulders slumping a fraction further. “You’re thanking me for dill I haven’t got, in the name of a dessert.” A long,
+   slow sigh escapes him, carrying the scent of dust and dry herbs. “Right. Well. You’re… welcome, I suppose. For the im
+  aginary dill.”
+
+  He pushes off from the stall post he’d stumbled back to, straightening his worn jacket with a resigned tug. “The name’
+  s Corin. And if you’re quite finished blessing the vegetables,” he says, his eyes glancing past you toward the quieter
+   shadows of the lane, “the night’s still got hours in it. Some of us prefer them quiet.”
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Corin (npc_site_4aa9a547/l2_32) [unemployed]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 13 | 4/22/2026, 12:36:57 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               *talk about the person you met earlier*
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             11049
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_32
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    Corin's confusion has deepened into a hollow weariness, and he has explicitly named the miller, Elara, while dismiss
+    ing any connection or need to discuss her. His body language—a glance down the lane, a drop of his gaze to the dust,
+     a tired sigh—signals a strong desire to end this line of questioning. The player's intent to probe about Elara has 
+    been met with a firm, quiet boundary. The scene's mood is one of exhausted deflection, with the sensory anchors of d
+    ust, dry herbs, and lantern light persisting. The standoff is now defined by Corin's plea for quiet, leaving the pla
+    yer to decide whether to press the issue or let the night return to silence.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  869ch
+  Corin stares at you, his expression of weary confusion deepening into something more hollow. He blinks slowly, as if t
+  rying to translate your words from a distant, nonsensical language.
+
+  “Talk about…” he echoes, his voice flat. He glances past your shoulder, down the quiet lane, then back. The faint scen
+  t of dry herbs lifts from his jacket as he shifts his weight. “You mean the miller? Elara?” He says the name with a qu
+  iet familiarity, then gives a small, dismissive shake of his head. “She minds her wheel and her sky. I mind my stall. 
+  There’s nothing to talk about. We don’t… *bother* each other.”
+
+  He lets out a long, tired breath, his gaze dropping to the scuffed dust between you. “That’s how it is. That’s how it 
+  stays.” When he looks up again, his eyes hold a quiet plea for this to be the end of it. “The night’s better for quiet
+   thoughts. Don’t you think?”
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Corin (npc_site_4aa9a547/l2_32) [unemployed]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 14 | 4/22/2026, 12:42:48 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               *i tell corin about elara and our encounter*
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             11696
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_32
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    Corin has heard the player's story about Elara and has definitively shut down the conversation, his weariness harden
+    ing into a firm dismissal. He has physically created distance by pushing off the stall post and turning his shoulder
+    , withdrawing his attention down the lane. The player's intent to share information has been met and rejected. The s
+    cene's mood is now one of resolved tension and deliberate closure, with Corin signaling the interaction is over. The
+     player must decide whether to accept this end or attempt to re-engage.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  1163ch
+  You begin to tell him, your words spilling into the quiet he’d just asked for. You speak of the millhouse, the waterwh
+  eel, the woman gazing at the stars—Elara. You describe your leap, the startled turn, the conversation about the night’
+  s simple beauty.
+
+  Corin listens, but he doesn’t look at you. His eyes are fixed on the scuffed dust between your boots, as if reading so
+  mething written there. The hollow weariness in his face doesn’t shift into curiosity or concern; it hardens, like cool
+  ing wax. He lets the silence hang for a breath after you finish.
+
+  “I know who she is,” he says, his voice low and flat, finally lifting his gaze. It’s not the look of someone hearing n
+  ews—it’s the look of someone being forced to remember a chore they’d rather forget. “Everyone knows the miller. That d
+  oesn’t make her business mine. Or yours.”
+
+  He pushes off the stall post fully now, a deliberate motion that widens the space between you. “You had your moment. S
+  he had hers. The night doesn’t need a scribe.” He turns his shoulder slightly, a clear punctuation to the conversation
+  , his attention already withdrawn down the dark lane. The plea for quiet is now a dismissal.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Corin (npc_site_4aa9a547/l2_32) [unemployed]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 15 | 4/22/2026, 12:51:43 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               say "i'll be sure to tell her you said hello" and head west with a snicker
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Direction               west
+  Destination             —
+  Valid                   —
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             12331
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          none
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has definitively ended the interaction with Corin, turning their back and walking west down the lane. Cor
+    in is now out of sight and presumably remains at his stall, his state unchanged from his previous dismissal. The pla
+    yer's intent appears to be to leave the area and explore westward. The scene mood has shifted from interpersonal ten
+    sion to solitary, quiet exploration in a dimly lit lane. The primary unresolved element is the player's direction of
+     travel and what lies ahead in the western part of Newvale.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  753ch
+  “I’ll be sure to tell her you said hello,” you say with a snicker, turning your back on Corin’s tense dismissal and he
+  ading west.
+
+  Your boots scuff through the same dusty lane, but now you’re moving, the creak of the stall’s dark lantern fading behi
+  nd you. The packed dirt underfoot gives way to a wider, gravel-strewn path between silent, shadowed buildings. The coz
+  y marquee glow from the cinema is ahead and to your left now, painting the western faces of clapboard walls in soft ba
+  nds of red and gold. The air here is still, carrying the faint, clean scent of night-cooled stone and the distant, swe
+  et promise of the grasslands just beyond the last buildings. No one else is in the lane; the quiet is complete, save f
+  or the crunch of your own steps.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  none visible
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 16 | 4/22/2026, 12:58:51 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               look around for old cigarette butts. grab one if you find it.
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             13300
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          none
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has continued moving west, their interaction with the environment shifting from a focused ground search t
+    o forward observation. No NPCs are present or mentioned. The player's intent remains exploratory, moving toward the 
+    newly described, illuminated building at the end of the lane. The scene mood is one of quiet, solitary movement unde
+    r a shifting cinematic light. The primary unresolved element is the nature of the low building ahead and what, if an
+    ything, it contains.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  1003ch
+  Your gaze drops from the colored light on the western walls to the gravel and packed earth at your feet, scanning the 
+  margins of the lane where the gravel meets the foundations of the silent buildings. The light from the distant marquee
+   is just enough to glint off a few scattered pebbles and the deep, soft dust, but it reveals no discarded paper tubes,
+   no flecks of stray tobacco, no sign that anyone has lingered here long enough to leave such a trace. The ground is cl
+  ean, almost conspicuously so, as if the quiet night has swept away all evidence of the day’s small, human habits.
+
+  You straighten up, empty-handed. The lane continues west, the gravel crunching softly under your boots as you move, th
+  e colored glow on the walls slowly shifting from red to a deep gold as you pass a narrow gap between two structures. A
+  head, the lane appears to open into a slightly wider space where the cinema’s light falls more directly, illuminating 
+  the front of a low, rectangular building with a covered porch.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  none visible
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 17 | 4/22/2026, 1:02:17 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               west
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Direction               west
+  Destination             —
+  Valid                   —
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             14324
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          none
+  Entity Cleared          npc_site_4aa9a547/l2_40
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player has reached the small square and is now stationary, observing the low, illuminated building. No NPCs are 
+    present. The player's intent appears to be assessing this structure, which is dark and closed. The scene mood remain
+    s quiet and visually striking under the marquee's light. The primary unresolved element is the purpose and contents 
+    of the sealed, unlit building directly ahead.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  524ch
+  You continue west, the gravel crunching softly under your boots as the lane widens into a small, open square. The colo
+  red light from the cinema marquee now falls directly here, painting the low, rectangular building before you in soft b
+  ands of red and gold. It’s a simple structure of weathered wood, with a deep, shadowed porch supported by thick posts.
+   No light comes from within, and its single door is shut tight. The square itself is empty, the packed earth smooth an
+  d undisturbed, holding the night’s quiet like a cup.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 18 | 4/22/2026, 2:26:57 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               *ask her is she know the person from earlier that i met*
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             14991
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    The player is engaged in conversation with Elara, having turned from the building to ask about Corin. Elara has conf
+    irmed she knows him, describing him as private and suggesting his nights are his own business. Her demeanor is weary
+     and empathetic, folding her arms as if against a chill. The player's intent seems to be gathering information about
+     Corin's character and connections. The scene mood remains quiet and visually striking under the marquee's light, wi
+    th the unresolved mystery of the sealed building still present in the background.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  999ch
+  You turn from the silent, sealed building, the question forming on your lips as you look back toward the miller, Elara
+  , who has followed you into the square. The colored light from the marquee catches the pale dust on her sleeves.
+
+  “Do you know the person from earlier that I met?” you ask her, your voice cutting through the cinematic quiet.
+
+  She follows your gaze back down the lane from which you came, her expression shifting from thoughtful observation to o
+  ne of gentle, knowing weariness. She lets out a soft sigh, the sound almost lost in the vast quiet of the night.
+
+  “Corin,” she says, the name settling into the square like a stone dropped into still water. “Yes, I know him. Everyone
+   here does.” She folds her arms, not in defensiveness, but as if bracing against a familiar, cool draft. “He minds his
+   stall, he minds his business. And he prefers if the rest of us do the same.” She looks at you, her eyes holding a qui
+  et empathy. “His nights are his own. It’s best to let him have them.”
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 19 | 4/22/2026, 2:28:13 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               do you two have history? he got upset when i told him we met
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             15882
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    Elara continues the conversation, her body language tense and weary as she explains Corin's private nature and his r
+    eaction to the player's earlier mention of her. Her emotional state is one of gentle, knowing sadness, and she has s
+    hifted her weight on the gravel. The player's intent remains focused on gathering information, specifically about Co
+    rin's history and character. The scene mood is quiet and intimate, defined by the shifting marquee light and the unr
+    esolved background presence of the sealed building. The core tension is Elara's empathetic but firm warning about Co
+    rin's boundaries.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  771ch
+  Elara’s arms tighten slightly across her chest, a small, weary motion under the shifting red and gold light. She looks
+   past you, toward the dark lane where you’d left Corin, and her voice is soft, almost lost in the quiet of the square.
+
+  “History?” She lets out a breath that isn’t quite a laugh. “This is a small place. Everyone has history. His just… sit
+  s closer to the surface than most.” Her eyes return to you, holding a gentle, knowing sadness. “He wasn’t upset that y
+  ou met me. He was upset that you brought me to him, even in conversation. Corin keeps his nights—and his past—to himse
+  lf. It’s a kindness not to tether them to others.”
+
+  She shifts her weight, the gravel crunching softly under her boot. “He prefers his shadows. I’ve learned not to shine 
+  a light.”
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 20 | 4/22/2026, 2:29:51 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 say
+  Raw Input               what lurks in corins shadows?
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           parser
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   SITE
+  Position                mx:2 my:7 / lx:76 ly:41
+  Site                    Newvale
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             16440
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          npc_site_4aa9a547/l2_40
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    Elara's body language is closed and tense, arms crossed and gaze averted before she meets the player's eyes directly
+    . Her emotional state is a complex mix of weariness, gentle sadness, and protective firmness as she explains Corin's
+     'shadows' as absence and vulnerability. The player's intent seems focused on understanding Corin's past, prompting 
+    this deeply personal warning. The scene mood remains quiet and intimate, anchored by the crunch of gravel and the sh
+    ifting marquee light. The core tension is now Elara's explicit, empathetic plea for the player to respect Corin's si
+    lence.
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  872ch
+  Elara’s arms tighten across her chest, her gaze dropping to the gravel between you. The shifting red and gold light fr
+  om the marquee catches the weary lines at the corners of her eyes.
+
+  “Shadows?” she repeats, her voice low and careful. “You ask as if he’s a storybook villain with secrets buried in a ce
+  llar.” She lets out a soft breath, almost a sigh. “Corin’s shadows are just… absence. The space where something used t
+  o be. A missing laugh. A silence where there was once talk of the next season’s grain.” She looks up, meeting your eye
+  s directly. “He guards that empty space. Not because there’s a monster in it, but because letting anyone see how bare 
+  it is… that’s the real vulnerability. Do you understand?”
+
+  She shifts her weight, the gravel crunching softly beneath her boot. “Please. Don’t go poking at his silence. Some pat
+  ches of ground are best left fallow.”
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Elara (npc_site_4aa9a547/l2_40) [miller]
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch

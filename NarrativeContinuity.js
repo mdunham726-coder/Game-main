@@ -101,6 +101,7 @@ REQUIRED OUTPUT SCHEMA:
     "spine_atmosphere": "REQUIRED string, never null — exactly 1 sentence. Must include emotional tone and at least one sensory or environmental anchor. Must expand on 'tone', not duplicate it verbatim.",
     "spine_player": "REQUIRED string, never null — exactly 1 sentence. Must reflect current turn outcome. Must not lag behind player_locomotion or player_physical_state."
   },
+  "dm_note": "REQUIRED string — Write a 4–6 sentence handoff note for yourself as the next DM. Cover: key NPC states, unresolved tensions, player intent, scene mood. If a previous note is provided above, evolve it forward — do not restart from scratch.",
   "entity_updates": [
     {
       "npc_id": "string — exact NPC id from the context provided",
@@ -135,7 +136,8 @@ CRITICAL RULES:
 15. environment_continuity is the compact physical anchor; spine_scene may expand it, but must not contradict it (same location, same spatial context).
 16. spine_atmosphere may expand 'tone' but must not conflict with it in emotional direction.
 17. If interaction_mode is 'none', active_interaction MUST be null. Any non-null value with interaction_mode 'none' makes the extraction INVALID.
-18. player_physical_state MUST be exactly one of: 'moving', 'stationary', 'observing', 'interacting'. Any other value makes the extraction INVALID.`;
+18. player_physical_state MUST be exactly one of: 'moving', 'stationary', 'observing', 'interacting'. Any other value makes the extraction INVALID.
+19. dm_note MUST be a plain string of 4–6 sentences. Never an object, never an array. Must evolve from the previous note if one was provided — do not start over.`;
 
 // -----------------------------------------------------------------------------
 // 1. initContinuityState(gameState)
@@ -239,7 +241,11 @@ async function runContinuityExtraction(narrationText, gameState) {
     spatialAuthorityNote = `SPATIAL AUTHORITY:\nLayer: L1 (open site area — ${siteName || siteId}). Player is NOT inside any local space or building.`;
   }
 
-  const userMessage = `${spatialAuthorityNote ? spatialAuthorityNote + '\n\n' : ''}NARRATION:\n${narrationText}\n\nCONTEXT:\nLayer depth: ${depth} (1=overworld L0, 2=site interior L1, 3=local space interior L2)\nActive site: ${siteId ? `${siteName || siteId} (id: ${siteId})` : 'none'}\nVisible NPCs: ${npcContext}`;
+  const prevDmNote = gameState.world.dm_note || null;
+  const dmNotePrefix = prevDmNote
+    ? `PREVIOUS DM NOTE (evolve this — do not restart):\n${prevDmNote}\n\n`
+    : `PREVIOUS DM NOTE: none — this is the first turn, write from scratch.\n\n`;
+  const userMessage = `${dmNotePrefix}${spatialAuthorityNote ? spatialAuthorityNote + '\n\n' : ''}NARRATION:\n${narrationText}\n\nCONTEXT:\nLayer depth: ${depth} (1=overworld L0, 2=site interior L1, 3=local space interior L2)\nActive site: ${siteId ? `${siteName || siteId} (id: ${siteId})` : 'none'}\nVisible NPCs: ${npcContext}`;
 
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), 30000);
@@ -321,7 +327,11 @@ async function runContinuityExtraction(narrationText, gameState) {
       }
     }
 
-    console.log(`[CONTINUITY] extraction succeeded — entities: ${parsed.entity_updates.length}`);
+    // dm_note: warn loudly if missing but do not reject the extraction — fallback handled in freezeContinuityState
+    if (!parsed.dm_note || typeof parsed.dm_note !== 'string' || !parsed.dm_note.trim()) {
+      console.warn('[CONTINUITY] dm_note: missing or empty in extraction response — previous note will be preserved');
+    }
+    console.log(`[CONTINUITY] extraction succeeded — entities: ${parsed.entity_updates.length}, dm_note: ${parsed.dm_note ? `${parsed.dm_note.length}ch` : 'MISSING'}`);
     return parsed;
 
   } catch (err) {
@@ -437,58 +447,172 @@ function freezeContinuityState(extraction, gameState) {
     }
   }
 
-  console.log(`[CONTINUITY] Froze active_continuity + ${updatedCount} entity updates, cleared ${clearedCount} stale`);
+  // Write dm_note verbatim — no modification to content whatsoever.
+  // Returns a dm_note_status string so callers can record the outcome in turn metadata:
+  //   'updated'           — new note extracted and written this turn
+  //   'preserved_missing' — extraction provided no note; previous note retained
+  //   'new_game'          — extraction provided no note; no previous note existed (first-turn miss)
+  let dm_note_status;
+  if (extraction.dm_note && typeof extraction.dm_note === 'string' && extraction.dm_note.trim().length > 0) {
+    gameState.world.dm_note = extraction.dm_note;
+    dm_note_status = 'updated';
+  } else {
+    const hadPrevious = !!gameState.world.dm_note;
+    dm_note_status = hadPrevious ? 'preserved_missing' : 'new_game';
+    console.warn(`[CONTINUITY] dm_note: extraction provided no note — status: ${dm_note_status}`);
+  }
+
+  console.log(`[CONTINUITY] Froze active_continuity + ${updatedCount} entity updates, cleared ${clearedCount} stale — dm_note_status: ${dm_note_status}`);
+  return { dm_note_status };
 }
 
 // -----------------------------------------------------------------------------
-// 5. buildContinuityBlock(gameState)
-// Renders active_continuity as a structured, labeled, deterministic block for
-// injection into the narration prompt immediately after LAYER CONSTRAINT.
-// NOT prose. NOT raw JSON. Section headers, colon-separated fields, null fields
-// omitted entirely.
-// Returns '' if active_continuity is null (no continuity to inject).
-// Logs block character length every call for future cap calibration.
+// 5a. buildHistoryBlock(gameState, maxTurns)
+// Assembles the 50-turn structured history injection block.
+// Source: turn_history[n].narration_debug.extraction_packet (post-freeze canonical).
+// Non-intelligent assembler: reads, enforces window, preserves chronological order, formats.
+// NEVER re-extracts. NEVER mutates stored packets. Assembly = presentation only.
+// Fails loudly: every turn missing an extraction_packet is logged with its turn number.
+// Returns '' if no valid turns found — new game or pre-v1.66 save.
+// -----------------------------------------------------------------------------
+function buildHistoryBlock(gameState, maxTurns = 50) {
+  const history = gameState.turn_history || [];
+  if (history.length === 0) {
+    return '';
+  }
+
+  const missingTurns = [];
+  let validCount = 0;
+  for (const turn of history) {
+    if (turn.narration_debug?.extraction_packet) {
+      validCount++;
+    } else {
+      missingTurns.push(turn.turn_number ?? '?');
+    }
+  }
+
+  if (missingTurns.length > 0) {
+    console.warn(`[CONTINUITY] buildHistoryBlock: ${missingTurns.length} turn(s) have no extraction_packet — excluded from history block. Turns: ${missingTurns.join(', ')}. Cause: pre-v1.66 save data or extraction failure on those turns.`);
+  }
+
+  if (validCount === 0) {
+    console.warn('[CONTINUITY] buildHistoryBlock: zero turns with extraction_packet — history block will be empty');
+    return '';
+  }
+
+  // Filter to valid turns only, then take last maxTurns (already chronological — no sort needed)
+  const window = history
+    .filter(t => t.narration_debug?.extraction_packet != null)
+    .slice(-maxTurns);
+
+  const lines = ['--- CONTINUITY (STRUCTURED) ---', ''];
+
+  for (const turn of window) {
+    const p = turn.narration_debug.extraction_packet;
+    const tn = turn.turn_number ?? '?';
+    lines.push(`[Turn ${tn}]`);
+    lines.push(`Locomotion: ${p.player_locomotion || '—'}  Physical State: ${p.player_physical_state || '—'}`);
+    const tierEntries = (p.scene_focus_tier && typeof p.scene_focus_tier === 'object')
+      ? Object.entries(p.scene_focus_tier).map(([k, v]) => `${k}:${v}`).join(' ')
+      : '—';
+    lines.push(`Scene Focus: ${p.scene_focus_primary || '—'}  Tier: ${tierEntries}`);
+    lines.push(`Tone: ${p.tone || '—'}`);
+    lines.push(`Interaction: ${p.interaction_mode || '—'}  Active: ${p.active_interaction || 'none'}`);
+    lines.push(`Environment: ${p.environment_continuity || '—'}`);
+    const threads = Array.isArray(p.unresolved_threads) && p.unresolved_threads.length > 0
+      ? p.unresolved_threads.join(' | ')
+      : 'none';
+    lines.push(`Threads: ${threads}`);
+    if (p.spine_scene)      lines.push(`Scene: ${p.spine_scene}`);
+    if (p.spine_atmosphere) lines.push(`Atmosphere: ${p.spine_atmosphere}`);
+    if (p.spine_player)     lines.push(`Player: ${p.spine_player}`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+// -----------------------------------------------------------------------------
+// 5b. buildDMNoteBlock(gameState)
+// Returns the current DM handoff note under a section header.
+// The note content is stored and injected VERBATIM — no reformatting, no
+// summarization, no modification of any kind. The model reads its own prior
+// output byte-for-byte. This is the entire point of the evolving note system.
+// Returns '' if dm_note is null (first turn before any extraction).
+// -----------------------------------------------------------------------------
+function buildDMNoteBlock(gameState) {
+  const note = gameState.world.dm_note;
+  if (!note) return '';
+  return `--- DM HANDOFF NOTES ---\n\n${note}`;
+}
+
+// -----------------------------------------------------------------------------
+// 5cc. buildContinuityBlock(gameState)
+// Renders the full three-section continuity injection block:
+//   Section 1 — CONTINUITY (STRUCTURED): 50-turn history from extraction_packet archives
+//   Section 2 — DM HANDOFF NOTES: evolving note verbatim from gameState.world.dm_note
+//   Section 3 — CURRENT STATE: Scene Spine from active_continuity
+// Each section is independently optional — present only when data exists.
+// Logs character count and which sections are active every call.
 // -----------------------------------------------------------------------------
 function buildContinuityBlock(gameState) {
+  const sections = [];
+  const activeSections = [];
+
+  // Section 1: structured 50-turn history
+  const historyBlock = buildHistoryBlock(gameState);
+  if (historyBlock) {
+    sections.push(historyBlock);
+    activeSections.push('history');
+  }
+
+  // Section 2: DM handoff note — verbatim, no modification
+  const dmBlock = buildDMNoteBlock(gameState);
+  if (dmBlock) {
+    sections.push(dmBlock);
+    activeSections.push('dm_note');
+  }
+
+  // Section 3: current state — Scene Spine
   const ac = gameState.world.active_continuity;
+  if (ac) {
+    if (!ac.spine_scene || !ac.spine_atmosphere || !ac.spine_player) {
+      console.log('[CONTINUITY] CURRENT STATE: spine fields absent — Scene Spine skipped (graceful degradation)');
+    } else {
+      const threads = Array.isArray(ac.unresolved_threads) && ac.unresolved_threads.length > 0
+        ? ac.unresolved_threads.join('\n')
+        : 'none';
+      const spineBlock = [
+        '--- CURRENT STATE ---',
+        '',
+        '[NARRATIVE CONTINUITY — SCENE SPINE]',
+        '',
+        'Scene:',
+        ac.spine_scene,
+        '',
+        'Atmosphere:',
+        ac.spine_atmosphere,
+        '',
+        'Player:',
+        ac.spine_player,
+        '',
+        'Active Threads:',
+        threads,
+        '',
+        '[Continue from this exact state. Do not reset or generalize the scene.]'
+      ].join('\n');
+      sections.push(spineBlock);
+      activeSections.push('scene_spine');
+    }
+  }
 
-  // No active continuity → nothing to inject
-  if (!ac) {
-    console.log('[CONTINUITY] block: 0 chars (no active_continuity)');
+  if (sections.length === 0) {
+    console.log('[CONTINUITY] block: 0 chars (no continuity data)');
     return '';
   }
 
-  // Spine fields missing (stale pre-v1.65 data, or spatial guard nulled spine_scene) → inject nothing
-  // Better: no continuity than wrong-format continuity
-  if (!ac.spine_scene || !ac.spine_atmosphere || !ac.spine_player) {
-    console.log('[CONTINUITY] block: 0 chars (spine fields absent — graceful degradation)');
-    return '';
-  }
-
-  // Build Active Threads section
-  const threads = Array.isArray(ac.unresolved_threads) && ac.unresolved_threads.length > 0
-    ? ac.unresolved_threads.join('\n')
-    : 'none';
-
-  const block = [
-    '[NARRATIVE CONTINUITY — SCENE SPINE]',
-    '',
-    'Scene:',
-    ac.spine_scene,
-    '',
-    'Atmosphere:',
-    ac.spine_atmosphere,
-    '',
-    'Player:',
-    ac.spine_player,
-    '',
-    'Active Threads:',
-    threads,
-    '',
-    '[Continue from this exact state. Do not reset or generalize the scene.]'
-  ].join('\n');
-
-  console.log(`[CONTINUITY] block: ${block.length} chars (Scene Spine)`);
+  const block = sections.join('\n\n');
+  console.log(`[CONTINUITY] block: ${block.length} chars (${activeSections.join('+')} — ${sections.length} section(s))`);
   return block;
 }
 
