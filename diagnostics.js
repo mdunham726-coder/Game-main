@@ -222,7 +222,7 @@ function render(p) {
   }
 
   // Footer
-  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] cb extraction  [L] log  [D] mood  Ctrl+C exit`));
+  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] cb extraction  [L] log  [D] mood  [B] cb panel  Ctrl+C exit`));
 
   clr();
   process.stdout.write(lines.join('\n') + '\n');
@@ -325,6 +325,13 @@ if (process.stdin.isTTY) {
     }
     if (key === 'd' || key === 'D') {
       spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node dmletter.js'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    }
+    if (key === 'b' || key === 'B') {
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node cbpanel.js'], {
         cwd: __dirname,
         detached: true,
         stdio: 'ignore'

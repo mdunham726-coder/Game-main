@@ -1543,6 +1543,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         elevation:   finalElev,
         moisture:    finalMois,
         temperature: finalTemp,
+        attributes:  {},      // ContinuityBrain: L0 persistent feature storage
       };
 
       // Accumulate stats

@@ -286,6 +286,7 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
 }
 
 function _promoteLocationAttributes(locationRecord, locationRef, features, turn, logEntries) {
+  if (!locationRecord.attributes) locationRecord.attributes = {}; // backward-compat: old saves lack attributes field
   for (const feat of (features || [])) {
     if (!_isConcreteDetail(feat)) {
       logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: feat, turn, reason: 'failed_concrete_test' });
@@ -293,10 +294,21 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
     }
     const key = `env:${feat}`;
     if (!locationRecord.attributes[key]) {
-      locationRecord.attributes[key] = { value: feat, bucket: 'environment', turn_set: turn, confidence: 'initial' };
+      locationRecord.attributes[key] = { value: feat, bucket: 'environment', turn_set: turn, confidence: 'initial', source: 'narration' };
       logEntries.push({ action: 'create', entity_type: 'location', entity_id: locationRef, entity_name: locationRef, attribute: key, old_value: null, new_value: feat, evidence_quote: null, turn });
     }
   }
+}
+
+// ── L0 cell record helper ─────────────────────────────────────────────────────
+// Returns the world cell record for the player's current overworld position,
+// or null if position/cells are unavailable.
+function _getL0CellRecord(gameState) {
+  const w   = gameState.world || {};
+  const pos = w.position;
+  if (!pos) return null;
+  const key = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+  return w.cells?.[key] || null;
 }
 
 // ── Phase B ───────────────────────────────────────────────────────────────────
@@ -372,27 +384,47 @@ async function runPhaseB(frozenNarration, gameState) {
   const logEntries  = [];
   const warnings    = [];
   const w           = gameState.world || {};
-  const locationRecord = w.active_local_space || w.active_site || null;
-  const locationRef    = (w.active_local_space?.name || w.active_site?.name || 'unknown');
+  const locationRecord = w.active_local_space || w.active_site || _getL0CellRecord(gameState);
+  const pos            = w.position;
+  const locationRef    = w.active_local_space?.name || w.active_site?.name ||
+                         (pos ? `cell(${pos.mx},${pos.my}:${pos.lx},${pos.ly})` : 'unknown');
 
-  for (const candidate of (extracted.entity_candidates || [])) {
-    const ref = candidate.entity_ref;
-    if (!ref) continue;
+  const loc = w.active_local_space || w.active_site;
 
-    const resolved = _resolveEntityRef(ref, gameState);
-
-    if (!resolved) {
-      warnings.push({ type: 'unresolved_entity_ref', entity_ref: ref, turn });
-      console.warn(`[CB] entity_ref "${ref}" could not be resolved to any visible NPC — promotion skipped`);
-      continue;
+  // At L0 (no active site/local_space), there is no NPC registry — collapse all
+  // entity candidates into a single informational warning instead of N UNRESOLVED entries.
+  if (!loc) {
+    const candidates = (extracted.entity_candidates || []).filter(c => c.entity_ref);
+    if (candidates.length > 0) {
+      warnings.push({
+        type: 'l0_entity_candidates_skipped',
+        reason: 'no_npc_registry',
+        count: candidates.length,
+        entities: candidates.map(c => c.entity_ref),
+        turn,
+      });
+      console.warn(`[CB] L0: ${candidates.length} entity candidate(s) skipped — no NPC registry at overworld (L0)`);
     }
+  } else {
+    for (const candidate of (extracted.entity_candidates || [])) {
+      const ref = candidate.entity_ref;
+      if (!ref) continue;
 
-    if (resolved._fuzzy) {
-      warnings.push({ type: 'fuzzy_entity_ref', entity_ref: ref, resolved_to: resolved.id, turn });
-      console.warn(`[CB] entity_ref "${ref}" resolved via fuzzy match to ${resolved.id} — should use exact npc_id`);
+      const resolved = _resolveEntityRef(ref, gameState);
+
+      if (!resolved) {
+        warnings.push({ type: 'unresolved_entity_ref', entity_ref: ref, turn });
+        console.warn(`[CB] entity_ref "${ref}" could not be resolved to any visible NPC — promotion skipped`);
+        continue;
+      }
+
+      if (resolved._fuzzy) {
+        warnings.push({ type: 'fuzzy_entity_ref', entity_ref: ref, resolved_to: resolved.id, turn });
+        console.warn(`[CB] entity_ref "${ref}" resolved via fuzzy match to ${resolved.id} — should use exact npc_id`);
+      }
+
+      _promoteEntityAttributes(resolved, candidate, turn, logEntries);
     }
-
-    _promoteEntityAttributes(resolved, candidate, turn, logEntries);
   }
 
   // Promote environmental features to location record

@@ -2,6 +2,20 @@
 
 ---
 
+## v1.71.0 — April 23, 2026
+**cbpanel.js + Mother Brain Context Completion**
+
+- **New file:** `cbpanel.js` — live SSE terminal panel with 4 interactive views: Turn View, Promotion Log, Entity View, Explain This
+- **Turn View:** source narration (labeled `Narrator output (T-N)`), extraction candidates (all 4 buckets + inline rejections), UNRESOLVED/FUZZY warnings, per-turn promotion results
+- **Promotion Log:** full `promotion_log_recent` (20 entries) in chronological stream
+- **Entity View:** all visible NPCs + site with `bucket | value | T-N` per attribute; `[Tab]` cycles entities
+- **Explain This:** assembles last turn context and calls DeepSeek directly (ECONNRESET retry); renders explanation in panel
+- **`diagnostics.js`:** `[B]` hotkey spawns `cbpanel.js`; footer updated to include `[B] cb panel`
+- **`index.js` `buildDebugContext()`:** added `=== LAST NARRATIONS ===` (last 2, labeled `Narrator output (T-N):`); per-entity rejected_interpretations now inline strings (up to 3); entity attribute format `bucket:value (T-N)` with temporal tag; location attributes same; `RECENT PROMOTIONS` depth 5 → 10
+- **`motherbrain.js` v2.0.0:** system prompt updated — `LAST NARRATIONS` section named in `TOOLS AND DATA ACCESS`; tone adjusted to interpretive/aware (not robotic, not expressive); `CAPABILITIES` updated with continuity gaps bullet; `OUTPUT STYLE` section added
+
+---
+
 ## v1.70.0 — April 23, 2026
 **Continuity Subsystem Redesign — ContinuityBrain**
 
@@ -10,7 +24,9 @@
 - **Phase C:** `assembleContinuityPacket(gameState, turnContext)` — assembles TRUTH block (entity + location facts) followed by MOOD block (structured trajectory signals) for narrator injection
 - **Data model:** `NPC.attributes{}`, `site.attributes{}`, `local_space.attributes{}`, `world.promotion_log[]`, `world.mood_history[]`
 - **index.js:** 4 swap points — `CB.assembleContinuityPacket` replaces `NC.buildContinuityBlock`; `CB.runPhaseB` replaces `NC.runContinuityExtraction + NC.freezeContinuityState`; `CB.getLastRunDiagnostics` replaces `NC.getLastRunDiagnostics`
-- `NarrativeContinuity.js` preserved (bypassed); scheduled for removal in Phase 5 cleanup
+- `NarrativeContinuity.js` preserved (bypassed); scheduled for removal in Phase 6 cleanup
+- **Phase 4 observability:** `/diagnostics/continuity` endpoint replaced with CB-native fields (`extraction_packet`, `cb_diagnostics`, `visible_npc_attributes`, `site_attributes`, `mood_history`, `promotion_log_recent`); `buildDebugContext()` updated with `ENTITY ATTRIBUTES`, `RECENT PROMOTIONS`, `MOOD TRAJECTORY`, `CB EXTRACTION`, `CB WARNINGS` sections; `summary.js` converted to live SSE panel; `continuity.js` rewritten as CB Extraction + Promotion View (9 sections); `dmletter.js` rewritten as Mood Pipeline Debug View (trajectory-primary, 3 sections); `diagnostics.js` footer labels updated
+- **`motherbrain.js` v1.0.5:** SSE reconnect guard (`_sseReconnectPending` flag) prevents exponential listener accumulation on socket drop
 
 ---
 

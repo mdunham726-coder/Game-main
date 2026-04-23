@@ -1818,7 +1818,8 @@ app.post('/narrate', async (req, res) => {
     } else if (_narDepth === 3 && gameState?.world?.active_local_space && gameState?.player?.position) {
       gameState.world.active_local_space._visible_npcs = Actions.computeVisibleNpcs(gameState.world.active_local_space, gameState.player.position, gameState.world.active_site?.npcs || []);
     }
-    console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, gameState?.player?.position, _narActiveSite?._visible_npcs?.length ?? 'n/a');
+    const _narLogPos = _narDepth === 1 ? 'L0' : (gameState?.player?.position ?? 'unset');
+    console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, _narLogPos, _narActiveSite?._visible_npcs?.length ?? 'n/a');
     // v1.56.0: Eviction check + continuity block pre-build (after computeVisibleNpcs for fresh _visible_npcs)
     NC.resetDiagnostics();
     const { evicted: _continuityEvicted, reason: _continuityEvictionReason } = NC.checkEviction(gameState);
@@ -3359,7 +3360,11 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     }
 
     // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===
-    const _ctxLoc = gameState.world.active_local_space || gameState.world.active_site || null;
+    const _ctxLoc = gameState.world.active_local_space || gameState.world.active_site || (() => {
+      const _pos = gameState.world.position;
+      if (!_pos) return null;
+      return gameState.world.cells?.[`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`] || null;
+    })();
     const _ctxVisible = (_ctxLoc?._visible_npcs || []);
     context += `\n=== ENTITY ATTRIBUTES (promoted by ContinuityBrain) ===\n`;
     if (_ctxVisible.length === 0) {
@@ -3371,18 +3376,20 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         if (attrs.length === 0) {
           context += `- ${label}: (no promoted facts yet)\n`;
         } else {
-          const attrStr = attrs.map(a => `${a.bucket}:${a.value}`).join(' | ');
+          const attrStr = attrs.map(a => `${a.bucket}:${a.value}${a.turn_set != null ? ` (T-${a.turn_set})` : ''}`).join(' | ');
           context += `- ${label}: ${attrStr}\n`;
         }
       }
     }
     if (_ctxLoc?.attributes && Object.keys(_ctxLoc.attributes).length > 0) {
-      const locAttrs = Object.values(_ctxLoc.attributes).map(a => a.value).join(' | ');
-      context += `[${_ctxLoc.name || 'location'}]: ${locAttrs}\n`;
+      const _pos = gameState.world.position;
+      const locLabel = _ctxLoc.name || (_pos ? `cell(${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly})` : 'location');
+      const locAttrs = Object.values(_ctxLoc.attributes).map(a => `${a.bucket ? a.bucket + ':' : ''}${a.value}${a.turn_set != null ? ` (T-${a.turn_set})` : ''}`).join(' | ');
+      context += `[${locLabel}]: ${locAttrs}\n`;
     }
 
-    // === RECENT PROMOTIONS (last 5 entries from world.promotion_log) ===
-    const _ctxPromoLog = (gameState.world.promotion_log || []).slice(-5);
+    // === RECENT PROMOTIONS (last 10 entries from world.promotion_log) ===
+    const _ctxPromoLog = (gameState.world.promotion_log || []).slice(-10);
     context += `\n=== RECENT PROMOTIONS (last ${_ctxPromoLog.length}) ===\n`;
     if (_ctxPromoLog.length === 0) {
       context += `(no promotions yet)\n`;
@@ -3407,6 +3414,19 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       }
     }
 
+    // === LAST NARRATIONS (last 2 turns — labeled for Mother Brain citation) ===
+    const _ctxNarrations = (gameState.turn_history || []).slice(-2);
+    context += `\n=== LAST NARRATIONS ===\n`;
+    if (_ctxNarrations.length === 0) {
+      context += `(no narrations yet)\n`;
+    } else {
+      for (const _nt of _ctxNarrations) {
+        const _nText  = (_nt.narrative || '').slice(0, 400);
+        const _nExtra = (_nt.narrative || '').length > 400 ? '…' : '';
+        context += `Narrator output (T-${_nt.turn_number}): ${_nText}${_nExtra}\n`;
+      }
+    }
+
     // === CB EXTRACTION (last turn) — compact summary for Mother Brain ===
     const _cbLastTurnNd = (gameState.turn_history || []).slice(-1)[0]?.narration_debug || {};
     const _cbExtract    = _cbLastTurnNd.extraction_packet || null;
@@ -3426,8 +3446,11 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         const _pa  = (_cand.physical_attributes || []).join(', ') || '—';
         const _os  = (_cand.observable_states   || []).join(', ') || '—';
         const _obj = (_cand.held_or_worn_objects || []).join(', ') || '—';
-        const _rej = (_cand.rejected_interpretations || []).length;
-        context += `  ${_ref}: phys[${_pa}] state[${_os}] obj[${_obj}] rej:${_rej}\n`;
+        const _rejList = (_cand.rejected_interpretations || []).slice(0, 3);
+        context += `  ${_ref}: phys[${_pa}] state[${_os}] obj[${_obj}]\n`;
+        if (_rejList.length > 0) {
+          context += `    rejected: ${_rejList.join(' | ')}\n`;
+        }
       }
       if (_cbTopReject.length > 0) {
         context += `  top-reject: ${_cbTopReject.slice(0, 3).join(' | ')}\n`;
@@ -3448,6 +3471,8 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
           context += `UNRESOLVED: "${_w.entity_ref}" — no visible NPC matched, fact NOT promoted\n`;
         } else if (_w.type === 'fuzzy_entity_ref') {
           context += `FUZZY: "${_w.entity_ref}" → resolved to "${_w.resolved_to}" via fuzzy match — verify correctness\n`;
+        } else if (_w.type === 'l0_entity_candidates_skipped') {
+          context += `L0-SKIP: ${_w.count} entity candidate(s) skipped — no NPC registry at overworld (L0). Entities: ${(_w.entities || []).join(', ')}\n`;
         } else {
           context += `${_w.type}: ${JSON.stringify(_w)}\n`;
         }
@@ -4069,7 +4094,11 @@ app.get('/diagnostics/continuity', (req, res) => {
 
   // Visible NPC attributes — entity_id → { label, attributes{} }
   const w   = _lastGameState.world || {};
-  const loc = w.active_local_space || w.active_site || null;
+  const loc = w.active_local_space || w.active_site || (() => {
+    const _p = w.position;
+    if (!_p) return null;
+    return w.cells?.[`LOC:${_p.mx},${_p.my}:${_p.lx},${_p.ly}`] || null;
+  })();
   const visibleNpcs = (loc?._visible_npcs || []);
   const visible_npc_attributes = {};
   for (const npc of visibleNpcs) {
@@ -4077,9 +4106,10 @@ app.get('/diagnostics/continuity', (req, res) => {
     visible_npc_attributes[npc.id] = { label, attributes: npc.attributes || {} };
   }
 
-  // Site/local_space attributes
+  // Site/local_space attributes (falls back to L0 cell at overworld)
+  const _diagPos = w.position;
   const site_attributes = {
-    name: loc?.name || null,
+    name: loc?.name || (_diagPos ? `cell(${_diagPos.mx},${_diagPos.my}:${_diagPos.lx},${_diagPos.ly})` : null),
     attributes: loc?.attributes || {}
   };
 

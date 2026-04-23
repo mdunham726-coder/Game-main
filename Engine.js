@@ -221,6 +221,7 @@ function streamL1Cells(state) {
         moisture:    _mois,
         temperature: _temp,
         water_distance: null, // Streamed cells lack hydrology data (computed at world init only)
+        attributes: {},       // ContinuityBrain: L0 persistent feature storage
       };
 
       // Phase 4: Deterministic site generation at cell creation time

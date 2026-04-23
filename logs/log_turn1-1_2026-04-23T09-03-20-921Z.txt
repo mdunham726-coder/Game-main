@@ -1,0 +1,60 @@
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  === TURN 1 | 4/23/2026, 4:53:47 AM ===
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+── PARSER / INPUT ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Channel                 do
+  Raw Input               hey, you wanna go grab a bagel? ham egg and cheese on onion sounds good
+  Parsed Action           —
+  Parsed Dir              —
+  Intent Source           none
+
+── SPATIAL ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Depth                   OVERWORLD
+  Position                mx:1 my:5 / lx:45 ly:110
+  Site                    —
+  Local Space             —
+
+── MOVEMENT ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  no movement this turn
+
+── CONTINUITY ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Injected                YES
+  block_chars             185
+  Evicted                 NO
+  Extraction              success
+  History Block           present
+  Alerts                  none
+  Entity Updates          none
+  Entity Cleared          none
+
+── DM NOTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Status                  updated
+  Note:
+    (none)
+
+── NARRATION ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Length                  1113ch
+  The cool, damp air of the deciduous forest clings to you as you turn, a familiar path worn into the soft earth underfo
+  ot. Sunlight filters through the canopy in scattered coins of gold, warming the mossy roots and the scent of damp bark
+  . You glance over your shoulder, a grin pulling at your lips. "Hey, you wanna go grab a bagel? Ham, egg, and cheese on
+   onion sounds good." The words hang in the still air, met only by the rustle of a squirrel in the leaves above and the
+   distant, rhythmic hush of waves. Through the gaps in the trees to the east, you can just make out the pale shimmer of
+   a sandy beach, while to the west, another stretch of sand is visible, curving away. A little way off the path, nestle
+  d in a small clearing, sits a modest wooden building with a gently sloping roof and a single, dark window—a quiet, una
+  ssuming place, like a forgotten hermit's cottage. Nearer to you, almost hidden by a tangle of wild blackberry bushes, 
+  a large, weathered stone slab juts from the earth, covered in a thick pelt of moss and lichen, its surface carved with
+   faint, swirling lines that time has nearly erased.
+
+── ENTITIES ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  none visible
+
+── VIOLATIONS ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ no violations
+
+── TOKENS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Narrator                prompt:—  compl:—  total:—
+  Parser                  total:—  cached:—
+  System Total            —  Δ—  avg5:—
+  Breakdown               base:—ch  cont:—ch  spatial:—ch  out:—ch
