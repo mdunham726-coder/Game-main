@@ -222,7 +222,7 @@ function render(p) {
   }
 
   // Footer
-  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] continuity  [L] log  [D] dm letter  Ctrl+C exit`));
+  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] cb extraction  [L] log  [D] mood  Ctrl+C exit`));
 
   clr();
   process.stdout.write(lines.join('\n') + '\n');

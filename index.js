@@ -11,6 +11,7 @@ const Actions = require('./ActionProcessor.js');
 const { validateAndQueueIntent, parseIntent } = require('./ActionProcessor.js');
 const { normalizeUserIntent, resolveEnterTarget } = require('./SemanticParser.js');
 const NC = require('./NarrativeContinuity');
+const CB = require('./ContinuityBrain'); // v1.70.0
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -19,6 +20,9 @@ app.use(express.static(__dirname));
 
 // Session state management
 const sessionStates = new Map();
+
+// Mother Brain — unique session identifier (changes on every Node restart)
+const _mbSessionId = Date.now();
 
 // Consult DeepSeek — rolling conversation history per session
 // Stored as exchange objects so future trimming/summarization touches only exchanges[]
@@ -1821,9 +1825,10 @@ app.post('/narrate', async (req, res) => {
     if (_continuityEvicted) {
       NC.pushAlert({ severity: 'Info', type: 'continuity_eviction', description: `Continuity evicted (${_continuityEvictionReason})`, entity_ref: null, turn: (gameState.turn_history ? gameState.turn_history.length : 0) + 1 });
     }
-    const _continuityBlock = NC.buildContinuityBlock(gameState);
+    const _continuityBlock = CB.assembleContinuityPacket(gameState, null); // v1.70.0
     _lastRenderedBlock = _continuityBlock; // cache for /diagnostics/continuity
     _lastGameState = gameState;            // cache for /diagnostics/continuity
+    _lastSessionId = resolvedSessionId;    // cache for /diagnostics/session
     // v1.63.0: reflects actual block output — true when narrator received any continuity content
     // (active_continuity OR narrative_memory entries), not just active_continuity presence
     const _continuityInjected = _continuityBlock.length > 0;
@@ -2427,21 +2432,17 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       }
     }
 
-    // v1.56.0: Continuity extraction — runs after narrative is finalized (all update blocks stripped)
+    // v1.70.0: ContinuityBrain Phase B — forensic extraction + promotion; replaces NC extraction+freeze
     let _continuityExtractionSuccess = false;
-    let _extractionPacket = null;   // v1.66.0: post-freeze canonical archive record (NOT pre-freeze)
-    let _dmNoteArchived   = null;   // v1.66.0: dm_note verbatim at turn completion
-    let _dmNoteStatus     = 'new_game'; // v1.66.0: 'updated' | 'preserved_missing' | 'new_game'
+    let _extractionPacket = null;   // v1.70.0: CB extracted schema (replaces active_continuity snapshot)
+    let _dmNoteArchived   = null;   // v1.70.0: retired (dm_note superseded by entity.attributes promotion)
+    let _dmNoteStatus     = 'new_game'; // v1.70.0: 'updated' | 'new_game'
     {
-      const _continuityExtraction = await NC.runContinuityExtraction(narrative, gameState);
-      const _freezeResult = NC.freezeContinuityState(_continuityExtraction, gameState);
-      _continuityExtractionSuccess = _continuityExtraction !== null;
-      _dmNoteStatus = _freezeResult?.dm_note_status ?? 'new_game';
-      // Capture post-freeze state — extraction_packet is the canonical archived truth for this turn
-      if (gameState.world.active_continuity) {
-        _extractionPacket = JSON.parse(JSON.stringify(gameState.world.active_continuity));
-      }
-      _dmNoteArchived = gameState.world.dm_note || null;
+      const _phaseBResult = await CB.runPhaseB(narrative, gameState);
+      _continuityExtractionSuccess = _phaseBResult !== null;
+      _dmNoteStatus = _phaseBResult ? 'updated' : 'new_game';
+      _extractionPacket = _phaseBResult ? _phaseBResult.extracted : null;
+      _dmNoteArchived = null; // dm_note retired in v1.70.0
     }
 
     // Log narration generation
@@ -2834,7 +2835,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         continuity_evicted: _continuityEvicted,
         continuity_block_chars: _continuityBlock.length,
         continuity_snapshot: _continuityBlockSnapshot,
-        continuity_diagnostics: NC.getLastRunDiagnostics(),
+        continuity_diagnostics: CB.getLastRunDiagnostics(), // v1.70.0
         engine_spatial_notes: _engineSpatialBlock || null,
         extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
         dm_note_archived:  _dmNoteArchived,       // v1.66.0: dm_note verbatim at turn completion
@@ -2979,7 +2980,8 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       },
       narration_length: narrative?.length || 0,
       engine_message: _engineMsg || null,
-      violations: _turnViolations
+      violations: _turnViolations,
+      gameSessionId: resolvedSessionId
     });
 
     // Update rolling history for delta/avg computation next turn
@@ -3356,36 +3358,100 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       context += `(No cells in current macro)\n`;
     }
 
-    // === DM NOTE ===
-    const _ctxDmNote    = gameState.world.dm_note || null;
-    const _ctxDmStatus  = (() => {
-      const _th = gameState.turn_history;
-      if (!_th || !_th.length) return null;
-      return _th[_th.length - 1]?.narration_debug?.dm_note_status || null;
-    })();
-    context += `\n=== DM NOTE ===\n`;
-    if (_ctxDmNote) {
-      context += `Status : ${_ctxDmStatus || '(unknown)'}\n`;
-      context += `Note   : ${_ctxDmNote}\n`;
+    // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===
+    const _ctxLoc = gameState.world.active_local_space || gameState.world.active_site || null;
+    const _ctxVisible = (_ctxLoc?._visible_npcs || []);
+    context += `\n=== ENTITY ATTRIBUTES (promoted by ContinuityBrain) ===\n`;
+    if (_ctxVisible.length === 0) {
+      context += `(no visible entities at current position)\n`;
     } else {
-      context += `(none — no DM note has been written yet)\n`;
+      for (const npc of _ctxVisible) {
+        const label = (npc.is_learned && npc.npc_name) ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || npc.id}`;
+        const attrs = npc.attributes ? Object.values(npc.attributes) : [];
+        if (attrs.length === 0) {
+          context += `- ${label}: (no promoted facts yet)\n`;
+        } else {
+          const attrStr = attrs.map(a => `${a.bucket}:${a.value}`).join(' | ');
+          context += `- ${label}: ${attrStr}\n`;
+        }
+      }
+    }
+    if (_ctxLoc?.attributes && Object.keys(_ctxLoc.attributes).length > 0) {
+      const locAttrs = Object.values(_ctxLoc.attributes).map(a => a.value).join(' | ');
+      context += `[${_ctxLoc.name || 'location'}]: ${locAttrs}\n`;
     }
 
-    // === RECENT CONTINUITY (last 5 turns — thin format) ===
-    context += `\n=== RECENT CONTINUITY (last 5 turns) ===\n`;
-    const _ctxHistory = (gameState.turn_history || [])
-      .filter(t => t?.narration_debug?.extraction_packet != null)
-      .slice(-5);
-    if (_ctxHistory.length === 0) {
-      context += `(no extraction history yet)\n`;
+    // === RECENT PROMOTIONS (last 5 entries from world.promotion_log) ===
+    const _ctxPromoLog = (gameState.world.promotion_log || []).slice(-5);
+    context += `\n=== RECENT PROMOTIONS (last ${_ctxPromoLog.length}) ===\n`;
+    if (_ctxPromoLog.length === 0) {
+      context += `(no promotions yet)\n`;
     } else {
-      _ctxHistory.forEach(t => {
-        const ep = t.narration_debug.extraction_packet;
-        const tn = t.turn_number ?? '?';
-        context += `[T-${tn}] focus:${ep.scene_focus_primary || '—'}  tone:${ep.tone || '—'}  interaction:${ep.interaction_mode || '—'}  active:${ep.active_interaction || '—'}\n`;
-        if (ep.spine_scene) context += `  scene   : ${ep.spine_scene.slice(0, 120)}${ep.spine_scene.length > 120 ? '…' : ''}\n`;
-        if (ep.spine_atmosphere) context += `  atmos   : ${ep.spine_atmosphere.slice(0, 80)}${ep.spine_atmosphere.length > 80 ? '…' : ''}\n`;
-      });
+      for (const e of _ctxPromoLog) {
+        if (e.action === 'create') {
+          context += `[T-${e.turn}] ${e.entity_type}:${e.entity_name || e.entity_id} → ${e.attribute} = "${e.new_value}"\n`;
+        } else if (e.action === 'rejected_filter') {
+          context += `[T-${e.turn}] FILTERED ${e.entity_id} ${e.bucket}:"${e.value}" (${e.reason})\n`;
+        }
+      }
+    }
+
+    // === MOOD TRAJECTORY (last 3 entries from world.mood_history) ===
+    const _ctxMoods = (gameState.world.mood_history || []).slice(-3);
+    context += `\n=== MOOD TRAJECTORY (last ${_ctxMoods.length}) ===\n`;
+    if (_ctxMoods.length === 0) {
+      context += `(no mood data yet)\n`;
+    } else {
+      for (const m of _ctxMoods) {
+        context += `[T-${m.turn}] tone:${m.tone || '—'} tension:${m.tension_level || '—'}(${m.tension_direction || '—'}) focus:${m.scene_focus || '—'} → ${m.delta_note || '—'}\n`;
+      }
+    }
+
+    // === CB EXTRACTION (last turn) — compact summary for Mother Brain ===
+    const _cbLastTurnNd = (gameState.turn_history || []).slice(-1)[0]?.narration_debug || {};
+    const _cbExtract    = _cbLastTurnNd.extraction_packet || null;
+    const _cbDiag       = _cbLastTurnNd.continuity_diagnostics || null;
+    context += `\n=== CB EXTRACTION (last turn) ===\n`;
+    if (!_cbExtract) {
+      context += `(no extraction data yet)\n`;
+    } else {
+      const _cbCandidates = _cbExtract.entity_candidates || [];
+      const _cbEnv        = _cbExtract.environmental_features || [];
+      const _cbSpatial    = _cbExtract.spatial_relations || [];
+      const _cbTopReject  = _cbExtract.rejected_interpretations || [];
+      const _cbEnvCount   = _cbEnv.reduce((s, b) => s + (b.features || []).length, 0);
+      context += `candidates:${_cbCandidates.length}  env_features:${_cbEnvCount}  spatial:${_cbSpatial.length}  top_rejected:${_cbTopReject.length}\n`;
+      for (const _cand of _cbCandidates) {
+        const _ref = _cand.entity_ref || '?';
+        const _pa  = (_cand.physical_attributes || []).join(', ') || '—';
+        const _os  = (_cand.observable_states   || []).join(', ') || '—';
+        const _obj = (_cand.held_or_worn_objects || []).join(', ') || '—';
+        const _rej = (_cand.rejected_interpretations || []).length;
+        context += `  ${_ref}: phys[${_pa}] state[${_os}] obj[${_obj}] rej:${_rej}\n`;
+      }
+      if (_cbTopReject.length > 0) {
+        context += `  top-reject: ${_cbTopReject.slice(0, 3).join(' | ')}\n`;
+      }
+      if (_cbSpatial.length > 0) {
+        context += `  spatial: ${_cbSpatial.slice(0, 3).join(' | ')}\n`;
+      }
+    }
+
+    // === CB WARNINGS (last turn) — entity resolution failures ===
+    const _cbWarnings = _cbDiag?.warnings || [];
+    context += `\n=== CB WARNINGS (last turn) ===\n`;
+    if (_cbWarnings.length === 0) {
+      context += `(none)\n`;
+    } else {
+      for (const _w of _cbWarnings) {
+        if (_w.type === 'unresolved_entity_ref') {
+          context += `UNRESOLVED: "${_w.entity_ref}" — no visible NPC matched, fact NOT promoted\n`;
+        } else if (_w.type === 'fuzzy_entity_ref') {
+          context += `FUZZY: "${_w.entity_ref}" → resolved to "${_w.resolved_to}" via fuzzy match — verify correctness\n`;
+        } else {
+          context += `${_w.type}: ${JSON.stringify(_w)}\n`;
+        }
+      }
     }
   }
 
@@ -3941,6 +4007,9 @@ app.get('/logs/download/:sessionId', (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  // Notify Mother Brain that Node is online. _lastDiagnosticPayload will replay
+  // this to MB on its first connect even if MB starts after Node.
+  emitDiagnostics({ type: 'lifecycle', event: 'online', ts: new Date().toISOString(), port: PORT, sessionId: _mbSessionId });
 });
 
 // =============================================================================
@@ -3953,6 +4022,7 @@ let _lastDiagnosticPayload = null; // replayed to new connections so they show c
 let _diagHistory = []; // rolling per-turn cost history for delta/avg and session summary (max 200 entries)
 let _lastRenderedBlock = null; // cache of the exact continuity text injected into the model each turn
 let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
+let _lastSessionId    = null; // cache of most-recent resolved session ID (used by /diagnostics/session for MB bootstrap)
 
 app.get('/diagnostics/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -3986,38 +4056,67 @@ app.get('/diagnostics/stream', (req, res) => {
 });
 
 // On-demand continuity inspector — GET /diagnostics/continuity?turns=N
-// Returns the exact injected continuity block text, structured extraction state,
-// prior location memories, and the last N narrations from the archive.
+// v1.70.0: Returns ContinuityBrain CB fields. Legacy NC fields (active_continuity,
+// dm_note, narrative_memory) are retired and no longer returned.
 app.get('/diagnostics/continuity', (req, res) => {
   if (!_lastGameState || _lastRenderedBlock === null) {
     return res.json({ no_data: true, reason: 'No turns played yet — start the game and take at least one action.' });
   }
-  const history = _lastGameState.turn_history || [];
-  const total = history.length;
-  const turnsParam = req.query.turns;
-  let count;
-  if (turnsParam === 'all') {
-    count = total;
-  } else {
-    count = parseInt(turnsParam, 10);
-    if (!Number.isFinite(count) || count < 1) count = 3;
+  const history   = _lastGameState.turn_history || [];
+  const total     = history.length;
+  const lastTurn  = history[history.length - 1] || null;
+  const lastDebug = lastTurn?.narration_debug || {};
+
+  // Visible NPC attributes — entity_id → { label, attributes{} }
+  const w   = _lastGameState.world || {};
+  const loc = w.active_local_space || w.active_site || null;
+  const visibleNpcs = (loc?._visible_npcs || []);
+  const visible_npc_attributes = {};
+  for (const npc of visibleNpcs) {
+    const label = npc.npc_name ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
+    visible_npc_attributes[npc.id] = { label, attributes: npc.attributes || {} };
   }
-  const slice = history.slice(-count).map(t => ({
-    turn_number: t.turn_number,
-    narrative: t.narrative,
+
+  // Site/local_space attributes
+  const site_attributes = {
+    name: loc?.name || null,
+    attributes: loc?.attributes || {}
+  };
+
+  // mood_history — full array
+  const mood_history = w.mood_history || [];
+
+  // Recent promotion log — last 20 entries
+  const promoLog = w.promotion_log || [];
+  const promotion_log_recent = promoLog.slice(-20);
+
+  // cb_diagnostics from last turn
+  const cb_diagnostics = lastDebug.continuity_diagnostics || null;
+
+  // extraction_packet from last turn (raw CB JSON schema)
+  const extraction_packet = lastDebug.extraction_packet || null;
+
+  // Last N narrations (for context in CB extraction panel)
+  const turnsParam = req.query.turns;
+  let count = turnsParam === 'all' ? total : (parseInt(turnsParam, 10) || 3);
+  if (!Number.isFinite(count) || count < 1) count = 3;
+  const last_narrations = history.slice(-count).map(t => ({
+    turn_number:           t.turn_number,
+    narrative:             t.narrative,
     continuity_block_chars: t.narration_debug?.continuity_block_chars ?? null
   }));
+
   res.json({
-    turn: total,
-    rendered_block: _lastRenderedBlock,
-    active_continuity: _lastGameState.world.active_continuity
-      ? JSON.parse(JSON.stringify(_lastGameState.world.active_continuity))
-      : null,
-    dm_note: _lastGameState.world.dm_note || null,
-    dm_note_status: (_lastGameState.turn_history || []).slice(-1)[0]?.narration_debug?.dm_note_status ?? null,
-    narrative_memory: _lastGameState.world.narrative_memory || [],
+    turn:                  total,
+    rendered_block:        _lastRenderedBlock,
+    extraction_packet,
+    cb_diagnostics,
+    visible_npc_attributes,
+    site_attributes,
+    mood_history,
+    promotion_log_recent,
     narrative_archive_total: total,
-    last_narrations: slice
+    last_narrations
   });
 });
 
@@ -4123,6 +4222,40 @@ app.get('/diagnostics/summary', (req, res) => {
   });
 });
 
+// On-demand game state context for Mother Brain — GET /diagnostics/context?sessionId=X&level=detailed
+// Calls buildDebugContext() and returns the formatted context string.
+// Mother Brain fetches this on every question to get the live authoritative game state.
+app.get('/diagnostics/context', (req, res) => {
+  const { sessionId, level = 'detailed' } = req.query;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'no_session', message: 'sessionId query param required.' });
+  }
+  if (!_lastGameState) {
+    return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  }
+  let context;
+  try {
+    context = buildDebugContext(_lastGameState, level);
+  } catch (err) {
+    return res.status(500).json({ error: 'context_build_failed', message: err.message });
+  }
+  res.json({ context, sessionId, level, contextLength: context.length });
+});
+
+// Session bootstrap probe for Mother Brain — GET /diagnostics/session
+// Returns the last known session ID and turn count so MB can self-initialize without waiting for an SSE turn.
+app.get('/diagnostics/session', (req, res) => {
+  if (!_lastSessionId || !_lastGameState) {
+    return res.json({ sessionId: null, hasTurnData: false, lastTurn: null });
+  }
+  const lastEntry = _diagHistory.length > 0 ? _diagHistory[_diagHistory.length - 1] : null;
+  res.json({
+    sessionId:   _lastSessionId,
+    hasTurnData: _diagHistory.length > 0,
+    lastTurn:    lastEntry?.turn_number ?? null
+  });
+});
+
 function emitDiagnostics(payload) {
   let data;
   try {
@@ -4152,3 +4285,37 @@ function emitDiagnostics(payload) {
 server.headersTimeout = 130000;
 server.requestTimeout = 130000;
 server.setTimeout(0); // disable per-socket idle timeout — axios owns the outbound deadline
+
+// =============================================================================
+// MOTHER BRAIN LIFECYCLE SIGNALS
+// Emit NODE_OFFLINE before any shutdown so MB receives the reason.
+// 50ms delay is REQUIRED on all paths — SSE writes are async and the message
+// will be silently lost if Node exits before the socket flushes.
+// =============================================================================
+function _mbEmitOffline(reason) {
+  try {
+    emitDiagnostics({ type: 'lifecycle', event: 'offline', reason, ts: new Date().toISOString(), sessionId: _mbSessionId });
+  } catch (_) {}
+}
+
+process.on('SIGINT', () => {
+  _mbEmitOffline('developer shutdown (SIGINT)');
+  setTimeout(() => { try { server.close(); } catch (_) {} process.exit(0); }, 50);
+});
+
+process.on('SIGTERM', () => {
+  _mbEmitOffline('process terminated (SIGTERM)');
+  setTimeout(() => { try { server.close(); } catch (_) {} process.exit(0); }, 50);
+});
+
+process.on('uncaughtException', (err) => {
+  _mbEmitOffline('crash: ' + (err?.message || String(err)));
+  console.error('[UNCAUGHT EXCEPTION]', err);
+  setTimeout(() => process.exit(1), 50);
+});
+
+process.on('unhandledRejection', (reason) => {
+  _mbEmitOffline('unhandled rejection: ' + String(reason));
+  console.error('[UNHANDLED REJECTION]', reason);
+  setTimeout(() => process.exit(1), 50);
+});

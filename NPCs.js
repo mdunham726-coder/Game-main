@@ -284,7 +284,8 @@ const faction_id = null;  // Factions reserved for future politics system
     home_location, faction_id, wealth_tier,
     player_reputation, traits, corruption_level, is_criminal,
     npc_name: null, is_learned: false,
-    position, state: "active", created_at_utc, expires_at_utc, schedule: null
+    position, state: "active", created_at_utc, expires_at_utc, schedule: null,
+    attributes: {}  // ContinuityBrain: promoted facts (physical_attributes, observable_states, held_or_worn_objects)
   };
 }
 

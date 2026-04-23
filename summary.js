@@ -1,6 +1,6 @@
-// summary.js — Dungeon Master session summary viewer (v1.64.3)
+// summary.js — Dungeon Master session summary viewer (v1.70.0)
 // Usage: node summary.js
-// Fetches /diagnostics/summary from the running engine and renders a static ANSI display.
+// Live: SSE-connected. Redraws on every new game turn.
 
 'use strict';
 const http = require('http');
@@ -96,30 +96,69 @@ function render(d) {
 
   lines.push(`  ${c.dim}(data since last server restart \u2014 not persisted across restarts)${c.reset}`);
   lines.push('');
+  lines.push(`  ${c.dim}last updated ${new Date().toLocaleTimeString()}  \u2502  Ctrl+C exit${c.reset}`);
+  lines.push('');
 
+  process.stdout.write('\x1b[H\x1b[2J\x1b[3J');
   console.log(lines.join('\n'));
 }
 
-// ── Fetch summary ─────────────────────────────────────────────────────────────
-const req = http.get({ host: HOST, port: PORT, path: '/diagnostics/summary' }, res => {
-  let raw = '';
-  res.on('data', chunk => { raw += chunk; });
-  res.on('end', () => {
-    try {
-      const data = JSON.parse(raw);
-      render(data);
-    } catch (e) {
-      console.error('[summary.js] Failed to parse response:', e.message);
-      console.error('Raw:', raw);
-      process.exit(1);
-    }
+// ── HTTP fetch ────────────────────────────────────────────────────────────────
+function fetchAndRender() {
+  const req = http.get({ host: HOST, port: PORT, path: '/diagnostics/summary' }, res => {
+    let raw = '';
+    res.on('data', chunk => { raw += chunk; });
+    res.on('end', () => {
+      try { render(JSON.parse(raw)); }
+      catch (e) { process.stdout.write(`\x1b[31m[summary.js] parse error: ${e.message}\x1b[0m\n`); }
+    });
+    res.on('error', () => {});
   });
-});
+  req.on('error', () => {});
+  req.end();
+}
 
-req.on('error', err => {
-  console.error(`[summary.js] Could not reach engine at ${HOST}:${PORT} — is the server running?`);
-  console.error(err.message);
-  process.exit(1);
-});
+// ── SSE reconnect guard ───────────────────────────────────────────────────────
+const SSE_PATH     = '/diagnostics/stream';
+const RECONNECT_MS = 1000;
+let _reconnectPending = false;
 
-req.end();
+function scheduleReconnect() {
+  if (_reconnectPending) return;
+  _reconnectPending = true;
+  setTimeout(() => { _reconnectPending = false; connectSSE(); }, RECONNECT_MS);
+}
+
+// ── SSE client ────────────────────────────────────────────────────────────────
+function connectSSE() {
+  const req = http.get(
+    { host: HOST, port: PORT, path: SSE_PATH, headers: { Accept: 'text/event-stream' } },
+    res => {
+      req.socket.setTimeout(0);
+      req.socket.setNoDelay(true);
+      if (res.statusCode !== 200) { res.resume(); scheduleReconnect(); return; }
+      res.setEncoding('utf8');
+      let buf = '';
+      res.on('data', chunk => {
+        buf += chunk;
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const block of parts) {
+          for (const line of block.split('\n')) {
+            if (!line.startsWith('data:')) continue;
+            let p; try { p = JSON.parse(line.slice(5).trim()); } catch (_) { continue; }
+            if (p.type === 'turn') fetchAndRender();
+          }
+        }
+      });
+      res.on('end',   () => scheduleReconnect());
+      res.on('error', () => scheduleReconnect());
+    }
+  );
+  req.on('error', () => scheduleReconnect());
+  req.end();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+fetchAndRender();
+connectSSE();

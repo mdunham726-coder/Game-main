@@ -103,7 +103,9 @@ function initState(timestampUTC) {
       stream: { R: DEFAULTS.STREAM.R, P: DEFAULTS.STREAM.P },
       macro: {}, cells: {}, sites: {},
       merchants: [], factions: [], npcs: [],
-      position: { mx: 0, my: 0, lx: Math.floor(l1w/2), ly: Math.floor(l1h/2) }
+      position: { mx: 0, my: 0, lx: Math.floor(l1w/2), ly: Math.floor(l1h/2) },
+      promotion_log:  [],  // ContinuityBrain: PromotionLogEntry[] — how facts became true
+      mood_history:   []   // ContinuityBrain: mood_snapshot[] — rolling 20-turn cap
     },
     ledger: { promotions: [] },
     counters: { state_rev: 0, site_rev: 0, cell_rev: 0, inventory_rev: 0, merchant_state_rev: 0, faction_rev: 0 },
@@ -279,6 +281,7 @@ function recordSiteToCell(state, cellKey, site) {
       my:             cell.my,
       lx:             cell.lx,
       ly:             cell.ly,
+      attributes:     {}  // ContinuityBrain: promoted facts for this location
     };
   }
 }
@@ -978,6 +981,10 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     site.entered = true;
   }
 
+  // Ensure attributes object present on all three paths (reuse / stub-complete / fresh).
+  // ContinuityBrain writes promoted environmental_features here.
+  if (!state.world.sites[interior_key].attributes) state.world.sites[interior_key].attributes = {};
+
   // Stored object IS the active object — no secondary generation, no split references.
   state.world.active_site = state.world.sites[interior_key];
   state.world.active_site._source_cell_key = cell_key;  // used by auto-exit guard
@@ -1023,6 +1030,8 @@ function enterLocalSpace(state, local_space_id_short) {
   state.player.position = { x: Math.floor(_lw / 2), y: _lh - 1 };
   // Compute visible NPCs at entry position (derived runtime field).
   interior._visible_npcs = Actions.computeVisibleNpcs(interior, state.player.position, site.npcs);
+  // ContinuityBrain: promoted environmental_features for this local space.
+  if (!interior.attributes) interior.attributes = {};
   console.log(`[ENGINE] [L2-ENTER] Entered ${interior.name || local_space_id_short} at (${state.player.position.x},${state.player.position.y})`);
   return interior;
 }
