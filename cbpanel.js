@@ -542,9 +542,10 @@ if (process.stdin.isTTY) {
     if (key === 'x' || key === 'X') { _activeView = 'X'; runExplainThis(); }
     if (key === '\t') {
       // Tab — cycle entities (works in any view, switches to Entity View)
-      const npcMap   = _lastData?.visible_npc_attributes || {};
-      const siteAttr = _lastData?.site_attributes        || {};
-      const total    = Object.keys(npcMap).length + (hasSiteData(siteAttr) ? 1 : 0);
+      const npcMap    = _lastData?.visible_npc_attributes || {};
+      const siteAttr  = _lastData?.site_attributes        || {};
+      const hasPlayer = !!_lastData?.player_attributes;
+      const total     = (hasPlayer ? 1 : 0) + Object.keys(npcMap).length + (hasSiteData(siteAttr) ? 1 : 0);
       if (total > 0) {
         _activeView  = 'E';
         _entityIndex = (_entityIndex + 1) % total;

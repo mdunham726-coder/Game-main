@@ -36,7 +36,7 @@ const DEEPSEEK_URL      = 'https://api.deepseek.com/v1/chat/completions';
 const MOOD_HISTORY_CAP  = 20;   // hard cap on world.mood_history[]
 const MOOD_WINDOW       = 5;    // entries used for MOOD block in packet
 const EXTRACTION_TIMEOUT = 30000; // ms — Phase B LLM call
-const CB_VERSION        = '1.0.0';
+const CB_VERSION        = '1.1.0';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -48,8 +48,9 @@ function _setDiag(d) { _lastRunDiagnostics = d; }
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
 function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot) {
-  const location  = _describeLocation(gameState);
-  const entities  = _describeVisibleEntities(gameState);
+  const location         = _describeLocation(gameState);
+  const entities         = _describeVisibleEntities(gameState);
+  const knownPlayerAttrs = _describePlayerAttributes(gameState);
   const prevMood  = previousMoodSnapshot
     ? JSON.stringify(previousMoodSnapshot, null, 2)
     : '(none — first turn)';
@@ -64,6 +65,7 @@ ${frozenNarration}
 CURRENT ENGINE STATE:
 Active location: ${location}
 Visible entities: ${entities}
+Player character: always present — entity_ref "player" | known attributes: ${knownPlayerAttrs}
 
 PREVIOUS MOOD SNAPSHOT:
 ${prevMood}
@@ -87,6 +89,7 @@ Check the Visible entities list above before writing any entity_ref.
 If the entity matches a known entry, use the EXACT npc_id (e.g. "npc_barkeep_01").
 Only use a descriptive label ("man near hearth") if no match exists in the list.
 A descriptive label that should have been an npc_id is a silent continuity break.
+"player" is always a valid entity_ref — use it when the narration describes the player character's appearance, clothing, equipment, or current physical state.
 
 ---
 
@@ -222,6 +225,12 @@ function _describeVisibleEntities(gameState) {
   }).join(', ');
 }
 
+function _describePlayerAttributes(gameState) {
+  const attrs = gameState.player?.attributes;
+  if (!attrs || !Object.keys(attrs).length) return '(none yet)';
+  return Object.values(attrs).map(a => `${a.bucket}:${a.value}`).join(' | ');
+}
+
 // ── NPC id resolution ─────────────────────────────────────────────────────────
 
 function _resolveEntityRef(entityRef, gameState) {
@@ -298,6 +307,28 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
       logEntries.push({ action: 'create', entity_type: 'location', entity_id: locationRef, entity_name: locationRef, attribute: key, old_value: null, new_value: feat, evidence_quote: null, turn });
     }
   }
+}
+
+// ── Player attribute promotion ──────────────────────────────────────────────────
+// Parallel to _promoteEntityAttributes — targets gameState.player.attributes.
+function _promotePlayerAttributes(player, candidate, turn, logEntries) {
+  if (!player.attributes) player.attributes = {}; // migration guard: old saves
+  const promote = (bucket, items) => {
+    for (const item of (items || [])) {
+      if (!_isConcreteDetail(item)) {
+        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'failed_concrete_test' });
+        continue;
+      }
+      const key = `${bucket}:${item}`;
+      if (!player.attributes[key]) {
+        player.attributes[key] = { value: item, bucket, turn_set: turn, confidence: 'initial' };
+        logEntries.push({ action: 'create', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', attribute: key, old_value: null, new_value: item, evidence_quote: null, turn });
+      }
+    }
+  };
+  promote('physical', candidate.physical_attributes);
+  promote('state',    candidate.observable_states);
+  promote('object',   candidate.held_or_worn_objects);
 }
 
 // ── L0 cell record helper ─────────────────────────────────────────────────────
@@ -389,42 +420,55 @@ async function runPhaseB(frozenNarration, gameState) {
   const locationRef    = w.active_local_space?.name || w.active_site?.name ||
                          (pos ? `cell(${pos.mx},${pos.my}:${pos.lx},${pos.ly})` : 'unknown');
 
-  const loc = w.active_local_space || w.active_site;
+  const loc    = w.active_local_space || w.active_site;
+  const player = gameState.player;
 
-  // At L0 (no active site/local_space), there is no NPC registry — collapse all
-  // entity candidates into a single informational warning instead of N UNRESOLVED entries.
-  if (!loc) {
-    const candidates = (extracted.entity_candidates || []).filter(c => c.entity_ref);
-    if (candidates.length > 0) {
-      warnings.push({
-        type: 'l0_entity_candidates_skipped',
-        reason: 'no_npc_registry',
-        count: candidates.length,
-        entities: candidates.map(c => c.entity_ref),
-        turn,
-      });
-      console.warn(`[CB] L0: ${candidates.length} entity candidate(s) skipped — no NPC registry at overworld (L0)`);
+  // Route entity candidates: player self-refs first (any layer), then NPC resolution.
+  // At L0, non-player candidates collapse into a single warning (no NPC registry).
+  const l0NonPlayerCandidates = [];
+  for (const candidate of (extracted.entity_candidates || [])) {
+    const ref = candidate.entity_ref;
+    if (!ref) continue;
+
+    // Player self-ref — always route to player container regardless of layer
+    const refLower = ref.toLowerCase();
+    if (refLower === 'player' || refLower === 'you') {
+      if (player) _promotePlayerAttributes(player, candidate, turn, logEntries);
+      continue;
     }
-  } else {
-    for (const candidate of (extracted.entity_candidates || [])) {
-      const ref = candidate.entity_ref;
-      if (!ref) continue;
 
-      const resolved = _resolveEntityRef(ref, gameState);
-
-      if (!resolved) {
-        warnings.push({ type: 'unresolved_entity_ref', entity_ref: ref, turn });
-        console.warn(`[CB] entity_ref "${ref}" could not be resolved to any visible NPC — promotion skipped`);
-        continue;
-      }
-
-      if (resolved._fuzzy) {
-        warnings.push({ type: 'fuzzy_entity_ref', entity_ref: ref, resolved_to: resolved.id, turn });
-        console.warn(`[CB] entity_ref "${ref}" resolved via fuzzy match to ${resolved.id} — should use exact npc_id`);
-      }
-
-      _promoteEntityAttributes(resolved, candidate, turn, logEntries);
+    // At L0: no NPC registry — collect for warning
+    if (!loc) {
+      l0NonPlayerCandidates.push(candidate);
+      continue;
     }
+
+    // L1/L2: resolve and promote
+    const resolved = _resolveEntityRef(ref, gameState);
+    if (!resolved) {
+      warnings.push({ type: 'unresolved_entity_ref', entity_ref: ref, turn });
+      console.warn(`[CB] entity_ref "${ref}" could not be resolved to any visible NPC — promotion skipped`);
+      continue;
+    }
+
+    if (resolved._fuzzy) {
+      warnings.push({ type: 'fuzzy_entity_ref', entity_ref: ref, resolved_to: resolved.id, turn });
+      console.warn(`[CB] entity_ref "${ref}" resolved via fuzzy match to ${resolved.id} — should use exact npc_id`);
+    }
+
+    _promoteEntityAttributes(resolved, candidate, turn, logEntries);
+  }
+
+  // Fire L0 warning for non-player entity candidates that could not be resolved
+  if (!loc && l0NonPlayerCandidates.length > 0) {
+    warnings.push({
+      type: 'l0_entity_candidates_skipped',
+      reason: 'no_npc_registry',
+      count: l0NonPlayerCandidates.length,
+      entities: l0NonPlayerCandidates.map(c => c.entity_ref),
+      turn,
+    });
+    console.warn(`[CB] L0: ${l0NonPlayerCandidates.length} entity candidate(s) skipped — no NPC registry at overworld (L0)`);
   }
 
   // Promote environmental features to location record
@@ -484,6 +528,15 @@ function assembleContinuityPacket(gameState, turnContext) {
 
   const visible = (loc && loc._visible_npcs) || [];
   let truthLines = 0;
+
+  // Player attributes — always first in TRUTH block (layer-agnostic)
+  const player      = gameState.player;
+  const playerAttrs = player?.attributes ? Object.values(player.attributes) : [];
+  if (playerAttrs.length > 0) {
+    const pStr = playerAttrs.map(a => `${a.bucket}:${a.value}`).join(' | ');
+    lines.push(`You: ${pStr}`);
+    truthLines++;
+  }
 
   // Entity attributes
   for (const npc of visible) {

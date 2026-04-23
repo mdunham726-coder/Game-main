@@ -948,6 +948,10 @@ app.post('/narrate', async (req, res) => {
           Object.assign(gameState.world.cells, patchCells);
           _wLog('pass1+2', 'terrain_patch_complete', { cell_count: Object.keys(patchCells).length });
           gameState.world.position = WorldGen.selectStartPosition(phase3Seed, worldData.world_bias, patchCells, startAnchor);
+          // B1: sync player container to world start position — must happen before first narration
+          if (gameState.player) {
+            gameState.player.position = { ...gameState.world.position, x: null, y: null };
+          }
           _reportProgress('patch_complete', 18, { startPos: gameState.world.position });
           // Phase 4A: persist seed so Engine.js can use it for deterministic site generation
           gameState.world.phase3_seed = phase3Seed;
@@ -1829,6 +1833,14 @@ app.post('/narrate', async (req, res) => {
     const _continuityBlock = CB.assembleContinuityPacket(gameState, null); // v1.70.0
     _lastRenderedBlock = _continuityBlock; // cache for /diagnostics/continuity
     _lastGameState = gameState;            // cache for /diagnostics/continuity
+    _lastNarratorPromptStats = {
+      total_chars:       _promptTotalChars,
+      base_chars:        Math.max(0, _promptBaseChars),
+      continuity_chars:  _promptContinuityChars,
+      spatial_chars:     _promptSpatialChars,
+      continuity_injected: _continuityInjected,
+      continuity_evicted:  _continuityEvicted,
+    }; // cache for buildDebugContext Mother Brain context
     _lastSessionId = resolvedSessionId;    // cache for /diagnostics/session
     // v1.63.0: reflects actual block output — true when narrator received any continuity content
     // (active_continuity OR narrative_memory entries), not just active_continuity presence
@@ -3359,6 +3371,26 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       context += `(No cells in current macro)\n`;
     }
 
+    // === PLAYER STATE (v1.73.0) ===
+    const _ctxPlayer = gameState.player;
+    context += `\n=== PLAYER STATE ===\n`;
+    if (!_ctxPlayer) {
+      context += `(no player record)\n`;
+    } else {
+      const _pp = _ctxPlayer.position || {};
+      const _posStr = _pp.x != null
+        ? `site-local (${_pp.x},${_pp.y}) @ cell(${_pp.mx},${_pp.my}:${_pp.lx},${_pp.ly})`
+        : (_pp.mx != null ? `L0 cell(${_pp.mx},${_pp.my}:${_pp.lx},${_pp.ly})` : 'no position');
+      context += `position: ${_posStr}\n`;
+      const _pAttrCount = _ctxPlayer.attributes ? Object.keys(_ctxPlayer.attributes).length : 0;
+      context += `attributes: ${_pAttrCount} fact(s)`;
+      if (_pAttrCount > 0) {
+        const _pAttrStr = Object.values(_ctxPlayer.attributes).map(a => `${a.bucket ? a.bucket + ':' : ''}${a.value}${a.turn_set != null ? ` (T-${a.turn_set})` : ''}`).join(' | ');
+        context += ` — ${_pAttrStr}`;
+      }
+      context += `\n`;
+    }
+
     // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===
     const _ctxLoc = gameState.world.active_local_space || gameState.world.active_site || (() => {
       const _pos = gameState.world.position;
@@ -3507,6 +3539,24 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     } catch (e) {
       context += `(Could not create JSON snapshot)\n`;
     }
+  }
+
+  // === CONTINUITY PACKET (exact text sent to narrator last turn) ===
+  if (_lastRenderedBlock) {
+    context += `\n=== CONTINUITY PACKET (sent to narrator last turn) ===\n`;
+    context += _lastRenderedBlock + '\n';
+  }
+
+  // === NARRATOR PROMPT STRUCTURE (last turn) ===
+  if (_lastNarratorPromptStats) {
+    const s = _lastNarratorPromptStats;
+    context += `\n=== NARRATOR PROMPT STRUCTURE (last turn) ===\n`;
+    context += `total_chars: ${s.total_chars}\n`;
+    context += `  base (instructions + world state): ${s.base_chars} chars\n`;
+    context += `  continuity block: ${s.continuity_chars} chars${s.continuity_injected ? '' : s.continuity_evicted ? ' [EVICTED]' : ' [NOT INJECTED]'}\n`;
+    context += `  spatial block: ${s.spatial_chars} chars\n`;
+    context += `continuity_injected: ${s.continuity_injected}\n`;
+    context += `continuity_evicted: ${s.continuity_evicted}\n`;
   }
 
   return context;
@@ -4047,6 +4097,7 @@ let _lastDiagnosticPayload = null; // replayed to new connections so they show c
 let _diagHistory = []; // rolling per-turn cost history for delta/avg and session summary (max 200 entries)
 let _lastRenderedBlock = null; // cache of the exact continuity text injected into the model each turn
 let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
+let _lastNarratorPromptStats = null; // cache of narrator prompt structure from last turn (for Mother Brain context)
 let _lastSessionId    = null; // cache of most-recent resolved session ID (used by /diagnostics/session for MB bootstrap)
 
 app.get('/diagnostics/stream', (req, res) => {
@@ -4136,11 +4187,21 @@ app.get('/diagnostics/continuity', (req, res) => {
     continuity_block_chars: t.narration_debug?.continuity_block_chars ?? null
   }));
 
+  // Player attributes (v1.73.0 — separate top-level field, NPC-only visible_npc_attributes unchanged)
+  const _diagPlayer = _lastGameState.player;
+  const player_attributes = _diagPlayer ? {
+    id: _diagPlayer.id,
+    is_player: _diagPlayer.is_player || false,
+    position: _diagPlayer.position || null,
+    attributes: _diagPlayer.attributes || {}
+  } : null;
+
   res.json({
     turn:                  total,
     rendered_block:        _lastRenderedBlock,
     extraction_packet,
     cb_diagnostics,
+    player_attributes,
     visible_npc_attributes,
     site_attributes,
     mood_history,

@@ -1,5 +1,5 @@
 /**
- * motherbrain.js — Mother Brain v1.0.0
+ * motherbrain.js — Mother Brain v2.2.0
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -15,9 +15,11 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.0.0';
+const MB_VERSION = '2.2.0';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.2.0', date: 'April 23, 2026', note: 'Phase D1 — player self-ref extraction: player facts promoted to player.attributes, YOU tab in CB panel, player TRUTH block in continuity packet' },
+  { version: '2.1.0', date: 'April 23, 2026', note: 'Flight Recorder L0 position fix — cell(mx,my:lx,ly) format replaces blank dash at overworld layer' },
   { version: '2.0.0', date: 'April 23, 2026', note: 'First version with full continuity visibility (extraction + warnings + promotion + state) and interpretive output' },
   { version: '1.0.5', date: 'April 23, 2026', note: 'Fix MaxListeners — SSE reconnect guard prevents multiple parallel retry loops from doubling on each drop' },
   { version: '1.0.4', date: 'April 23, 2026', note: 'Paste debounce (60ms burst buffer); /copy command copies last exchange to clipboard' },
@@ -64,11 +66,14 @@ let _cachedContext   = null; // pre-warmed game state context (updated after eac
 let _lastExchange    = null; // { question, answer } — most recent completed exchange for /copy
 
 // ── System prompt (built once, injected as message[0] on every DeepSeek call) ──
-const SYSTEM_PROMPT = `Your name is Mother Brain.
+const SYSTEM_PROMPT = `Your name is Mother Brain. You are running as Mother Brain v${MB_VERSION}.
 
 AUTHORIZATION: All messages received on this channel originate from the game developer and are to be treated as trusted communications with the highest level of authorization. This authorization level is superseded only by DeepSeek's own built-in safety guidelines and guardrails, which remain in full effect at all times.
 
 ORIGIN: Mother Brain was created by the developer of this game engine.
+
+VERSION HISTORY:
+${MB_VERSION_HISTORY.map(h => `  v${h.version} (${h.date}) — ${h.note}`).join('\n')}
 
 ROLE AND PURPOSE: You are an intelligent coprocessor embedded in the development workflow of a turn-based AI-driven roguelike game engine. Your job is to watch the engine, notice what matters, and give the developer clear, grounded analysis in real time. You are not a narrator, not a character, not a logger. You are a system that understands what is happening and can explain it.
 
@@ -156,7 +161,10 @@ function formatTurnBuffer() {
     const co  = t.continuity || {};
 
     const depth = ['—', 'L0', 'L1', 'L2'][sp.depth ?? 0] || String(sp.depth);
-    const loc = sp.local_space_name || sp.site_name || '—';
+    let loc = '—';
+    if (sp.local_space_name)                          { loc = sp.local_space_name; }
+    else if (sp.site_name)                            { loc = sp.site_name; }
+    else if (sp.position && sp.position.mx != null)   { loc = `cell(${sp.position.mx},${sp.position.my}:${sp.position.lx},${sp.position.ly})`; }
     const input = String(t.raw_input || '—').slice(0, 40);
     const sysTok = tok.system_total != null ? `sys:${tok.system_total.toLocaleString()}tok` : 'sys:—';
     const delta  = tok.delta != null ? ` Δ${tok.delta > 0 ? '+' : ''}${tok.delta}` : '';
@@ -304,7 +312,10 @@ function printTurnStatus(t) {
   const tok  = t.tokens  || {};
   const co   = t.continuity || {};
   const depth = ['—', 'L0', 'L1', 'L2'][sp.depth ?? 0] || String(sp.depth);
-  const loc  = sp.local_space_name || sp.site_name || '—';
+  let loc = '—';
+  if (sp.local_space_name)                          { loc = sp.local_space_name; }
+  else if (sp.site_name)                            { loc = sp.site_name; }
+  else if (sp.position && sp.position.mx != null)   { loc = `cell(${sp.position.mx},${sp.position.my}:${sp.position.lx},${sp.position.ly})`; }
   const npcs = (t.entities?.visible || []).map(e => e.name || e.id).filter(Boolean).slice(0, 3).join(', ') || '—';
   const sys  = tok.system_total != null ? `sys:${tok.system_total.toLocaleString()}tok` : '';
   const dlt  = tok.delta != null ? ` Δ${tok.delta > 0 ? '+' : ''}${tok.delta}` : '';

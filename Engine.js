@@ -95,7 +95,22 @@ function initState(timestampUTC) {
     schema_version: "1.1.0",
     rng_seed: 0,
     turn_counter: 0,
-    player: { id: "player-1", aliases: ["you"], stats: { stamina: 100, clarity: 100 }, inventory: [] },
+    player: {
+      id: 'player',
+      type: 'player',
+      is_player: true,
+      aliases: ['you', 'yourself', 'player'],
+      stats: { stamina: 100, clarity: 100 },
+      inventory: [],
+      attributes: {},
+      position: {
+        mx: 0, my: 0,
+        lx: Math.floor(l1w/2), ly: Math.floor(l1h/2),
+        x: null, y: null
+      },
+      quests: [],
+      reputation: {}
+    },
     world: {
       time_utc: timestampUTC,
       l0: { w: DEFAULTS.L0_SIZE.w, h: DEFAULTS.L0_SIZE.h },
@@ -998,7 +1013,8 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
   const _cx = Math.floor(_aw / 2);
   const _cy = Math.floor(_ah / 2);
   const _edgeMap = { north: { x: _cx, y: 0 }, south: { x: _cx, y: _ah - 1 }, east: { x: 0, y: _cy }, west: { x: _aw - 1, y: _cy } };
-  state.player.position = _edgeMap[entry_dir] || { x: _cx, y: _ah - 1 };
+  const _entry = _edgeMap[entry_dir] || { x: _cx, y: _ah - 1 };
+  state.player.position = { ...(state.world.position || {}), x: _entry.x, y: _entry.y };
   // Compute visible NPCs at entry position (derived runtime field — recomputed on move, not persisted)
   state.world.active_site._visible_npcs = Actions.computeVisibleNpcs(state.world.active_site, state.player.position);
   return state.world.active_site;
@@ -1028,7 +1044,7 @@ function enterLocalSpace(state, local_space_id_short) {
   // Place player at south-center of the local space (bottom-center entry tile).
   const _lw = interior.width || 5;
   const _lh = interior.height || 5;
-  state.player.position = { x: Math.floor(_lw / 2), y: _lh - 1 };
+  state.player.position = { ...(state.world.position || {}), x: Math.floor(_lw / 2), y: _lh - 1 };
   // Compute visible NPCs at entry position (derived runtime field).
   interior._visible_npcs = Actions.computeVisibleNpcs(interior, state.player.position, site.npcs);
   // ContinuityBrain: promoted environmental_features for this local space.
@@ -1046,6 +1062,7 @@ function exitSite(state) {
   state.world.current_depth = 1;
   if (!state.player) state.player = {};
   state.player.depth = 1;
+  if (state.player.position) { state.player.position.x = null; state.player.position.y = null; }
 }
 
 /**
@@ -1059,7 +1076,7 @@ function exitLocalSpace(state) {
   state.player.depth = 2;
   // Restore the exact L1 tile the player entered from.
   if (state.world._ls_entry_pos) {
-    state.player.position = state.world._ls_entry_pos;
+    state.player.position = { ...(state.world.position || {}), ...state.world._ls_entry_pos };
     delete state.world._ls_entry_pos;
   }
 }

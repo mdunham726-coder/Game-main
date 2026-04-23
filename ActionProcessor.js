@@ -274,6 +274,11 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     
     // Update position in state
     state.world.position = { mx: newMx, my: newMy, lx: newLx, ly: newLy };
+    // B2: sync player container world coords on every L0 move
+    if (state.player?.position) {
+      state.player.position.mx = newMx; state.player.position.my = newMy;
+      state.player.position.lx = newLx; state.player.position.ly = newLy;
+    }
     console.log('[POINT-D-EXECUTE] POSITION MUTATED:', state.world.position);
     deltas.push({ op:'set', path:'/world/position', value: state.world.position });
     console.log('[POINT-D-EXECUTE] delta pushed for position change');
