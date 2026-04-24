@@ -3437,20 +3437,22 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `lx/ly values of 0-127 are fully valid — do NOT treat them as anomalies.\n`;
 
     context += `\n=== VISIBLE CELLS (Sample) ===\n`;
+    context += `Macro cell (${pos.mx},${pos.my}) — sample of up to 5 other local cells within this macro cell (player cell excluded):\n`;
+    const _playerCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
     const cellKeys = Object.keys(gameState.world.cells || {})
       .filter(k => {
         const cell = gameState.world.cells[k];
-        return cell && cell.mx === pos.mx && cell.my === pos.my;
+        return cell && cell.mx === pos.mx && cell.my === pos.my && k !== _playerCellKey;
       })
       .slice(0, 5);
     
     if (cellKeys.length > 0) {
       cellKeys.forEach(k => {
         const cell = gameState.world.cells[k];
-        context += `- [${cell.lx},${cell.ly}] ${cell.type}/${cell.subtype}\n`;
+        context += `- cell(${pos.mx},${pos.my}:${cell.lx},${cell.ly}) ${cell.type}/${cell.subtype}\n`;
       });
     } else {
-      context += `(No cells in current macro)\n`;
+      context += `(No other loaded cells in current macro)\n`;
     }
 
     // === PLAYER STATE (v1.73.0) ===
