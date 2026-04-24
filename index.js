@@ -3051,13 +3051,16 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     ;(async () => {
       try {
         const _wCtx = buildDebugContext(gameState, 'detailed');
+        // Strip VISIBLE CELLS section — terrain subtype variation is normal engine behavior,
+        // not a fault surface. Mother Brain chat still receives the full context.
+        const _wCtxScan = _wCtx.replace(/(?:\r?\n)?=== VISIBLE CELLS \(Sample\) ===[[\s\S]*?(?=\r?\n===|$)/, '');
         const _wResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.1,
           max_tokens: 600,
           messages: [
-            { role: 'system', content: 'You are a game engine debugger reviewing one turn of a text RPG engine. The engine uses a two-tier coordinate system: macro grid (mx/my, valid range 0-7) and local grid within each macro cell (lx/ly, valid range 0-127 — each macro cell contains a 128x128 local grid). Coordinates in these ranges are valid and normal — do not flag them as anomalies. Scan the diagnostic context for bugs, errors, contradictions, or anomalies. Report every issue you find — one sentence per issue. If nothing is wrong, output exactly one sentence saying so. No headers, no preamble, no explanation.' },
-            { role: 'user', content: _wCtx }
+            { role: 'system', content: 'You are a game engine debugger reviewing one turn of a text RPG engine. The engine uses a two-tier coordinate system: macro grid (mx/my, valid range 0-7) and local grid within each macro cell (lx/ly, valid range 0-127 — each macro cell contains a 128x128 local grid). Coordinates in these ranges are valid and normal — do not flag them as anomalies. Report only genuine faults: thrown errors, failed API calls, missing records that should exist, null/undefined values where the engine requires a real value, schema violations, diagnostic surfaces that misrepresent authoritative state, or state that would prevent correct gameplay, narration, diagnostics, or progression. Do not report apparent contradictions between sections if both sides are consistent with normal engine behavior — diagnostic surfaces intentionally show different scopes and slices of the same state. Report every genuine fault you find — one sentence per fault. If nothing is genuinely wrong, output exactly one sentence saying so. No headers, no preamble, no explanation.' },
+            { role: 'user', content: _wCtxScan }
           ]
         }, {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
