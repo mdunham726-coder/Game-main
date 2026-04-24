@@ -3676,20 +3676,39 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     } else {
       const _cellKey = `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`;
       const _cell = gameState.world.cells?.[_cellKey];
-      const _cellSites = Array.isArray(_cell?.sites) ? _cell.sites : [];
-      if (_cellSites.length === 0) {
-        context += `(no sites at current cell)\n`;
+      // cell.sites is an object dictionary keyed by site_id — not an array.
+      // If it is unexpectedly an array, surface the shape error; do not normalize silently.
+      if (Array.isArray(_cell?.sites)) {
+        context += `(WARNING: cell.sites unexpected shape — expected object dict, got array)\n`;
       } else {
-        for (const _sRef of _cellSites) {
-          const _sRec = gameState.world.sites?.[_sRef];
-          if (!_sRec) {
-            context += `${_sRef} | (no record) | enterable:? | filled:? | interior:N/A\n`;
-            continue;
+        const _cellSiteObjs = Object.values(_cell?.sites || {});
+        if (_cellSiteObjs.length === 0) {
+          context += `(no sites at current cell)\n`;
+        } else {
+          for (const _s of _cellSiteObjs) {
+            const _sid        = _s.site_id || '(unknown_id)';
+            const _sName      = _s.name || '(unnamed)';
+            const _enterable  = _s.enterable === false ? 'NO' : 'YES';
+            const _filled     = _s.is_filled ? 'YES' : 'NO';
+            let _interior;
+            if (_s.enterable === false) {
+              _interior = 'NOT_APPLICABLE';
+            } else if (!_s.is_filled) {
+              _interior = 'PENDING_FILL';
+            } else if (!_s.interior_key) {
+              _interior = 'MISSING_INTERIOR_KEY';
+            } else {
+              const _mirror = gameState.world.sites?.[_s.interior_key];
+              if (!_mirror) {
+                _interior = 'MISSING_INTERIOR_RECORD';
+              } else if (_mirror.is_stub === false) {
+                _interior = 'GENERATED';
+              } else {
+                _interior = 'NOT_GENERATED';
+              }
+            }
+            context += `${_sid} | ${_sName} | enterable:${_enterable} | filled:${_filled} | interior:${_interior}\n`;
           }
-          const _enterable = _sRec.enterable !== false ? 'YES' : 'NO';
-          const _filled    = !_sRec.is_stub ? 'YES' : 'NO';
-          const _interior  = _sRec.is_stub ? 'N/A' : (_sRec.grid ? 'GENERATED' : 'NOT_GENERATED');
-          context += `${_sRef} | ${_sRec.name || '(unnamed)'} | enterable:${_enterable} | filled:${_filled} | interior:${_interior}\n`;
         }
       }
     }
