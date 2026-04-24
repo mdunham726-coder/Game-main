@@ -3053,7 +3053,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         const _wCtx = buildDebugContext(gameState, 'detailed');
         // Strip VISIBLE CELLS section — terrain subtype variation is normal engine behavior,
         // not a fault surface. Mother Brain chat still receives the full context.
-        const _wCtxScan = _wCtx.replace(/(?:\r?\n)?=== VISIBLE CELLS \(Sample\) ===[[\s\S]*?(?=\r?\n===|$)/, '');
+        const _wCtxScan = _wCtx.replace(/(?:\r?\n)?=== VISIBLE CELLS \(Sample\) ===[\s\S]*?(?=\r?\n===|$)/, '');
         const _wResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.1,
