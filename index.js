@@ -1832,6 +1832,8 @@ app.post('/narrate', async (req, res) => {
     }
     const _continuityBlock = CB.assembleContinuityPacket(gameState, null); // v1.70.0
     _lastRenderedBlock = _continuityBlock; // cache for /diagnostics/continuity
+    _continuityBlockHistory.push({ turn: turnNumber, block: _continuityBlock, chars: _continuityBlock.length });
+    if (_continuityBlockHistory.length > 3) _continuityBlockHistory.shift();
     _lastGameState = gameState;            // cache for /diagnostics/continuity
     _lastSessionId = resolvedSessionId;    // cache for /diagnostics/session
     // v1.63.0: reflects actual block output — true when narrator received any continuity content
@@ -2215,14 +2217,18 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
 
     // Safely extract narrative
     let narrative = "The engine processes your action.";
+    let _narratorStatus = 'ok'; // 'ok' | 'malformed' — hard failures emit narrator_error SSE event instead
     let _narratorUsage = null;
     try {
       if (response?.data?.choices?.[0]?.message?.content) {
         narrative = String(response.data.choices[0].message.content);
+      } else {
+        _narratorStatus = 'malformed'; // response received but no content
       }
       _narratorUsage = response?.data?.usage || null;
     } catch (parseErr) {
       console.error('Failed to parse DeepSeek response:', parseErr.message);
+      _narratorStatus = 'malformed'; // parse threw
     }
 
     // Phase 5D+E: Extract [site_updates: [...]] block, first-fill capture, legacy mirror sync
@@ -2449,6 +2455,24 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       _extractionPacket = _phaseBResult ? _phaseBResult.extracted : null;
       _dmNoteArchived = null; // dm_note retired in v1.70.0
     }
+
+    // Extract player entity candidate for Mother Brain visibility
+    const _playerExtraction = (() => {
+      const _peCands = _extractionPacket?.entity_candidates || [];
+      const _peFound = _peCands.find(c => {
+        const ref = (c.entity_ref || '').toLowerCase();
+        return ref === 'player' || ref === 'you';
+      });
+      if (!_peFound) return null;
+      return {
+        candidate_count: 1,
+        facts: [
+          ...(_peFound.physical_attributes || []),
+          ...(_peFound.observable_states   || []),
+          ...(_peFound.held_or_worn_objects || [])
+        ]
+      };
+    })();
 
     // Log narration generation
     if (logger) {
@@ -2992,6 +3016,8 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         visible: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || []).map(n => ({ id: n.id, job: n.job_category || null, name: n.npc_name || null }))
       },
       narration_length: narrative?.length || 0,
+      narrator_status: _narratorStatus,
+      player_extraction: _playerExtraction,
       engine_message: _engineMsg || null,
       violations: _turnViolations,
       gameSessionId: resolvedSessionId
@@ -3028,6 +3054,11 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     });
   } catch (err) {
     console.error('[NARRATE] Error:', err.message);
+    // Hard failures bypass the normal turn event — emit narrator_error so Mother Brain sees the gap explicitly
+    const _narErrKind = (err.name === 'AbortError' || err.code === 'ERR_CANCELED') ? 'timeout'
+                      : err.code === 'ECONNRESET' ? 'econnreset'
+                      : 'error';
+    emitDiagnostics({ type: 'narrator_error', turn: turnNumber, kind: _narErrKind, message: err.message, gameSessionId: resolvedSessionId });
     if (logger) {
       logger.narrationFailed(err.message);
     }
@@ -3333,7 +3364,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     const siteKeys = Object.keys(gameState.world.sites || {});
     const _filledSites = siteKeys.filter(k => !gameState.world.sites[k].is_stub);
     const _stubSites = siteKeys.filter(k => !!gameState.world.sites[k].is_stub);
-    context += `Total entries: ${siteKeys.length} (${_filledSites.length} filled, ${_stubSites.length} unfilled stubs)\n`;
+    context += `Total entries: ${_filledSites.length} filled\n`;
     if (_filledSites.length > 0) {
       context += `-- Filled sites --\n`;
       _filledSites.slice(0, 5).forEach(k => {
@@ -3346,11 +3377,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       });
       if (_filledSites.length > 5) context += `  ... and ${_filledSites.length - 5} more filled\n`;
     }
-    if (_stubSites.length > 0) {
-      context += `-- Unfilled stubs (awaiting player proximity) --\n`;
-      context += `  + ${_stubSites.length} stubs (identity pending DS fill)\n`;
-    }
-    if (siteKeys.length === 0) {
+    if (_filledSites.length === 0) {
       context += `(none)\n`;
     }
 
@@ -3541,10 +3568,13 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     }
   }
 
-  // === CONTINUITY PACKET (exact text sent to narrator last turn) ===
-  if (_lastRenderedBlock) {
-    context += `\n=== CONTINUITY PACKET (sent to narrator last turn) ===\n`;
-    context += _lastRenderedBlock + '\n';
+  // === CONTINUITY PACKET (exact text sent to narrator, last 3 turns newest-first) ===
+  if (_continuityBlockHistory.length > 0) {
+    for (let _ci = _continuityBlockHistory.length - 1; _ci >= 0; _ci--) {
+      const _ch = _continuityBlockHistory[_ci];
+      context += `\n=== CONTINUITY PACKET (T-${_ch.turn}) ===\n`;
+      context += _ch.block + '\n';
+    }
   }
 
   // === NARRATOR PROMPT STRUCTURE (last turn) ===
@@ -4096,6 +4126,7 @@ const _sseClients = new Set();
 let _lastDiagnosticPayload = null; // replayed to new connections so they show current state immediately
 let _diagHistory = []; // rolling per-turn cost history for delta/avg and session summary (max 200 entries)
 let _lastRenderedBlock = null; // cache of the exact continuity text injected into the model each turn
+let _continuityBlockHistory = []; // rolling cache of last 3 continuity packets sent to narrator (for Mother Brain per-turn history)
 let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
 let _lastNarratorPromptStats = null; // cache of narrator prompt structure from last turn (for Mother Brain context)
 let _lastSessionId    = null; // cache of most-recent resolved session ID (used by /diagnostics/session for MB bootstrap)

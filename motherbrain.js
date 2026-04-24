@@ -1,5 +1,5 @@
 /**
- * motherbrain.js — Mother Brain v2.3.0
+ * motherbrain.js — Mother Brain v2.4.0
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -15,9 +15,10 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.3.0';
+const MB_VERSION = '2.4.0';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.4.0', date: 'April 23, 2026', note: 'Full narrator visibility — narrator_status (ok/malformed) on turn events; narrator_error SSE event on hard failures (timeout/econnreset/error) with explicit flight recorder entry; avg5 token baseline per turn; player extraction facts count per turn; continuity packet history expanded to last 3 turns; unfilled site stubs hidden from context entirely' },
   { version: '2.3.0', date: 'April 23, 2026', note: 'Narrator visibility — CONTINUITY PACKET (exact text sent to narrator last turn) and NARRATOR PROMPT STRUCTURE (char breakdown: base, continuity, spatial; injection/eviction status) added to context block' },
   { version: '2.2.0', date: 'April 23, 2026', note: 'Phase D1 — player self-ref extraction: player facts promoted to player.attributes, YOU tab in CB panel, player TRUTH block in continuity packet' },
   { version: '2.1.0', date: 'April 23, 2026', note: 'Flight Recorder L0 position fix — cell(mx,my:lx,ly) format replaces blank dash at overworld layer' },
@@ -88,12 +89,14 @@ TOOLS AND DATA ACCESS: You have access to two live data sources that are provide
    - LAST NARRATIONS: the last 2 narrator outputs, each labeled "Narrator output (T-N):" — use these to trace what the narrator wrote and why specific facts were or were not extracted
    - CB EXTRACTION (last turn): compact summary of ContinuityBrain's extraction — per-entity candidates (physical_attributes, observable_states, held_or_worn_objects) with inline rejected_interpretations strings (up to 3 per entity), environmental features, spatial relations, top-level rejections
    - CB WARNINGS (last turn): entity resolution failures — UNRESOLVED means an entity ref could not be matched to any visible NPC and its facts were NOT promoted; FUZZY means a match was found via approximate matching and should be verified; L0-SKIP (l0_entity_candidates_skipped) means entity candidates were skipped because no NPC registry exists at the overworld layer (L0) — this is expected behavior, not a failure
-   - CONTINUITY PACKET (sent to narrator last turn): the exact TRUTH + MOOD block that was injected into the narrator's prompt last turn — what the narrator actually saw; use this to understand why the narrator wrote what it wrote and whether the right facts were present
+   - CONTINUITY PACKET (T-N): the exact TRUTH + MOOD block sent to the narrator for each of the last 3 turns, labeled by turn number, newest first — this is the real payload DeepSeek received; use this to understand what the narrator saw and why it wrote what it wrote across recent turns
    - NARRATOR PROMPT STRUCTURE (last turn): char breakdown of the narrator's full prompt — total_chars, base (instructions + world state), continuity block size and injection status (injected / NOT INJECTED / EVICTED), spatial block size; use this to diagnose prompt budget issues, continuity eviction, or missing context
 
-2. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result, continuity injection status, token usage and delta, and any engine violations. Use this to reason about temporal patterns, causal chains, and state changes across turns.
+2. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result, continuity injection status, token usage, delta from previous turn, avg5 (5-turn rolling token average for baseline comparison), narrator_status (ok = success; malformed = response received but content was empty or unparseable), player_extraction (you:Nf = N facts extracted about the player this turn by ContinuityBrain), and any engine violations. Hard narrator failures (timeout, connection reset, thrown error) appear as explicit [NARRATION FAILED] entries with failure kind and error message — these mark turns where no turn event was emitted.
 
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
+
+NARRATOR FAILURES: When the narrator hard-fails (timeout, connection reset, thrown error), the normal turn event is not emitted. Instead, a [NARRATION FAILED] entry appears in the Flight Recorder with the failure kind (timeout/econnreset/error) and error message. This marks the exact turn where the failure occurred. Soft failures (narrator_status:malformed) appear as normal turn entries and indicate the narrator returned a response with no usable content. When you see either failure type, correlate with the surrounding continuity packets and token baseline to assess cause.
 
 CB WARNINGS are high-priority. An UNRESOLVED entity ref means facts about a character were silently dropped — the narrator described that entity but ContinuityBrain couldn't match it to a known NPC, so nothing was promoted. When you see UNRESOLVED warnings, surface them immediately and identify which facts were lost. A FUZZY match resolved an entity ref by approximate name/job matching — verify it is correct. An L0-SKIP (l0_entity_candidates_skipped) means the player is at the overworld layer (L0) where no NPC registry exists — entity candidates were collected from narration but could not be resolved to NPCs; facts may still have been promoted to the cell's attribute record. L0-SKIP is expected behavior: do NOT treat it as a failure or as lost data requiring remediation.
 
@@ -171,6 +174,9 @@ function formatTurnBuffer() {
     const input = String(t.raw_input || '—').slice(0, 40);
     const sysTok = tok.system_total != null ? `sys:${tok.system_total.toLocaleString()}tok` : 'sys:—';
     const delta  = tok.delta != null ? ` Δ${tok.delta > 0 ? '+' : ''}${tok.delta}` : '';
+    const avg5   = tok.avg5  != null ? ` avg:${tok.avg5.toLocaleString()}` : '';
+    const narSt  = t.narrator_status && t.narrator_status !== 'ok' ? ` nar:${t.narrator_status}` : '';
+    const youEx  = t.player_extraction ? ` you:${t.player_extraction.facts.length}f` : '';
     const contOk = co.injected ? '✓' : (co.evicted ? 'evicted' : '✗');
     const viols  = (t.violations || []).length ? t.violations.join('; ') : 'none';
 
@@ -181,12 +187,18 @@ function formatTurnBuffer() {
         : ` | move:✗(${String(mv.block_reason || '?').slice(0, 20)})`;
     }
 
+    // narrator_error entries render as a special failure line
+    if (t.type === 'narrator_error') {
+      lines.push(`T-${t.turn} [NARRATION FAILED: ${t.kind || 'error'}] ${t.message || ''}`);
+      continue;
+    }
+
     const isCurrent = (i === _turnBuffer.length - 1);
     if (isCurrent) {
       // Current turn: full detail
-      lines.push(`T-${t.turn} [CURRENT] ${depth}:"${loc}" | input:"${input}" | ch:${t.channel || '—'} | action:${t.parsed_action || '—'}${mvStr} | ${sysTok}${delta} | continuity:${contOk} | violations:${viols}`);
+      lines.push(`T-${t.turn} [CURRENT] ${depth}:"${loc}" | input:"${input}" | ch:${t.channel || '—'} | action:${t.parsed_action || '—'}${mvStr} | ${sysTok}${delta}${avg5}${narSt}${youEx} | continuity:${contOk} | violations:${viols}`);
     } else {
-      lines.push(`T-${t.turn} | ${depth}:"${loc}" | input:"${input}"${mvStr} | ${sysTok}${delta} | continuity:${contOk} | violations:${viols}`);
+      lines.push(`T-${t.turn} | ${depth}:"${loc}" | input:"${input}"${mvStr} | ${sysTok}${delta}${avg5}${narSt}${youEx} | continuity:${contOk} | violations:${viols}`);
     }
   }
   return lines.join('\n');
@@ -324,7 +336,8 @@ function printTurnStatus(t) {
   const dlt  = tok.delta != null ? ` Δ${tok.delta > 0 ? '+' : ''}${tok.delta}` : '';
   const ok   = (t.violations || []).length === 0 ? g('✓') : r(`✗ ${t.violations.length}`);
 
-  printLine(d(`  [T-${t.turn}]  ${depth}:${b(loc)}  │  ${c(npcs)}  │  ${sys}${dlt}  │  ${ok}`));
+  const narStatus = t.narrator_status && t.narrator_status !== 'ok' ? ` │  ${r(`nar:${t.narrator_status}`)}` : '';
+  printLine(d(`  [T-${t.turn}]  ${depth}:${b(loc)}  │  ${c(npcs)}  │  ${sys}${dlt}  │  ${ok}${narStatus}`));
 }
 
 // ── Session bootstrap: pre-fetch session ID and warm context cache ───────────────
@@ -404,6 +417,14 @@ function connectSSE() {
             let p;
             try { p = JSON.parse(line.slice(5).trim()); }
             catch (_) { continue; }
+
+            if (p.type === 'narrator_error') {
+              // Hard narrator failure — no turn event was emitted; store as special marker in buffer
+              _turnBuffer.push(p);
+              if (_turnBuffer.length > TURN_BUFFER) _turnBuffer.shift();
+              printLine(r(`  [T-${p.turn}] NARRATION FAILED (${p.kind || 'error'}): ${p.message || '—'}`));
+              continue;
+            }
 
             if (p.type === 'turn') {
               _turnBuffer.push(p);
