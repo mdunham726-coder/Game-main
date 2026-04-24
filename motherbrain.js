@@ -15,9 +15,10 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.8';
+const MB_VERSION = '2.8.9';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.8.9', date: 'April 24, 2026', note: 'Fix is_stub NOT_GENERATED false diagnostic (v1.81.1): generateL2Site() return object never had is_stub field; diagnostic checked === false (strict) so always fell through to NOT_GENERATED. Fix: siteRecord.is_stub = false set in both Engine.js generation paths (stub-complete + fresh). Diagnostic check loosened from === false to !is_stub to also recover old saves. Invariant verified: is_stub: true set in exactly one place (Engine.js:293); WorldGen never creates stubs.' },
   { version: '2.8.8', date: 'April 24, 2026', note: 'Strip VISIBLE CELLS from Mother Watch scan context (v1.81.0): VISIBLE CELLS section removed from _wCtxScan before passing to watch DeepSeek call. Terrain subtype variation between neighboring local cells is normal engine behavior — the section produces persistent false positives in automated scan regardless of prompt-level suppression. Mother Brain chat context unchanged — full VISIBLE CELLS still present for human-requested analysis.' },
   { version: '2.8.7', date: 'April 24, 2026', note: 'Mother Watch scan mandate rewrite (v1.80.9): replaced broad contradiction-detection instruction with fault-only mandate. Reports only: thrown errors, failed API calls, missing records that should exist, null/undefined where required, schema violations, diagnostic surfaces that misrepresent authoritative state, or state preventing correct gameplay/narration/diagnostics/progression. Explicitly does not report apparent cross-section contradictions when both sides reflect normal engine behavior. Removes whack-a-mole VISIBLE CELLS exception — superseded by the principled mandate.' },
   { version: '2.8.6', date: 'April 24, 2026', note: 'VISIBLE CELLS chat squelch (v1.80.8): added instruction to SYSTEM_PROMPT VISIBLE CELLS bullet to not proactively analyze or comment on this section unless the user asks or a WARNING line is present. Rows are guaranteed valid — coordinate proximity analysis wastes response budget. Matches Mother Watch squelch added in v2.8.5.' },

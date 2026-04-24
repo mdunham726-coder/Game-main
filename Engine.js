@@ -930,6 +930,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     siteRecord.mx = _stubMx; siteRecord.my = _stubMy;
     siteRecord.lx = _stubLx; siteRecord.ly = _stubLy;
     siteRecord.category = site.category || null;  // carry category from cell.sites for count filtering
+    siteRecord.is_stub = false;  // v1.81.1: mark fully generated — generateL2Site() does not set this field
     state.world.sites[interior_key] = siteRecord;
 
     if (logger) {
@@ -974,6 +975,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
     siteRecord = WorldGen.generateL2Site(interior_key, site.site_size ?? 3, npcs_here, state.rng_seed, undefined, { local_space_purpose: _startLsPurpose || undefined, local_space_name: _startLsName || undefined });
     if (_freshStubName) siteRecord.name = _freshStubName;
     siteRecord.category = site.category || null;  // carry category from cell.sites for count filtering
+    siteRecord.is_stub = false;  // v1.81.1: mark fully generated — generateL2Site() does not set this field
     state.world.sites[interior_key] = siteRecord;
 
     const totalSites = Object.keys(state.world.sites).length;

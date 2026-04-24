@@ -3706,7 +3706,9 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
               const _mirror = gameState.world.sites?.[_s.interior_key];
               if (!_mirror) {
                 _interior = 'MISSING_INTERIOR_RECORD';
-              } else if (_mirror.is_stub === false) {
+              } else if (!_mirror.is_stub) {
+                // v1.81.1: truthy check covers is_stub===false (new saves) and is_stub===undefined
+                // (old saves generated before this fix). Real stubs always have is_stub:true.
                 _interior = 'GENERATED';
               } else {
                 _interior = 'NOT_GENERATED';
