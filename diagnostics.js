@@ -222,7 +222,7 @@ function render(p) {
   }
 
   // Footer
-  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] cb extraction  [L] log  [D] mood  [B] cb panel  Ctrl+C exit`));
+  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] cb extraction  [L] log  [D] mood  [B] cb panel  [W] watch  Ctrl+C exit`));
 
   clr();
   process.stdout.write(lines.join('\n') + '\n');
@@ -332,6 +332,13 @@ if (process.stdin.isTTY) {
     }
     if (key === 'b' || key === 'B') {
       spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node cbpanel.js'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    }
+    if (key === 'w' || key === 'W') {
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node motherwatch.js'], {
         cwd: __dirname,
         detached: true,
         stdio: 'ignore'

@@ -2439,12 +2439,29 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     let _extractionPacket = null;   // v1.70.0: CB extracted schema (replaces active_continuity snapshot)
     let _dmNoteArchived   = null;   // v1.70.0: retired (dm_note superseded by entity.attributes promotion)
     let _dmNoteStatus     = 'new_game'; // v1.70.0: 'updated' | 'new_game'
+    let _watchMessageThisTurn = null; // v1.79.0: Mother's watch_message for this turn
     {
-      const _phaseBResult = await CB.runPhaseB(narrative, gameState);
+      // Assemble compact watch context for Phase B — 5 structured fields, no prose
+      // NOTE: movement and _turnViolations are not yet computed at Phase B time — omit them
+      const _watchCtx = {
+        continuity_injected:        _continuityInjected,
+        continuity_evicted:         _continuityEvicted,
+        continuity_eviction_reason: _continuityEvictionReason || null,
+        narrator_status:            _narratorStatus || 'ok',
+        move_summary:               null,
+        violation_count:            0,
+        top_violation:              null,
+        channel:                    resolvedChannel || null,
+      };
+      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx);
       _continuityExtractionSuccess = _phaseBResult !== null;
       _dmNoteStatus = _phaseBResult ? 'updated' : 'new_game';
       _extractionPacket = _phaseBResult ? _phaseBResult.extracted : null;
       _dmNoteArchived = null; // dm_note retired in v1.70.0
+      if (_phaseBResult?.watch_message) {
+        _watchMessageThisTurn = _phaseBResult.watch_message;
+        _lastWatchMessage = _watchMessageThisTurn;
+      }
     }
 
     // Extract player entity candidate for Mother Brain visibility
@@ -3026,8 +3043,33 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       player_extraction: _playerExtraction,
       engine_message: _engineMsg || null,
       violations: _turnViolations,
-      gameSessionId: resolvedSessionId
+      gameSessionId: resolvedSessionId,
+      watch_message: _watchMessageThisTurn || null
     });
+
+    // v1.80.0: Mother Watch — full-context async scan, fires after turn event, never blocks game
+    ;(async () => {
+      try {
+        const _wCtx = buildDebugContext(gameState, 'detailed');
+        const _wResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+          model: 'deepseek-chat',
+          temperature: 0.1,
+          max_tokens: 300,
+          messages: [
+            { role: 'system', content: 'You are a game engine debugger reviewing one turn of a text RPG engine. Scan the diagnostic context for bugs, errors, contradictions, or anomalies. Output ONLY a short list: one sentence per issue, maximum 5. If nothing is wrong, output exactly one sentence saying so. No headers, no preamble, no explanation.' },
+            { role: 'user', content: _wCtx }
+          ]
+        }, {
+          headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+        const _wRaw = _wResp?.data?.choices?.[0]?.message?.content || '(no response)';
+        const _wLines = _wRaw.split('\n').map(l => l.trim()).filter(Boolean);
+        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: _wLines, gameSessionId: resolvedSessionId });
+      } catch (e) {
+        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: [`[scan failed: ${e.message}]`], gameSessionId: resolvedSessionId });
+      }
+    })();
 
     // Update rolling history for delta/avg computation next turn
     _diagHistory.push({
@@ -4283,6 +4325,7 @@ let _lastNarratorPromptStats = null; // cache of narrator prompt structure from 
 let _lastSessionId    = null; // cache of most-recent resolved session ID (used by /diagnostics/session for MB bootstrap)
 let _lastNarratorPayload = null;     // cache of full messages payload sent to narrator (for NARRATOR I/O surface)
 let _lastNarratorRawResponse = null; // cache of raw narrator response string (for NARRATOR I/O surface)
+let _lastWatchMessage = null;        // cache of Mother's last watch_message (from Phase B)
 
 // Terrain type -> 2-char code map (module-level for world map 5x5 grid in buildDebugContext)
 const _TERRAIN_CODES = {

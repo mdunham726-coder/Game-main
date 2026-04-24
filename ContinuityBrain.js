@@ -36,7 +36,7 @@ const DEEPSEEK_URL      = 'https://api.deepseek.com/v1/chat/completions';
 const MOOD_HISTORY_CAP  = 20;   // hard cap on world.mood_history[]
 const MOOD_WINDOW       = 5;    // entries used for MOOD block in packet
 const EXTRACTION_TIMEOUT = 30000; // ms — Phase B LLM call
-const CB_VERSION        = '1.4.0';
+const CB_VERSION        = '1.5.0';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -47,7 +47,7 @@ function _setDiag(d) { _lastRunDiagnostics = d; }
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot) {
+function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext) {
   const location         = _describeLocation(gameState);
   const entities         = _describeVisibleEntities(gameState);
   const knownPlayerAttrs = _describePlayerAttributes(gameState);
@@ -201,7 +201,8 @@ delta_note
           "stable — no shift"
   REJECT: multi-sentence narrative explanation
 
-Respond with ONLY the JSON object. No explanation, no wrapper text.`;
+Respond with ONLY the JSON object. No explanation, no wrapper text.
+${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '\u2014'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with \u2713 if clean, \u26a0 for a warning, \u2715 for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
 
 // ── Location / entity description helpers ─────────────────────────────────────
@@ -381,7 +382,7 @@ function _getL0CellRecord(gameState) {
 
 // ── Phase B ───────────────────────────────────────────────────────────────────
 
-async function runPhaseB(frozenNarration, gameState) {
+async function runPhaseB(frozenNarration, gameState, watchContext) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length;
 
@@ -404,7 +405,7 @@ async function runPhaseB(frozenNarration, gameState) {
   const previousMood = moodHistory.length ? moodHistory[moodHistory.length - 1] : null;
 
   // ── LLM extraction call ────────────────────────────────────────────────────
-  const prompt = _buildExtractionPrompt(frozenNarration, gameState, previousMood);
+  const prompt = _buildExtractionPrompt(frozenNarration, gameState, previousMood, watchContext);
   let raw = null;
   try {
     const resp = await axios.post(
@@ -447,6 +448,9 @@ async function runPhaseB(frozenNarration, gameState) {
     _setDiag({ error: 'schema_missing_keys', missing, turn });
     return null;
   }
+
+  // Safely extract watch_message — optional, never blocks Phase B
+  const watch_message = typeof extracted.watch_message === 'string' ? extracted.watch_message : null;
 
   // ── Association + Promotion ────────────────────────────────────────────────
   const logEntries  = [];
@@ -561,6 +565,7 @@ async function runPhaseB(frozenNarration, gameState) {
     log_entries:     logEntries,
     mood_snapshot:   moodSnapshot,
     diagnostics:     diag,
+    watch_message,   // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
   };
 }
 
