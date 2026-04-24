@@ -1833,14 +1833,6 @@ app.post('/narrate', async (req, res) => {
     const _continuityBlock = CB.assembleContinuityPacket(gameState, null); // v1.70.0
     _lastRenderedBlock = _continuityBlock; // cache for /diagnostics/continuity
     _lastGameState = gameState;            // cache for /diagnostics/continuity
-    _lastNarratorPromptStats = {
-      total_chars:       _promptTotalChars,
-      base_chars:        Math.max(0, _promptBaseChars),
-      continuity_chars:  _promptContinuityChars,
-      spatial_chars:     _promptSpatialChars,
-      continuity_injected: _continuityInjected,
-      continuity_evicted:  _continuityEvicted,
-    }; // cache for buildDebugContext Mother Brain context
     _lastSessionId = resolvedSessionId;    // cache for /diagnostics/session
     // v1.63.0: reflects actual block output — true when narrator received any continuity content
     // (active_continuity OR narrative_memory entries), not just active_continuity presence
@@ -2901,6 +2893,14 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     const _promptSpatialChars    = (_engineSpatialBlock || '').length;
     const _promptTotalChars      = narrationContent ? narrationContent.length : 0;
     const _promptBaseChars       = _promptTotalChars - _promptContinuityChars - _promptSpatialChars;
+    _lastNarratorPromptStats = {
+      total_chars:       _promptTotalChars,
+      base_chars:        Math.max(0, _promptBaseChars),
+      continuity_chars:  _promptContinuityChars,
+      spatial_chars:     _promptSpatialChars,
+      continuity_injected: _continuityInjected,
+      continuity_evicted:  _continuityEvicted,
+    }; // cache for buildDebugContext Mother Brain context
 
     // System totals (null-safe — falls back to char/4 estimate in renderer)
     const _narratorTok  = _narratorUsage?.total_tokens    ?? null;
