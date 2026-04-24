@@ -2373,8 +2373,9 @@ function generateLocalSpace(local_space_id, localSpaceData, siteSize = 1) {
     width: w,
     height: h,
     grid,
-    npc_ids,
-    npcs: []
+    npc_ids
+    // npcs field intentionally absent: local spaces never own NPC records.
+    // All NPC resolution uses parent active_site.npcs as registry. (v1.81.3)
   };
 }
 

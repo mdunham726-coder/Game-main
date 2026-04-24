@@ -3328,7 +3328,10 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `\n=== ACTIVE LOCAL SPACE (L2) ===\n`;
     context += `Name: ${_dbgLS.name || '(unnamed)'}\n`;
     context += `Type: ${_dbgLS.type || '(unknown)'}\n`;
-    context += `NPC Records: ${(_dbgLS.npcs || []).length}\n`;
+    // v1.81.3: local_space.npcs is always [] (never populated — dead field removed from WorldGen).
+    // Correct sources: npc_ids = IDs assigned to this space; _dbgVisible = resolved NPCs at player tile.
+    context += `NPCs in space: ${(_dbgLS.npc_ids || []).length}\n`;
+    context += `NPCs at your tile: ${_dbgVisible.length}\n`;
     context += `Player Position (L2): (${gameState.player?.position?.x ?? '?'},${gameState.player?.position?.y ?? '?'})\n`;
     context += `\n=== NEARBY NPCS ===\n`;
     if (_dbgVisible.length > 0) {

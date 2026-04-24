@@ -15,9 +15,10 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.10';
+const MB_VERSION = '2.8.11';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.8.11', date: 'April 24, 2026', note: 'Fix L2 diagnostic dead NPC field (v1.81.3): active_local_space.npcs was always [] (hardcoded in WorldGen.generateLocalSpace, never populated). Diagnostic read this and reported NPC Records: 0 at L2, causing false three-surface contradiction triage. Fix: diagnostic now reports NPCs in space (npc_ids.length) and NPCs at your tile (visible count). Dead npcs field removed from generateLocalSpace return object. All functional NPC resolution at L2 uses active_site.npcs as registry — unaffected.' },
   { version: '2.8.10', date: 'April 24, 2026', note: 'NPC hallucination containment (v1.81.2): removed Population count from narrator site context block — telling narrator how many NPCs exist in the building while NPCs nearby was empty licensed the model to render off-screen persons. Replaced fragile multi-clause NPC constraint bullet with single existence rule: only persons in NPCs PRESENT exist anywhere in the scene. Pre-existing flaw uncovered by noise reduction from v1.81.0/v1.81.1.' },
   { version: '2.8.9', date: 'April 24, 2026', note: 'Fix is_stub NOT_GENERATED false diagnostic (v1.81.1): generateL2Site() return object never had is_stub field; diagnostic checked === false (strict) so always fell through to NOT_GENERATED. Fix: siteRecord.is_stub = false set in both Engine.js generation paths (stub-complete + fresh). Diagnostic check loosened from === false to !is_stub to also recover old saves. Invariant verified: is_stub: true set in exactly one place (Engine.js:293); WorldGen never creates stubs.' },
   { version: '2.8.8', date: 'April 24, 2026', note: 'Strip VISIBLE CELLS from Mother Watch scan context (v1.81.0): VISIBLE CELLS section removed from _wCtxScan before passing to watch DeepSeek call. Terrain subtype variation between neighboring local cells is normal engine behavior — the section produces persistent false positives in automated scan regardless of prompt-level suppression. Mother Brain chat context unchanged — full VISIBLE CELLS still present for human-requested analysis.' },
