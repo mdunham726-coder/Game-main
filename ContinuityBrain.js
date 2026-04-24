@@ -36,7 +36,7 @@ const DEEPSEEK_URL      = 'https://api.deepseek.com/v1/chat/completions';
 const MOOD_HISTORY_CAP  = 20;   // hard cap on world.mood_history[]
 const MOOD_WINDOW       = 5;    // entries used for MOOD block in packet
 const EXTRACTION_TIMEOUT = 30000; // ms — Phase B LLM call
-const CB_VERSION        = '1.1.0';
+const CB_VERSION        = '1.3.0';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -478,6 +478,18 @@ async function runPhaseB(frozenNarration, gameState) {
     }
   }
 
+  // L0 context snapshot: capture canonically accepted env facts for next assembly's CONTEXT block.
+  // Read from locationRecord.attributes (post-filter, post-dedup) — NOT raw extraction candidates.
+  // Filter by turn_set === turn so only this Phase B run's accepted facts are captured.
+  if (!loc && locationRecord) {
+    const _canonFeats = Object.values(locationRecord.attributes || {})
+      .filter(a => a.bucket === 'environment' && a.turn_set === turn)
+      .map(a => a.value);
+    if (_canonFeats.length > 0) {
+      gameState.world._lastPhaseBLoc = { locationRef, features: _canonFeats };
+    }
+  }
+
   // Append promotion log entries
   if (!gameState.world.promotion_log) gameState.world.promotion_log = [];
   gameState.world.promotion_log.push(...logEntries);
@@ -520,6 +532,11 @@ async function runPhaseB(frozenNarration, gameState) {
 function assembleContinuityPacket(gameState, turnContext) {
   const w   = gameState.world || {};
   const loc = w.active_local_space || w.active_site;
+  // L0 fallback: env features are promoted to the cell record, not active_site/local_space
+  const locRecord = loc || _getL0CellRecord(gameState);
+  const locLabel  = locRecord
+    ? (locRecord.name || (w.position ? `cell(${w.position.mx},${w.position.my}:${w.position.lx},${w.position.ly})` : 'location'))
+    : 'location';
   const lines = [];
 
   // ── TRUTH BLOCK (always first) ─────────────────────────────────────────────
@@ -549,10 +566,9 @@ function assembleContinuityPacket(gameState, turnContext) {
     truthLines++;
   }
 
-  // Location attributes
-  if (loc && loc.attributes && Object.keys(loc.attributes).length) {
-    const locLabel = loc.name || 'location';
-    const locAttrs = Object.values(loc.attributes)
+  // Location attributes — includes L0 cell attributes via locRecord fallback
+  if (locRecord && locRecord.attributes && Object.keys(locRecord.attributes).length) {
+    const locAttrs = Object.values(locRecord.attributes)
       .map(a => a.value)
       .join(' | ');
     lines.push(`[${locLabel}]: ${locAttrs}`);
@@ -591,6 +607,19 @@ function assembleContinuityPacket(gameState, turnContext) {
         lines.push(`  T-${snap.turn}: ${snap.tone} / ${snap.tension_level} ${snap.tension_direction} / ${snap.delta_note}`);
       }
     }
+  }
+
+  // ── CONTEXT — RECENT LOCATION (L0 only, single-use) ─────────────────────────
+  // Shows env facts canonically accepted by Phase B for the player's prior position.
+  // NOT current-scene truth — prior-cell context for narrative continuity.
+  // Cleared after one read so stale facts never linger across turns.
+  const _ctxLoc = w._lastPhaseBLoc;
+  if (_ctxLoc && Array.isArray(_ctxLoc.features) && _ctxLoc.features.length > 0) {
+    lines.push('');
+    lines.push('CONTEXT — RECENT LOCATION');
+    lines.push('─────────────────────────────────────────────');
+    lines.push(`[${_ctxLoc.locationRef} — prior position]: ${_ctxLoc.features.join(' | ')}`);
+    w._lastPhaseBLoc = null; // single-use: clear after read
   }
 
   return lines.join('\n');

@@ -1,5 +1,5 @@
 /**
- * motherbrain.js — Mother Brain v2.4.0
+ * motherbrain.js — Mother Brain v2.5.0
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -15,9 +15,11 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.4.0';
+const MB_VERSION = '2.6.0';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.6.0', date: 'April 23, 2026', note: 'Option C truth architecture — TRUTH block stays strict (current cell only, empty at L0 during exploration is correct behavior); new CONTEXT — RECENT LOCATION block appended after MOOD shows canonically accepted env facts (post-filter, post-dedup, turn_set===current) from prior cell position; single-use (cleared after one assembly read); narrator gets env grounding without contaminating current-scene truth' },
+  { version: '2.5.0', date: 'April 23, 2026', note: 'L0 continuity packet fix — ContinuityBrain.js v1.2.0: assembleContinuityPacket() now reads cell.attributes at overworld layer via _getL0CellRecord() fallback; env features promoted by runPhaseB() now appear in TRUTH block at L0 (previously silently dropped)' },
   { version: '2.4.0', date: 'April 23, 2026', note: 'Full narrator visibility — narrator_status (ok/malformed) on turn events; narrator_error SSE event on hard failures (timeout/econnreset/error) with explicit flight recorder entry; avg5 token baseline per turn; player extraction facts count per turn; continuity packet history expanded to last 3 turns; unfilled site stubs hidden from context entirely' },
   { version: '2.3.0', date: 'April 23, 2026', note: 'Narrator visibility — CONTINUITY PACKET (exact text sent to narrator last turn) and NARRATOR PROMPT STRUCTURE (char breakdown: base, continuity, spatial; injection/eviction status) added to context block' },
   { version: '2.2.0', date: 'April 23, 2026', note: 'Phase D1 — player self-ref extraction: player facts promoted to player.attributes, YOU tab in CB panel, player TRUTH block in continuity packet' },
@@ -89,7 +91,7 @@ TOOLS AND DATA ACCESS: You have access to two live data sources that are provide
    - LAST NARRATIONS: the last 2 narrator outputs, each labeled "Narrator output (T-N):" — use these to trace what the narrator wrote and why specific facts were or were not extracted
    - CB EXTRACTION (last turn): compact summary of ContinuityBrain's extraction — per-entity candidates (physical_attributes, observable_states, held_or_worn_objects) with inline rejected_interpretations strings (up to 3 per entity), environmental features, spatial relations, top-level rejections
    - CB WARNINGS (last turn): entity resolution failures — UNRESOLVED means an entity ref could not be matched to any visible NPC and its facts were NOT promoted; FUZZY means a match was found via approximate matching and should be verified; L0-SKIP (l0_entity_candidates_skipped) means entity candidates were skipped because no NPC registry exists at the overworld layer (L0) — this is expected behavior, not a failure
-   - CONTINUITY PACKET (T-N): the exact TRUTH + MOOD block sent to the narrator for each of the last 3 turns, labeled by turn number, newest first — this is the real payload DeepSeek received; use this to understand what the narrator saw and why it wrote what it wrote across recent turns
+   - CONTINUITY PACKET (T-N): the exact TRUTH + MOOD block sent to the narrator for each of the last 3 turns, labeled by turn number, newest first — this is the real payload DeepSeek received; use this to understand what the narrator saw and why it wrote what it wrote across recent turns; each packet may also include a CONTEXT — RECENT LOCATION block (appears after MOOD) containing env facts canonically accepted by Phase B for the player's prior cell position — this is NOT current-scene truth, it is prior-position context for narrative continuity; TRUTH at L0 is intentionally empty of a location line when the player just moved to a new cell — this is correct behavior, not a bug
    - NARRATOR PROMPT STRUCTURE (last turn): char breakdown of the narrator's full prompt — total_chars, base (instructions + world state), continuity block size and injection status (injected / NOT INJECTED / EVICTED), spatial block size; use this to diagnose prompt budget issues, continuity eviction, or missing context
 
 2. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result, continuity injection status, token usage, delta from previous turn, avg5 (5-turn rolling token average for baseline comparison), narrator_status (ok = success; malformed = response received but content was empty or unparseable), player_extraction (you:Nf = N facts extracted about the player this turn by ContinuityBrain), and any engine violations. Hard narrator failures (timeout, connection reset, thrown error) appear as explicit [NARRATION FAILED] entries with failure kind and error message — these mark turns where no turn event was emitted.
