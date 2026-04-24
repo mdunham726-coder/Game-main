@@ -1257,18 +1257,7 @@ app.post('/narrate', async (req, res) => {
         });
 
         // C2c: Coarse map snapshot — 16×16 grid (each block = 8×8 cells)
-        const _terrainCodes = {
-          plains_grassland:'PG', plains_wildflower:'PW', meadow:'ME',
-          forest_deciduous:'FD', forest_mixed:'FM', forest_coniferous:'FC',
-          hills_rolling:'HR', hills_rocky:'HK', rocky_terrain:'RT', scree:'SC',
-          mountain_slopes:'MS', mountain_peak:'MP', mountain_pass:'MA',
-          desert_sand:'DS', desert_dunes:'DD', desert_rocky:'DR',
-          scrubland:'SB', badlands:'BL', canyon:'CY', mesa:'MZ',
-          tundra:'TU', snowfield:'SF', ice_sheet:'IS', permafrost:'PF', alpine:'AL',
-          swamp:'SW', marsh:'MR', wetland:'WL', bog:'BG',
-          beach_sand:'BS', beach_pebble:'BP', cliffs_coastal:'CC', tidepools:'TP', dunes_coastal:'DC',
-          river_crossing:'RC', stream:'ST', lake_shore:'LS', waterfall:'WF', spring:'SP'
-        };
+        const _terrainCodes = _TERRAIN_CODES; // alias to module-level constant
         const _coarseGrid = [];
         for (let by = 0; by < 16; by++) {
           const row = [];
@@ -2204,6 +2193,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     };
 
     let response;
+    _lastNarratorPayload = { model: 'deepseek-chat', temperature: 0.7, messages: [{ role: 'user', content: narrationContent }] };
     try {
       response = await _makeNarCall();
     } catch (_nFirstErr) {
@@ -2222,6 +2212,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     try {
       if (response?.data?.choices?.[0]?.message?.content) {
         narrative = String(response.data.choices[0].message.content);
+        _lastNarratorRawResponse = narrative;
       } else {
         _narratorStatus = 'malformed'; // response received but no content
       }
@@ -2711,9 +2702,23 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         to: toPos,
         direction: attemptData.direction || parsedIntent.direction,
         success: resolvedData.success || false,
+        block_reason: resolvedData.success ? null : (resolvedData.reason || '?'),
         from_cell_type: locationChangedLog?.data?.from_cell_type,
         to_cell_type: locationChangedLog?.data?.to_cell_type,
         l2_exit_diag: toPos?.l2_exit_diag || null
+      };
+    } else if (!playerMoveAttemptedLog && playerMoveResolvedLog && playerMoveResolvedLog.data?.success === false) {
+      // Failed before attempt was logged (NO_POSITION, ENGINE_GUARD, etc.)
+      const resolvedData = playerMoveResolvedLog.data || {};
+      movement = {
+        from: currentPosition,
+        to: currentPosition,
+        direction: parsedIntent?.direction || '?',
+        success: false,
+        block_reason: resolvedData.reason || 'UNKNOWN',
+        from_cell_type: null,
+        to_cell_type: null,
+        l2_exit_diag: null
       };
     }
     
@@ -2924,6 +2929,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
       spatial_chars:     _promptSpatialChars,
       continuity_injected: _continuityInjected,
       continuity_evicted:  _continuityEvicted,
+      narrator_usage:    _narratorUsage || null,  // { prompt_tokens, completion_tokens, total_tokens }
     }; // cache for buildDebugContext Mother Brain context
 
     // System totals (null-safe — falls back to char/4 estimate in renderer)
@@ -3458,6 +3464,9 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
           context += `[T-${e.turn}] ${e.entity_type}:${e.entity_name || e.entity_id} → ${e.attribute} = "${e.new_value}"\n`;
         } else if (e.action === 'rejected_filter') {
           context += `[T-${e.turn}] FILTERED ${e.entity_id} ${e.bucket}:"${e.value}" (${e.reason})\n`;
+        } else if (e.action === 'duplicate_silenced_summary') {
+          const _bkts = Object.entries(e.count_by_bucket || {}).map(([b, c]) => `${b}:${c}`).join(', ');
+          context += `[T-${e.turn}] DUP-SILENCED ${e.entity_type}:${e.entity_name || e.entity_id} total:${e.total} (${_bkts})\n`;
         }
       }
     }
@@ -3581,12 +3590,154 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   if (_lastNarratorPromptStats) {
     const s = _lastNarratorPromptStats;
     context += `\n=== NARRATOR PROMPT STRUCTURE (last turn) ===\n`;
-    context += `total_chars: ${s.total_chars}\n`;
+    // Always-on one-liner summary
+    context += `payload_messages: 1 | prompt_chars: ${s.total_chars} | continuity: ${s.continuity_chars} | spatial: ${s.spatial_chars} | base: ${s.base_chars}\n`;
     context += `  base (instructions + world state): ${s.base_chars} chars\n`;
     context += `  continuity block: ${s.continuity_chars} chars${s.continuity_injected ? '' : s.continuity_evicted ? ' [EVICTED]' : ' [NOT INJECTED]'}\n`;
     context += `  spatial block: ${s.spatial_chars} chars\n`;
     context += `continuity_injected: ${s.continuity_injected}\n`;
     context += `continuity_evicted: ${s.continuity_evicted}\n`;
+    if (s.narrator_usage) {
+      const u = s.narrator_usage;
+      context += `prompt_tokens: ${u.prompt_tokens ?? '—'}  completion_tokens: ${u.completion_tokens ?? '—'}  total_tokens: ${u.total_tokens ?? '—'}\n`;
+    } else {
+      context += `prompt_tokens: —  completion_tokens: —  total_tokens: — (no usage data)\n`;
+    }
+    context += `model: deepseek-chat | max_tokens: not set (model cap: 8,192 output / 64K context window)\n`;
+  }
+
+  // === SPATIAL BLOCK (last turn) ===
+  {
+    const _lastTurnNd = (gameState.turn_history || []).slice(-1)[0]?.narration_debug || {};
+    const _spatialBlock = _lastTurnNd.engine_spatial_notes;
+    context += `\n=== SPATIAL BLOCK (last turn) ===\n`;
+    if (_spatialBlock) {
+      context += _spatialBlock + '\n';
+    } else {
+      context += `(no spatial block for last turn)\n`;
+    }
+  }
+
+  // === SITE INTERIOR STATE (current cell) ===
+  {
+    const _pos = gameState.world.position;
+    context += `\n=== SITE INTERIOR STATE (current cell) ===\n`;
+    if (!_pos) {
+      context += `(no position)\n`;
+    } else {
+      const _cellKey = `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`;
+      const _cell = gameState.world.cells?.[_cellKey];
+      const _cellSites = _cell?.sites || [];
+      if (_cellSites.length === 0) {
+        context += `(no sites at current cell)\n`;
+      } else {
+        for (const _sRef of _cellSites) {
+          const _sRec = gameState.world.sites?.[_sRef];
+          if (!_sRec) {
+            context += `${_sRef} | (no record) | enterable:? | filled:? | interior:N/A\n`;
+            continue;
+          }
+          const _enterable = _sRec.enterable !== false ? 'YES' : 'NO';
+          const _filled    = !_sRec.is_stub ? 'YES' : 'NO';
+          const _interior  = _sRec.is_stub ? 'N/A' : (_sRec.grid ? 'GENERATED' : 'NOT_GENERATED');
+          context += `${_sRef} | ${_sRec.name || '(unnamed)'} | enterable:${_enterable} | filled:${_filled} | interior:${_interior}\n`;
+        }
+      }
+    }
+  }
+
+  // === WORLD MAP 5x5 (player-centered, toroidal) ===
+  {
+    const _wPos = gameState.world.position;
+    const _macroW = gameState.world.l0_grid?.width  || 8;
+    const _macroH = gameState.world.l0_grid?.height || 8;
+    context += `\n=== WORLD MAP 5x5 (player macro-cell, radius 2) ===\n`;
+    if (!_wPos) {
+      context += `(no position)\n`;
+    } else {
+      const _pMx = _wPos.mx;
+      const _pMy = _wPos.my;
+      const _appearingCodes = new Set();
+      const _gridRows = [];
+      for (let dy = -2; dy <= 2; dy++) {
+        const row = [];
+        for (let dx = -2; dx <= 2; dx++) {
+          // Toroidal wrap on macro grid
+          const _mx = ((_pMx + dx) % _macroW + _macroW) % _macroW;
+          const _my = ((_pMy + dy) % _macroH + _macroH) % _macroH;
+          const _isPlayer = (dx === 0 && dy === 0);
+          // Find dominant terrain for this macro cell
+          const _macroCells = Object.values(gameState.world.cells || {}).filter(c => c && c.mx === _mx && c.my === _my);
+          let _code = '??';
+          if (_macroCells.length > 0) {
+            const _freq = {};
+            for (const _c of _macroCells) { const _t = _c.type || ''; _freq[_t] = (_freq[_t] || 0) + 1; }
+            const _dom = Object.entries(_freq).sort(([,a],[,b]) => b - a)[0][0];
+            _code = _TERRAIN_CODES[_dom] || '??';
+          }
+          // Check if cell has any enterable site
+          const _hasSite = Object.values(gameState.world.sites || {}).some(s => s && s.mx === _mx && s.my === _my && s.enterable !== false && !s.is_stub);
+          const _isUnknown = (_macroCells.length === 0);
+          let _label;
+          if (_isPlayer)   { _label = '[*]'; }
+          else if (_hasSite) { _label = '[S]'; _appearingCodes.add(`S=site`); }
+          else if (_isUnknown) { _label = '[ ]'; }
+          else { _label = `[${_code}]`; _appearingCodes.add(`${_code}=${Object.entries(_TERRAIN_CODES).find(([k,v])=>v===_code)?.[0]||_code}`); }
+          row.push(_label);
+        }
+        _gridRows.push(row.join(' '));
+      }
+      context += _gridRows.join('\n') + '\n';
+      if (_appearingCodes.size > 0) {
+        context += `legend: [*]=player  ` + [..._appearingCodes].join('  ') + '\n';
+      }
+    }
+  }
+
+  // === ACTION RESOLUTION (last turn) ===
+  {
+    const _lastTurn = (gameState.turn_history || []).slice(-1)[0];
+    context += `\n=== ACTION RESOLUTION (last turn) ===\n`;
+    if (!_lastTurn) {
+      context += `(no turns yet)\n`;
+    } else {
+      const _mv = _lastTurn.movement;
+      const _act = _lastTurn.action;
+      context += `input: "${String(_lastTurn.raw_input || _act || '—').slice(0, 80)}"\n`;
+      context += `parsed_action: ${_lastTurn.parsed_action || '—'}\n`;
+      if (_mv) {
+        if (_mv.success) {
+          context += `move: SUCCESS  direction:${_mv.direction || '—'}  from:${JSON.stringify(_mv.from || {})}  to:${JSON.stringify(_mv.to || {})}\n`;
+          if (_mv.from_cell_type || _mv.to_cell_type) {
+            context += `cell_types: ${_mv.from_cell_type || '—'} -> ${_mv.to_cell_type || '—'}\n`;
+          }
+        } else {
+          context += `move: BLOCKED  block_reason:${_mv.block_reason || '?'}  direction:${_mv.direction || '—'}\n`;
+        }
+      } else if (_lastTurn.parsed_action === 'move') {
+        context += `move: NO_RESOLVE_LOG (player_move_resolved was never called)\n`;
+      } else {
+        context += `(no move this turn)\n`;
+      }
+    }
+  }
+
+  // === NARRATOR I/O (last turn) — gated: only with level=narrator_io ===
+  if (debugLevel === 'narrator_io') {
+    context += `\n=== NARRATOR I/O (last turn) ===\n`;
+    context += `-- MESSAGES PAYLOAD --\n`;
+    if (_lastNarratorPayload?.messages?.[0]) {
+      context += `[message 0] role: ${_lastNarratorPayload.messages[0].role}\n`;
+      context += _lastNarratorPayload.messages[0].content + '\n';
+    } else {
+      context += `(no payload captured yet)\n`;
+    }
+    context += `\n-- RAW RESPONSE --\n`;
+    if (_lastNarratorRawResponse) {
+      context += _lastNarratorRawResponse + '\n';
+    } else {
+      context += `(no response captured yet)\n`;
+    }
   }
 
   return context;
@@ -4130,6 +4281,22 @@ let _continuityBlockHistory = []; // rolling cache of last 3 continuity packets 
 let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
 let _lastNarratorPromptStats = null; // cache of narrator prompt structure from last turn (for Mother Brain context)
 let _lastSessionId    = null; // cache of most-recent resolved session ID (used by /diagnostics/session for MB bootstrap)
+let _lastNarratorPayload = null;     // cache of full messages payload sent to narrator (for NARRATOR I/O surface)
+let _lastNarratorRawResponse = null; // cache of raw narrator response string (for NARRATOR I/O surface)
+
+// Terrain type -> 2-char code map (module-level for world map 5x5 grid in buildDebugContext)
+const _TERRAIN_CODES = {
+  plains_grassland:'PG', plains_wildflower:'PW', meadow:'ME',
+  forest_deciduous:'FD', forest_mixed:'FM', forest_coniferous:'FC',
+  hills_rolling:'HR', hills_rocky:'HK', rocky_terrain:'RT', scree:'SC',
+  mountain_slopes:'MS', mountain_peak:'MP', mountain_pass:'MA',
+  desert_sand:'DS', desert_dunes:'DD', desert_rocky:'DR',
+  scrubland:'SB', badlands:'BL', canyon:'CY', mesa:'MZ',
+  tundra:'TU', snowfield:'SF', ice_sheet:'IS', permafrost:'PF', alpine:'AL',
+  swamp:'SW', marsh:'MR', wetland:'WL', bog:'BG',
+  beach_sand:'BS', beach_pebble:'BP', cliffs_coastal:'CC', tidepools:'TP', dunes_coastal:'DC',
+  river_crossing:'RC', stream:'ST', lake_shore:'LS', waterfall:'WF', spring:'SP'
+};
 
 app.get('/diagnostics/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');

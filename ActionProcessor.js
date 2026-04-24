@@ -111,6 +111,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     console.log('[POINT-D-EXECUTE] pos exists?', !!pos, 'pos:', pos);
     if (!pos) {
       console.log('[POINT-D-EXECUTE] NO POSITION - returning early');
+      if (logger) logger.player_move_resolved(false, 'NO_POSITION', { reason: 'NO_POSITION' });
       return; // No position to move from
     }
     
@@ -123,6 +124,10 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     console.log('[POINT-D-EXECUTE] dir:', dir, 'delta:', delta);
     if (!delta) {
       console.log('[POINT-D-EXECUTE] INVALID DIRECTION - returning early');
+      if (logger) {
+        logger.player_move_attempted(dir, { mx: pos.mx, my: pos.my, lx: pos.lx, ly: pos.ly }, { mx: pos.mx, my: pos.my, lx: pos.lx, ly: pos.ly });
+        logger.player_move_resolved(false, 'NO_DIRECTION', { reason: 'NO_DIRECTION', dir });
+      }
       return; // Invalid direction
     }
 
@@ -169,6 +174,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       const _ls = state.world.active_local_space;
       if (!_ls) {
         console.log('[ACTIONS] L2 move: no active local space');
+        if (logger) logger.player_move_resolved(false, 'ENGINE_GUARD', { reason: 'ENGINE_GUARD', depth: 3 });
         return;
       }
       const _lsW = _ls.width || 5;

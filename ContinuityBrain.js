@@ -36,7 +36,7 @@ const DEEPSEEK_URL      = 'https://api.deepseek.com/v1/chat/completions';
 const MOOD_HISTORY_CAP  = 20;   // hard cap on world.mood_history[]
 const MOOD_WINDOW       = 5;    // entries used for MOOD block in packet
 const EXTRACTION_TIMEOUT = 30000; // ms — Phase B LLM call
-const CB_VERSION        = '1.3.0';
+const CB_VERSION        = '1.4.0';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -259,23 +259,40 @@ function _resolveEntityRef(entityRef, gameState) {
 // LIBERAL on concrete visible detail; CONSERVATIVE on interpretation.
 // Promotion filters run AFTER extraction schema separates fields.
 
-const BANNED_INTERPRETATION_PATTERNS = [
-  /\baura\b/i, /\bpresence\b/i, /\bdemeanor\b/i, /\bmenace\b/i,
-  /\bsinister\b/i, /\bmystic\b/i, /\bsacred\b/i, /\bblessed\b/i,
-  /\bcursed\b/i, /\bominous\b/i, /\bforbidding\b/i, /\bmagic\b/i,
-  /\bmelancholy\b/i, /\baura\b/i, /\bsorrow\b/i, /\bintimidating\b/i,
-];
+const BANNED_INTERPRETATION_PATTERNS = {
+  aura:         /\baura\b/i,
+  presence:     /\bpresence\b/i,
+  demeanor:     /\bdemeanor\b/i,
+  menace:       /\bmenace\b/i,
+  sinister:     /\bsinister\b/i,
+  mystic:       /\bmystic\b/i,
+  sacred:       /\bsacred\b/i,
+  blessed:      /\bblessed\b/i,
+  cursed:       /\bcursed\b/i,
+  ominous:      /\bominous\b/i,
+  forbidding:   /\bforbidding\b/i,
+  magic:        /\bmagic\b/i,
+  melancholy:   /\bmelancholy\b/i,
+  sorrow:       /\bsorrow\b/i,
+  intimidating: /\bintimidating\b/i,
+};
 
+// Returns { ok: true } if str passes all filters, or { ok: false, pattern: 'name' } on first match.
 function _isConcreteDetail(str) {
-  if (!str) return false;
-  return !BANNED_INTERPRETATION_PATTERNS.some(rx => rx.test(str));
+  if (!str) return { ok: false, pattern: 'empty' };
+  for (const [name, rx] of Object.entries(BANNED_INTERPRETATION_PATTERNS)) {
+    if (rx.test(str)) return { ok: false, pattern: name };
+  }
+  return { ok: true };
 }
 
 function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
+  const _dupCounts = {};
   const promote = (bucket, items) => {
     for (const item of (items || [])) {
-      if (!_isConcreteDetail(item)) {
-        logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: item, turn, reason: 'failed_concrete_test' });
+      const _check = _isConcreteDetail(item);
+      if (!_check.ok) {
+        logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
         continue;
       }
       const key = `${bucket}:${item}`;
@@ -283,29 +300,41 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
       if (!existing) {
         npc.attributes[key] = { value: item, bucket, turn_set: turn, confidence: 'initial' };
         logEntries.push({ action: 'create', entity_type: 'npc', entity_id: npc.id, entity_name: npc.npc_name || npc.id, attribute: key, old_value: null, new_value: item, evidence_quote: null, turn });
+      } else {
+        _dupCounts[bucket] = (_dupCounts[bucket] || 0) + 1;
       }
       // Existing facts: only update on positive evidence of change (not mere omission).
-      // Current implementation preserves existing facts until contradiction is detected.
       // Contradiction detection is a future evolution — for now facts persist until retracted.
     }
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
   promote('object',   candidate.held_or_worn_objects);
+  const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
+  if (_dupTotal > 0) {
+    logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'npc', entity_id: npc.id, entity_name: npc.npc_name || npc.id, count_by_bucket: _dupCounts, total: _dupTotal, turn });
+  }
 }
 
 function _promoteLocationAttributes(locationRecord, locationRef, features, turn, logEntries) {
   if (!locationRecord.attributes) locationRecord.attributes = {}; // backward-compat: old saves lack attributes field
+  let _dupCount = 0;
   for (const feat of (features || [])) {
-    if (!_isConcreteDetail(feat)) {
-      logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: feat, turn, reason: 'failed_concrete_test' });
+    const _check = _isConcreteDetail(feat);
+    if (!_check.ok) {
+      logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: feat, turn, reason: 'banned_pattern:' + _check.pattern });
       continue;
     }
     const key = `env:${feat}`;
     if (!locationRecord.attributes[key]) {
       locationRecord.attributes[key] = { value: feat, bucket: 'environment', turn_set: turn, confidence: 'initial', source: 'narration' };
       logEntries.push({ action: 'create', entity_type: 'location', entity_id: locationRef, entity_name: locationRef, attribute: key, old_value: null, new_value: feat, evidence_quote: null, turn });
+    } else {
+      _dupCount++;
     }
+  }
+  if (_dupCount > 0) {
+    logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'location', entity_id: locationRef, entity_name: locationRef, count_by_bucket: { environment: _dupCount }, total: _dupCount, turn });
   }
 }
 
@@ -313,22 +342,30 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
 // Parallel to _promoteEntityAttributes — targets gameState.player.attributes.
 function _promotePlayerAttributes(player, candidate, turn, logEntries) {
   if (!player.attributes) player.attributes = {}; // migration guard: old saves
+  const _dupCounts = {};
   const promote = (bucket, items) => {
     for (const item of (items || [])) {
-      if (!_isConcreteDetail(item)) {
-        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'failed_concrete_test' });
+      const _check = _isConcreteDetail(item);
+      if (!_check.ok) {
+        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
         continue;
       }
       const key = `${bucket}:${item}`;
       if (!player.attributes[key]) {
         player.attributes[key] = { value: item, bucket, turn_set: turn, confidence: 'initial' };
         logEntries.push({ action: 'create', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', attribute: key, old_value: null, new_value: item, evidence_quote: null, turn });
+      } else {
+        _dupCounts[bucket] = (_dupCounts[bucket] || 0) + 1;
       }
     }
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
   promote('object',   candidate.held_or_worn_objects);
+  const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
+  if (_dupTotal > 0) {
+    logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', count_by_bucket: _dupCounts, total: _dupTotal, turn });
+  }
 }
 
 // ── L0 cell record helper ─────────────────────────────────────────────────────
