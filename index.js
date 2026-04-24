@@ -3054,9 +3054,9 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
         const _wResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.1,
-          max_tokens: 300,
+          max_tokens: 600,
           messages: [
-            { role: 'system', content: 'You are a game engine debugger reviewing one turn of a text RPG engine. Scan the diagnostic context for bugs, errors, contradictions, or anomalies. Output ONLY a short list: one sentence per issue, maximum 5. If nothing is wrong, output exactly one sentence saying so. No headers, no preamble, no explanation.' },
+            { role: 'system', content: 'You are a game engine debugger reviewing one turn of a text RPG engine. The engine uses a two-tier coordinate system: macro grid (mx/my, valid range 0-7) and local grid within each macro cell (lx/ly, valid range 0-127 — each macro cell contains a 128x128 local grid). Coordinates in these ranges are valid and normal — do not flag them as anomalies. Scan the diagnostic context for bugs, errors, contradictions, or anomalies. Report every issue you find — one sentence per issue. If nothing is wrong, output exactly one sentence saying so. No headers, no preamble, no explanation.' },
             { role: 'user', content: _wCtx }
           ]
         }, {
@@ -3428,6 +3428,13 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     if (_filledSites.length === 0) {
       context += `(none)\n`;
     }
+
+    context += `\n=== COORDINATE SYSTEM ===\n`;
+    context += `Macro grid: 8x8  (mx: 0-7, my: 0-7)\n`;
+    context += `Local grid per macro cell: 128x128  (lx: 0-127, ly: 0-127)\n`;
+    context += `Cell key format: LOC:mx,my:lx,ly\n`;
+    context += `Position format: L0 cell(mx,my:lx,ly) at overworld | site-local (x,y) @ cell(mx,my:lx,ly) inside a site\n`;
+    context += `lx/ly values of 0-127 are fully valid — do NOT treat them as anomalies.\n`;
 
     context += `\n=== VISIBLE CELLS (Sample) ===\n`;
     const cellKeys = Object.keys(gameState.world.cells || {})
