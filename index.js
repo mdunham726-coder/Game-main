@@ -3669,7 +3669,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     } else {
       const _cellKey = `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`;
       const _cell = gameState.world.cells?.[_cellKey];
-      const _cellSites = _cell?.sites || [];
+      const _cellSites = Array.isArray(_cell?.sites) ? _cell.sites : [];
       if (_cellSites.length === 0) {
         context += `(no sites at current cell)\n`;
       } else {
