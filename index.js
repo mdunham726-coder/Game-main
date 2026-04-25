@@ -1983,7 +1983,7 @@ app.post('/narrate', async (req, res) => {
     if (_narDepth === 3 && gameState?.world?.active_local_space) {
       const _narActiveLS = gameState.world.active_local_space;
       _narSceneDesc = _narActiveLS.description || `The interior of ${_narActiveLS.name || 'a local space'}.`;
-      _narSceneType = _narActiveLS.type || 'local_space_interior';
+      _narSceneType = 'local_space_interior';
       const _lsNpcs = _narActiveLS._visible_npcs || [];
       const _lsNpcNames = _lsNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
       if (_lsNpcs.length > 0) {
@@ -1995,7 +1995,7 @@ app.post('/narrate', async (req, res) => {
       } else {
         npcsStr = '(None visible)';
       }
-      _siteContextBlock = `\n\nCURRENT LOCAL SPACE (you are inside this location):\nName: ${_narActiveLS.name || '(unnamed)'}\nType: ${_narActiveLS.type || 'local_space'}\nNPCs nearby: ${_lsNpcNames}\nIMPORTANT: The name above is COMMITTED. Use it exactly as given. Do not rename or reinterpret this location.`;
+      _siteContextBlock = `\n\nCURRENT LOCAL SPACE (you are inside this location):\nName: ${_narActiveLS.name || '(unnamed)'}\nNPCs nearby: ${_lsNpcNames}\nIMPORTANT: The name above is COMMITTED. Use it exactly as given. Do not rename or reinterpret this location.`;
       const _lsp = gameState?.player?.position;
       if (_lsp && _narActiveLS.grid) {
         const _lsCell = _narActiveLS.grid[_lsp.y]?.[_lsp.x] ?? null;
