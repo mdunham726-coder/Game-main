@@ -1756,6 +1756,142 @@ app.post('/narrate', async (req, res) => {
     const _narCellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
     const _narCell = gameState?.world?.cells?.[_narCellKey] || null;
 
+    // [SITE-FILL] Pre-narration site fill — independent DS call, fires before narrator.
+    // Condition: depth 1, any site in current cell has name===null or description===null.
+    const _sfDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
+    if (_sfDepth === 1 && _narCell?.sites) {
+      const _sfSites = Object.values(_narCell.sites);
+      const _sfUnfilled = _sfSites.filter(s => s.name === null || s.description === null);
+      if (_sfUnfilled.length > 0) {
+        const _sfFoundingClause = gameState.world.founding_prompt
+          ? `World description: "${gameState.world.founding_prompt}". `
+          : '';
+        const _sfCellBiome = _narCell.biome || _narCell.type || 'unknown';
+        const _sfSiteList = _sfUnfilled.map(s => ({
+          site_id: s.site_id,
+          enterable: s.enterable !== false,
+          is_community: s.is_community || false,
+          site_size: s.site_size ?? null
+        }));
+        const _sfPrompt = `${_sfFoundingClause}Cell terrain: ${_sfCellBiome}.\nSites requiring identity fill:\n${JSON.stringify(_sfSiteList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"site_id":"...","name":"...","identity":"...","description":"..."}. Fill every site in the list.`;
+        try {
+          const _sfResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            messages: [{ role: 'user', content: _sfPrompt }],
+            temperature: 0.3
+          }, {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 30000
+          });
+          let _sfRaw = _sfResp?.data?.choices?.[0]?.message?.content || '';
+          let _sfUpdates = null;
+          try { _sfUpdates = JSON.parse(_sfRaw); } catch (_) {
+            const _sfBracket = _sfRaw.match(/\[[\s\S]*\]/);
+            if (_sfBracket) { try { _sfUpdates = JSON.parse(_sfBracket[0]); } catch (_) {} }
+          }
+          if (Array.isArray(_sfUpdates)) {
+            for (const _sfUpd of _sfUpdates) {
+              if (!_sfUpd?.site_id) continue;
+              const _sfTgt = _narCell.sites[_sfUpd.site_id];
+              if (!_sfTgt) continue;
+              for (const _sfField of ['name', 'identity', 'description']) {
+                if (_sfUpd[_sfField] != null && _sfTgt[_sfField] == null) {
+                  _sfTgt[_sfField] = _sfUpd[_sfField];
+                  console.log(`[SITE-FILL] ${_sfUpd.site_id}.${_sfField} = "${_sfUpd[_sfField]}"`);
+                  const _sfIk = _sfTgt.interior_key || (_sfUpd.site_id + '/l2');
+                  if (_sfIk && gameState.world.sites?.[_sfIk]) {
+                    if (_sfField === 'name') gameState.world.sites[_sfIk].name = _sfUpd[_sfField];
+                    if (_sfField === 'identity') gameState.world.sites[_sfIk].type = _sfUpd[_sfField];
+                  }
+                }
+              }
+              if (_sfTgt.name !== null && _sfTgt.description !== null) {
+                _sfTgt.is_filled = true;
+              }
+            }
+            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+          } else {
+            console.warn('[SITE-FILL] Failed to parse fill response — blocking narration');
+            return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is taking shape. Please try again.', state: gameState, diagnostics });
+          }
+        } catch (_sfErr) {
+          console.error('[SITE-FILL] DS call failed:', _sfErr.message);
+          return res.json({ sessionId: resolvedSessionId, error: `site_fill_failed: ${_sfErr.message}`, narrative: 'The world is taking shape. Please try again.', state: gameState, diagnostics });
+        }
+      }
+    }
+
+    // [LS-FILL] Pre-narration local space fill — independent DS call, fires before narrator.
+    // Condition: depth 2, any local space in active site has name===null or description===null.
+    if (_sfDepth === 2 && gameState?.world?.active_site?.local_spaces) {
+      const _lsf = gameState.world.active_site;
+      const _lsfEntries = Object.entries(_lsf.local_spaces);
+      const _lsfUnfilled = _lsfEntries.filter(([, s]) => s.name === null || s.description === null);
+      if (_lsfUnfilled.length > 0) {
+        const _lsfCtxParts = [
+          _lsf.name ? `Site name: "${_lsf.name}".` : '',
+          _lsf.description ? `Site description: "${_lsf.description}".` : '',
+          _lsf.site_size != null ? `Site size: ${_lsf.site_size}.` : ''
+        ].filter(Boolean);
+        const _lsfSiteContext = _lsfCtxParts.length > 0 ? _lsfCtxParts.join(' ') : 'A site interior.';
+        const _lsfSpaceList = _lsfUnfilled.map(([key, s]) => ({
+          local_space_id: key,
+          x: s.x,
+          y: s.y
+        }));
+        const _lsfPrompt = `${_lsfSiteContext}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+        try {
+          const _lsfResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            messages: [{ role: 'user', content: _lsfPrompt }],
+            temperature: 0.3
+          }, {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 30000
+          });
+          let _lsfRaw = _lsfResp?.data?.choices?.[0]?.message?.content || '';
+          let _lsfUpdates = null;
+          try { _lsfUpdates = JSON.parse(_lsfRaw); } catch (_) {
+            const _lsfBracket = _lsfRaw.match(/\[[\s\S]*\]/);
+            if (_lsfBracket) { try { _lsfUpdates = JSON.parse(_lsfBracket[0]); } catch (_) {} }
+          }
+          if (Array.isArray(_lsfUpdates)) {
+            for (const _lsfUpd of _lsfUpdates) {
+              if (!_lsfUpd?.local_space_id) continue;
+              const _lsfTgt = _lsf.local_spaces[_lsfUpd.local_space_id];
+              if (!_lsfTgt) continue;
+              for (const _lsfField of ['name', 'description']) {
+                if (_lsfUpd[_lsfField] != null && _lsfTgt[_lsfField] == null) {
+                  _lsfTgt[_lsfField] = _lsfUpd[_lsfField];
+                  console.log(`[LS-FILL] ${_lsfUpd.local_space_id}.${_lsfField} = "${_lsfUpd[_lsfField]}"`);
+                  if (_lsfTgt._generated_interior?.[_lsfField] == null) {
+                    if (_lsfTgt._generated_interior) _lsfTgt._generated_interior[_lsfField] = _lsfUpd[_lsfField];
+                  }
+                }
+              }
+              if (_lsfTgt.name !== null && _lsfTgt.description !== null) {
+                _lsfTgt.is_filled = true;
+                if (_lsfTgt._generated_interior) _lsfTgt._generated_interior.is_filled = true;
+              }
+            }
+            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+          } else {
+            console.warn('[LS-FILL] Failed to parse fill response — blocking narration');
+            return res.json({ sessionId: resolvedSessionId, error: 'ls_fill_failed', narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
+          }
+        } catch (_lsfErr) {
+          console.error('[LS-FILL] DS call failed:', _lsfErr.message);
+          return res.json({ sessionId: resolvedSessionId, error: `ls_fill_failed: ${_lsfErr.message}`, narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
+        }
+      }
+    }
+
     // Build safe narration prompt with guards against undefined values
     let nearbyStr = '';
     if (scene.nearbyCells && Array.isArray(scene.nearbyCells)) {
@@ -1777,27 +1913,13 @@ app.post('/narrate', async (req, res) => {
     // Phase 5B: Build site context block from current cell's sites
     let _siteContextBlock = '';
     const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites) : [];
-    const _hasFilled   = _narCellSites.some(s => s.is_filled === true);
-    const _hasUnfilled = _narCellSites.some(s => !s.is_filled);
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
         .map(s => `- site_id: ${s.site_id} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'} | is_community: ${s.is_community ? 'YES' : 'NO'}${s.site_size != null ? ` | site_size: ${s.site_size}` : ''}`)
         .join('\n');
-      let _instructionLines = '';
-      if (_hasFilled && _hasUnfilled) {
-        // Mixed: scope each instruction explicitly
-        _instructionLines = '\nSites that already have a name must keep that exact name — do not change or replace it.' +
-                            '\nSites marked (unfilled) may receive identity, name, and description via a site_updates block.';
-      } else if (_hasFilled) {
-        // All filled: lock only + narration usage
-        _instructionLines = '\nAll sites above have stored names. Use them exactly as written — do not invent alternatives.' +
-                            '\nWhen narrating the overworld, refer to any named site by its proper name rather than a generic description.';
-      } else {
-        // All unfilled: invitation only
-        _instructionLines = '\nAll sites above are unfilled. You may introduce identity, name, and description for them via a site_updates block.';
-      }
-      // Enterable constraint — non-enterable sites must never be narrated as accessible.
-      _instructionLines += '\nSites with enterable: NO must NOT be described as having open doors, visible interiors, accessible entrances, or any language implying the player can enter or explore them.';
+      const _instructionLines = '\nAll sites above have stored names. Use them exactly as written — do not invent alternatives.' +
+                                '\nWhen narrating the overworld, refer to any named site by its proper name rather than a generic description.' +
+                                '\nSites with enterable: NO must NOT be described as having open doors, visible interiors, accessible entrances, or any language implying the player can enter or explore them.';
       _siteContextBlock = `\n\nSITES AT CURRENT LOCATION:\n${_siteLines}${_instructionLines}`;
     }
 
@@ -1909,8 +2031,8 @@ app.post('/narrate', async (req, res) => {
         _narTileType = _cellType;
         const _cellNpcIds = _gridCell?.npc_ids || [];
         const _cellNpcs = (_narActiveSite.npcs || []).filter(n => _cellNpcIds.includes(n.id)).map(n => n.name || n.id);
-        const _bldInfo = _gridCell?.type === 'local_space' && _narActiveSite.local_spaces?.[_gridCell.local_space_id]
-          ? ` (${_narActiveSite.local_spaces[_gridCell.local_space_id].purpose}: ${_narActiveSite.local_spaces[_gridCell.local_space_id].name})`
+        const _bldInfo = _gridCell?.type === 'local_space' && _narActiveSite.local_spaces?.[_gridCell.local_space_id]?.name
+          ? ` (${_narActiveSite.local_spaces[_gridCell.local_space_id].name})`
           : '';
         const _tileDesc = _cellType === 'local_space'
           ? `local space${_bldInfo}. You are OUTSIDE this local space. Describe the façade, entrance, and surroundings only. Do NOT describe or infer any interior.`
@@ -1935,13 +2057,7 @@ app.post('/narrate', async (req, res) => {
       ? '\nNOTE: Player moved to a new overworld cell. Any sites visible here belong to this cell — they are not changes to the previous location.\n'
       : '';
 
-    // Approach C: founding prompt clause — natural language grounding, not a classification layer
-    const _foundingPromptClause = gameState.world.founding_prompt
-      ? `The player described this world as: "${gameState.world.founding_prompt}". Site identities should feel consistent with that description — a site that would feel wrong or anachronistic given those words is wrong. `
-      : '';
-    const _phase5Instruction = _hasUnfilled
-      ? `- Phase 5: ${_foundingPromptClause}One or more sites here have not yet been filled. Assign an identity, name, and description to each unfilled site and use the name in your narrative prose — do NOT refer to any site by a generic descriptor once you have named it. Do not announce or explain that you are naming it; simply use the name as if it has always been known. Sites marked enterable: YES must receive an identity that can be physically entered and explored — a structure, cave, vault, ruin, or similar enclosed space. A standing stone, open marker, or natural terrain feature is not enterable. The identity must name the place itself, not a feature within it — it must describe what the whole site fundamentally is. A well, shrine, stall, signpost, or any other element that exists inside or around a place is a feature, not a place. If the surrounding context implies a community, name the community. If it implies a single enclosed structure, name the structure. Sites marked is_community: YES are confirmed by the engine to host a human community — assign an identity appropriate to a community of that scale (site_size 2–3 = small settlement, 5–6 = moderate town, 8–9 = large city). Sites marked is_community: NO must not be assumed to be communities unless the world description makes one clearly implied. After your narration paragraph, you MUST append a site_updates block on its own line. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Required: site_id and name. You SHOULD also include identity and description. Only reference site_ids from SITES AT CURRENT LOCATION.`
-      : `- Phase 5: After your narration paragraph, you may optionally append a site_updates block on its own line to record site identity. Format: [site_updates: [{"site_id":"...","name":"...","identity":"...","description":"..."}]]. Only reference site_ids from SITES AT CURRENT LOCATION. All fields except site_id are optional. Omit this block entirely if no update is needed.`;
+
 
     // Issue 2: FREEFORM action acknowledgment — inject when action has no mechanical effect.
     // parsedIntent is populated AFTER narration — do not reference here.
@@ -2167,12 +2283,11 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. If NPCs PRESENT is '(None visible)', no person exists anywhere in this location.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC name rules: Each NPC in NPC data has a npc_name field (null or string) and an is_learned field (true/false). (1) If ANY NPC in NPCs PRESENT has npc_name:null this turn, you MUST silently assign a permanent name to ALL such NPCs and emit a single [npc_updates: [...]] block at the END of your response containing all name assignments — regardless of whether any assigned name appears in narration. Only include NPCs where npc_name is currently null. Do NOT use the assigned name(s) in narration unless is_learned is also true for that NPC. (2) If npc_name is already set in the data, use that exact name in all future references — never alter or regenerate it. (3) Only use the NPC's proper name in narration when is_learned is true. If false, describe by role, appearance, or context — not by name. The NPC may have a name in the world that the player simply does not know yet. (4) If npc_name is set, is_learned is false, and the NPC's proper name appears anywhere in your narration this turn — through self-introduction, dialogue, overhearing, or any other means — you MUST append [npc_updates: [{"id": "npc_id", "is_learned": true}]]. This is deterministic: if you used the name in narration while is_learned was false, the update is required. (5) If name assignment and learning both occur in the same beat, combine them: [npc_updates: [{"id": "npc_id", "npc_name": "Name", "is_learned": true}]]. (6) Only emit [npc_updates:] when something actually changes. Do not emit it on turns where nothing changed.
-${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}`;
+${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
     // Reset capture tracking for this turn
-    gameState.world._lastSiteCapture = { detected: false };
     gameState.world._lastNpcCapture = { detected: false };
 
     const _makeNarCall = async () => {
@@ -2224,92 +2339,6 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_phase5Instruction}${_emot
     } catch (parseErr) {
       console.error('Failed to parse DeepSeek response:', parseErr.message);
       _narratorStatus = 'malformed'; // parse threw
-    }
-
-    // Phase 5D+E: Extract [site_updates: [...]] block, first-fill capture, legacy mirror sync
-    // v1.53.0: Bracket-counting unconditional strip (mirrors Phase 5F architecture).
-    // Handles model tag variants ([site_updates:] / [sites_updates:] / spacing deviations).
-    // Strip is always attempted first; JSON parse runs on the extracted raw string only.
-    {
-      // Part 1: Bracket-counting strip — find tag, walk brackets, extract and remove from narrative.
-      const _suTagIdx = (() => {
-        const a = narrative.indexOf('[site_updates:');
-        const b = narrative.indexOf('[sites_updates:');
-        if (a === -1) return b;
-        if (b === -1) return a;
-        return Math.min(a, b);
-      })();
-      let _suRaw = null;
-      if (_suTagIdx !== -1) {
-        let _suDepth = 0, _suEnd = -1;
-        for (let _si = _suTagIdx; _si < narrative.length; _si++) {
-          if (narrative[_si] === '[') _suDepth++;
-          else if (narrative[_si] === ']') {
-            _suDepth--;
-            if (_suDepth === 0) { _suEnd = _si + 1; break; }
-          }
-        }
-        if (_suEnd !== -1) {
-          _suRaw = narrative.slice(_suTagIdx, _suEnd);
-          narrative = (narrative.slice(0, _suTagIdx) + narrative.slice(_suEnd)).trim();
-        } else {
-          // Unclosed bracket — strip tail to prevent leakage
-          _suRaw = narrative.slice(_suTagIdx);
-          narrative = narrative.slice(0, _suTagIdx).trim();
-          console.warn('[PHASE5D] unclosed [site_updates: bracket — stripped tail from narrative');
-        }
-      }
-      // Part 2: Regex+JSON parse on the extracted raw string (not on the cleaned narrative).
-      // Fallback regex also catches any edge cases the bracket-counter missed.
-      const _suMatch = _suRaw ? _suRaw.match(/\[sites?_updates:\s*(\[[\s\S]*?\])\s*\]/) : narrative.match(/\[sites?_updates:\s*(\[[\s\S]*?\])\s*\]/);
-      if (_suMatch && !_suRaw) {
-        // Regex caught something the bracket-counter missed — strip it now
-        narrative = (narrative.slice(0, _suMatch.index) + narrative.slice(_suMatch.index + _suMatch[0].length)).trim();
-      }
-      if (_suRaw || _suMatch) {
-        // Build capture tracking record
-        const _cr = { detected: true, parseSuccess: false, updatesApplied: 0, skipped: 0, capturedNames: [], changes: [] };
-        try {
-          const _suInner = _suMatch ? _suMatch[1] : null;
-          const _updates = _suInner ? JSON.parse(_suInner) : null;
-          if (!_updates) throw new Error('no inner array extracted');
-          _cr.parseSuccess = true;
-          const _capCell = gameState.world.cells?.[_narCellKey];
-          if (Array.isArray(_updates) && _capCell?.sites) {
-            for (const _upd of _updates) {
-              if (!_upd?.site_id) continue;
-              const _tgt = _capCell.sites[_upd.site_id];
-              if (!_tgt) continue; // site_id not in this cell — skip
-              // First-fill only: never overwrite existing values
-              let _anyFieldWritten = false;
-              for (const _field of ['name', 'identity', 'description']) {
-                if (_upd[_field] != null && _tgt[_field] == null) {
-                  _tgt[_field] = _upd[_field];
-                  _anyFieldWritten = true;
-                  _cr.updatesApplied++;
-                  _cr.changes.push({ site_id: _upd.site_id, field: _field, old: null, new: _upd[_field] });
-                  if (_field === 'name') _cr.capturedNames.push({ site_id: _upd.site_id, value: _upd[_field] });
-                  console.log(`[SITE_CAPTURE] site ${_upd.site_id} ${_field} set to "${_upd[_field]}"`);
-                  // Mirror sync — name and identity both propagate to world.sites stub
-                  const _ik5e = _tgt.interior_key || (_upd.site_id ? _upd.site_id + '/l2' : null);
-                  if (_ik5e && gameState.world.sites?.[_ik5e]) {
-                    if (_field === 'name') gameState.world.sites[_ik5e].name = _upd[_field];
-                    if (_field === 'identity') gameState.world.sites[_ik5e].type = _upd[_field];
-                  }
-                } else if (_upd[_field] != null && _tgt[_field] != null) {
-                  _cr.skipped++;
-                  console.log(`[SITE_CAPTURE] skipped (already set): ${_upd.site_id} ${_field}`);
-                }
-              }
-              // Mark site as filled once at least one field was successfully written
-              if (_anyFieldWritten) _tgt.is_filled = true;
-            }
-          }
-        } catch (_suErr) {
-          console.warn('[PHASE5] site_updates parse failed:', _suErr.message);
-        }
-        gameState.world._lastSiteCapture = _cr;
-      }
     }
 
     // Phase 5F: Extract [npc_updates: [...]] block — NPC name and learning persistence
@@ -3326,8 +3355,8 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     }
     const _dbgVisible = _dbgLS._visible_npcs || [];
     context += `\n=== ACTIVE LOCAL SPACE (L2) ===\n`;
-    context += `Name: ${_dbgLS.name || '(unnamed)'}\n`;
-    context += `Type: ${_dbgLS.type || '(unknown)'}\n`;
+    context += `Name: ${_dbgLS.name || '(unfilled)'}\n`;
+    context += `Description: ${_dbgLS.description || '(unfilled)'}\n`;
     // v1.81.3: local_space.npcs is always [] (never populated — dead field removed from WorldGen).
     // Correct sources: npc_ids = IDs assigned to this space; _dbgVisible = resolved NPCs at player tile.
     context += `NPCs in space: ${(_dbgLS.npc_ids || []).length}\n`;
@@ -3401,22 +3430,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       context += `  - none\n`;
     }
 
-    const _dbgCap = gameState.world._lastSiteCapture;
-    context += `\n=== SITE CAPTURE (LAST TURN) ===\n`;
-    if (!_dbgCap || !_dbgCap.detected) {
-      context += `site_updates detected : no\n`;
-    } else {
-      context += `site_updates detected : yes\n`;
-      context += `parse result          : ${_dbgCap.parseSuccess ? 'success' : 'FAILED'}\n`;
-      context += `updates applied       : ${_dbgCap.updatesApplied}\n`;
-      if (_dbgCap.changes?.length > 0) {
-        _dbgCap.changes.forEach(c => { context += `  ${c.site_id}.${c.field}: ${c.old === null ? 'null' : `"${c.old}"`} -> "${c.new}"\n`; });
-      }
-      context += `skipped               : ${_dbgCap.skipped}\n`;
-      if (_dbgCap.capturedNames?.length > 0) {
-        _dbgCap.capturedNames.forEach(n => { context += `names captured        : ${n.site_id} -> "${n.value}"\n`; });
-      }
-    }
+
 
     context += `\n=== SITE INTERIOR REGISTRY ===\n`;
     const siteKeys = Object.keys(gameState.world.sites || {});

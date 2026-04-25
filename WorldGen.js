@@ -2242,15 +2242,6 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
   const local_spaces = {};
   const localSpaceCount = st.local_space_count;
   let start_local_space_id = null;
-  const localSpaceNamesByPurpose = {
-    tavern: ["The Wanderer's Rest", "The Drunk Griffin", "The Ale House"],
-    house: ["Homestead", "Cottage", "Dwelling", "Residence"],
-    shop: ["General Store", "Trading Post", "Stall"],
-    guildhall: ["Guild Hall", "Council House"],
-    temple: ["Temple of Light", "Sacred Shrine"],
-    palace: ["The Grand Palace", "Royal Keep"]
-  };
-  const possiblePurposes = ["house", "house", "shop", "tavern", "house", "temple", "guildhall"];
   for (let i = 0; i < localSpaceCount; i++) {
     let bx = 0, by = 0, tries = 0;
     do {
@@ -2259,26 +2250,17 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
       tries++;
       if (tries > 200) break;
     } while (grid[by][bx]);
-    // First local space anchored to prompt-implied purpose when provided (startup path only).
-    // options.local_space_purpose is a transient value passed from the routing block via enterSite.
-    const purpose = (i === 0 && options.local_space_purpose)
-      ? options.local_space_purpose
-      : possiblePurposes[rng.nextInt(possiblePurposes.length)];
-    // Name: exact startup name (highest priority) > pool match > Title Case from purpose
-    const namePool = localSpaceNamesByPurpose[purpose]
-      || [purpose.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())];
-    const name = (i === 0 && options.local_space_name)
-      ? options.local_space_name
-      : namePool[rng.nextInt(namePool.length)];
     const local_space_id = `ls_${i}`;
     grid[by][bx] = { type: "local_space", local_space_id: local_space_id, npc_ids: [] };
     local_spaces[local_space_id] = {
-      name,
-      purpose,
+      local_space_id,
+      parent_site_id: siteId,
+      enterable: true,
+      is_filled: false,
+      name: null,
+      description: null,
       x: bx,
       y: by,
-      width: 1,
-      height: 1,
       npc_ids: []
     };
     if (start_local_space_id === null) start_local_space_id = local_space_id;
@@ -2364,12 +2346,12 @@ function generateLocalSpace(local_space_id, localSpaceData, siteSize = 1) {
     grid[cy][cx].npc_ids = npc_ids;
   }
   return {
-    id: local_space_id,
-    name: localSpaceData?.name || local_space_id,
-    purpose: localSpaceData?.purpose || 'unknown',
-    description: localSpaceData?.purpose
-      ? `The interior of a ${localSpaceData.purpose.replace(/_/g, ' ')}.`
-      : 'A local interior.',
+    local_space_id,
+    parent_site_id: localSpaceData?.parent_site_id ?? null,
+    enterable: localSpaceData?.enterable ?? true,
+    is_filled: localSpaceData?.is_filled ?? false,
+    name: localSpaceData?.name ?? null,
+    description: localSpaceData?.description ?? null,
     width: w,
     height: h,
     grid,
