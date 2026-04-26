@@ -69,11 +69,11 @@ function render(p, session) {
     if (!l) continue;
     const lo = l.toLowerCase();
     let colored;
-    if (lo.startsWith('error') || lo.startsWith('[scan failed') || lo.includes('missing') || lo.includes('undefined')) {
+    if (lo.startsWith('error') || lo.startsWith('[scan failed') || lo.includes('missing') || lo.includes('undefined') || lo.includes('unfilled') || lo.includes('partial fill') || lo.includes('not populated') || lo.includes('incomplete')) {
       colored = `  ${RED}${l}${R}`;
-    } else if (lo.startsWith('warn') || lo.includes('inconsisten') || lo.includes('mismatch') || lo.includes('unexpected')) {
+    } else if (lo.startsWith('warn') || lo.includes('inconsisten') || lo.includes('mismatch') || lo.includes('unexpected') || lo.includes('verify') || lo.includes('blank')) {
       colored = `  ${YLW}${l}${R}`;
-    } else if (lo.includes('no issue') || lo.includes('all clear') || lo.includes('no error') || lo.includes('no bug') || lo.includes('everything looks') || lo.includes('nothing wrong') || lo.includes('no problem')) {
+    } else if (lo.includes('no issue') || lo.includes('all clear') || lo.includes('no error') || lo.includes('no bug') || lo.includes('everything looks') || lo.includes('nothing wrong') || lo.includes('no problem') || lo.includes('nothing is wrong') || lo.includes('no faults') || lo.includes('no genuine')) {
       colored = `  ${GRN}${l}${R}`;
     } else {
       colored = `  ${WHT}${l}${R}`;
