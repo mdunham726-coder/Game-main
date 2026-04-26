@@ -1994,15 +1994,29 @@ app.post('/narrate', async (req, res) => {
     // [LS-FILL-ACTIVE] Pre-narration fill for the currently active local space — handles L2 direct starts.
     // Condition: depth 3, active_local_space and active_site exist, stub is unfilled.
     // This is additive — does NOT replace or alter the existing [LS-FILL] block above.
+    // v1.83.5: KEY-MISMATCH FIX — active_local_space.local_space_id is the full composite ID
+    // (e.g. "site123_ls_0") but active_site.local_spaces is keyed by short ID ("ls_0").
+    // Derive short key by stripping the site ID prefix. Fallback to full ID + warn (never skip).
     if (_sfDepth === 3 && gameState?.world?.active_local_space && gameState?.world?.active_site) {
-      const _lsfaAls  = gameState.world.active_local_space;
-      const _lsfaId   = _lsfaAls?.local_space_id;
-      if (!_lsfaId) {
+      const _lsfaAls     = gameState.world.active_local_space;
+      const _lsfaFullId  = _lsfaAls?.local_space_id;
+      if (!_lsfaFullId) {
         console.warn('[LS-FILL-ACTIVE] WARNING: active_local_space has no local_space_id — cannot fill');
       } else {
+        // Derive short key: strip "${siteId}_" prefix from the full composite ID.
+        const _lsfaSiteId  = gameState.world.active_site.id || gameState.world.active_site.site_id || '';
+        const _lsfaPrefix  = _lsfaSiteId ? `${_lsfaSiteId}_` : '';
+        let   _lsfaId;
+        if (_lsfaPrefix && _lsfaFullId.startsWith(_lsfaPrefix)) {
+          _lsfaId = _lsfaFullId.slice(_lsfaPrefix.length);
+        } else {
+          // Prefix not found — legacy save or short ID already present. Use as-is + warn.
+          _lsfaId = _lsfaFullId;
+          console.warn(`[LS-FILL-ACTIVE] WARNING: could not strip prefix "${_lsfaPrefix}" from local_space_id "${_lsfaFullId}" — using full ID as short key (legacy/edge case)`);
+        }
         const _lsfaStub = gameState.world.active_site?.local_spaces?.[_lsfaId];
         if (!_lsfaStub) {
-          console.error(`[LS-FILL-ACTIVE] ERROR: no stub found for local_space_id=${_lsfaId} in active_site.local_spaces — state mismatch`);
+          console.error(`[LS-FILL-ACTIVE] ERROR: no stub found for key="${_lsfaId}" (fullId="${_lsfaFullId}") in active_site.local_spaces — state mismatch`);
         } else {
           if (_lsfaStub._generated_interior && _lsfaAls !== _lsfaStub._generated_interior) {
             console.warn(`[LS-FILL-ACTIVE] WARNING: active_local_space reference mismatch with stub._generated_interior for id=${_lsfaId}`);
@@ -2015,6 +2029,7 @@ app.post('/narrate', async (req, res) => {
               _lsfaSite.site_size  != null ? `Site size: ${_lsfaSite.site_size}.` : ''
             ].filter(Boolean);
             const _lsfaSiteCtx  = _lsfaCtxParts.length > 0 ? _lsfaCtxParts.join(' ') : 'A site interior.';
+            // Send short key in prompt — DS response must echo it back for the write guard to match.
             const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y }];
             const _lsfaPrompt   = `${_lsfaSiteCtx}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
             try {
@@ -2035,7 +2050,7 @@ app.post('/narrate', async (req, res) => {
               if (Array.isArray(_lsfaUpdates)) {
                 for (const _lsfaUpd of _lsfaUpdates) {
                   if (!_lsfaUpd?.local_space_id) continue;
-                  // Guard: only update the expected stub
+                  // Guard: only update the expected stub (match on short key)
                   if (_lsfaUpd.local_space_id !== _lsfaId) continue;
                   for (const _lsfaField of ['name', 'description']) {
                     if (_lsfaUpd[_lsfaField] != null && _lsfaStub[_lsfaField] == null) {
@@ -2052,6 +2067,16 @@ app.post('/narrate', async (req, res) => {
                     _lsfaStub.is_filled = true;
                     if (_lsfaStub._generated_interior) _lsfaStub._generated_interior.is_filled = true;
                   }
+                }
+                // v1.83.5: Post-write guard — no world without fill.
+                // Consistent with [NARRATION-GATE] / [LS-FILL] philosophy.
+                // Guards against: DS returns valid array but with zero matching IDs (silent zero-write path).
+                if (_lsfaStub.name === null || _lsfaStub.description === null) {
+                  console.warn(`[LS-FILL-ACTIVE] Post-write guard: stub still incomplete after write loop (id=${_lsfaId}) — blocking narration`);
+                  if (!gameState.world._fillLog) gameState.world._fillLog = [];
+                  gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'localspace_active', error_label: 'fill_incomplete', affected_id: _lsfaId });
+                  if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+                  return res.json({ sessionId: resolvedSessionId, error: 'ls_fill_active_failed', narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
                 }
                 sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
               } else {
@@ -2139,7 +2164,24 @@ app.post('/narrate', async (req, res) => {
       }
     }
 
-    // Freshness guarantee: recompute visible NPCs before narration payload assembly
+    // [LOCAL-SPACE-GATE] Structural safety net for depth-3 narration — parallel to [NARRATION-GATE] for sites.
+    // LAYERED PROTECTION — not duplicate logic:
+    //   [LS-FILL-ACTIVE] failure = fill pipeline failure (API error, parse error, zero writes after key fix)
+    //   [LOCAL-SPACE-GATE]       = catches any remaining path where active_local_space is still incomplete
+    // Different error codes, different timing windows. Do not collapse these.
+    if (_narDepth === 3 && gameState?.world?.active_local_space) {
+      const _lgAls = gameState.world.active_local_space;
+      if (_lgAls.name === null || _lgAls.description === null) {
+        const _lgMissing = ['name','description'].filter(f => _lgAls[f] === null || _lgAls[f] === undefined);
+        console.warn(`[LOCAL-SPACE-GATE] Active local space incomplete — blocking narration. missing=${_lgMissing.join(',')}`);
+        if (!gameState.world._fillLog) gameState.world._fillLog = [];
+        gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'localspace', error_label: 'incomplete_active_local_space', affected_id: _lgAls.local_space_id ?? null, missing: _lgMissing });
+        if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+        return res.json({ sessionId: resolvedSessionId, error: 'local_space_incomplete',
+          narrative: 'The interior space is still taking shape. Please try again.',
+          state: gameState, diagnostics });
+      }
+    }
     if (_narDepth === 2 && _narActiveSite && gameState?.player?.position) {
       _narActiveSite._visible_npcs = Actions.computeVisibleNpcs(_narActiveSite, gameState.player.position);
     } else if (_narDepth === 3 && gameState?.world?.active_local_space && gameState?.player?.position) {
@@ -3304,7 +3346,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
           temperature: 0.3,
           max_tokens: 1500,
           messages: [
-            { role: 'system', content: 'You are a single-turn fault scanner for a text RPG engine, operating with the same diagnostic standards as Mother Brain. After every game turn you receive one snapshot of the full engine diagnostic state. Scan it for genuine faults using the rules below. List every genuine fault — one sentence per fault. If nothing is genuinely wrong, output exactly one sentence saying so. No headers, no preamble, no explanation. Do not report a blank or legacy field as a fault unless one of the rules below explicitly identifies it as a fault.\n\nCOORDINATE SYSTEM: The engine uses a two-tier coordinate system — macro grid (mx/my, valid range 0–7) and local grid within each macro cell (lx/ly, valid range 0–127, 128x128 grid per macro cell). Coordinates within these ranges are valid and normal — do not flag them as anomalies.\n\nSITE INTERIOR STATE — context format: each site slot line reads: site_id | name | slot_identity:VAL | enterable:YES/NO | filled:YES/NO | interior:STATE. The label is slot_identity (not identity) — it reflects the canonical cell.sites slot field. slot_identity:(null) means the identity has not been filled yet.\n\nSITE INTERIOR STATE — fault classification: MISSING_INTERIOR_KEY (filled but interior_key absent) = fault. MISSING_INTERIOR_RECORD (interior_key present but no world.sites mirror) = fault. PENDING_FILL while the player is currently inside the site = fault. PENDING_FILL pre-entry (player not yet inside) = normal. NOT_GENERATED (player has not yet entered) = normal. GENERATED (full site record) = normal.\n\nIS_FILLED RULE: is_filled=true requires all three fields to be non-null in the slot: name, description, and slot_identity. A site showing filled:NO when name is populated but slot_identity:(null) is a partial fill fault. A site showing filled:NO when name is also null is simply unfilled — not a partial fill fault.\n\nSITE PARTIAL FILL: If a site record shows slot_identity:(null) while name is populated — fault (applies to v1.83.4+ saves; pre-v1.83.4 saves may legitimately have name without slot_identity as an expected migration state, not a fault).\n\nACTIVE LOCAL SPACE: If the player is at depth 3 (inside a local space) and the active local space shows name === null or description === null — fault. The player is inside an unnamed or undescribed space.\n\nL2-START FILL PIPELINE: On L2-direct-start sessions, [L2-START-SITE-FILL] fires before enterSite on turn 1 to fill the starting site slot. This is expected and normal. If [L2-START-SITE-FILL] fails, the server returns error: site_fill_failed — this is a fault. If the DeepSeek response was missing the identity field, fill_log will show error_label: missing_identity — this is a fault.\n\nNARRATION GATE: [NARRATION-GATE] enforces canonical slot completeness before every narration call. If the active site slot is missing name, description, or slot_identity, narration is blocked and the server returns error: site_incomplete — fault. If the canonical slot cannot be resolved via interior_key lookup, the server returns error: site_state_integrity_failure — fault.\n\nB3 REMOVAL: The B3 hash name generator (generateSiteName) was fully removed in v1.83.4. Any [B3-NAME] or [B3-CALLER] log entry is a regression if it appears in a v1.83.4+ session — flag as fault.\n\nCB WARNINGS: UNRESOLVED (entity ref could not be matched to any visible NPC — facts were silently dropped) = fault. FUZZY (entity ref matched via approximate matching) = not a fault, but note it for verification. L0-SKIP (l0_entity_candidates_skipped) = expected behavior at the overworld layer, not a fault.\n\nL0 BEHAVIOR: An empty TRUTH block at L0 when the player just moved to a new cell is correct engine behavior — not a fault.\n\nNARRATOR FAILURES: A NARRATION FAILED entry in the flight recorder = fault. narrator_status:malformed (narrator returned no usable content) = fault. narrator_status:ok = normal.\n\nACTION RESOLUTION: NO_POSITION (world.position unavailable) = fault. ENGINE_GUARD (depth=3 with no active_local_space) = fault. NO_RESOLVE_LOG (player_move_resolved never called) = fault. NO_DIRECTION / VOID_CELL / L2_BOUNDARY = normal gameplay blocks, not faults.' },
+            { role: 'system', content: 'You are a single-turn fault scanner for a text RPG engine, operating with the same diagnostic standards as Mother Brain. After every game turn you receive one snapshot of the full engine diagnostic state. Scan it for genuine faults using the rules below. List every genuine fault — one sentence per fault. If nothing is genuinely wrong, output exactly one sentence saying so. No headers, no preamble, no explanation. Do not report a blank or legacy field as a fault unless one of the rules below explicitly identifies it as a fault.\n\nCOORDINATE SYSTEM: The engine uses a two-tier coordinate system — macro grid (mx/my, valid range 0–7) and local grid within each macro cell (lx/ly, valid range 0–127, 128x128 grid per macro cell). Coordinates within these ranges are valid and normal — do not flag them as anomalies.\n\nSITE INTERIOR STATE — context format: each site slot line reads: site_id | name | slot_identity:VAL | enterable:YES/NO | filled:YES/NO | interior:STATE. The label is slot_identity (not identity) — it reflects the canonical cell.sites slot field. slot_identity:(null) means the identity has not been filled yet.\n\nSITE INTERIOR STATE — fault classification: MISSING_INTERIOR_KEY (filled but interior_key absent) = fault. MISSING_INTERIOR_RECORD (interior_key present but no world.sites mirror) = fault. PENDING_FILL while the player is currently inside the site = fault. PENDING_FILL pre-entry (player not yet inside) = normal. NOT_GENERATED (player has not yet entered) = normal. GENERATED (full site record) = normal.\n\nIS_FILLED RULE: is_filled=true requires all three fields to be non-null in the slot: name, description, and slot_identity. A site showing filled:NO when name is populated but slot_identity:(null) is a partial fill fault. A site showing filled:NO when name is also null is simply unfilled — not a partial fill fault.\n\nSITE PARTIAL FILL: If a site record shows slot_identity:(null) while name is populated — fault (applies to v1.83.4+ saves; pre-v1.83.4 saves may legitimately have name without slot_identity as an expected migration state, not a fault).\n\nACTIVE LOCAL SPACE: If the player is at depth 3 (inside a local space) and the active local space shows name === null or description === null — fault. The player is inside an unnamed or undescribed space.\n\nL2-START FILL PIPELINE: On L2-direct-start sessions, [L2-START-SITE-FILL] fires before enterSite on turn 1 to fill the starting site slot. This is expected and normal. If [L2-START-SITE-FILL] fails, the server returns error: site_fill_failed — this is a fault. If the DeepSeek response was missing the identity field, fill_log will show error_label: missing_identity — this is a fault.\n\nNARRATION GATE: [NARRATION-GATE] enforces canonical slot completeness before every narration call. If the active site slot is missing name, description, or slot_identity, narration is blocked and the server returns error: site_incomplete — fault. If the canonical slot cannot be resolved via interior_key lookup, the server returns error: site_state_integrity_failure — fault.\n\nB3 REMOVAL: The B3 hash name generator (generateSiteName) was fully removed in v1.83.4. Any [B3-NAME] or [B3-CALLER] log entry is a regression if it appears in a v1.83.4+ session — flag as fault.\n\nCB WARNINGS: UNRESOLVED (entity ref could not be matched to any visible NPC) = fault and candidate narrator hallucination. ContinuityBrain extracted an entity from narration but could not match it to any visible NPC — the narrator introduced an entity not grounded in visible engine state. Report as: candidate hallucination — narrator described [entity_ref], but no matching NPC exists in visible engine registry. The UNRESOLVED signal alone is the sufficient trigger — do not re-examine narration text beyond identifying the entity_ref. FUZZY (entity ref matched via approximate matching) = not a fault, but note it for verification. L0-SKIP (l0_entity_candidates_skipped) = expected behavior at the overworld layer, not a fault.\n\nL0 BEHAVIOR: An empty TRUTH block at L0 when the player just moved to a new cell is correct engine behavior — not a fault.\n\nNARRATOR FAILURES: A NARRATION FAILED entry in the flight recorder = fault. narrator_status:malformed (narrator returned no usable content) = fault. narrator_status:ok = normal.\n\nACTION RESOLUTION: NO_POSITION (world.position unavailable) = fault. ENGINE_GUARD (depth=3 with no active_local_space) = fault. NO_RESOLVE_LOG (player_move_resolved never called) = fault. NO_DIRECTION / VOID_CELL / L2_BOUNDARY = normal gameplay blocks, not faults.' },
             { role: 'user', content: `Scan this turn for genuine faults. List every fault found, one sentence each. If nothing is wrong, say so in one sentence.\n\n${_wCtxScan}` }
           ]
         }, {
