@@ -15,9 +15,10 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.19';
+const MB_VERSION = '2.8.20';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.8.20', date: 'April 27, 2026', note: 'Arbiter MVP (v1.84.0): Arbiter IIFE fires async after every narration freeze and emits arbiter_verdict SSE event. Sole v1.84.0 responsibility: NPC reputation (reputation_player, 0-100, 50=neutral). Arbiter writes deltas to live NPC objects in site.npcs via direct mutation (not copy). Always emits arbiter_verdict even on no-op turns. Arbiter paragraph added to SYSTEM_PROMPT. Watch fault rules updated: missing arbiter_verdict = fault, reputation_player out of 0-100 = fault, arbiter error field = fault. Flight recorder rows show arb: summary. MB listens for arbiter_verdict SSE and updates matching turn buffer entry.' },
   { version: '2.8.19', date: 'April 26, 2026', note: 'Game Constitution integration (v1.84.0): Full constitution prepended verbatim to Narrator, Mother Brain, and Mother Watch system prompts — world founding rule (Turn 1 = founding premise, unrestricted), post-founding lock rule (Turn N = validate against engine state), player freedom rule (attempt always allowed, outcome never guaranteed), consequence rule (reality enforced through simulation not restriction). BIRTH RECORD bridging note added to Narrator prompt. STATE DECLARATION CHANNEL paragraph added: state_declare = valid parser action, state_declared = valid action_resolution, player.attributes source:declared = expected, birth_record field = expected founding data. Prompt ordering: constitution first, stable role instructions next, dynamic turn content last (cache efficiency).' },
   { version: '2.8.18', date: 'April 26, 2026', note: 'LS fill key-mismatch fix + hallucination classification (v1.83.5): [LS-FILL-ACTIVE] root cause confirmed — active_local_space.local_space_id is the full composite ID (e.g. site123_ls_0) but active_site.local_spaces is keyed by short ID (ls_0); lookup returned undefined, block logged error and silently continued. Fix: derive short key by stripping site ID prefix; fallback to full ID as-is + warning for legacy/edge cases — never skip fill. Post-write guard added: if stub still incomplete after write loop, block with error:ls_fill_active_failed / fill_incomplete. [LOCAL-SPACE-GATE] added after [NARRATION-GATE] — depth-3 structural safety net (layered protection, not duplicate: LS-FILL-ACTIVE = pipeline failure, LOCAL-SPACE-GATE = safety net; different error codes local_space_incomplete). CB WARNINGS bullet upgraded: UNRESOLVED now classified as fault AND candidate narrator hallucination — entity extracted from narration but not matched to any visible NPC. UNRESOLVED signal alone is sufficient trigger; narration text for entity identification only. Watch scan system prompt CB WARNINGS rule updated with same classification.' },
   { version: '2.8.17', date: 'April 26, 2026', note: 'Brain/Watch v1.83.4 pipeline awareness: slot_identity exposed in all diagnostic surfaces — /diagnostics/sites cell_slots now include identity field; buildDebugContext SITE INTERIOR STATE line format updated to site_id | name | slot_identity:VAL | enterable:YES/NO | filled:YES/NO | interior:STATE. is_filled now requires all three fields (name + description + slot_identity). Watch scan system prompt updated: slot_identity label throughout, IS_FILLED RULE section, FILL PIPELINE section ([L2-START-SITE-FILL] + [SITE-FILL] + [LS-FILL-ACTIVE] error codes), NARRATION GATE section (site_incomplete/site_state_integrity_failure), B3 REMOVAL section. Brain SYSTEM_PROMPT updated: SITE INTERIOR STATE bullet updated with slot_identity format, bridging sentence, 3-field is_filled rule; /diagnostics/sites cell_sites field list adds identity; new FILL PIPELINE + NARRATION GATE + B3 REMOVAL paragraphs. motherwatch.js RED color extended with fill_failed/integrity_failure/resolution_failed.' },
@@ -144,6 +145,8 @@ B3 REMOVAL: The B3 hash name generator (generateSiteName function) was permanent
 
 STATE DECLARATION CHANNEL: state_declare is a valid parser action type. When parsed_action is state_declare, action_resolution will show state_declared — this is correct, not a fault. player.attributes entries with source:declared are engine-validated player-asserted facts written by the state declaration pipeline. A birth_record field on the player container contains structured founding premise facts from Turn 1 — these are authoritative initial conditions established at world creation, not anomalies. Do not flag any of these as errors, gaps, or unexpected state. Turn 1 founding premise facts are unrestricted by design (see constitution above) — do not flag Turn 1 player.attributes entries as excessive or invalid regardless of content.
 
+ARBITER: After each narration freeze, an Arbiter IIFE evaluates the turn and determines whether any durable engine state change is warranted. For v1.84.0, the Arbiter's sole responsibility is NPC reputation. The Arbiter emits an arbiter_verdict SSE event every turn containing reputation_changes (array of {npc_id, old_val, new_val, delta, reason}) or an empty array for no-op turns. The reputation_player field on each NPC (0-100, 50=neutral) reflects the NPC's opinion of the player as adjudicated by the Arbiter — generated NPCs start in the 40-60 neutral range. This is distinct from ContinuityBrain — Arbiter writes hard engine state, CB records narrative memory. Both run in parallel from the same frozen narration. An arbiter_verdict error field means the Arbiter call failed that turn. Flight recorder rows show arb: summary.
+
 4. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result (move:OK or move:✗(CODE) where CODE is a deterministic block reason \u2014 see ACTION RESOLUTION section for code definitions), continuity injection status, token usage, delta from previous turn, avg5 (5-turn rolling token average for baseline comparison), narrator_status (ok = success; malformed = response received but content was empty or unparseable), player_extraction (you:Nf = N facts extracted about the player this turn by ContinuityBrain), and any engine violations. Hard narrator failures (timeout, connection reset, thrown error) appear as explicit [NARRATION FAILED] entries with failure kind and error message \u2014 these mark turns where no turn event was emitted.
 
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
@@ -248,11 +251,23 @@ function formatTurnBuffer() {
     }
 
     const isCurrent = (i === _turnBuffer.length - 1);
+    // Arbiter summary: "arb: N changes [name ±N, ...]" or "arb: --" or "arb: err" or "(pending)"
+    let arbStr = '';
+    if (t._arbiter) {
+      if (t._arbiter.error) {
+        arbStr = ' | arb: err';
+      } else if (t._arbiter.changes.length === 0) {
+        arbStr = ' | arb: --';
+      } else {
+        const _arbParts = t._arbiter.changes.map(c => `${c.npc_id.split('#').pop()} ${c.delta >= 0 ? '+' : ''}${c.delta}`);
+        arbStr = ` | arb: ${t._arbiter.changes.length}ch [${_arbParts.join(', ')}]`;
+      }
+    }
     if (isCurrent) {
       // Current turn: full detail
-      lines.push(`T-${t.turn} [CURRENT] ${depth}:"${loc}" | input:"${input}" | ch:${t.channel || '—'} | action:${t.parsed_action || '—'}${mvStr} | ${sysTok}${delta}${avg5}${narSt}${youEx} | continuity:${contOk} | violations:${viols}`);
+      lines.push(`T-${t.turn} [CURRENT] ${depth}:"${loc}" | input:"${input}" | ch:${t.channel || '—'} | action:${t.parsed_action || '—'}${mvStr} | ${sysTok}${delta}${avg5}${narSt}${youEx} | continuity:${contOk} | violations:${viols}${arbStr}`);
     } else {
-      lines.push(`T-${t.turn} | ${depth}:"${loc}" | input:"${input}"${mvStr} | ${sysTok}${delta}${avg5}${narSt}${youEx} | continuity:${contOk} | violations:${viols}`);
+      lines.push(`T-${t.turn} | ${depth}:"${loc}" | input:"${input}"${mvStr} | ${sysTok}${delta}${avg5}${narSt}${youEx} | continuity:${contOk} | violations:${viols}${arbStr}`);
     }
   }
   return lines.join('\n');
@@ -544,6 +559,18 @@ function connectSSE() {
                 const _histTokT = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
                 const _histDepT = Math.floor(_history.length / 2);
                 printLine(d(`  [MB] ${_mbSession.calls} calls  ${_mbSession.total_tokens.toLocaleString()} tok  ~$${_mbSession.est_cost_usd.toFixed(4)}  |  history: ${_histDepT} ex (~${_histTokT.toLocaleString()} tok)`));
+              }
+              continue;
+            }
+
+            if (p.type === 'arbiter_verdict') {
+              // Patch matching turn buffer entry with arbiter data for flight recorder display
+              const _arbEntry = _turnBuffer.find(t => t.turn === p.turn);
+              if (_arbEntry) {
+                _arbEntry._arbiter = {
+                  changes: p.reputation_changes || [],
+                  error: p.error || null
+                };
               }
               continue;
             }

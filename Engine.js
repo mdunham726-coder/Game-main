@@ -109,7 +109,16 @@ function initState(timestampUTC) {
         x: null, y: null
       },
       quests: [],
-      reputation: {}
+      reputation: {},
+      birth_record: {
+        raw_input: null,
+        created_turn: 1,
+        form: null,
+        location_premise: null,
+        possessions: [],
+        status_claims: [],
+        scenario_notes: []
+      }
     },
     world: {
       time_utc: timestampUTC,

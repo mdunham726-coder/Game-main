@@ -257,8 +257,8 @@ function generateNPC(seed, site_id){
 
   // Faction reserved for future politics
 const faction_id = null;  // Factions reserved for future politics system
-// Player reputation -100..100 (typical -25..+25 as spec)
-  const player_reputation = Math.floor((rng() - 0.5) * 50);
+// Player reputation 0-100 (50 = neutral; generated range 40-60)
+  const reputation_player = Math.floor(40 + rng() * 20);
 
   // Home location
   const r_home = rng();
@@ -282,7 +282,7 @@ const faction_id = null;  // Factions reserved for future politics system
     id, site_id: sid, age, gender, tier,
     job_category: job.name,
     home_location, faction_id, wealth_tier,
-    player_reputation, traits, corruption_level, is_criminal,
+    reputation_player, traits, corruption_level, is_criminal,
     npc_name: null, is_learned: false,
     position, state: "active", created_at_utc, expires_at_utc, schedule: null,
     attributes: {}  // ContinuityBrain: promoted facts (physical_attributes, observable_states, held_or_worn_objects)
