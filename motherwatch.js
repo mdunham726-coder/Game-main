@@ -69,7 +69,7 @@ function render(p, session) {
     if (!l) continue;
     const lo = l.toLowerCase();
     let colored;
-    if (lo.startsWith('error') || lo.startsWith('[scan failed') || lo.includes('missing') || lo.includes('undefined') || lo.includes('unfilled') || lo.includes('partial fill') || lo.includes('not populated') || lo.includes('incomplete')) {
+    if (lo.startsWith('error') || lo.startsWith('[scan failed') || lo.includes('missing') || lo.includes('undefined') || lo.includes('unfilled') || lo.includes('partial fill') || lo.includes('not populated') || lo.includes('incomplete') || lo.includes('fill_failed') || lo.includes('integrity_failure') || lo.includes('resolution_failed')) {
       colored = `  ${RED}${l}${R}`;
     } else if (lo.startsWith('warn') || lo.includes('inconsisten') || lo.includes('mismatch') || lo.includes('unexpected') || lo.includes('verify') || lo.includes('blank')) {
       colored = `  ${YLW}${l}${R}`;

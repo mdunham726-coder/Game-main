@@ -88,46 +88,6 @@ const BIOME_CONSISTENT_TERRAIN = {
 };
 
 // =============================================================================
-// PHASE 3C: SITE NAME GENERATION
-// =============================================================================
-
-// Name component libraries for procedural generation
-const NAME_PREFIXES = [
-  "Silver", "Gold", "Iron", "Stone", "White", "Black", "Red", "Green", "Blue",
-  "North", "South", "East", "West", "High", "Low", "New", "Old", "Fair",
-  "Dark", "Bright", "Shadow", "Sun", "Moon", "Star", "Wind", "Storm", "River",
-  "Forest", "Mountain", "Valley", "Hill", "Oak", "Pine", "Ash", "Willow"
-];
-
-const NAME_SUFFIXES = [
-  "haven", "ford", "bridge", "port", "gate", "hold", "burg", "ton", "ville",
-  "wood", "field", "brook", "creek", "dale", "glen", "vale", "mere", "point",
-  "rest", "watch", "keep", "fall", "ridge", "peak", "shore", "coast", "bay"
-];
-
-/**
- * Generate deterministic site name from site ID and world seed
- * @param {string} siteId - Unique site identifier
- * @param {string} worldSeed - World seed for consistency
- * @returns {string} Generated site name
- */
-function generateSiteName(siteId, worldSeed) {
-  const combinedSeed = `${worldSeed}|${siteId}|name`;
-  const hash = h32(combinedSeed);
-  const rng = mulberry32(hash);
-  
-  const prefix = NAME_PREFIXES[Math.floor(rng() * NAME_PREFIXES.length)];
-  const suffix = NAME_SUFFIXES[Math.floor(rng() * NAME_SUFFIXES.length)];
-  
-  const generatedName = `${prefix}${suffix}`;
-  
-  // B3: Site naming debug logging
-  console.log(`[B3-NAME] Generated site name: id=${siteId}, worldSeed=${worldSeed}, combinedSeed=${combinedSeed}, hash=${hash}, name=${generatedName}`);
-  
-  return generatedName;
-}
-
-// =============================================================================
 // PHASE 3C: NPC COUNT BY SITE TYPE
 // =============================================================================
 
@@ -823,6 +783,7 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
       is_filled:     false,
       name:          null,
       description:   null,
+      identity:      null,
       entered:       false,
       interior_key:  null,
     });
@@ -2304,15 +2265,12 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
   }
 
   // PHASE 3C: Add site metadata
-  const siteName = generateSiteName(siteId, worldSeed || "default");
+  // Site name is filled by DeepSeek ([SITE-FILL] or [L2-START-SITE-FILL]) — never generated here.
   const populationCount = npcs.length;
-  
-  // B3: Debug logging at call site
-  console.log(`[B3-CALLER] Site name generation called: siteId=${siteId}, worldSeed=${worldSeed}, result=${siteName}`);
-  
+
   return {
     id: siteId,
-    name: siteName,
+    name: null,
     site_size: typeof site_size === 'number' ? site_size : 3,
     start_local_space_id,
     population: populationCount,
@@ -2372,7 +2330,6 @@ module.exports = {
   detectWorldToneWithDeepSeek,
   detectStartingLocationWithDeepSeek,
   // PHASE 3C: New exports
-  generateSiteName,
   getNPCCountFromSize,
   siteGridFromSize,
   generateNPCTraits,

@@ -1097,6 +1097,89 @@ app.post('/narrate', async (req, res) => {
           // Phase 7: Legacy L2 stub block removed.
           // recordSiteToCell now stores the stub under the canonical site.interior_key.
 
+          // [START-SLOT] Single authoritative starting site slot lookup.
+          // Both [L2-START-SITE-FILL] and start-container routing blocks MUST use this variable.
+          // Never recompute independently — any divergence here is a bug.
+          const _startSlotPos     = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
+          const _startSlotCellKey = `LOC:${_startSlotPos.mx},${_startSlotPos.my}:${_startSlotPos.lx},${_startSlotPos.ly}`;
+          const _startSlotCell    = gameState.world.cells?.[_startSlotCellKey];
+          const _startSlotCandidates = _startSlotCell
+            ? Object.values(_startSlotCell.sites || {}).filter(s => s.enterable === true)
+            : [];
+          if (_startSlotCandidates.length > 1) {
+            console.warn(`[START-SLOT] Multiple enterable sites at start position — using first. count=${_startSlotCandidates.length}`);
+          }
+          const _startSlot = _startSlotCandidates[0] || null;
+
+          // [L2-START-SITE-FILL] Pre-activation DeepSeek fill for L2-direct-start sessions.
+          // Fires before enterSite so the site is fully populated before any system consumes it.
+          // Fills name, description, identity on the canonical slot. All three are required.
+          // On any failure: hard block — no partial writes, no fallback naming.
+          if (gameState.world.start_container === 'L2' && _startSlot &&
+              (_startSlot.name === null || _startSlot.description === null || _startSlot.identity === null)) {
+            const _lssFoundingClause = gameState.world.founding_prompt
+              ? `World description: "${gameState.world.founding_prompt}". ` : '';
+            const _lssPurpose = _startCtx?.local_space_purpose || null;
+            const _lssBiome   = gameState.world.macro_biome || 'unknown';
+            const _lssPrompt  = `${_lssFoundingClause}Biome: ${_lssBiome}.${_lssPurpose ? ` Site purpose: ${_lssPurpose}.` : ''} Site size: ${_startSlot.site_size ?? 'unknown'}.\n\nReturn ONLY a single JSON object. No prose, no markdown. Required fields — all mandatory, none may be null or omitted:\n{"name":"<short proper name for this place>","description":"<one sentence describing it>","identity":"<short lowercase category, e.g. restaurant, blacksmith, inn>"}`;
+            try {
+              const _lssResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+                model: 'deepseek-chat',
+                messages: [{ role: 'user', content: _lssPrompt }],
+                temperature: 0.4
+              }, {
+                headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+                timeout: 30000
+              });
+              let _lssRaw = _lssResp?.data?.choices?.[0]?.message?.content || '';
+              let _lssParsed = null;
+              try { _lssParsed = JSON.parse(_lssRaw); } catch (_) {
+                const _lssBracket = _lssRaw.match(/\{[\s\S]*\}/);
+                if (_lssBracket) { try { _lssParsed = JSON.parse(_lssBracket[0]); } catch (_) {} }
+              }
+              if (!_lssParsed || typeof _lssParsed !== 'object') {
+                console.warn('[L2-START-SITE-FILL] ERROR: parse_failure — response not valid JSON');
+                if (!gameState.world._fillLog) gameState.world._fillLog = [];
+                gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'parse_failed', affected_id: _startSlot.site_id });
+                if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState, diagnostics });
+              }
+              const _lssMissingFields = ['name','description','identity'].filter(f => !_lssParsed[f]);
+              if (_lssMissingFields.length > 0) {
+                if (_lssMissingFields.includes('identity')) {
+                  console.warn(`[L2-START-SITE-FILL] ERROR: missing_identity — identity field absent or null`);
+                }
+                console.warn(`[L2-START-SITE-FILL] ERROR: parse_failure — missing fields: ${_lssMissingFields.join(',')}`);
+                if (!gameState.world._fillLog) gameState.world._fillLog = [];
+                gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'parse_failed', affected_id: _startSlot.site_id, missing: _lssMissingFields });
+                if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState, diagnostics });
+              }
+              // All three confirmed — write to canonical slot
+              _startSlot.name        = _lssParsed.name;
+              _startSlot.description = _lssParsed.description;
+              _startSlot.identity    = _lssParsed.identity;
+              _startSlot.is_filled   = true;
+              console.log(`[L2-START-SITE-FILL] Slot filled: name="${_lssParsed.name}" identity="${_lssParsed.identity}"`);
+              // Mirror to world.sites stub — derived, not canonical
+              const _lssIk = _startSlot.interior_key;
+              if (_lssIk && gameState.world.sites?.[_lssIk]) {
+                gameState.world.sites[_lssIk].name = _lssParsed.name;
+                gameState.world.sites[_lssIk].type = _lssParsed.identity;
+                console.log(`[L2-START-SITE-FILL] Mirror written: ${_lssIk}`);
+              } else {
+                console.warn(`[L2-START-SITE-FILL] WARN: mirror target missing — interior_key=${_lssIk}. Slot written, registry not updated.`);
+              }
+              sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            } catch (_lssErr) {
+              console.error('[L2-START-SITE-FILL] DS call failed:', _lssErr.message);
+              if (!gameState.world._fillLog) gameState.world._fillLog = [];
+              gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'api_failed', affected_id: _startSlot?.site_id || null });
+              if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+              return res.json({ sessionId: resolvedSessionId, error: `site_fill_failed: ${_lssErr.message}`, narrative: 'The world is being prepared. Please try again.', state: gameState, diagnostics });
+            }
+          }
+
           // Start-container routing — L1/L2 players begin already inside a site/local_space.
           // Runs once at turn-1 worldgen time only, guarded by start_container value.
           // _startLocalSpacePurpose is a STARTUP-ONLY transient scratch field: written here,
@@ -1106,13 +1189,11 @@ app.post('/narrate', async (req, res) => {
             let _scSlotFound = false;
             let _scEnterSiteOk = false;
             let _scEnterLsOk = null;
-            let _scSlot = null;
+            // Use canonical _startSlot — never recompute independently
+            let _scSlot = _startSlot;
 
             if (_scContainer && _scContainer !== 'L0') {
-              const _scPos = gameState.world.position || { mx: 0, my: 0, lx: 6, ly: 6 };
-              const _scCellKey = `LOC:${_scPos.mx},${_scPos.my}:${_scPos.lx},${_scPos.ly}`;
-              const _scCell = gameState.world.cells?.[_scCellKey];
-              _scSlot = (_scCell && Object.values(_scCell.sites || {}).find(s => s.enterable === true)) || null;
+              const _scCellKey = _startSlotCellKey;
               _scSlotFound = !!_scSlot;
 
               if (_scSlot) {
@@ -1129,17 +1210,21 @@ app.post('/narrate', async (req, res) => {
                 const _scSite = Engine.enterSite(gameState, { cell_key: _scCellKey, site_id: _scSlot.site_id, entry_dir: 'south' });
                 _scEnterSiteOk = !!_scSite;
 
-                // Fix A: commit name + is_filled back to cell.sites slot at startup.
-                // enterSite writes the generated name to world.sites[interior_key] but never
-                // syncs it back to cell.sites[site_id]. Without this, Phase 5 sees is_filled:false
-                // every turn and mandates a [site_updates:] block, causing triple-identity conflict.
+                // Fix A: sync name + is_filled back to cell.sites slot at startup.
+                // enterSite writes the generated interior to world.sites but never syncs back to cell.sites slot.
+                // is_filled requires ALL THREE canonical fields: name, description, identity.
                 if (_scSite && _scSlot) {
-                  const _scCellRef = gameState.world.cells?.[_scCellKey];
+                  const _scCellRef = gameState.world.cells?.[_startSlotCellKey];
                   const _scSlotRef = _scCellRef?.sites?.[_scSlot.site_id];
                   if (_scSlotRef && _scSite.name) {
                     _scSlotRef.name = _scSite.name;
-                    _scSlotRef.is_filled = true;
-                    console.log(`[START-CONTAINER] Name committed to slot: "${_scSite.name}" | is_filled=true`);
+                    // Only mark filled when all three required fields are present on the slot
+                    if (_scSlotRef.name && _scSlotRef.description && _scSlotRef.identity) {
+                      _scSlotRef.is_filled = true;
+                      console.log(`[START-CONTAINER] Slot fully filled: "${_scSite.name}" | is_filled=true`);
+                    } else {
+                      console.log(`[START-CONTAINER] Name synced to slot: "${_scSite.name}" | is_filled NOT set (incomplete)`);
+                    }
                   }
                 }
 
@@ -1808,8 +1893,10 @@ app.post('/narrate', async (req, res) => {
                   }
                 }
               }
-              if (_sfTgt.name !== null && _sfTgt.description !== null) {
+              if (_sfTgt.name !== null && _sfTgt.description !== null && _sfTgt.identity !== null) {
                 _sfTgt.is_filled = true;
+              } else if (_sfTgt.name !== null && _sfTgt.description !== null && _sfTgt.identity === null) {
+                console.warn(`[SITE-FILL] WARN: identity missing from fill response for ${_sfUpd.site_id} — is_filled NOT set`);
               }
             }
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
@@ -2021,6 +2108,37 @@ app.post('/narrate', async (req, res) => {
     // Layer derived from containment state — not from current_depth counter which can drift.
     const _narDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
     const _narActiveSite = gameState?.world?.active_site || null;
+
+    // [NARRATION-GATE] Block narration if active site slot is incomplete.
+    // Operates on canonical slot (cell.sites[id]), NOT on active_site mirror fields.
+    // Hard-blocks if active_site exists but slot cannot be resolved (state integrity failure).
+    if (_narActiveSite) {
+      const _gCellKey = (_narActiveSite.mx != null && _narActiveSite.lx != null)
+        ? `LOC:${_narActiveSite.mx},${_narActiveSite.my}:${_narActiveSite.lx},${_narActiveSite.ly}` : null;
+      const _gCell = _gCellKey ? gameState.world.cells?.[_gCellKey] : null;
+      const _gSlot = _gCell?.sites
+        ? Object.values(_gCell.sites).find(s => s.interior_key === _narActiveSite.id) : null;
+      if (!_gSlot) {
+        console.error(`[NARRATION-GATE] ERROR: active_site exists but canonical slot cannot be resolved — id=${_narActiveSite.id}. State integrity failure.`);
+        if (!gameState.world._fillLog) gameState.world._fillLog = [];
+        gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'slot_resolution_failed', affected_id: _narActiveSite.id });
+        if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+        return res.json({ sessionId: resolvedSessionId, error: 'site_state_integrity_failure',
+          narrative: 'The world encountered an internal error. Please try again.',
+          state: gameState, diagnostics });
+      }
+      const _gMissing = ['name','description','identity'].filter(f => !_gSlot[f]);
+      if (_gMissing.length > 0) {
+        console.warn(`[NARRATION-GATE] Active site slot incomplete — blocking narration. missing=${_gMissing.join(',')}`);
+        if (!gameState.world._fillLog) gameState.world._fillLog = [];
+        gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'incomplete_active_site', affected_id: _narActiveSite.id, missing: _gMissing });
+        if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+        return res.json({ sessionId: resolvedSessionId, error: 'site_incomplete',
+          narrative: 'The world is still being prepared. Please try again.',
+          state: gameState, diagnostics });
+      }
+    }
+
     // Freshness guarantee: recompute visible NPCs before narration payload assembly
     if (_narDepth === 2 && _narActiveSite && gameState?.player?.position) {
       _narActiveSite._visible_npcs = Actions.computeVisibleNpcs(_narActiveSite, gameState.player.position);
@@ -3186,7 +3304,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
           temperature: 0.3,
           max_tokens: 1500,
           messages: [
-            { role: 'system', content: 'You are a single-turn fault scanner for a text RPG engine, operating with the same diagnostic standards as Mother Brain. After every game turn you receive one snapshot of the full engine diagnostic state. Scan it for genuine faults using the rules below. List every genuine fault — one sentence per fault. If nothing is genuinely wrong, output exactly one sentence saying so. No headers, no preamble, no explanation. Do not report a blank or legacy field as a fault unless one of the rules below explicitly identifies it as a fault.\n\nCOORDINATE SYSTEM: The engine uses a two-tier coordinate system — macro grid (mx/my, valid range 0–7) and local grid within each macro cell (lx/ly, valid range 0–127, 128x128 grid per macro cell). Coordinates within these ranges are valid and normal — do not flag them as anomalies.\n\nSITE INTERIOR STATE — fault classification: MISSING_INTERIOR_KEY (filled but interior_key absent) = fault. MISSING_INTERIOR_RECORD (interior_key present but no world.sites mirror) = fault. PENDING_FILL while the player is currently inside the site = fault. PENDING_FILL pre-entry (player not yet inside) = normal. NOT_GENERATED (player has not yet entered) = normal. GENERATED (full site record) = normal.\n\nACTIVE LOCAL SPACE: If the player is at depth 3 (inside a local space) and the active local space shows name === null or description === null — fault. The player is inside an unnamed or undescribed space.\n\nSITE PARTIAL FILL: If a site record shows the identity field blank or null while the name field is populated — fault. Name was assigned but identity bucket was not populated.\n\nCB WARNINGS: UNRESOLVED (entity ref could not be matched to any visible NPC — facts were silently dropped) = fault. FUZZY (entity ref matched via approximate matching) = not a fault, but note it for verification. L0-SKIP (l0_entity_candidates_skipped) = expected behavior at the overworld layer, not a fault.\n\nL0 BEHAVIOR: An empty TRUTH block at L0 when the player just moved to a new cell is correct engine behavior — not a fault.\n\nNARRATOR FAILURES: A NARRATION FAILED entry in the flight recorder = fault. narrator_status:malformed (narrator returned no usable content) = fault. narrator_status:ok = normal.\n\nACTION RESOLUTION: NO_POSITION (world.position unavailable) = fault. ENGINE_GUARD (depth=3 with no active_local_space) = fault. NO_RESOLVE_LOG (player_move_resolved never called) = fault. NO_DIRECTION / VOID_CELL / L2_BOUNDARY = normal gameplay blocks, not faults.' },
+            { role: 'system', content: 'You are a single-turn fault scanner for a text RPG engine, operating with the same diagnostic standards as Mother Brain. After every game turn you receive one snapshot of the full engine diagnostic state. Scan it for genuine faults using the rules below. List every genuine fault — one sentence per fault. If nothing is genuinely wrong, output exactly one sentence saying so. No headers, no preamble, no explanation. Do not report a blank or legacy field as a fault unless one of the rules below explicitly identifies it as a fault.\n\nCOORDINATE SYSTEM: The engine uses a two-tier coordinate system — macro grid (mx/my, valid range 0–7) and local grid within each macro cell (lx/ly, valid range 0–127, 128x128 grid per macro cell). Coordinates within these ranges are valid and normal — do not flag them as anomalies.\n\nSITE INTERIOR STATE — context format: each site slot line reads: site_id | name | slot_identity:VAL | enterable:YES/NO | filled:YES/NO | interior:STATE. The label is slot_identity (not identity) — it reflects the canonical cell.sites slot field. slot_identity:(null) means the identity has not been filled yet.\n\nSITE INTERIOR STATE — fault classification: MISSING_INTERIOR_KEY (filled but interior_key absent) = fault. MISSING_INTERIOR_RECORD (interior_key present but no world.sites mirror) = fault. PENDING_FILL while the player is currently inside the site = fault. PENDING_FILL pre-entry (player not yet inside) = normal. NOT_GENERATED (player has not yet entered) = normal. GENERATED (full site record) = normal.\n\nIS_FILLED RULE: is_filled=true requires all three fields to be non-null in the slot: name, description, and slot_identity. A site showing filled:NO when name is populated but slot_identity:(null) is a partial fill fault. A site showing filled:NO when name is also null is simply unfilled — not a partial fill fault.\n\nSITE PARTIAL FILL: If a site record shows slot_identity:(null) while name is populated — fault (applies to v1.83.4+ saves; pre-v1.83.4 saves may legitimately have name without slot_identity as an expected migration state, not a fault).\n\nACTIVE LOCAL SPACE: If the player is at depth 3 (inside a local space) and the active local space shows name === null or description === null — fault. The player is inside an unnamed or undescribed space.\n\nL2-START FILL PIPELINE: On L2-direct-start sessions, [L2-START-SITE-FILL] fires before enterSite on turn 1 to fill the starting site slot. This is expected and normal. If [L2-START-SITE-FILL] fails, the server returns error: site_fill_failed — this is a fault. If the DeepSeek response was missing the identity field, fill_log will show error_label: missing_identity — this is a fault.\n\nNARRATION GATE: [NARRATION-GATE] enforces canonical slot completeness before every narration call. If the active site slot is missing name, description, or slot_identity, narration is blocked and the server returns error: site_incomplete — fault. If the canonical slot cannot be resolved via interior_key lookup, the server returns error: site_state_integrity_failure — fault.\n\nB3 REMOVAL: The B3 hash name generator (generateSiteName) was fully removed in v1.83.4. Any [B3-NAME] or [B3-CALLER] log entry is a regression if it appears in a v1.83.4+ session — flag as fault.\n\nCB WARNINGS: UNRESOLVED (entity ref could not be matched to any visible NPC — facts were silently dropped) = fault. FUZZY (entity ref matched via approximate matching) = not a fault, but note it for verification. L0-SKIP (l0_entity_candidates_skipped) = expected behavior at the overworld layer, not a fault.\n\nL0 BEHAVIOR: An empty TRUTH block at L0 when the player just moved to a new cell is correct engine behavior — not a fault.\n\nNARRATOR FAILURES: A NARRATION FAILED entry in the flight recorder = fault. narrator_status:malformed (narrator returned no usable content) = fault. narrator_status:ok = normal.\n\nACTION RESOLUTION: NO_POSITION (world.position unavailable) = fault. ENGINE_GUARD (depth=3 with no active_local_space) = fault. NO_RESOLVE_LOG (player_move_resolved never called) = fault. NO_DIRECTION / VOID_CELL / L2_BOUNDARY = normal gameplay blocks, not faults.' },
             { role: 'user', content: `Scan this turn for genuine faults. List every fault found, one sentence each. If nothing is wrong, say so in one sentence.\n\n${_wCtxScan}` }
           ]
         }, {
@@ -3825,10 +3943,11 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
           for (const _s of _cellSiteObjs) {
             const _sid       = _s.site_id || '(unknown_id)';
             const _sName     = _s.name || '(unnamed)';
+            const _sIdentity = _s.identity !== null && _s.identity !== undefined ? _s.identity : '(null)';
             const _enterable = _s.enterable === false ? 'NO' : 'YES';
             const _filled    = _s.is_filled ? 'YES' : 'NO';
             const _interior  = _getSiteInteriorState(_s, gameState.world.sites);
-            context += `${_sid} | ${_sName} | enterable:${_enterable} | filled:${_filled} | interior:${_interior}\n`;
+            context += `${_sid} | ${_sName} | slot_identity:${_sIdentity} | enterable:${_enterable} | filled:${_filled} | interior:${_interior}\n`;
           }
         }
       }
@@ -4759,6 +4878,7 @@ app.get('/diagnostics/sites', (req, res) => {
         site_id:        s.site_id ?? null,
         name:           s.name ?? null,
         description:    s.description ?? null,
+        identity:       s.identity ?? null,
         is_filled:      s.is_filled ?? false,
         enterable:      s.enterable !== false,
         interior_key:   s.interior_key ?? null,

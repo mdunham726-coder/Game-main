@@ -939,7 +939,7 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
       logger.site_registered(interior_key, siteRecord.name, siteRecord.type, { mx: pos.mx, my: pos.my });
     }
 
-    console.log(`[ENGINE] Completed stub (name=${siteRecord.name}, source=${_stubName ? 'phase5e' : 'generated'}): ${npcs_here.length} NPCs`);
+    console.log(`[ENGINE] Completed stub (name=${siteRecord.name}, source=${_stubName ? 'phase5e' : 'none'}): ${npcs_here.length} NPCs`);
 
     if (!state.quests) state.quests = { active: [], completed: [], allQuestsSeeded: {}, config: { maxActiveQuests: 10, maxQuestsPerSite: 5 } };
     if (!state.quests.allQuestsSeeded) state.quests.allQuestsSeeded = {};
@@ -1033,7 +1033,13 @@ function enterLocalSpace(state, local_space_id_short) {
   if (!bld) return null;
   // Generate once and cache on the site record — no drift on re-entry.
   if (!bld._generated_interior) {
-    const full_id = `${site.site_id}_${local_space_id_short}`;
+    // site.id is canonical on interior records; site.site_id is the cell-slot field.
+    // Use site.id with fallback to site.site_id for compatibility with old saves.
+    const _lsSiteId = site.id || site.site_id;
+    if (!site.id && site.site_id) {
+      console.warn(`[ENGINE] enterLocalSpace: site.id missing, using site.site_id fallback for ${site.site_id}`);
+    }
+    const full_id = `${_lsSiteId}_${local_space_id_short}`;
     bld._generated_interior = WorldGen.generateLocalSpace(full_id, bld, site.site_size || 1);
     console.log(`[ENGINE] [L2-ENTER] Generated interior: ${full_id}`);
   }
