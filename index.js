@@ -1815,10 +1815,16 @@ app.post('/narrate', async (req, res) => {
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
           } else {
             console.warn('[SITE-FILL] Failed to parse fill response — blocking narration');
+            if (!gameState.world._fillLog) gameState.world._fillLog = [];
+            gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'parse_failed', affected_id: null });
+            if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
             return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is taking shape. Please try again.', state: gameState, diagnostics });
           }
         } catch (_sfErr) {
           console.error('[SITE-FILL] DS call failed:', _sfErr.message);
+          if (!gameState.world._fillLog) gameState.world._fillLog = [];
+          gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'api_failed', affected_id: null });
+          if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
           return res.json({ sessionId: resolvedSessionId, error: `site_fill_failed: ${_sfErr.message}`, narrative: 'The world is taking shape. Please try again.', state: gameState, diagnostics });
         }
       }
@@ -1883,11 +1889,99 @@ app.post('/narrate', async (req, res) => {
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
           } else {
             console.warn('[LS-FILL] Failed to parse fill response — blocking narration');
+            if (!gameState.world._fillLog) gameState.world._fillLog = [];
+            gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'localspace', error_label: 'parse_failed', affected_id: null });
+            if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
             return res.json({ sessionId: resolvedSessionId, error: 'ls_fill_failed', narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
           }
         } catch (_lsfErr) {
           console.error('[LS-FILL] DS call failed:', _lsfErr.message);
+          if (!gameState.world._fillLog) gameState.world._fillLog = [];
+          gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'localspace', error_label: 'api_failed', affected_id: null });
+          if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
           return res.json({ sessionId: resolvedSessionId, error: `ls_fill_failed: ${_lsfErr.message}`, narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
+        }
+      }
+    }
+
+    // [LS-FILL-ACTIVE] Pre-narration fill for the currently active local space — handles L2 direct starts.
+    // Condition: depth 3, active_local_space and active_site exist, stub is unfilled.
+    // This is additive — does NOT replace or alter the existing [LS-FILL] block above.
+    if (_sfDepth === 3 && gameState?.world?.active_local_space && gameState?.world?.active_site) {
+      const _lsfaAls  = gameState.world.active_local_space;
+      const _lsfaId   = _lsfaAls?.local_space_id;
+      if (!_lsfaId) {
+        console.warn('[LS-FILL-ACTIVE] WARNING: active_local_space has no local_space_id — cannot fill');
+      } else {
+        const _lsfaStub = gameState.world.active_site?.local_spaces?.[_lsfaId];
+        if (!_lsfaStub) {
+          console.error(`[LS-FILL-ACTIVE] ERROR: no stub found for local_space_id=${_lsfaId} in active_site.local_spaces — state mismatch`);
+        } else {
+          if (_lsfaStub._generated_interior && _lsfaAls !== _lsfaStub._generated_interior) {
+            console.warn(`[LS-FILL-ACTIVE] WARNING: active_local_space reference mismatch with stub._generated_interior for id=${_lsfaId}`);
+          }
+          if (_lsfaStub.name === null || _lsfaStub.description === null) {
+            const _lsfaSite = gameState.world.active_site;
+            const _lsfaCtxParts = [
+              _lsfaSite.name        ? `Site name: "${_lsfaSite.name}".`        : '',
+              _lsfaSite.description ? `Site description: "${_lsfaSite.description}".` : '',
+              _lsfaSite.site_size  != null ? `Site size: ${_lsfaSite.site_size}.` : ''
+            ].filter(Boolean);
+            const _lsfaSiteCtx  = _lsfaCtxParts.length > 0 ? _lsfaCtxParts.join(' ') : 'A site interior.';
+            const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y }];
+            const _lsfaPrompt   = `${_lsfaSiteCtx}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+            try {
+              const _lsfaResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+                model: 'deepseek-chat',
+                messages: [{ role: 'user', content: _lsfaPrompt }],
+                temperature: 0.3
+              }, {
+                headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+                timeout: 30000
+              });
+              let _lsfaRaw     = _lsfaResp?.data?.choices?.[0]?.message?.content || '';
+              let _lsfaUpdates = null;
+              try { _lsfaUpdates = JSON.parse(_lsfaRaw); } catch (_) {
+                const _lsfaBracket = _lsfaRaw.match(/\[[\s\S]*\]/);
+                if (_lsfaBracket) { try { _lsfaUpdates = JSON.parse(_lsfaBracket[0]); } catch (_) {} }
+              }
+              if (Array.isArray(_lsfaUpdates)) {
+                for (const _lsfaUpd of _lsfaUpdates) {
+                  if (!_lsfaUpd?.local_space_id) continue;
+                  // Guard: only update the expected stub
+                  if (_lsfaUpd.local_space_id !== _lsfaId) continue;
+                  for (const _lsfaField of ['name', 'description']) {
+                    if (_lsfaUpd[_lsfaField] != null && _lsfaStub[_lsfaField] == null) {
+                      // 1. Write to canonical stub first
+                      _lsfaStub[_lsfaField] = _lsfaUpd[_lsfaField];
+                      console.log(`[LS-FILL-ACTIVE] ${_lsfaId}.${_lsfaField} = "${_lsfaUpd[_lsfaField]}"`);
+                      // 2. Mirror to generated interior (same ref as active_local_space)
+                      if (_lsfaStub._generated_interior && _lsfaStub._generated_interior[_lsfaField] == null) {
+                        _lsfaStub._generated_interior[_lsfaField] = _lsfaUpd[_lsfaField];
+                      }
+                    }
+                  }
+                  if (_lsfaStub.name !== null && _lsfaStub.description !== null) {
+                    _lsfaStub.is_filled = true;
+                    if (_lsfaStub._generated_interior) _lsfaStub._generated_interior.is_filled = true;
+                  }
+                }
+                sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+              } else {
+                console.warn('[LS-FILL-ACTIVE] Failed to parse fill response — blocking narration');
+                if (!gameState.world._fillLog) gameState.world._fillLog = [];
+                gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'localspace_active', error_label: 'parse_failed', affected_id: _lsfaId });
+                if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+                return res.json({ sessionId: resolvedSessionId, error: 'ls_fill_active_failed', narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
+              }
+            } catch (_lsfaErr) {
+              console.error('[LS-FILL-ACTIVE] DS call failed:', _lsfaErr.message);
+              if (!gameState.world._fillLog) gameState.world._fillLog = [];
+              gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'localspace_active', error_label: 'api_failed', affected_id: _lsfaId });
+              if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+              return res.json({ sessionId: resolvedSessionId, error: `ls_fill_active_failed: ${_lsfaErr.message}`, narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
+            }
+          }
         }
       }
     }
@@ -3101,9 +3195,27 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
         });
         const _wRaw = _wResp?.data?.choices?.[0]?.message?.content || '(no response)';
         const _wLines = _wRaw.split('\n').map(l => l.trim()).filter(Boolean);
-        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: _wLines, gameSessionId: resolvedSessionId });
+        // Capture usage — log shape once on first call to confirm DeepSeek field names
+        const _wUsage = _wResp?.data?.usage || null;
+        if (!_wUsageShapeLogged) {
+          console.log('[WATCH] usage object shape:', JSON.stringify(_wUsage));
+          _wUsageShapeLogged = true;
+        }
+        const _wPromptTok      = _wUsage?.prompt_tokens           ?? 0;
+        const _wCompletionTok  = _wUsage?.completion_tokens        ?? 0;
+        const _wTotalTok       = _wUsage?.total_tokens             ?? 0;
+        const _wCacheHitTok    = _wUsage?.prompt_cache_hit_tokens  ?? 0;
+        const _wCacheMissTok   = _wUsage?.prompt_cache_miss_tokens ?? 0;
+        // Cost: use cache breakdown if present, else treat all input as cache miss (conservative)
+        const _wEstCost = _wCacheHitTok > 0 || _wCacheMissTok > 0
+          ? (_wCacheHitTok * 0.000000028) + (_wCacheMissTok * 0.00000014) + (_wCompletionTok * 0.00000028)
+          : (_wPromptTok   * 0.00000014)  + (_wCompletionTok * 0.00000028);
+        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: _wLines, gameSessionId: resolvedSessionId,
+          usage: { prompt_tokens: _wPromptTok, completion_tokens: _wCompletionTok, total_tokens: _wTotalTok,
+                   cache_hit_tokens: _wCacheHitTok, cache_miss_tokens: _wCacheMissTok, est_cost_usd: _wEstCost } });
       } catch (e) {
-        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: [`[scan failed: ${e.message}]`], gameSessionId: resolvedSessionId });
+        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: [`[scan failed: ${e.message}]`], gameSessionId: resolvedSessionId,
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0, est_cost_usd: 0 } });
       }
     })();
 
@@ -3335,7 +3447,6 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   context += `\n=== CURRENT LOCATION ===\n`;
   context += `Position: Macro(${pos.mx},${pos.my}) -> Local(${pos.lx},${pos.ly})\n`;
   context += `Cell Type: ${currentCell?.type || "unknown"}\n`;
-  context += `Cell Subtype: ${currentCell?.subtype || "unknown"}\n`;
   context += `Cell Biome: ${currentCell?.biome || "unknown"}\n`;
   context += `Description: ${currentCell?.description || ""}\n`;
   const _ctxDepth = gameState.world.current_depth ?? 1;
@@ -3712,29 +3823,11 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
           context += `(no sites at current cell)\n`;
         } else {
           for (const _s of _cellSiteObjs) {
-            const _sid        = _s.site_id || '(unknown_id)';
-            const _sName      = _s.name || '(unnamed)';
-            const _enterable  = _s.enterable === false ? 'NO' : 'YES';
-            const _filled     = _s.is_filled ? 'YES' : 'NO';
-            let _interior;
-            if (_s.enterable === false) {
-              _interior = 'NOT_APPLICABLE';
-            } else if (!_s.is_filled) {
-              _interior = 'PENDING_FILL';
-            } else if (!_s.interior_key) {
-              _interior = 'MISSING_INTERIOR_KEY';
-            } else {
-              const _mirror = gameState.world.sites?.[_s.interior_key];
-              if (!_mirror) {
-                _interior = 'MISSING_INTERIOR_RECORD';
-              } else if (!_mirror.is_stub) {
-                // v1.81.1: truthy check covers is_stub===false (new saves) and is_stub===undefined
-                // (old saves generated before this fix). Real stubs always have is_stub:true.
-                _interior = 'GENERATED';
-              } else {
-                _interior = 'NOT_GENERATED';
-              }
-            }
+            const _sid       = _s.site_id || '(unknown_id)';
+            const _sName     = _s.name || '(unnamed)';
+            const _enterable = _s.enterable === false ? 'NO' : 'YES';
+            const _filled    = _s.is_filled ? 'YES' : 'NO';
+            const _interior  = _getSiteInteriorState(_s, gameState.world.sites);
             context += `${_sid} | ${_sName} | enterable:${_enterable} | filled:${_filled} | interior:${_interior}\n`;
           }
         }
@@ -4380,6 +4473,20 @@ let _lastSessionId    = null; // cache of most-recent resolved session ID (used 
 let _lastNarratorPayload = null;     // cache of full messages payload sent to narrator (for NARRATOR I/O surface)
 let _lastNarratorRawResponse = null; // cache of raw narrator response string (for NARRATOR I/O surface)
 let _lastWatchMessage = null;        // cache of Mother's last watch_message (from Phase B)
+let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
+
+// Interior state helper — shared by buildDebugContext() and /diagnostics/sites
+// Returns one of six codes describing the generation state of an enterable site slot.
+function _getSiteInteriorState(s, sites) {
+  if (s.enterable === false) return 'NOT_APPLICABLE';
+  if (!s.is_filled)          return 'PENDING_FILL';
+  if (!s.interior_key)       return 'MISSING_INTERIOR_KEY';
+  const mirror = sites?.[s.interior_key];
+  if (!mirror)               return 'MISSING_INTERIOR_RECORD';
+  // v1.81.1: !mirror.is_stub covers false (new saves) and undefined (old saves). is_stub:true = stub only.
+  if (!mirror.is_stub)       return 'GENERATED';
+  return 'NOT_GENERATED';
+}
 
 // Terrain type -> 2-char code map (module-level for world map 5x5 grid in buildDebugContext)
 const _TERRAIN_CODES = {
@@ -4626,6 +4733,97 @@ app.get('/diagnostics/context', (req, res) => {
     return res.status(500).json({ error: 'context_build_failed', message: err.message });
   }
   res.json({ context, sessionId, level, contextLength: context.length });
+});
+
+// Sites & Localspaces structured state — GET /diagnostics/sites
+// Powers the sitelens.js panel and Mother Brain on-demand site/space data access.
+// Returns current cell sites, active site, active local space, fill log, and grid dimensions.
+// Read-only. Uses _lastGameState cache. sessionId is accepted but not required.
+app.get('/diagnostics/sites', (req, res) => {
+  if (!_lastGameState) {
+    return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  }
+  const gs   = _lastGameState;
+  const pos   = gs.world.position;
+  const depth = gs.world.active_local_space ? 3 : gs.world.active_site ? 2 : 1;
+  const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
+  const cell    = cellKey ? gs.world.cells?.[cellKey] : null;
+
+  // Cell sites — object dict, not array
+  let cellSites = [];
+  if (cell?.sites && !Array.isArray(cell.sites)) {
+    cellSites = Object.values(cell.sites).map(s => {
+      const interiorState = _getSiteInteriorState(s, gs.world.sites);
+      const mirror = s.interior_key ? gs.world.sites?.[s.interior_key] : null;
+      return {
+        site_id:        s.site_id ?? null,
+        name:           s.name ?? null,
+        description:    s.description ?? null,
+        is_filled:      s.is_filled ?? false,
+        enterable:      s.enterable !== false,
+        interior_key:   s.interior_key ?? null,
+        interior_state: interiorState,
+        grid_w:         mirror?.width  ?? null,
+        grid_h:         mirror?.height ?? null,
+        npc_count:      Array.isArray(mirror?.npcs) ? mirror.npcs.length : 0
+      };
+    });
+  }
+
+  // Active site
+  let activeSite = null;
+  if (gs.world.active_site) {
+    const as = gs.world.active_site;
+    const lsEntries = Object.entries(as.local_spaces || {}).map(([key, s]) => {
+      const gen = s._generated_interior || null;
+      return {
+        local_space_id: key,
+        parent_site_id: s.parent_site_id ?? as.site_id ?? null,
+        name:           s.name ?? null,
+        description:    s.description ?? null,
+        is_filled:      s.is_filled ?? false,
+        enterable:      s.enterable !== false,
+        width:          gen?.width  ?? null,
+        height:         gen?.height ?? null,
+        npc_count:      Array.isArray(s.npc_ids) ? s.npc_ids.length : 0
+      };
+    });
+    activeSite = {
+      site_id:      as.site_id ?? null,
+      name:         as.name ?? null,
+      description:  as.description ?? null,
+      is_filled:    as.is_filled ?? false,
+      enterable:    as.enterable !== false,
+      site_size:    as.site_size ?? null,
+      local_spaces: lsEntries
+    };
+  }
+
+  // Active local space
+  let activeLocalSpace = null;
+  if (gs.world.active_local_space) {
+    const als = gs.world.active_local_space;
+    activeLocalSpace = {
+      local_space_id: als.local_space_id ?? null,
+      parent_site_id: als.parent_site_id ?? null,
+      name:           als.name ?? null,
+      description:    als.description ?? null,
+      is_filled:      als.is_filled ?? false,
+      enterable:      als.enterable !== false,
+      width:          als.width  ?? null,
+      height:         als.height ?? null,
+      npc_count:      Array.isArray(als.npc_ids) ? als.npc_ids.length : 0
+    };
+  }
+
+  res.json({
+    depth,
+    cell_key:            cellKey,
+    cell_sites:          cellSites,
+    active_site:         activeSite,
+    active_local_space:  activeLocalSpace,
+    fill_log:            Array.isArray(gs.world._fillLog) ? gs.world._fillLog : []
+  });
 });
 
 // Session bootstrap probe for Mother Brain — GET /diagnostics/session

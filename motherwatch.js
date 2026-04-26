@@ -33,6 +33,9 @@ function bar(c, w)    { return c.repeat(w); }
 
 const WIDTH = process.stdout.columns || 100;
 
+// ── Session accumulator ─────────────────────────────────────────────────────
+const _session = { calls: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cache_hit_tokens: 0, est_cost_usd: 0.0 };
+
 function divider(label) {
   if (!label) return dim(bar('─', WIDTH));
   const inner = ` ${label} `;
@@ -41,7 +44,7 @@ function divider(label) {
 }
 
 // ── Render ──────────────────────────────────────────────────────────────────
-function render(p) {
+function render(p, session) {
   const out = [];
   const push = s => out.push(s);
   const turn = p.turn ?? '??';
@@ -80,7 +83,20 @@ function render(p) {
 
   push('');
   push(dim(bar('─', WIDTH)));
-  push(dim(`  turn ${turn}  |  Ctrl+C exit`));
+  // Footer: per-scan stats + session totals
+  const u = p.usage || {};
+  const scanTok  = u.total_tokens   || 0;
+  const scanCost = u.est_cost_usd   || 0;
+  const scanHit  = u.cache_hit_tokens || 0;
+  const scanMiss = u.cache_miss_tokens || 0;
+  const hitPct   = scanTok > 0 && (scanHit + scanMiss) > 0
+    ? Math.round((scanHit / (scanHit + scanMiss)) * 100) + '% hit'
+    : '';
+  const scanStr  = scanTok > 0
+    ? `scan: ${scanTok.toLocaleString()} tok${hitPct ? '  ' + hitPct : ''}  ~$${scanCost.toFixed(6)}`
+    : 'scan: --';
+  const sesStr   = `session: ${session.calls} calls  ${session.total_tokens.toLocaleString()} tok  ~$${session.est_cost_usd.toFixed(4)}`;
+  push(dim(`  turn ${turn}  |  ${scanStr}  |  ${sesStr}  |  Ctrl+C exit`));
 
   clr();
   process.stdout.write(out.join('\n') + '\n');
@@ -120,7 +136,15 @@ function connect() {
           }
           if (payload.type !== 'watch_verdict') continue;
           try {
-            render(payload);
+            // Accumulate session stats
+            const u = payload.usage || {};
+            _session.calls++;
+            _session.prompt_tokens     += u.prompt_tokens     || 0;
+            _session.completion_tokens += u.completion_tokens || 0;
+            _session.total_tokens      += u.total_tokens      || 0;
+            _session.cache_hit_tokens  += u.cache_hit_tokens  || 0;
+            _session.est_cost_usd      += u.est_cost_usd      || 0;
+            render(payload, { ..._session });
           } catch (e) {
             process.stdout.write(`${RED}[RENDER ERR T-${payload.turn}] ${e.message}\n${e.stack || ''}${R}\n`);
           }

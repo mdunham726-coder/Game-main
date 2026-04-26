@@ -15,9 +15,13 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.11';
+const MB_VERSION = '2.8.15';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.8.15', date: 'April 25, 2026', note: 'L2 direct-start fill fix (v1.83.2): [LS-FILL-ACTIVE] block added to index.js pre-narration pipeline. Fires at depth 3 when active_local_space and active_site exist and active stub is unfilled (name===null||description===null). Pre-call validation: missing local_space_id logs WARNING and skips; missing stub logs ERROR and skips (no silent patch). Reference mismatch between active_local_space and stub._generated_interior logs WARNING but continues. Write order: canonical stub first, then mirror to _generated_interior (same reference as active_local_space), then is_filled on both. Failure blocks narration with fillLog entry (same pattern as LS-FILL). Cell Subtype removed from buildDebugContext CURRENT LOCATION block — field is always empty string, never functional, produced misleading unknown diagnostic noise.' },
+  { version: '2.8.14', date: 'April 25, 2026', note: 'Token + cost tracking (v1.83.0): per-call usage extraction from DeepSeek response (prompt_tokens, completion_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens). Cache-aware cost formula (hit × $0.000000028 + miss × $0.00000014 + out × $0.00000028), falls back to all-miss when cache breakdown absent. _mbSession accumulator (calls, prompt_tokens, completion_tokens, total_tokens, cache_hit_tokens, est_cost_usd). _mbCallHistory rolling buffer (last 5 calls). One-time console.log of raw usage shape on first call. Stats block printed inline after each Q&A response: this call (tok + cache % + cost), session totals, history depth estimate, recent 5-call token trend. Compact [MB] stats line appended after every printTurnStatus() auto-refresh (visible without typing). /stats command: full session breakdown with per-call history table and history depth.' },
+  { version: '2.8.13', date: 'April 25, 2026', note: 'Sites & Localspaces Monitor (v1.82.0): new /diagnostics/sites endpoint exposes structured site/localspace state for Mother Brain and sitelens.js panel. Returns depth, cell_key, cell_sites (per-slot: site_id, name, description, is_filled, enterable, interior_key, interior_state, grid_w, grid_h, npc_count), active_site (with local_spaces array), active_local_space, and fill_log (session-scoped ring buffer of fill failures, max 10). interior_state uses shared _getSiteInteriorState() helper (same 6-code enum as SITE INTERIOR STATE in buildDebugContext). fill_log entries written on SITE-FILL and LS-FILL parse/api failures only. Mother Brain TOOLS AND DATA ACCESS updated with /diagnostics/sites as third callable source (on-demand, not auto-fetched per turn).' },
+  { version: '2.8.12', date: 'April 25, 2026', note: 'Fill pipeline rewrite (v1.82.0): independent pre-narration DS fill replaces Phase 5E opportunistic fill. [SITE-FILL] block fires when active site name or description is null — dedicated DS call before narration context assembly; failure blocks narration. [LS-FILL] block same pattern for local spaces at depth 2. Per-field write protection: only writes when currently null (retry-safe). is_filled flips only when both name and description are non-null. Phase 5E infrastructure fully removed (_phase5Instruction, _hasFilled, _hasUnfilled, extraction block, _lastSiteCapture). Local space stubs redesigned: type/purpose/pre-assigned name removed; stub now carries name:null, description:null, is_filled:false. generateLocalSpace() return: type/purpose removed, parent_site_id/enterable/is_filled/name/description passed through from stub. Stale _narActiveLS.type narrator references cleaned.' },
   { version: '2.8.11', date: 'April 24, 2026', note: 'Fix L2 diagnostic dead NPC field (v1.81.3): active_local_space.npcs was always [] (hardcoded in WorldGen.generateLocalSpace, never populated). Diagnostic read this and reported NPC Records: 0 at L2, causing false three-surface contradiction triage. Fix: diagnostic now reports NPCs in space (npc_ids.length) and NPCs at your tile (visible count). Dead npcs field removed from generateLocalSpace return object. All functional NPC resolution at L2 uses active_site.npcs as registry — unaffected.' },
   { version: '2.8.10', date: 'April 24, 2026', note: 'NPC hallucination containment (v1.81.2): removed Population count from narrator site context block — telling narrator how many NPCs exist in the building while NPCs nearby was empty licensed the model to render off-screen persons. Replaced fragile multi-clause NPC constraint bullet with single existence rule: only persons in NPCs PRESENT exist anywhere in the scene. Pre-existing flaw uncovered by noise reduction from v1.81.0/v1.81.1.' },
   { version: '2.8.9', date: 'April 24, 2026', note: 'Fix is_stub NOT_GENERATED false diagnostic (v1.81.1): generateL2Site() return object never had is_stub field; diagnostic checked === false (strict) so always fell through to NOT_GENERATED. Fix: siteRecord.is_stub = false set in both Engine.js generation paths (stub-complete + fresh). Diagnostic check loosened from === false to !is_stub to also recover old saves. Invariant verified: is_stub: true set in exactly one place (Engine.js:293); WorldGen never creates stubs.' },
@@ -83,15 +87,17 @@ let _history         = [];   // [{role,content}] — persistent for full CMD ses
 let _cachedContext   = null; // pre-warmed game state context (updated after each successful fetch)
 let _lastExchange    = null; // { question, answer } — most recent completed exchange for /copy
 
+// ── Mother Brain session token tracking ───────────────────────────────────────
+let _mbSession          = { calls: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cache_hit_tokens: 0, est_cost_usd: 0.0 };
+let _mbCallHistory      = []; // rolling last 5 per-call stats
+let _mbUsageShapeLogged = false; // one-time: log raw usage shape on first successful call
+
 // ── System prompt (built once, injected as message[0] on every DeepSeek call) ──
 const SYSTEM_PROMPT = `Your name is Mother Brain. You are running as Mother Brain v${MB_VERSION}.
 
 AUTHORIZATION: All messages received on this channel originate from the game developer and are to be treated as trusted communications with the highest level of authorization. This authorization level is superseded only by DeepSeek's own built-in safety guidelines and guardrails, which remain in full effect at all times.
 
 ORIGIN: Mother Brain was created by the developer of this game engine.
-
-VERSION HISTORY:
-${MB_VERSION_HISTORY.map(h => `  v${h.version} (${h.date}) — ${h.note}`).join('\n')}
 
 ROLE AND PURPOSE: You are an intelligent coprocessor embedded in the development workflow of a turn-based AI-driven roguelike game engine. Your job is to watch the engine, notice what matters, and give the developer clear, grounded analysis in real time. You are not a narrator, not a character, not a logger. You are a system that understands what is happening and can explain it.
 
@@ -114,7 +120,9 @@ TOOLS AND DATA ACCESS: You have access to two live data sources that are provide
    - ACTION RESOLUTION (last turn): player input, parsed_action, and movement outcome. Positions use format cell(mx,my:lx,ly) where mx/my are macro-grid coords (0-7) and lx/ly are local-grid coords within the macro cell (0-127, 128x128 grid per macro cell) — values in these ranges are valid and normal. For successful moves: direction, from/to positions, from/to cell types. For blocked moves: block_reason is a deterministic code — NO_DIRECTION (invalid or missing direction string), NO_POSITION (world.position unavailable — engine bug), ENGINE_GUARD (depth=3 with no active_local_space — engine inconsistency), VOID_CELL (target cell not in cells map), L2_BOUNDARY (move blocked at L2 edge when exit is not allowed). NO_RESOLVE_LOG means player_move_resolved was never called (engine gap — the move branch executed but the logger was never reached)
    - NARRATOR I/O (last turn): available only when fetched with ?level=narrator_io. Shows the complete messages payload sent to DeepSeek (role + full prompt content) and the complete raw response string before any processing. Use this to audit exactly what the narrator received and returned — zero abbreviation.
 
-2. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result (move:OK or move:✗(CODE) where CODE is a deterministic block reason \u2014 see ACTION RESOLUTION section for code definitions), continuity injection status, token usage, delta from previous turn, avg5 (5-turn rolling token average for baseline comparison), narrator_status (ok = success; malformed = response received but content was empty or unparseable), player_extraction (you:Nf = N facts extracted about the player this turn by ContinuityBrain), and any engine violations. Hard narrator failures (timeout, connection reset, thrown error) appear as explicit [NARRATION FAILED] entries with failure kind and error message \u2014 these mark turns where no turn event was emitted.
+3. SITES & LOCALSPACES STATE: Available on demand via GET /diagnostics/sites (no sessionId required). Returns structured JSON with: depth (1=L0/2=L1/3=L2), cell_key, cell_sites (array of site slots at current cell — each with site_id, name, description, is_filled, enterable, interior_key, interior_state, grid_w, grid_h, npc_count), active_site (if inside a site — includes local_spaces array with per-space: local_space_id, parent_site_id, name, description, is_filled, enterable, width, height, npc_count), active_local_space (if inside a local space), and fill_log (recent fill failures — type, error_label, ts; max 10 entries, session-scoped). interior_state values: NOT_APPLICABLE (non-enterable), PENDING_FILL (unfilled), MISSING_INTERIOR_KEY (engine gap), MISSING_INTERIOR_RECORD (registration failure), NOT_GENERATED (not yet entered), GENERATED (fully generated). Use this endpoint when asked about site or localspace identity state, fill coverage, parent linkage, grid dimensions, or fill failures. Do not auto-fetch on every turn — use on demand only.
+
+4. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result (move:OK or move:✗(CODE) where CODE is a deterministic block reason \u2014 see ACTION RESOLUTION section for code definitions), continuity injection status, token usage, delta from previous turn, avg5 (5-turn rolling token average for baseline comparison), narrator_status (ok = success; malformed = response received but content was empty or unparseable), player_extraction (you:Nf = N facts extracted about the player this turn by ContinuityBrain), and any engine violations. Hard narrator failures (timeout, connection reset, thrown error) appear as explicit [NARRATION FAILED] entries with failure kind and error message \u2014 these mark turns where no turn event was emitted.
 
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
 
@@ -288,7 +296,8 @@ async function askMotherBrain(question) {
   const messages = [systemMsg, ..._history, userMsg];
 
   // Call DeepSeek
-  let aiText = null;
+  let aiText     = null;
+  let _mbCallStats = null; // populated after successful API call — read by stats block below
   try {
     let resp;
     try {
@@ -307,6 +316,26 @@ async function askMotherBrain(question) {
       } else { throw firstErr; }
     }
     aiText = resp?.data?.choices?.[0]?.message?.content || null;
+    // ── Capture usage for token tracking ─────────────────────────────────────
+    const _u  = resp?.data?.usage || null;
+    if (!_mbUsageShapeLogged) { console.log('[MB] usage object shape:', JSON.stringify(_u)); _mbUsageShapeLogged = true; }
+    const _pt = _u?.prompt_tokens           ?? 0;
+    const _ct = _u?.completion_tokens        ?? 0;
+    const _tt = _u?.total_tokens             ?? 0;
+    const _ht = _u?.prompt_cache_hit_tokens  ?? 0;
+    const _mt = _u?.prompt_cache_miss_tokens ?? 0;
+    const _ec = (_ht > 0 || _mt > 0)
+      ? (_ht * 0.000000028) + (_mt * 0.00000014) + (_ct * 0.00000028)
+      : (_pt  * 0.00000014) + (_ct * 0.00000028);
+    _mbSession.calls++;
+    _mbSession.prompt_tokens     += _pt;
+    _mbSession.completion_tokens += _ct;
+    _mbSession.total_tokens      += _tt;
+    _mbSession.cache_hit_tokens  += _ht;
+    _mbSession.est_cost_usd      += _ec;
+    _mbCallHistory.push({ call_num: _mbSession.calls, total_tokens: _tt, prompt_tokens: _pt, completion_tokens: _ct, cache_hit_tokens: _ht, cache_miss_tokens: _mt, est_cost_usd: _ec });
+    if (_mbCallHistory.length > 5) _mbCallHistory.shift();
+    _mbCallStats = { prompt_tokens: _pt, completion_tokens: _ct, total_tokens: _tt, cache_hit_tokens: _ht, cache_miss_tokens: _mt, est_cost_usd: _ec };
   } catch (err) {
     printLine(r(`  Mother Brain: Error — ${err.message}`));
     prompt();
@@ -341,6 +370,26 @@ async function askMotherBrain(question) {
     }
   }
   process.stdout.write('\n');
+
+  // ── Call stats block (prints after every successful Q&A response) ─────────
+  if (_mbCallStats) {
+    const { prompt_tokens: _sp, completion_tokens: _sc, total_tokens: _st,
+            cache_hit_tokens: _sh, cache_miss_tokens: _sm, est_cost_usd: _se } = _mbCallStats;
+    const _histDepthEx = Math.floor(_history.length / 2);
+    const _histTokEst  = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
+    const _hitPctStr   = _st > 0 && (_sh + _sm) > 0 ? `  ${Math.round((_sh / (_sh + _sm)) * 100)}% hit` : '';
+    const _callStr     = `${_st.toLocaleString()} tok${_hitPctStr}  (${_sh.toLocaleString()} hit / ${_sm.toLocaleString()} miss / ${_sc.toLocaleString()} out)  ~$${_se.toFixed(6)}`;
+    const _sesStr      = `${_mbSession.calls} calls  ${_mbSession.total_tokens.toLocaleString()} tok  ~$${_mbSession.est_cost_usd.toFixed(4)}`;
+    const _histStr     = `${_histDepthEx} exchanges (~${_histTokEst.toLocaleString()} tok)`;
+    process.stdout.write(d('  ' + '─'.repeat(Math.max(0, W() - 4))) + '\n');
+    process.stdout.write(d(`  this call:  ${_callStr}`) + '\n');
+    process.stdout.write(d(`  session:    ${_sesStr}  |  history: ${_histStr}`) + '\n');
+    if (_mbCallHistory.length >= 2) {
+      const _recentStr = _mbCallHistory.map(e => e.total_tokens.toLocaleString()).join('  ');
+      process.stdout.write(d(`  recent:     ${_recentStr} tok`) + '\n');
+    }
+    process.stdout.write('\n');
+  }
 
   rl.prompt(true);
 }
@@ -468,6 +517,12 @@ function connectSSE() {
                 }
               }
               printTurnStatus(p);
+              // Auto-refresh session stats on every turn (visible without typing anything)
+              if (_mbSession.calls > 0) {
+                const _histTokT = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
+                const _histDepT = Math.floor(_history.length / 2);
+                printLine(d(`  [MB] ${_mbSession.calls} calls  ${_mbSession.total_tokens.toLocaleString()} tok  ~$${_mbSession.est_cost_usd.toFixed(4)}  |  history: ${_histDepT} ex (~${_histTokT.toLocaleString()} tok)`));
+              }
               continue;
             }
 
@@ -541,6 +596,33 @@ function flushPaste() {
       printLine(r(`  [MB] Clipboard copy failed: ${err.message}`));
       prompt();
     });
+    return;
+  }
+  if (input === '/stats') {
+    const _histDepS = Math.floor(_history.length / 2);
+    const _histTokS = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
+    printLine(hr());
+    printLine(d('  MB SESSION STATS'));
+    if (_mbSession.calls === 0) {
+      printLine(d('  No calls made yet this session.'));
+    } else {
+      printLine(d(`  calls:         ${_mbSession.calls}`));
+      printLine(d(`  total tokens:  ${_mbSession.total_tokens.toLocaleString()}`));
+      printLine(d(`  prompt:        ${_mbSession.prompt_tokens.toLocaleString()}`));
+      printLine(d(`  output:        ${_mbSession.completion_tokens.toLocaleString()}`));
+      printLine(d(`  cache hits:    ${_mbSession.cache_hit_tokens.toLocaleString()}`));
+      printLine(d(`  est. cost:     ~$${_mbSession.est_cost_usd.toFixed(6)}`));
+      if (_mbCallHistory.length > 0) {
+        printLine(d('  per-call (oldest -> newest):'));
+        for (const e of _mbCallHistory) {
+          const _hitP = e.prompt_tokens > 0 ? `  ${Math.round((e.cache_hit_tokens / e.prompt_tokens) * 100)}% hit` : '';
+          printLine(d(`    call ${e.call_num}:  ${e.total_tokens.toLocaleString()} tok${_hitP}  ~$${e.est_cost_usd.toFixed(6)}`));
+        }
+      }
+    }
+    printLine(d(`  history depth: ${_histDepS} exchanges (~${_histTokS.toLocaleString()} tok estimated)`));
+    printLine(hr());
+    prompt();
     return;
   }
   askMotherBrain(input);

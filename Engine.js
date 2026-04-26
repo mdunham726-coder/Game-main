@@ -120,7 +120,8 @@ function initState(timestampUTC) {
       merchants: [], factions: [], npcs: [],
       position: { mx: 0, my: 0, lx: Math.floor(l1w/2), ly: Math.floor(l1h/2) },
       promotion_log:  [],  // ContinuityBrain: PromotionLogEntry[] — how facts became true
-      mood_history:   []   // ContinuityBrain: mood_snapshot[] — rolling 20-turn cap
+      mood_history:   [],  // ContinuityBrain: mood_snapshot[] — rolling 20-turn cap
+      _fillLog:       []   // Fill pipeline: short failure entries only, max 10, session-scoped
     },
     ledger: { promotions: [] },
     counters: { state_rev: 0, site_rev: 0, cell_rev: 0, inventory_rev: 0, merchant_state_rev: 0, faction_rev: 0 },

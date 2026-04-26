@@ -1,0 +1,15 @@
+# Secret-bearing files
+*.bat
+.env
+*.env
+
+# Runtime-generated data
+saves/
+logs/
+*.log
+
+# OS artifacts
+.DS_Store
+
+# Dependencies
+node_modules/
