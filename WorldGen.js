@@ -138,6 +138,9 @@ function generateNPCTraits(rng, traitCatalog) {
  * @returns {Array<object>} Inventory items
  */
 function generateNPCInventory(profession, rng) {
+  // Null guard: job_category is null at NPC birth (filled later by [NPC-FILL])
+  if (!profession) return [{ name: "personal_belongings", qty: 1 }];
+
   // Profession-based inventory templates
   const inventoryTemplates = {
     merchant: [

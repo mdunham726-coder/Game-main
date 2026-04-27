@@ -2160,6 +2160,72 @@ app.post('/narrate', async (req, res) => {
     const _narDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
     const _narActiveSite = gameState?.world?.active_site || null;
 
+    // [NPC-FILL] Fill DS-owned NPC identity fields (npc_name, gender, age, job_category) for newly-born NPCs.
+    // Fires every turn but skips immediately when all NPCs are already filled (frozen check).
+    // Non-blocking on failure: NPCs pass through with null fields + _fill_error. Never hard-blocks narration.
+    if (_narActiveSite && Array.isArray(_narActiveSite.npcs) && _narActiveSite.npcs.length > 0) {
+      const _DS_FIELDS = ['npc_name', 'gender', 'age', 'job_category'];
+      const _fillNeeded = _narActiveSite.npcs.filter(n =>
+        n && !n._fill_frozen && _DS_FIELDS.some(f => n[f] == null)
+      );
+      if (_fillNeeded.length > 0) {
+        try {
+          const _fillSiteCtx = [
+            _narActiveSite.name        ? `Site name: "${_narActiveSite.name}".`        : '',
+            _narActiveSite.description ? `Site description: "${_narActiveSite.description}".` : '',
+            _narActiveSite.type        ? `Site type: ${_narActiveSite.type}.`           : ''
+          ].filter(Boolean).join(' ') || 'A settlement interior.';
+          const _fillList = _fillNeeded.map(n => ({ id: n.id, traits: n.traits || [] }));
+          const _fillPrompt = `${_fillSiteCtx}\n\nFor each NPC in this list, invent a fitting identity. Return ONLY a JSON array — no prose, no markdown.\n\nEach element must be:\n{"id":"<exact id from input>","npc_name":"<full name>","gender":"<male|female|nonbinary>","age":<integer 12-80>,"job_category":"<occupation string>"}\n\nNPC list:\n${JSON.stringify(_fillList)}\n\nRules:\n- id must match the input id exactly\n- npc_name, gender, age, job_category must ALL be non-null\n- age must be a number (integer)\n- job_category should fit the site context and the NPC's traits\n- Return one element per NPC in the input list`;
+          const _fillResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            messages: [{ role: 'user', content: _fillPrompt }],
+            temperature: 0.7
+          }, {
+            headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+            timeout: 30000
+          });
+          let _fillRaw = _fillResp?.data?.choices?.[0]?.message?.content || '';
+          let _fillUpdates = null;
+          try { _fillUpdates = JSON.parse(_fillRaw); } catch (_) {
+            const _fillBracket = _fillRaw.match(/\[[\s\S]*\]/);
+            if (_fillBracket) { try { _fillUpdates = JSON.parse(_fillBracket[0]); } catch (_) {} }
+          }
+          if (Array.isArray(_fillUpdates)) {
+            for (const npc of _fillNeeded) {
+              const upd = _fillUpdates.find(u => u && u.id === npc.id);
+              if (!upd) {
+                console.warn(`[NPC-FILL] No entry returned for npc id=${npc.id} — marking _fill_error`);
+                npc._fill_error = 'missing_from_response';
+                continue;
+              }
+              const allPresent = _DS_FIELDS.every(f => upd[f] != null);
+              if (!allPresent) {
+                const missing = _DS_FIELDS.filter(f => upd[f] == null).join(',');
+                console.warn(`[NPC-FILL] Incomplete fill for npc id=${npc.id} missing=${missing} — atomic fail`);
+                npc._fill_error = `incomplete_fields:${missing}`;
+                continue;
+              }
+              // Atomic write: all 4 fields present
+              npc.npc_name     = String(upd.npc_name);
+              npc.gender       = String(upd.gender);
+              npc.age          = Number(upd.age);
+              npc.job_category = String(upd.job_category);
+              npc._fill_frozen = true;
+              delete npc._fill_error;
+              console.log(`[NPC-FILL] Filled npc id=${npc.id} name="${npc.npc_name}" job="${npc.job_category}" gender=${npc.gender} age=${npc.age}`);
+            }
+          } else {
+            console.error('[NPC-FILL] Failed to parse DS response — all fill-needed NPCs marked _fill_error');
+            for (const npc of _fillNeeded) npc._fill_error = 'parse_failed';
+          }
+        } catch (_fillErr) {
+          console.error('[NPC-FILL] DS call failed:', _fillErr.message);
+          for (const npc of _fillNeeded) npc._fill_error = `api_failed:${_fillErr.message}`;
+        }
+      }
+    }
+
     // [NARRATION-GATE] Block narration if active site slot is incomplete.
     // Operates on canonical slot (cell.sites[id]), NOT on active_site mirror fields.
     // Hard-blocks if active_site exists but slot cannot be resolved (state integrity failure).
@@ -2268,7 +2334,7 @@ app.post('/narrate', async (req, res) => {
       const _lsNpcNames = _lsNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
       if (_lsNpcs.length > 0) {
         npcsStr = JSON.stringify(_lsNpcs.map(n => {
-          const _ne = { id: n.id, job: n.job_category, tier: n.tier, gender: n.gender, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false };
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
           if (n.narrative_state) Object.assign(_ne, n.narrative_state);
           return _ne;
         }));
@@ -2292,7 +2358,7 @@ app.post('/narrate', async (req, res) => {
       // Sync npcsStr with visible NPCs — this is the hard authority boundary for narration
       if (_siteNpcs.length > 0) {
         npcsStr = JSON.stringify(_siteNpcs.map(n => {
-          const _ne = { id: n.id, job: n.job_category, tier: n.tier, gender: n.gender, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false };
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
           if (n.narrative_state) Object.assign(_ne, n.narrative_state);
           return _ne;
         }));
@@ -3423,7 +3489,7 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
       try {
         const _arbVisibleNpcs = (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || []);
         if (_arbVisibleNpcs.length === 0) {
-          emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], gameSessionId: resolvedSessionId });
+          emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], gameSessionId: resolvedSessionId });
           return;
         }
         const _arbNpcRegistry = _arbVisibleNpcs.map(n => ({
@@ -3435,12 +3501,12 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
         }));
         const _arbSiteName = gameState.world.active_local_space?.name || gameState.world.active_site?.name || null;
         const _arbDepthLabel = ['L0', 'L1', 'L2', 'L3'][_sfDepth] || `depth ${_sfDepth}`;
-        const _arbSystemMsg = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Statements such as "I am inside Bojangles," "I am a chicken nugget," "I have a magic sword," "I have 5 million dollars," or "I start in an arcade" are all valid founding premises. These are not cheating, not invalid, and are not to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.\n\nAfter Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player's self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements such as "I have a magic sword," "I am the king of this realm," or "I am inside the bank vault" must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.\n\nThe player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.\n\nAll actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player's expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.\n\n---\n\nYou are the Arbiter — a post-narration consequence engine for a text RPG. Your sole responsibility in this version is to evaluate whether any NPC's opinion of the player (reputation_player, 0-100, 50=neutral) should change based on what just happened.\n\nRULES:\n- Only change reputation for NPCs who were DIRECTLY involved in this turn (present, addressed, or observably affected).\n- Movement, exploration, and turns with no NPC interaction must produce an empty array.\n- Magnitude: trivial interaction ±1-3, meaningful ±4-8, significant social event ±9-15, exceptional ±16-20. Cap at ±25 per turn.\n- reason must be a terse factual phrase (max 10 words) describing what happened.\n- Return ONLY valid JSON. No prose, no explanation, no markdown fences.\n\nOUTPUT FORMAT (strict JSON only):\n{"reputation_changes":[{"npc_id":"...","delta":N,"reason":"..."}]}\nFor no changes: {"reputation_changes":[]}`;
+        const _arbSystemMsg = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Statements such as "I am inside Bojangles," "I am a chicken nugget," "I have a magic sword," "I have 5 million dollars," or "I start in an arcade" are all valid founding premises. These are not cheating, not invalid, and are not to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.\n\nAfter Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player's self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements such as "I have a magic sword," "I am the king of this realm," or "I am inside the bank vault" must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.\n\nThe player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.\n\nAll actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player's expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.\n\n---\n\nYou are the Arbiter — a post-narration consequence engine for a text RPG. You have two responsibilities:\n\n1. REPUTATION: Evaluate whether any NPC's opinion of the player (reputation_player, 0-100, 50=neutral) should change.\n2. NAME LEARNING: Determine if the player learned an NPC's name this turn.\n\nREPUTATION RULES:\n- Only change reputation for NPCs who were DIRECTLY involved in this turn (present, addressed, or observably affected).\n- Movement, exploration, and turns with no NPC interaction must produce an empty array.\n- Magnitude: trivial interaction ±1-3, meaningful ±4-8, significant social event ±9-15, exceptional ±16-20. Cap at ±25 per turn.\n- reason must be a terse factual phrase (max 10 words) describing what happened.\n\nNAME LEARNING RULES:\n- Only include an NPC in is_learned_changes if the narration explicitly shows the player learning their name via one of these event types: self_introduction, third_party_introduction, visible_label, document_or_record, direct_answer.\n- revealed_name must be the exact name as it appeared in the narration.\n- Do not infer name learning; it must be textually evident in the narration.\n- is_learned_changes is an empty array if no name was learned.\n\nReturn ONLY valid JSON. No prose, no explanation, no markdown fences.\n\nOUTPUT FORMAT (strict JSON only):\n{"reputation_changes":[{"npc_id":"...","delta":N,"reason":"..."}],"is_learned_changes":[{"npc_id":"...","revealed_name":"...","event_type":"self_introduction|third_party_introduction|visible_label|document_or_record|direct_answer","evidence":"..."}]}\nFor no changes in either: {"reputation_changes":[],"is_learned_changes":[]}`;
         const _arbUserMsg = `PLAYER ACTION: "${_rawInput}" (parsed: ${_parsedAction || 'unknown'})\nNARRATION: ${narrative.slice(0, 1200)}\nNPC REGISTRY: ${JSON.stringify(_arbNpcRegistry)}\nLOCATION: ${_arbDepthLabel}${_arbSiteName ? ` / ${_arbSiteName}` : ''}\n\nEvaluate this turn. Return JSON only.`;
         const _arbResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.3,
-          max_tokens: 400,
+          max_tokens: 600,
           messages: [
             { role: 'system', content: _arbSystemMsg },
             { role: 'user', content: _arbUserMsg }
@@ -3455,13 +3521,13 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
           const _arbClean = _arbRaw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
           _arbParsed = JSON.parse(_arbClean);
         } catch (_) {
-          _arbParsed = { reputation_changes: [] };
+          _arbParsed = { reputation_changes: [], is_learned_changes: [] };
         }
+        // --- Reputation changes ---
         const _arbChanges = Array.isArray(_arbParsed?.reputation_changes) ? _arbParsed.reputation_changes : [];
         const _arbApplied = [];
         for (const change of _arbChanges) {
           if (!change.npc_id || typeof change.delta !== 'number') continue;
-          // Use live NPC reference from visible list — these are direct refs to site.npcs objects
           const _npc = _arbVisibleNpcs.find(n => n.id === change.npc_id);
           if (_npc) {
             const _old = _npc.reputation_player ?? 50;
@@ -3469,9 +3535,37 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
             _arbApplied.push({ npc_id: change.npc_id, old_val: _old, new_val: _npc.reputation_player, delta: change.delta, reason: change.reason || '' });
           }
         }
-        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, gameSessionId: resolvedSessionId });
+        // --- is_learned changes ---
+        const _ALLOWED_EVENT_TYPES = ['self_introduction','third_party_introduction','visible_label','document_or_record','direct_answer'];
+        const _arbLearnChanges = Array.isArray(_arbParsed?.is_learned_changes) ? _arbParsed.is_learned_changes : [];
+        const _arbLearnApplied = [];
+        for (const lc of _arbLearnChanges) {
+          if (!lc.npc_id || !lc.revealed_name || !lc.event_type) continue;
+          if (!_ALLOWED_EVENT_TYPES.includes(lc.event_type)) {
+            console.warn(`[ARBITER] is_learned rejected — unknown event_type="${lc.event_type}" for npc_id=${lc.npc_id}`);
+            continue;
+          }
+          const _lnpc = _arbVisibleNpcs.find(n => n.id === lc.npc_id);
+          if (!_lnpc) {
+            console.warn(`[ARBITER] is_learned rejected — npc_id=${lc.npc_id} not in visible set`);
+            continue;
+          }
+          if (!_lnpc.npc_name) {
+            console.warn(`[ARBITER] is_learned rejected — npc_id=${lc.npc_id} has no npc_name (fill pending?)`);
+            continue;
+          }
+          if (_lnpc.npc_name.toLowerCase().trim() !== String(lc.revealed_name).toLowerCase().trim()) {
+            console.warn(`[ARBITER] name_mismatch — npc_id=${lc.npc_id} engine="${_lnpc.npc_name}" arbiter="${lc.revealed_name}"`);
+            _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: false, reason: 'name_mismatch' });
+            continue;
+          }
+          _lnpc.is_learned = true;
+          _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: true });
+          console.log(`[ARBITER] is_learned=true for npc_id=${lc.npc_id} name="${_lnpc.npc_name}" event=${lc.event_type}`);
+        }
+        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, gameSessionId: resolvedSessionId });
       } catch (e) {
-        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], error: e.message, gameSessionId: resolvedSessionId });
+        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], error: e.message, gameSessionId: resolvedSessionId });
       }
     })();
 
@@ -3687,7 +3781,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
                        : [];
     const _aVisibleLines = _aVisibleSrc.map(npc => {
       const _namePart = npc.is_learned && npc.npc_name ? ` name:"${npc.npc_name}"` : '';
-      return `  - ${npc.job_category || npc.id || 'unknown'}${_namePart} [tier:${npc.tier ?? '?'}, gender:${npc.gender ?? '?'}, is_learned:${npc.is_learned ?? false}, rep_player:${npc.reputation_player ?? '?'}]`;
+      return `  - ${npc.job_category || npc.id || 'unknown'}${_namePart} [age:${npc.age ?? '?'}, gender:${npc.gender ?? '?'}, is_learned:${npc.is_learned ?? false}, rep_player:${npc.reputation_player ?? '?'}]`;
     });
 
     context += `\n=== CURRENT AUTHORITATIVE PLAY SPACE ===\n`;
@@ -3733,12 +3827,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     if (_dbgVisible.length > 0) {
       _dbgVisible.forEach(npc => {
         const _npcNamePart = npc.is_learned && npc.npc_name ? ` name:"${npc.npc_name}"` : '';
-        context += `- ${npc.job_category || npc.id || 'Unknown'}${_npcNamePart} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}, is_learned:${npc.is_learned ?? false}, rep_player:${npc.reputation_player ?? '?'}]\n`;
-      });
-    } else {
-      context += `(None visible at current tile)\n`;
-    }
-  } else if (_dbgDepth >= 2 && _dbgActiveSite) {
+        context += `- ${npc.job_category || npc.id || 'Unknown'}${_npcNamePart} [age:${npc.age ?? '?'}, gender:${npc.gender || '?'}, is_learned:${npc.is_learned ?? false}, rep_player:${npc.reputation_player ?? '?'}]\n`;
     // L1: recompute _visible_npcs fresh (freshness guarantee — never stale)
     if (gameState.player?.position) {
       const Actions = require('./ActionProcessor.js');
@@ -3757,7 +3846,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     if (_dbgVisible.length > 0) {
       _dbgVisible.forEach(npc => {
         const _npcNamePart = npc.is_learned && npc.npc_name ? ` name:"${npc.npc_name}"` : '';
-        context += `- ${npc.job_category || npc.id || 'Unknown'}${_npcNamePart} [tier:${npc.tier || '?'}, gender:${npc.gender || '?'}, is_learned:${npc.is_learned ?? false}, rep_player:${npc.reputation_player ?? '?'}]\n`;
+        context += `- ${npc.job_category || npc.id || 'Unknown'}${_npcNamePart} [age:${npc.age ?? '?'}, gender:${npc.gender || '?'}, is_learned:${npc.is_learned ?? false}, rep_player:${npc.reputation_player ?? '?'}]\n`;
       });
     } else {
       context += `(None visible at current tile)\n`;
@@ -5098,6 +5187,56 @@ app.get('/diagnostics/session', (req, res) => {
     hasTurnData: _diagHistory.length > 0,
     lastTurn:    lastEntry?.turn_number ?? null
   });
+});
+
+// NPC diagnostics endpoint — NPC truth surface for panel and QA
+// Returns visible NPCs at the player's current tile with field-level checks.
+// No sessionId required. computeVisibleNpcs is called fresh on every request.
+app.get('/diagnostics/npc', (req, res) => {
+  if (!_lastGameState) {
+    return res.json({ location: null, npcs: [], site_npc_count: 0 });
+  }
+  const Actions = require('./ActionProcessor.js');
+  const gs = _lastGameState;
+  const depth = gs.world?.active_local_space ? 3 : gs.world?.active_site ? 2 : 1;
+  const activeSite = gs.world?.active_site || null;
+  const activeLS   = gs.world?.active_local_space || null;
+  const playerPos  = gs.player?.position || null;
+
+  let visibleNpcs = [];
+  let locationLabel = 'L0';
+  let siteNpcCount = 0;
+
+  if (depth === 3 && activeLS && playerPos) {
+    visibleNpcs = Actions.computeVisibleNpcs(activeLS, playerPos, activeSite?.npcs || []);
+    locationLabel = `L2:${activeLS.local_space_id || '?'} inside ${activeSite?.name || '?'}`;
+    siteNpcCount = (activeSite?.npcs || []).length;
+  } else if (depth >= 2 && activeSite && playerPos) {
+    visibleNpcs = Actions.computeVisibleNpcs(activeSite, playerPos);
+    locationLabel = `L1:${activeSite.name || activeSite.id || '?'} pos(${playerPos.x ?? '?'},${playerPos.y ?? '?'})`;
+    siteNpcCount = (activeSite?.npcs || []).length;
+  }
+
+  const npcData = visibleNpcs.map(npc => {
+    // _location_check: compare npc.position (world coords) vs player tile placement
+    let _location_check = 'UNKNOWN';
+    if (npc.site_id && activeSite) {
+      if (npc.site_id === activeSite.id) {
+        if (playerPos && npc.position) {
+          const _posMismatch = (npc.position.mx !== (gs.world?.position?.mx ?? 0)) ||
+                               (npc.position.my !== (gs.world?.position?.my ?? 0));
+          _location_check = _posMismatch ? 'POSITION MISMATCH' : 'OK';
+        } else {
+          _location_check = 'OK';
+        }
+      } else {
+        _location_check = 'OTHER SITE';
+      }
+    }
+    return { ...npc, _location_check };
+  });
+
+  res.json({ location: locationLabel, npcs: npcData, site_npc_count: siteNpcCount });
 });
 
 function emitDiagnostics(payload) {
