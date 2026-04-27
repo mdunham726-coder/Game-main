@@ -2,6 +2,23 @@
 
 ---
 
+## v1.84.6 — NPC Panel Access + Continuity Turn Index Fix + Snapshot Cleanup (April 27, 2026)
+
+**Accessibility, correctness, and log clarity. No changes to pipeline logic.**
+
+### diagnostics.js
+- Added `[N]` hotkey: spawns `npcpanel.js` in a new CMD window (matches existing pattern for `[B]` cbpanel, `[I]` sitelens, etc.).
+- Updated footer to include `[N] npc` in the hotkey legend.
+
+### ContinuityBrain.js
+- Fixed T-0 labeling at source: changed `const turn = (gameState.turn_history || []).length` to `(gameState.turn_history || []).length + 1`. Phase B runs before the current turn is pushed to `turn_history`, so the previous formula stamped Turn 1 entries as `turn_set: 0`. Now stamps `turn_set: 1` on Turn 1, aligning with player-visible turn numbering. No display-layer offset applied — fix is at source.
+
+### Index.html
+- Fixed `order_confirmed` false alarm in `copyRealityCheckSnapshot()`: changed `st.rc_end < st.narrator_start` to `st.rc_end <= st.narrator_start`. Updated label to `YES -- rc_end <= narrator_start`.
+- Removed `query` field from REALITY CHECK section of snapshot output. `fired`, `skipped_reason`, `result`, and `raw_response` are retained. Eliminates redundant DeepSeek prompt text now that query correctness has been verified.
+
+---
+
 ## v1.84.5 — Reality Check Observability + Turn 1 Fix (April 27, 2026)
 
 **Correctness fix + full pipeline observability for the Reality Check system.**

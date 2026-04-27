@@ -222,7 +222,7 @@ function render(p) {
   }
 
   // Footer
-  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] cb extraction  [L] log  [D] mood  [B] cb panel  [W] watch  [I] identity  Ctrl+C exit`));
+  push(dim(`  last updated ${new Date().toLocaleTimeString()}  │  [S] summary  [C] cb extraction  [L] log  [D] mood  [B] cb panel  [W] watch  [I] identity  [N] npc  Ctrl+C exit`));
 
   clr();
   process.stdout.write(lines.join('\n') + '\n');
@@ -346,6 +346,13 @@ if (process.stdin.isTTY) {
     }
     if (key === 'i' || key === 'I') {
       spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node sitelens.js'], {
+        cwd: __dirname,
+        detached: true,
+        stdio: 'ignore'
+      }).unref();
+    }
+    if (key === 'n' || key === 'N') {
+      spawn('cmd', ['/c', 'start', 'cmd', '/k', 'node npcpanel.js'], {
         cwd: __dirname,
         detached: true,
         stdio: 'ignore'

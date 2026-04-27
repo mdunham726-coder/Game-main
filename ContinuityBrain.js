@@ -384,7 +384,7 @@ function _getL0CellRecord(gameState) {
 
 async function runPhaseB(frozenNarration, gameState, watchContext) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
-  const turn   = (gameState.turn_history || []).length;
+  const turn   = (gameState.turn_history || []).length + 1;
 
   _setDiag(null);
 

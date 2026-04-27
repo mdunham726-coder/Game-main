@@ -2074,7 +2074,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const narDuration = (st.narrator_start != null && st.narrator_end != null)
           ? `${st.narrator_end - st.narrator_start}ms` : null;
         const orderConfirmed = (st.rc_end != null && st.narrator_start != null)
-          ? (st.rc_end < st.narrator_start ? 'YES -- rc_end < narrator_start' : 'NO -- ORDER VIOLATION DETECTED')
+          ? (st.rc_end <= st.narrator_start ? 'YES -- rc_end <= narrator_start' : 'NO -- ORDER VIOLATION DETECTED')
           : '(n/a -- RC skipped or data absent)';
         const lines = [
           `=== TURN SNAPSHOT (Turn ${t.turn_number}) ===`,
@@ -2086,9 +2086,9 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           'REALITY CHECK',
           `fired: ${rc.fired ?? false}`,
           `skipped_reason: ${rc.skipped_reason ?? 'null'}`,
-          `query: ${rc.query != null ? '"' + rc.query + '"' : 'null'}`,
           `result: ${rc.result != null ? '"' + rc.result + '"' : 'null'}`,
           `raw_response: ${rc.raw_response != null ? '"' + rc.raw_response + '"' : 'null'}`,
+
           '',
           'RAW DEEPSEEK RESPONSE (verbatim)',
           rc.raw_response != null ? rc.raw_response : '(skipped -- RC did not fire)',
