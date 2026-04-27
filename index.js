@@ -1168,7 +1168,7 @@ app.post('/narrate', async (req, res) => {
                 if (!gameState.world._fillLog) gameState.world._fillLog = [];
                 gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'parse_failed', affected_id: _startSlot.site_id });
                 if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
-                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState, diagnostics });
+                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState });
               }
               const _lssMissingFields = ['name','description','identity'].filter(f => !_lssParsed[f]);
               if (_lssMissingFields.length > 0) {
@@ -1179,7 +1179,7 @@ app.post('/narrate', async (req, res) => {
                 if (!gameState.world._fillLog) gameState.world._fillLog = [];
                 gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'parse_failed', affected_id: _startSlot.site_id, missing: _lssMissingFields });
                 if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
-                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState, diagnostics });
+                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState });
               }
               // All three confirmed — write to canonical slot
               _startSlot.name        = _lssParsed.name;
@@ -1202,7 +1202,77 @@ app.post('/narrate', async (req, res) => {
               if (!gameState.world._fillLog) gameState.world._fillLog = [];
               gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'api_failed', affected_id: _startSlot?.site_id || null });
               if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
-              return res.json({ sessionId: resolvedSessionId, error: `site_fill_failed: ${_lssErr.message}`, narrative: 'The world is being prepared. Please try again.', state: gameState, diagnostics });
+              return res.json({ sessionId: resolvedSessionId, error: `site_fill_failed: ${_lssErr.message}`, narrative: 'The world is being prepared. Please try again.', state: gameState });
+            }
+          }
+
+          // [L1-START-SITE-FILL] Pre-activation DeepSeek fill for L1-direct-start sessions.
+          // Mirrors [L2-START-SITE-FILL] exactly. Fires before enterSite so the site is fully
+          // populated before [START-CONTAINER] calls Engine.enterSite() (which sets active_site
+          // and bumps _sfDepth to 2, causing [SITE-FILL] to skip the slot).
+          // All three fields required. Hard-fail on any error.
+          if (gameState.world.start_container === 'L1' && _startSlot &&
+              (_startSlot.name === null || _startSlot.description === null || _startSlot.identity === null)) {
+            const _l1FoundingClause = gameState.world.founding_prompt
+              ? `World description: "${gameState.world.founding_prompt}". ` : '';
+            const _l1Purpose = _startCtx?.local_space_purpose || null;
+            const _l1Biome   = gameState.world.macro_biome || 'unknown';
+            const _l1Prompt  = `${_l1FoundingClause}Biome: ${_l1Biome}.${_l1Purpose ? ` Site purpose: ${_l1Purpose}.` : ''} Site size: ${_startSlot.site_size ?? 'unknown'}.\n\nReturn ONLY a single JSON object. No prose, no markdown. Required fields — all mandatory, none may be null or omitted:\n{"name":"<short proper name for this place>","description":"<one sentence describing it>","identity":"<short lowercase category, e.g. restaurant, blacksmith, inn>"}`;
+            try {
+              const _l1Resp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+                model: 'deepseek-chat',
+                messages: [{ role: 'user', content: _l1Prompt }],
+                temperature: 0.4
+              }, {
+                headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+                timeout: 30000
+              });
+              let _l1Raw = _l1Resp?.data?.choices?.[0]?.message?.content || '';
+              let _l1Parsed = null;
+              try { _l1Parsed = JSON.parse(_l1Raw); } catch (_) {
+                const _l1Bracket = _l1Raw.match(/\{[\s\S]*\}/);
+                if (_l1Bracket) { try { _l1Parsed = JSON.parse(_l1Bracket[0]); } catch (_) {} }
+              }
+              if (!_l1Parsed || typeof _l1Parsed !== 'object') {
+                console.warn('[L1-START-SITE-FILL] ERROR: parse_failure — response not valid JSON');
+                if (!gameState.world._fillLog) gameState.world._fillLog = [];
+                gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'parse_failed', affected_id: _startSlot.site_id });
+                if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState });
+              }
+              const _l1MissingFields = ['name','description','identity'].filter(f => !_l1Parsed[f]);
+              if (_l1MissingFields.length > 0) {
+                if (_l1MissingFields.includes('identity')) {
+                  console.warn('[L1-START-SITE-FILL] ERROR: missing_identity — identity field absent or null');
+                }
+                console.warn(`[L1-START-SITE-FILL] ERROR: parse_failure — missing fields: ${_l1MissingFields.join(',')}`);
+                if (!gameState.world._fillLog) gameState.world._fillLog = [];
+                gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'parse_failed', affected_id: _startSlot.site_id, missing: _l1MissingFields });
+                if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+                return res.json({ sessionId: resolvedSessionId, error: 'site_fill_failed', narrative: 'The world is being prepared. Please try again.', state: gameState });
+              }
+              // All three confirmed — write to canonical slot
+              _startSlot.name        = _l1Parsed.name;
+              _startSlot.description = _l1Parsed.description;
+              _startSlot.identity    = _l1Parsed.identity;
+              _startSlot.is_filled   = true;
+              console.log(`[L1-START-SITE-FILL] Slot filled: name="${_l1Parsed.name}" identity="${_l1Parsed.identity}"`);
+              // Mirror to world.sites stub — derived, not canonical
+              const _l1Ik = _startSlot.interior_key;
+              if (_l1Ik && gameState.world.sites?.[_l1Ik]) {
+                gameState.world.sites[_l1Ik].name = _l1Parsed.name;
+                gameState.world.sites[_l1Ik].type = _l1Parsed.identity;
+                console.log(`[L1-START-SITE-FILL] Mirror written: ${_l1Ik}`);
+              } else {
+                console.warn(`[L1-START-SITE-FILL] WARN: mirror target missing — interior_key=${_l1Ik}. Slot written, registry not updated.`);
+              }
+              sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            } catch (_l1Err) {
+              console.error('[L1-START-SITE-FILL] DS call failed:', _l1Err.message);
+              if (!gameState.world._fillLog) gameState.world._fillLog = [];
+              gameState.world._fillLog.push({ ts: new Date().toISOString(), type: 'site', error_label: 'api_failed', affected_id: _startSlot?.site_id || null });
+              if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
+              return res.json({ sessionId: resolvedSessionId, error: `site_fill_failed: ${_l1Err.message}`, narrative: 'The world is being prepared. Please try again.', state: gameState });
             }
           }
 
@@ -2248,7 +2318,7 @@ app.post('/narrate', async (req, res) => {
         if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
         return res.json({ sessionId: resolvedSessionId, error: 'site_state_integrity_failure',
           narrative: 'The world encountered an internal error. Please try again.',
-          state: gameState, diagnostics });
+          state: gameState });
       }
       const _gMissing = ['name','description','identity'].filter(f => !_gSlot[f]);
       if (_gMissing.length > 0) {
@@ -2258,7 +2328,7 @@ app.post('/narrate', async (req, res) => {
         if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
         return res.json({ sessionId: resolvedSessionId, error: 'site_incomplete',
           narrative: 'The world is still being prepared. Please try again.',
-          state: gameState, diagnostics });
+          state: gameState });
       }
     }
 
@@ -2423,8 +2493,11 @@ app.post('/narrate', async (req, res) => {
     let _realityAnchor = null;
     let _realityQuery = null;
     let _rcSkippedReason = null;
+    let _rcRawResponse = null;
+    let _rcStart = null;
+    let _rcEnd = null;
     const _rcSuffix = 'Focus on immediate physical, social, and legal consequences. be accurate, but concise and brief. distill the answer to the essence of the event.';
-    if (isFirstTurn) {
+    if (turnNumber === 1) {
       _rcSkippedReason = 'turn_1';
     } else if (_parsedAction === 'move') {
       _rcSkippedReason = 'move';
@@ -2441,6 +2514,7 @@ app.post('/narrate', async (req, res) => {
         ? `What happens when I say "${_rawInput}" to the ${_rcNpcRole}? ${_rcSuffix}`
         : `What happens when I ${_rawInput}? ${_rcSuffix}`;
       try {
+        _rcStart = Date.now();
         const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.3,
@@ -2450,7 +2524,9 @@ app.post('/narrate', async (req, res) => {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
           timeout: 15000
         });
-        _realityAnchor = _rcResp?.data?.choices?.[0]?.message?.content?.trim() || null;
+        _rcEnd = Date.now();
+        _rcRawResponse = _rcResp?.data?.choices?.[0]?.message?.content || null;
+        _realityAnchor = _rcRawResponse?.trim() || null;
         if (!_realityAnchor) throw new Error('empty_response');
         emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, gameSessionId: resolvedSessionId });
         console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}`);
@@ -2727,13 +2803,19 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
     };
 
     let response;
+    let _narratorStart = null;
+    let _narratorEnd = null;
     _lastNarratorPayload = { model: 'deepseek-chat', temperature: 0.7, messages: [{ role: 'user', content: narrationContent }] };
     try {
+      _narratorStart = Date.now();
       response = await _makeNarCall();
+      _narratorEnd = Date.now();
     } catch (_nFirstErr) {
       if (_nFirstErr?.code === 'ECONNRESET') {
         console.warn('[NARRATE] ECONNRESET — retrying once...');
+        _narratorStart = Date.now();
         response = await _makeNarCall();
+        _narratorEnd = Date.now();
       } else {
         throw _nFirstErr;
       }
@@ -3236,7 +3318,15 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
         fired: !_rcSkippedReason && _realityAnchor !== null,
         skipped_reason: _rcSkippedReason || null,
         query: _realityQuery || null,
-        result: _realityAnchor || null
+        result: _realityAnchor || null,
+        raw_response: _rcRawResponse || null,
+        anchor_block: _realityAnchorBlock || null
+      },
+      stage_times: {
+        rc_start: _rcStart,
+        rc_end: _rcEnd,
+        narrator_start: _narratorStart,
+        narrator_end: _narratorEnd
       }
     };
     
@@ -3782,6 +3872,11 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       _dbgVisible.forEach(npc => {
         const _npcNamePart = npc.is_learned && npc.npc_name ? ` name:"${npc.npc_name}"` : '';
         context += `- ${npc.job_category || npc.id || 'Unknown'}${_npcNamePart} [age:${npc.age ?? '?'}, gender:${npc.gender || '?'}, is_learned:${npc.is_learned ?? false}, rep_player:${npc.reputation_player ?? '?'}]\n`;
+      });
+    } else {
+      context += `(None visible at current tile)\n`;
+    }
+  } else if (_dbgActiveSite) {
     // L1: recompute _visible_npcs fresh (freshness guarantee — never stale)
     if (gameState.player?.position) {
       const Actions = require('./ActionProcessor.js');

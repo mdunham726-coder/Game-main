@@ -215,6 +215,9 @@
   <div style="margin-bottom: 10px;">
     <button onclick="copyStory()" style="width: 100%; padding: 10px; font-size: 14px; background: #2c3e50; color: white; border: none; cursor: pointer; border-radius: 3px;">Copy Story</button>
   </div>
+  <div style="margin-bottom: 10px;">
+    <button onclick="copyRealityCheckSnapshot()" style="width: 100%; padding: 10px; font-size: 14px; background: #c0392b; color: white; border: none; cursor: pointer; border-radius: 3px;">Copy Reality Check Snapshot</button>
+  </div>
   <div id="logsLoading" style="display: none; color: #2ecc71; margin-top: 10px; font-size: 12px;">Processing logs...</div>
   <div id="logsResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #2ecc71; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.4; max-height: 500px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word; font-family: monospace;"></div>
 </div>
@@ -2055,6 +2058,75 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         return `<div style="color:${color}; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${e}</div>`;
       }).join('');
       logDom.scrollTop = logDom.scrollHeight;
+    }
+
+    async function copyRealityCheckSnapshot() {
+      const turnHistory = lastGameResponse?.turn_history;
+      if (!turnHistory || turnHistory.length === 0) {
+        alert('No turns yet. Start a game first!');
+        return;
+      }
+      const blocks = turnHistory.map(t => {
+        const rc = t.reality_check || {};
+        const st = t.stage_times || {};
+        const rcDuration = (st.rc_start != null && st.rc_end != null)
+          ? `${st.rc_end - st.rc_start}ms` : null;
+        const narDuration = (st.narrator_start != null && st.narrator_end != null)
+          ? `${st.narrator_end - st.narrator_start}ms` : null;
+        const orderConfirmed = (st.rc_end != null && st.narrator_start != null)
+          ? (st.rc_end < st.narrator_start ? 'YES -- rc_end < narrator_start' : 'NO -- ORDER VIOLATION DETECTED')
+          : '(n/a -- RC skipped or data absent)';
+        const lines = [
+          `=== TURN SNAPSHOT (Turn ${t.turn_number}) ===`,
+          '',
+          'INPUT',
+          `raw_input: "${t.input?.raw ?? '(none)'}"`,
+          `parsed_action: "${t.input?.parsed_intent?.action ?? '(none)'}"`,
+          '',
+          'REALITY CHECK',
+          `fired: ${rc.fired ?? false}`,
+          `skipped_reason: ${rc.skipped_reason ?? 'null'}`,
+          `query: ${rc.query != null ? '"' + rc.query + '"' : 'null'}`,
+          `result: ${rc.result != null ? '"' + rc.result + '"' : 'null'}`,
+          `raw_response: ${rc.raw_response != null ? '"' + rc.raw_response + '"' : 'null'}`,
+          '',
+          'RAW DEEPSEEK RESPONSE (verbatim)',
+          rc.raw_response != null ? rc.raw_response : '(skipped -- RC did not fire)',
+          '',
+          'REALITY ANCHOR (INJECTED BLOCK)',
+          rc.anchor_block != null ? rc.anchor_block.trim() : '(skipped -- no anchor)',
+          '',
+          'NARRATOR OUTPUT',
+          `"${t.narrative ?? '(none)'}"`,
+          '',
+          '--- POST-ARBITER: async SSE -- not included in synchronous snapshot ---',
+          '',
+          'STAGE TIMES',
+          `rc_start:       ${st.rc_start ?? 'null'}`,
+          `rc_end:         ${st.rc_end ?? 'null'}`,
+          `narrator_start: ${st.narrator_start ?? 'null'}`,
+          `narrator_end:   ${st.narrator_end ?? 'null'}`,
+          `rc_duration:       ${rcDuration ?? '(skipped)'}`,
+          `narrator_duration: ${narDuration ?? '(no data)'}`,
+          `order_confirmed:   ${orderConfirmed}`,
+          '',
+          '=== END TURN ==='
+        ];
+        return lines.join('\n');
+      });
+      const text = blocks.join('\n\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        const logsResponse = document.getElementById('logsResponse');
+        if (logsResponse) {
+          logsResponse.textContent = `Reality Check Snapshot copied! (${turnHistory.length} turns)`;
+          logsResponse.style.color = '#e74c3c';
+          logsResponse.style.display = 'block';
+          setTimeout(() => { logsResponse.style.display = 'none'; }, 3000);
+        }
+      } catch (err) {
+        alert('Copy failed: ' + err.message);
+      }
     }
 
     async function copyStory() {
