@@ -2,6 +2,58 @@
 
 ---
 
+## v1.84.14 — Expand MB Narration Window (April 28, 2026)
+
+**Mother Brain now sees the last 5 narrator outputs at up to 1200 characters each — was 2 turns / 400 chars.**
+
+### index.js
+- `buildDebugContext` LAST NARRATIONS section: `.slice(-2)` → `.slice(-5)`, `.slice(0, 400)` → `.slice(0, 1200)`. Fixes mid-sentence truncation of narrator output in the MB context snapshot.
+
+### motherbrain.js (v2.8.28)
+- LAST NARRATIONS bullet updated: "last 5 narrator outputs... up to 1200 characters; longer outputs truncated with …"
+
+---
+
+## v1.84.13 — State Claim Pre-RC Gate (April 28, 2026)
+
+**Player possession/existence assertions are now intercepted before validation and RC, routing to freeform without treating the claim as true.**
+
+### SemanticParser.js
+- `state_claim` added to valid actions list with definition: player is asserting possession, existence, or identity with no concrete mechanical intent. Parser routing verdict only — not an engine action.
+
+### index.js
+- `[STATE-CLAIM]` pre-validation intercept: when `parseResult.intent.primaryAction.action === 'state_claim'`, engine intercepts before `validateAndQueueIntent`, sets `inputObj` to freeform via `mapActionToInput(userInput, 'FREEFORM')`, preserves `player_intent.action = 'state_claim'`, sets `debug.path = 'STATE_CLAIM_FREEFORM'`, and sets `_degradedToFreeform = true`. Validation is skipped entirely.
+- RC skip block: `state_claim` added with `skipped_reason: 'state_claim'`. Comment distinguishes it from harmless-action skips (move/look/wait/enter/exit) — this is non-executable input, not a valid action that happens to not need RC.
+- Mother Watch system prompt: RC rule updated — `skipped_reason:state_claim` = correct skip, not a fault.
+
+### motherbrain.js (v2.8.27)
+- `STATE CLAIM ROUTING` paragraph added: documents `state_claim` as routing verdict, `STATE_CLAIM_FREEFORM` debug path, RC skip with `skipped_reason:state_claim`, and no-instantiation guarantee. Instructs MB not to flag these signals as faults.
+
+---
+
+## v1.84.12 — RC Narrator Input Mirror + MB Full Visibility (April 27, 2026)
+
+**Mother Brain now sees exactly what the narrator saw for every RC turn.**
+
+### index.js
+- `buildDebugContext`: added `=== REALITY CHECK (last turn) ===` section rendered from `turn_history.reality_check` and `turn_history.stage_times`. When `fired:false` — shows skipped_reason only. When `fired:true` — shows query, `raw_response` (verbatim DeepSeek output before any processing), `anchor_block` (exact text injected into narrator prompt), and stage timing (rc duration, narrator duration, order_confirmed).
+- Mother Watch system prompt: RC skip list updated from `move/look/wait` to `move/look/wait/enter/exit` — Watch was incorrectly flagging enter/exit turns as missing RC faults.
+
+### motherbrain.js (v2.8.26)
+- REALITY CHECK paragraph updated: `turn_history` field set expanded from `{ fired, skipped_reason, query, result }` to full set including `raw_response` and `anchor_block`. `stage_times` fields documented. New `=== REALITY CHECK (last turn) ===` context section referenced with usage guidance.
+
+---
+
+## v1.84.11 — MB Absence Narration Classification Rule (April 27, 2026)
+
+**Mother Brain no longer misclassifies correct absence narration as hallucination.**
+
+### motherbrain.js (v2.8.25)
+- Added `ABSENCE NARRATION` paragraph to the `CB WARNINGS` section of MB's SYSTEM_PROMPT. Defines the pattern: player references a nonexistent entity, narrator responds by narrating the absence ("no one is here", "nowhere to be seen"). No UNRESOLVED warning fires — ContinuityBrain had nothing to extract. This is correct closed-world behavior, not a fault.
+- Rule: the authoritative hallucination signal remains UNRESOLVED. Narration prose alone is never sufficient to classify a fault.
+
+---
+
 ## v1.84.10 — Continuity Packet NPC Absence Fix (April 27, 2026)
 
 **Narrator no longer infers NPC presence from silence. Zero NPCs is now a positive engine assertion.**

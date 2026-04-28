@@ -70,7 +70,8 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
   const _doInstructions = [
     // === PHASE 3C: Quest actions added to valid actions list ===
     // NOTE: 'help' removed — Help channel bypasses parser entirely (Phase 1/5a)
-    "Valid actions: move, take, drop, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory",
+    "Valid actions: move, take, drop, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, state_claim",
+    "state_claim: the player is asserting possession, existence, or identity without performing any action against the world ('I have a grenade', 'I am carrying a sword', 'there is gold here', 'I am a wizard'). Use ONLY when the input is a pure assertion with no concrete mechanical intent. This is NOT an engine action — it is a routing signal.",
     "",
     "Directions: north, south, east, west, up, down",
     "Only assign action='move' when the player clearly intends to travel to a new location. Do not infer movement from body-part words (e.g., 'right foot', 'left hand') or positional language used in non-travel contexts.",
