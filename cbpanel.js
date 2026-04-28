@@ -258,13 +258,31 @@ function renderEntityView(push) {
   const d        = _lastData;
   const npcMap   = d.visible_npc_attributes || {};
   const siteAttr = d.site_attributes        || {};
+  const playerAt = d.player_attributes      || null;
 
-  const allEntities = Object.keys(npcMap).map(k => ({
-    key:        k,
-    label:      npcMap[k].label,
-    attributes: npcMap[k].attributes || {},
-    isSite:     false
-  }));
+  const allEntities = [];
+
+  // Player slot first
+  if (playerAt) {
+    allEntities.push({
+      key:        '__player__',
+      label:      'YOU',
+      attributes: playerAt.attributes || {},
+      isSite:     false,
+      isPlayer:   true
+    });
+  }
+
+  // NPCs
+  for (const k of Object.keys(npcMap)) {
+    allEntities.push({
+      key:        k,
+      label:      npcMap[k].label,
+      attributes: npcMap[k].attributes || {},
+      isSite:     false,
+      isPlayer:   false
+    });
+  }
 
   const hasSite = siteAttr.name || Object.keys(siteAttr.attributes || {}).length > 0;
   if (hasSite) {
@@ -272,7 +290,8 @@ function renderEntityView(push) {
       key:        '__site__',
       label:      siteAttr.name || 'location',
       attributes: siteAttr.attributes || {},
-      isSite:     true
+      isSite:     true,
+      isPlayer:   false
     });
   }
 
@@ -292,7 +311,7 @@ function renderEntityView(push) {
   push(`  ${dim('Entity:')} ${nav}  ${dim('— [Tab] to cycle')}`);
   push('');
 
-  push(divider(current.isSite ? `LOCATION: ${current.label}` : `NPC: ${current.label}`));
+  push(divider(current.isPlayer ? 'YOU (PLAYER)' : current.isSite ? `LOCATION: ${current.label}` : `NPC: ${current.label}`));
   push('');
 
   const attrs = Object.values(current.attributes);
@@ -541,11 +560,11 @@ if (process.stdin.isTTY) {
     if (key === 'e' || key === 'E') { _activeView = 'E'; render(); }
     if (key === 'x' || key === 'X') { _activeView = 'X'; runExplainThis(); }
     if (key === '\t') {
-      // Tab — cycle entities (works in any view, switches to Entity View)
+      // Tab -- cycle entities (works in any view, switches to Entity View)
       const npcMap    = _lastData?.visible_npc_attributes || {};
       const siteAttr  = _lastData?.site_attributes        || {};
-      const hasPlayer = !!_lastData?.player_attributes;
-      const total     = (hasPlayer ? 1 : 0) + Object.keys(npcMap).length + (hasSiteData(siteAttr) ? 1 : 0);
+      const playerAt  = _lastData?.player_attributes      || null;
+      const total     = (playerAt ? 1 : 0) + Object.keys(npcMap).length + (hasSiteData(siteAttr) ? 1 : 0);
       if (total > 0) {
         _activeView  = 'E';
         _entityIndex = (_entityIndex + 1) % total;

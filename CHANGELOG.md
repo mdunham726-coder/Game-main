@@ -2,6 +2,17 @@
 
 ---
 
+## v1.84.8 — cbpanel Player Slot Fix (April 27, 2026)
+
+**Player entity was counted in Tab cycling but never rendered. Now renders correctly.**
+
+### cbpanel.js
+- Added player as first entry in `allEntities` in `renderEntityView()`. Uses `d.player_attributes` (already returned by `/diagnostics/continuity`). Slot key `__player__`, label `YOU`, section header `YOU (PLAYER)`. Renders the same CB-promoted attributes table as NPC slots.
+- Removed manual `hasPlayer` boolean in Tab handler. `total` now counts `playerAt ? 1 : 0` (matching `renderEntityView` exactly), eliminating the off-by-one that caused the phantom index.
+- Tab cycle order: YOU → NPCs → location (site).
+
+---
+
 ## v1.84.7 — Diagnostic Polish (April 27, 2026)
 
 **Two targeted diagnostic fixes. No changes to pipeline logic or game behavior.**
