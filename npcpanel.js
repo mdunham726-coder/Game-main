@@ -277,7 +277,7 @@ let _pollTimer = null;
 function schedulePoll() {
   if (_pollTimer) clearTimeout(_pollTimer);
   _pollTimer = setTimeout(() => {
-    fetchNpcs(() => { render(); schedulePoll(); });
+    fetchNpcs(() => { if (_screen !== 'detail') render(); schedulePoll(); });
   }, POLL_MS);
 }
 
@@ -309,7 +309,7 @@ function connect() {
           try { payload = JSON.parse(line.slice(5).trim()); } catch (_) { continue; }
           if (payload.type !== 'turn') continue;
           // New turn: fetch fresh NPC data, reset poll timer
-          fetchNpcs(() => { render(); schedulePoll(); });
+          fetchNpcs(() => { if (_screen !== 'detail') render(); schedulePoll(); });
         }
       }
     });

@@ -2,6 +2,18 @@
 
 ---
 
+## v1.84.7 — Diagnostic Polish (April 27, 2026)
+
+**Two targeted diagnostic fixes. No changes to pipeline logic or game behavior.**
+
+### index.js
+- Fixed `_location_check` false alarm in `/diagnostics/npc`: the `POSITION MISMATCH` check was comparing `npc.position.mx/my` against `gs.world.position` (the world root anchor, set at startup) instead of `playerPos` (the player's live position). Changed both sides of the comparison to use `playerPos.mx/my`. `playerPos` is already declared in scope and guarded in the outer condition.
+
+### npcpanel.js
+- Suppressed automatic screen redraw when in detail view: both the 5-second poll callback and the SSE turn callback now guard `render()` with `if (_screen !== 'detail')`. Data continues to refresh silently in the background. Pressing `[r]` in detail view still forces an immediate fetch and redraw. Prevents the panel from scrolling back to the top while the user is reading NPC attributes.
+
+---
+
 ## v1.84.6 — NPC Panel Access + Continuity Turn Index Fix + Snapshot Cleanup (April 27, 2026)
 
 **Accessibility, correctness, and log clarity. No changes to pipeline logic.**
