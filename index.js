@@ -2505,6 +2505,10 @@ app.post('/narrate', async (req, res) => {
       _rcSkippedReason = 'look';
     } else if (_parsedAction === 'wait') {
       _rcSkippedReason = 'wait';
+    } else if (_parsedAction === 'enter') {
+      _rcSkippedReason = 'enter';
+    } else if (_parsedAction === 'exit') {
+      _rcSkippedReason = 'exit';
     } else {
       // Build query — SAY channel with matched NPC gets role context
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
@@ -2541,7 +2545,7 @@ app.post('/narrate', async (req, res) => {
       console.log(`[REALITY-CHECK] skipped — turn ${turnNumber}, reason: ${_rcSkippedReason}`);
     }
     const _realityAnchorBlock = _realityAnchor
-      ? `\n\nADJUDICATED REALITY [FINAL AUTHORITY]:\n${_realityAnchor}\nRender this turn consistent with the above adjudicated consequence. This is what actually happens as a result of the player's action — narrate it through the world tone.\n`
+      ? `\n\nPossible consequences of the player's action (advisory):\n${_realityAnchor}\nUse these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.\n`
       : '';
     const _DIRECTION_SHORTHAND = {n:'north',s:'south',e:'east',w:'west',ne:'northeast',nw:'northwest',se:'southeast',sw:'southwest',u:'up',d:'down'};
     const _movementDisplayInput = (_parsedAction === 'move' && _DIRECTION_SHORTHAND[_rawInput.toLowerCase()])

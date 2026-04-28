@@ -2,6 +2,21 @@
 
 ---
 
+## v1.84.9 — RC Advisory Mode + Enter/Exit Skip (April 27, 2026)
+
+**Restores narrator authority. RC becomes guidance, not override.**
+
+### index.js
+- Injected anchor block header changed: `ADJUDICATED REALITY [FINAL AUTHORITY]:` → `Possible consequences of the player's action (advisory):`. "Possible" frames the entire block as conditional before the narrator reads the content.
+- Injected instruction changed: `Render this turn consistent with the above adjudicated consequence. This is what actually happens...` → `Use these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.`
+- Added `enter` and `exit` to RC skip conditions (alongside `move`, `look`, `wait`). Structural/spatial transitions are handled by engine state, not consequence modeling. `skipped_reason: 'enter'` / `skipped_reason: 'exit'` emitted on skip.
+
+### motherbrain.js (v2.8.23)
+- REALITY CHECK paragraph updated: skip list now includes `enter`/`exit`; "ADJUDICATED REALITY [FINAL AUTHORITY]" and "narrator renders from it" removed; replaced with advisory framing (narrator uses as guidance, selects/adapts/ignores, retains scene authority).
+- Version history entry `v2.8.23` added.
+
+---
+
 ## v1.84.8 — cbpanel Player Slot Fix (April 27, 2026)
 
 **Player entity was counted in Tab cycling but never rendered. Now renders correctly.**
