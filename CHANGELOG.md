@@ -2,6 +2,15 @@
 
 ---
 
+## v1.84.10 — Continuity Packet NPC Absence Fix (April 27, 2026)
+
+**Narrator no longer infers NPC presence from silence. Zero NPCs is now a positive engine assertion.**
+
+### ContinuityBrain.js
+- `assembleContinuityPacket`: when `visible.length === 0`, pushes `'NPCs at this location: none visible in engine state.'` into the TRUTH block. Previously the entity loop simply produced nothing when no NPCs were present — the narrator received silence and could fill the gap with invented characters. The explicit line makes the zero state authoritative.
+
+---
+
 ## v1.84.9 — RC Advisory Mode + Enter/Exit Skip (April 27, 2026)
 
 **Restores narrator authority. RC becomes guidance, not override.**

@@ -607,6 +607,10 @@ function assembleContinuityPacket(gameState, turnContext) {
     lines.push(`${label}: ${attrs}`);
     truthLines++;
   }
+  if (visible.length === 0) {
+    lines.push('NPCs at this location: none visible in engine state.');
+    truthLines++;
+  }
 
   // Location attributes — includes L0 cell attributes via locRecord fallback
   if (locRecord && locRecord.attributes && Object.keys(locRecord.attributes).length) {
