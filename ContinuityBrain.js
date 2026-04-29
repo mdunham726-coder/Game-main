@@ -59,12 +59,19 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   const prevMood  = previousMoodSnapshot
     ? JSON.stringify(previousMoodSnapshot, null, 2)
     : '(none — first turn)';
+  const isFoundingTurn = (gameState.turn_history || []).length === 0;
 
   return `EXTRACTION TASK — TURN ${(gameState.turn_history || []).length}
 
 You are a forensic extraction system. Your job is to read the narration below and identify structured facts. You are NOT summarizing. You are NOT interpreting. You are identifying what a stationary camera in the room would capture.
 
-NARRATION (verbatim):
+${isFoundingTurn ? `TURN 1 — FOUNDING EXTRACTION
+This is the player's very first turn. You have two sources. Use them as directed below.
+
+PRIMARY SOURCE — Player's verbatim founding input (original casing, unedited):
+"${gameState.player?.birth_record?.raw_input || '(not captured)'}"
+
+CONTEXT ONLY — Narrator's opening narration (may contain embellishment and creative flavoring):` : 'NARRATION (verbatim):'}
 ${frozenNarration}
 
 CURRENT ENGINE STATE:
@@ -86,7 +93,14 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "spatial_relations": [...],
   "rejected_interpretations": [...],
   "mood_snapshot": { ... },
-  "condition_events": [...]
+  "condition_events": [...]${isFoundingTurn ? `,
+  "founding_premise": {
+    "form": null,
+    "location_premise": null,
+    "possessions": [],
+    "status_claims": [],
+    "scenario_notes": []
+  }` : ''}
 }
 
 ---
@@ -239,7 +253,26 @@ IMPORTANT for interaction events: you MUST use the exact condition_id string fro
 
 If there are no condition events, emit an empty array: "condition_events": []
 
-${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
+${isFoundingTurn ? `---
+
+FOUNDING PREMISE (Turn 1 only)
+
+Extract the player's founding premise from the PRIMARY SOURCE (player's verbatim input).
+
+SOURCE PRECEDENCE RULES — read carefully:
+1. PRIMARY SOURCE is the player's own words. Extract ONLY what is explicitly stated there.
+2. CONTEXT (narration) is a fallback — use it ONLY when primary source is silent or ambiguous on a field.
+3. ANTI-DRIFT: If the player wrote "I am a merchant", write form: "merchant". Do NOT expand to "weathered merchant from distant lands" even if the narration added that flavor. The birth_record must reflect what the player said, not what the narrator embellished.
+4. If a field cannot be determined from the primary source AND the narration provides no factual grounding, leave it null or empty.
+
+Fields:
+  form             — character type or role as stated in primary source (e.g. "merchant", "soldier", "wanderer"). null if not stated.
+  location_premise — starting location as stated in primary source (e.g. "city gates", "the Thornwood road"). null if not stated.
+  possessions      — items explicitly named in primary source as owned or carried. Empty array if none stated.
+  status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
+  scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
+
+` : ''}${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
 
 // ── Location / entity description helpers ─────────────────────────────────────
@@ -539,6 +572,17 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
 
   // Safely extract watch_message — optional, never blocks Phase B
   const watch_message = typeof extracted.watch_message === 'string' ? extracted.watch_message : null;
+
+  // v1.84.33 — write founding_premise into birth_record on Turn 1
+  if (turn === 1 && extracted.founding_premise && gameState.player?.birth_record) {
+    const fp = extracted.founding_premise;
+    gameState.player.birth_record.form             = fp.form             || null;
+    gameState.player.birth_record.location_premise = fp.location_premise || null;
+    gameState.player.birth_record.possessions      = Array.isArray(fp.possessions)   ? fp.possessions   : [];
+    gameState.player.birth_record.status_claims    = Array.isArray(fp.status_claims) ? fp.status_claims : [];
+    gameState.player.birth_record.scenario_notes   = Array.isArray(fp.scenario_notes)? fp.scenario_notes: [];
+    console.log('[CB] birth_record populated on Turn 1:', JSON.stringify(gameState.player.birth_record).slice(0, 200));
+  }
 
   // ── Association + Promotion ────────────────────────────────────────────────
   const logEntries  = [];

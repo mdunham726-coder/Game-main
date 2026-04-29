@@ -883,6 +883,12 @@ app.post('/narrate', async (req, res) => {
 
   // --- Semantic Parser integration (Phase 2) ---
   const userInput = String(action);
+
+  // v1.84.33 — capture verbatim Turn 1 founding input before any normalization
+  if (turnNumber === 1 && gameState.player?.birth_record && !gameState.player.birth_record.raw_input) {
+    gameState.player.birth_record.raw_input = userInput;
+  }
+
   const gameContext = {
     player: gameState?.player ? {
       position: gameState.player,
