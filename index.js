@@ -2569,7 +2569,9 @@ app.post('/narrate', async (req, res) => {
       : _rawInput;
     const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
-      ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`
+      ? (_parsedAction === 'state_claim'
+        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, narrate it as the player's spoken words, thought, or attempted assertion — with no change to the world.)\n`
+        : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`)
       : '';
     const _expressiveBlock = (_parsedAction === 'wait' && _rawInput.toLowerCase() !== 'wait' && _rawInput !== '')
       ? `\nPLAYER EXPRESSION: "${_rawInput}"\nRender this concretely as the player's body language, posture, or physical expression in the scene. This is intentional player behavior and must appear in narration, but it does not create or modify game state.\n`
@@ -4023,7 +4025,20 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       }
       context += `\n`;
       const _brec = _ctxPlayer.birth_record;
-      context += `birth_record: ${_brec ? (_brec.raw_input ? `present (raw: "${String(_brec.raw_input).slice(0, 60)}${String(_brec.raw_input).length > 60 ? '...' : ''}")` : 'present (raw_input: null)') : '(none — old save)'}\n`;
+      if (!_brec) {
+        context += `birth_record: (none)\n`;
+      } else {
+        context += `birth_record:\n`;
+        context += `  raw_input: ${_brec.raw_input != null ? `"${String(_brec.raw_input).slice(0, 120)}${String(_brec.raw_input).length > 120 ? '...' : ''}"` : '(null)'}\n`;
+        context += `  form: ${_brec.form != null ? _brec.form : '(null)'}\n`;
+        context += `  location_premise: ${_brec.location_premise != null ? _brec.location_premise : '(null)'}\n`;
+        if (Array.isArray(_brec.possessions) && _brec.possessions.length > 0)
+          context += `  possessions: ${_brec.possessions.slice(0, 5).join(', ')}${_brec.possessions.length > 5 ? ` (+${_brec.possessions.length - 5} more)` : ''}\n`;
+        if (Array.isArray(_brec.status_claims) && _brec.status_claims.length > 0)
+          context += `  status_claims: ${_brec.status_claims.slice(0, 5).join(', ')}${_brec.status_claims.length > 5 ? ` (+${_brec.status_claims.length - 5} more)` : ''}\n`;
+        if (Array.isArray(_brec.scenario_notes) && _brec.scenario_notes.length > 0)
+          context += `  scenario_notes: ${_brec.scenario_notes.slice(0, 5).join(', ')}${_brec.scenario_notes.length > 5 ? ` (+${_brec.scenario_notes.length - 5} more)` : ''}\n`;
+      }
     }
 
     // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===
