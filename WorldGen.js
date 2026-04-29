@@ -2253,6 +2253,8 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     const cell = grid[slot.y][slot.x];
     if (cell && cell.type === "street") {
       cell.npc_ids.push(npc.id || npc);
+      // v1.84.38: record site-local placement coords — additive, npc.position (mx/my/lx/ly) unchanged
+      if (npc && typeof npc === 'object') npc.site_position = { x: slot.x, y: slot.y };
     }
     streetAssigned++;
   }
@@ -2264,6 +2266,8 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
       const npc = npcs[i];
       const ls = local_spaces[lsKeys[i % lsKeys.length]];
       ls.npc_ids.push(npc.id || npc);
+      // v1.84.38: record site-local placement coords — additive, npc.position (mx/my/lx/ly) unchanged
+      if (npc && typeof npc === 'object') npc.site_position = { x: ls.x, y: ls.y };
     }
   }
 

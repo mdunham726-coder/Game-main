@@ -1171,11 +1171,16 @@ app.post('/narrate', async (req, res) => {
           if (gameState.world.start_container === 'L2' && _startSlot &&
               (_startSlot.name === null || _startSlot.description === null || _startSlot.identity === null)) {
             const _lssRawContext = gameState.world.founding_prompt || gameState.player.birth_record?.raw_input || null;
+            // v1.84.39: premise identifies the LOCAL SPACE (the establishment), not the site.
+            // Reframe as exclusionary directive so DS generates the surrounding area instead.
             const _lssFoundingClause = _lssRawContext
-              ? `Player's starting context: "${_lssRawContext}". ` : '';
+              ? `The player begins inside a specific establishment: "${_lssRawContext}". ` : '';
             const _lssPurpose = _startCtx?.local_space_purpose || null;
             const _lssBiome   = gameState.world.macro_biome || 'unknown';
-            const _lssPrompt  = `${_lssFoundingClause}Biome: ${_lssBiome}.${_lssPurpose ? ` Site purpose: ${_lssPurpose}.` : ''} Site size: ${_startSlot.site_size ?? 'unknown'}.\n\nReturn ONLY a single JSON object. No prose, no markdown. Required fields — all mandatory, none may be null or omitted:\n{"name":"<short proper name for this place>","description":"<one sentence describing it>","identity":"<short lowercase category, e.g. restaurant, blacksmith, inn>"}`;
+            const _lssExclusionNote = _lssRawContext
+              ? `\n\nGenerate the CONTAINING SITE — the surrounding area that holds this kind of establishment alongside other locations. The site name must describe this broader area, NOT the establishment itself. The establishment will be placed as a local space inside the site.`
+              : '';
+            const _lssPrompt  = `${_lssFoundingClause}Biome: ${_lssBiome}.${_lssPurpose ? ` Site purpose: ${_lssPurpose}.` : ''} Site size: ${_startSlot.site_size ?? 'unknown'}.${_lssExclusionNote}\n\nReturn ONLY a single JSON object. No prose, no markdown. Required fields — all mandatory, none may be null or omitted:\n{"name":"<short proper name for this place>","description":"<one sentence describing it>","identity":"<short lowercase descriptor of the surrounding area>"}`;
             try {
               const _lssResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
                 model: 'deepseek-chat',
@@ -2166,9 +2171,14 @@ app.post('/narrate', async (req, res) => {
               _lsfaSite.site_size  != null ? `Site size: ${_lsfaSite.site_size}.` : ''
             ].filter(Boolean);
             const _lsfaSiteCtx  = _lsfaCtxParts.length > 0 ? _lsfaCtxParts.join(' ') : 'A site interior.';
+            // v1.84.39: inject founding premise as direct naming directive for the starting local space
+            const _lsfaRawContext = gameState.world.founding_prompt || gameState.player.birth_record?.raw_input || null;
+            const _lsfaPremiseDirective = _lsfaRawContext
+              ? `\nPlayer's founding premise: "${_lsfaRawContext}" — this is the specific place the player starts in. Name this local space to match the founding premise as closely as possible, using the proper name of the establishment or location.`
+              : '';
             // Send short key in prompt — DS response must echo it back for the write guard to match.
             const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y }];
-            const _lsfaPrompt   = `${_lsfaSiteCtx}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+            const _lsfaPrompt   = `${_lsfaSiteCtx}${_lsfaPremiseDirective}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
             try {
               const _lsfaResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
                 model: 'deepseek-chat',
@@ -2432,8 +2442,13 @@ app.post('/narrate', async (req, res) => {
       }
     }
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
-    const _engineMsg = gameState?.world?._engineMessage || null;
+    let _engineMsg = gameState?.world?._engineMessage || null;
     if (_engineMsg) gameState.world._engineMessage = null;
+    // v1.84.38: refresh stale "unnamed place" message — LS-FILL-ACTIVE runs before this point
+    // and may have populated active_local_space.name after _engineMessage was originally set
+    if (_engineMsg && _engineMsg.includes('an unnamed place') && gameState.world.active_local_space?.name) {
+      _engineMsg = `You begin inside ${gameState.world.active_local_space.name}.`;
+    }
     // Consume _npcTalkResult (transient — clear after capture so it doesn't repeat)
     const _npcTalkResult = gameState?.world?._npcTalkResult || null;
     if (_npcTalkResult) gameState.world._npcTalkResult = null;
@@ -2942,6 +2957,11 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
       };
       const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx);
       _continuityExtractionSuccess = _phaseBResult !== null;
+      // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
+      if (!_continuityExtractionSuccess && turnNumber === 1 && gameState.player?.birth_record) {
+        gameState.player.birth_record._extraction_failed = true;
+        console.warn('[NARRATE] Turn 1 CB extraction failed — birth_record._extraction_failed set');
+      }
       _dmNoteStatus = _phaseBResult ? 'updated' : 'new_game';
       _extractionPacket = _phaseBResult ? _phaseBResult.extracted : null;
       _dmNoteArchived = null; // dm_note retired in v1.70.0

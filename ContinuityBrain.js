@@ -40,7 +40,7 @@ const STATE_ATTR_WINDOW = 5;    // state: bucket decay window — state facts ol
                                 // physical: and object: buckets are permanent and always included
                                 // NOTE: state: is a mixed bucket (ephemeral motion + ongoing aftermath); a future pass may split
                                 //   into state:ephemeral (window=1-2) and state:persistent (longer/condition-backed)
-const CB_VERSION        = '1.5.0';
+const CB_VERSION        = '1.5.1';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -528,24 +528,37 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
   // ── LLM extraction call ────────────────────────────────────────────────────
   const prompt = _buildExtractionPrompt(frozenNarration, gameState, previousMood, watchContext);
   let raw = null;
+  // v1.84.38: extract into closure for ECONNRESET retry
+  const _makeExtractionCall = () => axios.post(
+    DEEPSEEK_URL,
+    {
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,  // low temperature — forensic, not creative
+      max_tokens: 1600
+    },
+    {
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: EXTRACTION_TIMEOUT
+    }
+  );
   try {
-    const resp = await axios.post(
-      DEEPSEEK_URL,
-      {
-        model: 'deepseek-chat',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,  // low temperature — forensic, not creative
-        max_tokens: 1600
-      },
-      {
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        timeout: EXTRACTION_TIMEOUT
+    let resp;
+    try {
+      resp = await _makeExtractionCall();
+    } catch (err) {
+      if (err.code === 'ECONNRESET') {
+        console.warn('[CB] Phase B ECONNRESET — retrying once...');
+        resp = await _makeExtractionCall();
+      } else {
+        throw err;
       }
-    );
+    }
     raw = resp?.data?.choices?.[0]?.message?.content || null;
   } catch (err) {
-    console.error('[CB] Phase B LLM call failed:', err.message);
-    _setDiag({ error: err.message, turn });
+    const _errLabel = err.code === 'ECONNRESET' ? 'econnreset_retry_failed' : err.message;
+    console.error('[CB] Phase B LLM call failed:', _errLabel);
+    _setDiag({ error: _errLabel, turn });
     return null;
   }
 
