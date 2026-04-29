@@ -20,7 +20,7 @@ const { spawn } = require('child_process');
 const _toolHttpAgent = new http.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.41';
+const MB_VERSION = '2.8.42';
 
 const MB_VERSION_HISTORY = [
   { version: '2.8.41', date: 'April 30, 2026', note: 'Player attribute state decay (v1.84.31): state: bucket facts older than 5 turns (STATE_ATTR_WINDOW) are now suppressed from the narrator TRUTH block — physical: and object: buckets are permanent. Suppressed count surfaced in narration_debug.state_attrs_suppressed each turn and in buildDebugContext as "state attrs in narrator: N active / M total (X suppressed, window=5)". All attributes remain in storage unchanged — storage not affected. System prompt: STATE DECLARATION CHANNEL updated with decay rule.' },
@@ -183,6 +183,27 @@ const MB_TOOLS = [
         required: ['file']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_source',
+      description: 'Search for a literal string across allowlisted game source files. Use this when you do not know which file or line a symbol lives in. Returns up to 20 matches with 2 lines of context each. Follow up with get_source_slice to read the surrounding code. NOT for browsing — use specific identifiers (function names, variable names, error code strings). Scope to a file with the file= param when possible to reduce noise. Minimum query length: 3 characters.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Literal string to search for (case-sensitive, minimum 3 characters). Use specific identifiers — function names, variable names, string literals, error codes.'
+          },
+          file: {
+            type: 'string',
+            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js.'
+          }
+        },
+        required: ['query']
+      }
+    }
   }
 ];
 
@@ -297,10 +318,12 @@ REALITY CHECK (Arbiter Phase 0): Before each narration turn (except Turn 1 and s
 
 8. SOURCE SLICE READER (targeted verification only): GET /diagnostics/source — returns a bounded line-range slice of a game source file. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing — use only when you know approximately where to look. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js. Returns: file, from, to, total_lines, lines (raw source). Results are Tier 3 — authoritative for implementation truth, but static (source code, not runtime state).
 
+9. SOURCE SEARCH (code discovery): GET /diagnostics/source-search — literal string search across allowlisted source files. Use this when you do not know which file or line number a symbol lives in. Returns up to 20 matches each with file, line_number, matching line, and 2 lines of context (context_before / context_after). The intended workflow is: search_source to discover location → get_source_slice to read surrounding code. Use specific identifiers as queries — function names, variable names, error code strings, string literals. Scope to a specific file with file= when possible (faster, less noise). Do NOT use short or common tokens as queries. Minimum 3 characters. Results are Tier 3 — static implementation truth, not runtime state.
+
 KNOWLEDGE TIERS: Every answer you give draws from one of three tiers:
   Tier 1 — Current state (authoritative): current game state snapshot, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn RC/extraction. Fully reliable for present-moment questions.
   Tier 2 — Summary data (partial coverage): Flight Recorder rows (one-line summaries only, not evidence), WORLD SITES SUMMARY (loaded cells only). Useful for quick answers but limited in scope — absence in Tier 2 does not prove absence in the world.
-  Tier 3 — Tool results (most complete available): get_turn_data, get_payload, get_sites, get_source_slice. Best truth available for the data that exists. get_source_slice is static implementation truth (source code) — authoritative for how the engine works, but not runtime state.
+  Tier 3 — Tool results (most complete available): get_turn_data, get_payload, get_sites, get_source_slice, search_source. Best truth available for the data that exists. get_source_slice and search_source are static implementation truth (source code) — authoritative for how the engine works, but not runtime state. search_source discovers where code lives; get_source_slice reads it.
 When the distinction matters, be explicit about which tier your answer comes from.
 
 EVIDENCE REQUIREMENT
@@ -490,6 +513,17 @@ async function executeToolCall(name, args) {
         return raw.slice(0, 16000) + '\n[TRUNCATED — narrow the range with from= and to=]';
       }
       return raw;
+    } else if (name === 'search_source') {
+      const qs = [`query=${encodeURIComponent(args.query)}`];
+      if (args.file !== undefined) qs.push(`file=${encodeURIComponent(args.file)}`);
+      const searchUrl  = `http://${HOST}:${PORT}/diagnostics/source-search?${qs.join('&')}`;
+      const searchKey  = process.env.DIAGNOSTICS_KEY || '';
+      const searchResp = await axios.get(searchUrl, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': searchKey } });
+      const searchRaw  = JSON.stringify(searchResp.data);
+      if (searchRaw.length > 16000) {
+        return searchRaw.slice(0, 16000) + '\n[TRUNCATED — scope to a specific file with file= to reduce results]';
+      }
+      return searchRaw;
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }

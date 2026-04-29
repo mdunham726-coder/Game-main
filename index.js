@@ -5693,6 +5693,66 @@ app.get('/diagnostics/source', (req, res) => {
   }
 });
 
+// Source search — GET /diagnostics/source-search
+// Used by Mother Brain search_source tool for code discovery before get_source_slice verification.
+// Auth: same DIAGNOSTICS_KEY pattern as /diagnostics/source.
+// Params: ?query= (required, min 3 chars, literal string), ?file= (optional, scope to one file)
+// Returns: { query, file_scope, total_matches_returned, capped, results: [{file, line_number, line, context_before, context_after}] }
+app.get('/diagnostics/source-search', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) {
+    return res.status(503).json({ error: 'source_search_disabled', message: 'DIAGNOSTICS_KEY env var is not set.' });
+  }
+  if (req.headers['x-diagnostics-key'] !== diagKey) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const query = req.query.query;
+  if (!query || query.length < 3) {
+    return res.status(400).json({ error: 'invalid_query_too_short', message: 'query must be at least 3 characters.' });
+  }
+  const fileParam = req.query.file;
+  if (fileParam) {
+    if (/[\\/]|\.\./.test(fileParam)) {
+      return res.status(400).json({ error: 'invalid_file', message: 'file param must be a plain filename with no path separators or ..' });
+    }
+    if (!_SOURCE_ALLOWLIST.has(fileParam)) {
+      return res.status(403).json({ error: 'not_allowed', message: `${fileParam} is not in the source allowlist.` });
+    }
+  }
+  const filesToSearch = fileParam ? [fileParam] : [..._SOURCE_ALLOWLIST];
+  const fileScope     = fileParam || 'all';
+  const results       = [];
+  const MAX_RESULTS   = 20;
+  outer: for (const fname of filesToSearch) {
+    try {
+      const fPath    = path.join(__dirname, fname);
+      const allLines = fs.readFileSync(fPath, 'utf8').split('\n');
+      for (let i = 0; i < allLines.length; i++) {
+        if (allLines[i].includes(query)) {
+          results.push({
+            file:           fname,
+            line_number:    i + 1,
+            line:           allLines[i].trim(),
+            context_before: i > 0 ? allLines[i - 1].trim() : null,
+            context_after:  i < allLines.length - 1 ? allLines[i + 1].trim() : null
+          });
+          if (results.length >= MAX_RESULTS) break outer;
+        }
+      }
+    } catch (_e) {
+      // skip unreadable files silently
+    }
+  }
+  console.log('[search_source]', JSON.stringify(query), fileScope, results.length);
+  return res.json({
+    query,
+    file_scope:             fileScope,
+    total_matches_returned: results.length,
+    capped:                 results.length >= MAX_RESULTS,
+    results
+  });
+});
+
 // Session bootstrap probe for Mother Brain — GET /diagnostics/session
 // Returns the last known session ID and turn count so MB can self-initialize without waiting for an SSE turn.
 app.get('/diagnostics/session', (req, res) => {
