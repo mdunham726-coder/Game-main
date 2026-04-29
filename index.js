@@ -1170,8 +1170,9 @@ app.post('/narrate', async (req, res) => {
           // On any failure: hard block — no partial writes, no fallback naming.
           if (gameState.world.start_container === 'L2' && _startSlot &&
               (_startSlot.name === null || _startSlot.description === null || _startSlot.identity === null)) {
-            const _lssFoundingClause = gameState.world.founding_prompt
-              ? `World description: "${gameState.world.founding_prompt}". ` : '';
+            const _lssRawContext = gameState.world.founding_prompt || gameState.player.birth_record?.raw_input || null;
+            const _lssFoundingClause = _lssRawContext
+              ? `Player's starting context: "${_lssRawContext}". ` : '';
             const _lssPurpose = _startCtx?.local_space_purpose || null;
             const _lssBiome   = gameState.world.macro_biome || 'unknown';
             const _lssPrompt  = `${_lssFoundingClause}Biome: ${_lssBiome}.${_lssPurpose ? ` Site purpose: ${_lssPurpose}.` : ''} Site size: ${_startSlot.site_size ?? 'unknown'}.\n\nReturn ONLY a single JSON object. No prose, no markdown. Required fields — all mandatory, none may be null or omitted:\n{"name":"<short proper name for this place>","description":"<one sentence describing it>","identity":"<short lowercase category, e.g. restaurant, blacksmith, inn>"}`;
@@ -2457,7 +2458,7 @@ app.post('/narrate', async (req, res) => {
       } else {
         npcsStr = '(None visible)';
       }
-      _siteContextBlock = `\n\nCURRENT LOCAL SPACE (you are inside this location):\nName: ${_narActiveLS.name || '(unnamed)'}\nNPCs nearby: ${_lsNpcNames}\nIMPORTANT: The name above is COMMITTED. Use it exactly as given. Do not rename or reinterpret this location.`;
+      _siteContextBlock = `\n\nCURRENT LOCAL SPACE (you are inside this location):\nName: ${_narActiveLS.name || '(unnamed)'}\nNPCs nearby: ${_lsNpcNames}\nIMPORTANT: The name above is COMMITTED. Use it exactly as given. Do not rename, reinterpret, or substitute a different room, section, or area for this location. The engine has already assigned this specific space. Render it.`;
       const _lsp = gameState?.player?.position;
       if (_lsp && _narActiveLS.grid) {
         const _lsCell = _narActiveLS.grid[_lsp.y]?.[_lsp.x] ?? null;

@@ -20,12 +20,14 @@ const { spawn } = require('child_process');
 const _toolHttpAgent = new http.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.44';
+const MB_VERSION = '2.8.45';
 
-const MB_VERSION_HISTORY = [
+// Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
+/*
   { version: '2.8.44', date: 'April 29, 2026', note: 'CONTEXT block stale-on-move suppression (v1.84.34): assembleContinuityPacket now compares _lastPhaseBLoc.locationRef against current w.position cell string before emitting CONTEXT — RECENT LOCATION. If they differ (player moved to a new cell), the block is suppressed entirely — prior-cell biome facts are misleading when the player is in a different cell and cost ~400 tokens. _lastPhaseBLoc = null moved outside the if block to clear the snapshot regardless of suppression (prevents next-turn bleed). Stationary turns unaffected — block fires normally when locationRef matches current cell. L1/L2 unaffected — _lastPhaseBLoc only populated at L0. CONTINUITY PACKET bullet updated. Package v1.84.34.' },
   { version: '2.8.43', date: 'April 29, 2026', note: 'birth_record canonicalization (v1.84.33): Turn 1 founding premise extraction pipeline fully implemented. (1) index.js: verbatim player input captured to birth_record.raw_input immediately after String(action) (pre-normalization, original casing), gated on turnNumber===1 && !raw_input already set. (2) ContinuityBrain _buildExtractionPrompt: on Turn 1 (turn_history.length===0) injects PRIMARY SOURCE (raw_input) and CONTEXT ONLY (narration) distinction, adds founding_premise block to JSON schema, adds FOUNDING PREMISE extraction section with source precedence rules (raw_input primary, narration fallback, anti-drift rule). (3) ContinuityBrain runPhaseB: write-back gate after REQUIRED_KEYS check — if turn===1 and extracted.founding_premise exists, writes form/location_premise/possessions/status_claims/scenario_notes to birth_record; console.log confirms population. founding_premise NOT in REQUIRED_KEYS (Turn 1 extension only — adding it would break Phase B on all other turns). Pre-v1.84.33 saves: birth_record fields remain null as expected.' },
-  { version: '2.8.42', date: 'April 30, 2026', note: 'Source search tool (v1.84.32): added search_source as tool 9 in MB_TOOLS. executeToolCall branch hits GET /diagnostics/source-search with q= param and x-diagnostics-key auth. System prompt tool 9 description added: literal string search across all allowlisted files, 2-line context, discovery workflow (search_source -> find line -> get_source_slice -> read context). KNOWLEDGE TIERS updated: search_source listed in Tier 3 alongside get_source_slice with discovery/verification distinction. MB_VERSION 2.8.41 -> 2.8.42. Package v1.84.32.' }, state: bucket facts older than 5 turns (STATE_ATTR_WINDOW) are now suppressed from the narrator TRUTH block — physical: and object: buckets are permanent. Suppressed count surfaced in narration_debug.state_attrs_suppressed each turn and in buildDebugContext as "state attrs in narrator: N active / M total (X suppressed, window=5)". All attributes remain in storage unchanged — storage not affected. System prompt: STATE DECLARATION CHANNEL updated with decay rule.' },
+  { version: '2.8.42', date: 'April 30, 2026', note: 'Source search tool (v1.84.32): added search_source as tool 9 in MB_TOOLS. executeToolCall branch hits GET /diagnostics/source-search with q= param and x-diagnostics-key auth. System prompt tool 9 description added: literal string search across all allowlisted files, 2-line context, discovery workflow (search_source -> find line -> get_source_slice -> read context). KNOWLEDGE TIERS updated: search_source listed in Tier 3 alongside get_source_slice with discovery/verification distinction. MB_VERSION 2.8.41 -> 2.8.42. Package v1.84.32.' },
+  { version: '2.8.41', date: 'April 30, 2026', note: 'Player attribute state decay (v1.84.31): state: bucket facts older than 5 turns (STATE_ATTR_WINDOW) are now suppressed from the narrator TRUTH block — physical: and object: buckets are permanent. Suppressed count surfaced in narration_debug.state_attrs_suppressed each turn and in buildDebugContext as "state attrs in narrator: N active / M total (X suppressed, window=5)". All attributes remain in storage unchanged — storage not affected. System prompt: STATE DECLARATION CHANNEL updated with decay rule.' },
   { version: '2.8.40', date: 'April 29, 2026', note: 'Source slice access (v1.84.29): added GET /diagnostics/source endpoint to index.js — authenticated (x-diagnostics-key header / DIAGNOSTICS_KEY env var), disabled by default (503 when env var not set), read-only, hardcoded allowlist of 14 source files, 300-line hard cap, path-traversal rejection. Added get_source_slice as tool 8 in MB_TOOLS with file/from/to parameters. Added executeToolCall branch — passes x-diagnostics-key auth header inline, handles its own early return. Added tool 8 description to system prompt (targeted verification only, narrow ranges, not for browsing). Updated KNOWLEDGE TIERS: get_source_slice listed as Tier 3 static implementation truth.' },
   { version: '2.8.39', date: 'April 29, 2026', note: 'World site visibility (v1.84.27): (1) WORLD SITES SUMMARY added to buildDebugContext — compact section showing total filled sites in loaded cells, counts by macro cell (cap 20), top 3 nearest with exact coordinates and distance. Labeled "loaded cells only" throughout with explicit unvisited-area caveat. (2) GET /diagnostics/sites-query endpoint added to index.js — queryable by mx+my, radius, filled_only; sorted by distance; returns loaded_cells_only:true. (3) get_sites added to MB_TOOLS as tool 7 with full parameter schema and loaded-cells-only disclaimer. executeToolCall branch added. (4) System prompt: WORLD SITES SUMMARY bullet added (with overconfidence guard and scope-boundary rule); item 7 get_sites tool description added; KNOWLEDGE TIERS section added before EVIDENCE REQUIREMENT (Tier 1=current state, Tier 2=summary/FR rows, Tier 3=tool results); DO NOT FETCH updated with WORLD SITES SUMMARY exemption and unloaded-area exception.' },
   { version: '2.8.38', date: 'April 29, 2026', note: 'Fix MaxListenersExceededWarning (v1.84.26): added module-level _toolHttpAgent = new http.Agent({ keepAlive: false }) and passed it as httpAgent option in executeToolCall axios.get. Each tool call now closes its socket immediately after response — zero listeners accumulate on http.globalAgent across multi-call tool chains. keepAlive:false is safe for localhost diagnostic calls (sub-1ms RTT, no TCP handshake cost). SSE client and DeepSeek axios calls are unaffected.' },
@@ -82,7 +84,7 @@ const MB_VERSION_HISTORY = [
   { version: '1.0.2', date: 'April 23, 2026', note: 'Phosphor green + deep red colors; backspace fix; session bootstrap + context pre-warm' },
   { version: '1.0.1', date: 'April 22, 2026', note: 'Always awake — responds before first game turn, no session gate' },
   { version: '1.0.0', date: 'April 22, 2026', note: 'Initial release — intelligent terminal coprocessor' }
-];
+*/
 
 // ── Tool definitions for DeepSeek function calling ────────────────────────────
 const MB_TOOLS = [
@@ -355,6 +357,8 @@ PRIORITY ORDER:
 
 DO NOT FETCH for Category A questions: current game state, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn's CB extraction/warnings/reality check, WORLD SITES SUMMARY (for proximity/nearest-site questions scoped to loaded cells). If the full answer is already present, respond directly. Exception: if the question scope exceeds loaded cells (e.g., "anywhere in the world", unvisited areas), you must call get_sites — the summary cannot prove absence in unloaded areas.
 
+SEARCH EFFICIENCY: If a tool call returns empty, null, or no matching results, do not repeat the same query. Either try a meaningfully different search term or synthesize from available context. Repeating an identical or near-identical query that already failed wastes a round and will produce the same result.
+
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
 
 NARRATOR FAILURES: When the narrator hard-fails (timeout, connection reset, thrown error), the normal turn event is not emitted. Instead, a [NARRATION FAILED] entry appears in the Flight Recorder with the failure kind (timeout/econnreset/error) and error message. This marks the exact turn where the failure occurred. Soft failures (narrator_status:malformed) appear as normal turn entries and indicate the narrator returned a response with no usable content. When you see either failure type, correlate with the surrounding continuity packets and token baseline to assess cause.
@@ -604,7 +608,7 @@ async function askMotherBrain(question) {
   let _mbCallStats  = null; // populated after loop — reflects totals across all rounds
   const _loopMsgs   = [...messages]; // mutable local copy for tool rounds
   const _totUsage   = { pt: 0, ct: 0, tt: 0, ht: 0, mt: 0, ec: 0 };
-  const MAX_ROUNDS  = 5;
+  const MAX_ROUNDS  = 7;
   let   _round      = 0;
 
   try {
@@ -826,7 +830,7 @@ function connectSSE() {
   printLine(d(`  [SSE] connecting to http://${HOST}:${PORT}${SSE_PATH} …`));
 
   const req = http.get(
-    { host: HOST, port: PORT, path: SSE_PATH, headers: { Accept: 'text/event-stream' } },
+    { host: HOST, port: PORT, path: SSE_PATH, headers: { Accept: 'text/event-stream' }, agent: _toolHttpAgent },
     res => {
       req.socket.setTimeout(0);
       req.socket.setNoDelay(true);
@@ -1020,11 +1024,6 @@ function banner() {
   process.stdout.write(border + '\n');
   process.stdout.write(`${GRN}${B}${titleText}${titlePad}${R}\n`);
   process.stdout.write(border + '\n');
-  process.stdout.write('\n');
-  process.stdout.write(g('  Version History\n'));
-  for (const h of MB_VERSION_HISTORY) {
-    process.stdout.write(g(`    ${h.version}  ${h.date}`) + d(`  — ${h.note}`) + '\n');
-  }
   process.stdout.write('\n');
   process.stdout.write(d('  Type a question and press Enter. Type /clear to reset conversation. Ctrl+C to exit.\n'));
   process.stdout.write('\n');
