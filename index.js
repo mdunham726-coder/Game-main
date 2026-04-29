@@ -2161,13 +2161,14 @@ app.post('/narrate', async (req, res) => {
             const _lsfaSite = gameState.world.active_site;
             const _lsfaCtxParts = [
               _lsfaSite.name        ? `Site name: "${_lsfaSite.name}".`        : '',
+              _lsfaSite.type        ? `Site type: ${_lsfaSite.type}.`           : '',
               _lsfaSite.description ? `Site description: "${_lsfaSite.description}".` : '',
               _lsfaSite.site_size  != null ? `Site size: ${_lsfaSite.site_size}.` : ''
             ].filter(Boolean);
             const _lsfaSiteCtx  = _lsfaCtxParts.length > 0 ? _lsfaCtxParts.join(' ') : 'A site interior.';
             // Send short key in prompt — DS response must echo it back for the write guard to match.
             const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y }];
-            const _lsfaPrompt   = `${_lsfaSiteCtx}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+            const _lsfaPrompt   = `${_lsfaSiteCtx}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
             try {
               const _lsfaResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
                 model: 'deepseek-chat',
