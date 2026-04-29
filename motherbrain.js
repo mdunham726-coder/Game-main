@@ -15,9 +15,11 @@ const axios    = require('axios');
 const { spawn } = require('child_process');
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.32';
+const MB_VERSION = '2.8.34';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.8.34', date: 'April 29, 2026', note: 'Agentic tool use (v1.84.22): Mother Brain can now invoke get_turn_data and get_payload as real DeepSeek function calls mid-reasoning. MB_TOOLS constant defines both functions. executeToolCall() helper resolves sessionId from module scope, fires axios.get, truncates at 8000 chars with TRUNCATED note. askMotherBrain() single DS call replaced with 5-round tool loop: on finish_reason=tool_calls, prints her reasoning sentence (message.content), dim [tool] line, executes call, appends tool result, loops with [synthesizing...]; on stop breaks and displays final response. Token tracking accumulates across all rounds. Tool messages not stored in _history[]. System prompt TOOL USE rule added: output one reasoning sentence before each tool call; use get_turn_data first, escalate to get_payload for verbatim strings; do not invoke if answer is in provided context. Package v1.84.22.' },
+  { version: '2.8.33', date: 'April 29, 2026', note: 'Flight Recorder cold archive (v1.84.21): two new retrieval endpoints added. GET /diagnostics/turn/{sessionId}/{turn} returns full structured turnObject from turn_history[] for any past turn (optional ?fields= filter). GET /diagnostics/payload/{sessionId}/{turn} returns raw DeepSeek prompt+response per pipeline stage in order: reality_check -> narrator -> continuity_brain -> condition_bot (optional ?stage= and ?part= filters). payload_archive written atomically at turn-close, persisted to saves/{sessionId}/payload_archive.json, restored on session restore. Mental model: /turn = structured truth (use first), /payload = forensic evidence (escalate to). null stage = stage did not run that turn. TOOLS AND DATA ACCESS items 5 and 6 added.' },
   { version: '2.8.32', date: 'April 29, 2026', note: 'Condition Bot (v1.84.19): PLAYER CONDITIONS paragraph added to SYSTEM_PROMPT. player.conditions[] is the active condition array; player.conditions_archive[] holds resolved conditions. Each condition: condition_id, created_turn, description (live snapshot), turn_log (append-only, [narration]/[bot] provenance), notes (rolling 5-entry evidence window from CB). Condition Bot evaluates lifecycle each turn post-CB — description changes only on qualitative shift; [bot] turn_log entries required for every change; no-op = silence. CB owns creation; ConditionBot owns progression/resolution. Narrator sees description only (not notes or bot log entries). buildDebugContext PLAYER CONDITIONS section added showing full condition state. Package v1.84.19.' },
   { version: '2.8.31', date: 'April 28, 2026', note: 'Raise LAST NARRATIONS cap (v1.84.18): per-narration character cap raised from 1200 to 3000. Fixes mid-word truncation on long DS narrations (~1650 chars confirmed). LAST NARRATIONS bullet updated. Package v1.84.18.' },
   { version: '2.8.30', date: 'April 28, 2026', note: 'State claim narrator instruction (v1.84.16): _freeformBlock now branches on _parsedAction===state_claim. State_claim turns receive directed absence instruction: claim is unsupported, do not instantiate objects/inventory/conditions/NPCs/authority/world facts, reflect only existing engine state, narrate as speech/thought/assertion with no world change. All other freeform turns unchanged. Package v1.84.16.' },
@@ -66,6 +68,56 @@ const MB_VERSION_HISTORY = [
   { version: '1.0.2', date: 'April 23, 2026', note: 'Phosphor green + deep red colors; backspace fix; session bootstrap + context pre-warm' },
   { version: '1.0.1', date: 'April 22, 2026', note: 'Always awake — responds before first game turn, no session gate' },
   { version: '1.0.0', date: 'April 22, 2026', note: 'Initial release — intelligent terminal coprocessor' }
+];
+
+// ── Tool definitions for DeepSeek function calling ────────────────────────────
+const MB_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_turn_data',
+      description: 'Fetch the full structured turnObject for a specific past turn from turn_history[]. Use this as your default when answering any turn-specific question — it contains narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, and reality_check. Use the fields parameter to request only the fields you need. Call this first before escalating to get_payload.',
+      parameters: {
+        type: 'object',
+        properties: {
+          turn: {
+            type: 'integer',
+            description: 'The turn number to retrieve.'
+          },
+          fields: {
+            type: 'string',
+            description: 'Optional comma-separated list of fields to return: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug. Omit for the full turnObject.'
+          }
+        },
+        required: ['turn']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_payload',
+      description: 'Fetch raw DeepSeek prompt+response pairs for a specific past turn from the payload archive. Pipeline stages in order: reality_check, narrator, continuity_brain, condition_bot. A null stage means that stage did not run that turn — not a crash. Use this when you need verbatim LLM input/output: exact extraction prompts, raw narrator responses, condition_bot JSON. Escalate to this after get_turn_data when the structured data is insufficient.',
+      parameters: {
+        type: 'object',
+        properties: {
+          turn: {
+            type: 'integer',
+            description: 'The turn number to retrieve.'
+          },
+          stage: {
+            type: 'string',
+            description: 'Optional: one of reality_check, narrator, continuity_brain, condition_bot. Omit to get all stages.'
+          },
+          part: {
+            type: 'string',
+            description: 'Optional: prompt or response. Only valid when stage is also specified. Omit to get both prompt and response for the stage.'
+          }
+        },
+        required: ['turn']
+      }
+    }
+  }
 ];
 
 // ── Config ─────────────────────────────────────────────────────────────────────
@@ -168,7 +220,11 @@ NPC FILL PIPELINE: [NPC-FILL] fires before each narration turn and fills DS-owne
 REALITY CHECK (Arbiter Phase 0): Before each narration turn (except Turn 1 and skip-action turns: move/look/wait/enter/exit), a blocking awaited Reality Check call fires. It takes the player's raw input and constructs a plain-language consequence query appended with the verbatim suffix: 'Focus on immediate physical, social, and legal consequences. be accurate, but concise and brief. distill the answer to the essence of the event.' The DeepSeek result is frozen as reality_check.result in the turn record and injected into the narrator's prompt as an advisory block headed 'Possible consequences of the player's action (advisory):'. The narrator uses this as guidance only — it selects, adapts, or ignores as appropriate, and honors the current scene, engine state, and system prompt. The narrator retains full scene authority; RC output does not override it. If the check fires and fails, the turn halts with REALITY_CHECK_FAILED — the narrator is never called. Skipped turns emit reality_check with fired:false and skipped_reason. The post-narration Arbiter IIFE (reputation/name-learning) continues to fire separately after narration. reality_check in turn_history: { fired, skipped_reason, query, result, raw_response, anchor_block }. stage_times in turn_history: { rc_start, rc_end, narrator_start, narrator_end }. The === REALITY CHECK (last turn) === section in the context snapshot mirrors exactly what the narrator received — raw_response is the verbatim DeepSeek output before any formatting; anchor_block is the exact text injected into the narrator prompt. Use these to diagnose discrepancies between RC advisory content and narrator output.
 
 4. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result (move:OK or move:✗(CODE) where CODE is a deterministic block reason \u2014 see ACTION RESOLUTION section for code definitions), continuity injection status, token usage, delta from previous turn, avg5 (5-turn rolling token average for baseline comparison), narrator_status (ok = success; malformed = response received but content was empty or unparseable), player_extraction (you:Nf = N facts extracted about the player this turn by ContinuityBrain), and any engine violations. Hard narrator failures (timeout, connection reset, thrown error) appear as explicit [NARRATION FAILED] entries with failure kind and error message \u2014 these mark turns where no turn event was emitted.
+5. TURN ARCHIVE (structured truth): GET /diagnostics/turn/{sessionId}/{turn} — returns the full structured turnObject for any past turn from turn_history[]. Contains: narrative (full narration text), narration_debug.extraction_packet (CB parsed JSON), narration_debug.continuity_snapshot (TRUTH+MOOD packet sent to narrator), authoritative_state (full position/NPC snapshot), input (raw action + parsed_intent), stage_times (RC/narrator durations), reality_check (fired/result/raw_response/anchor_block). Optional ?fields= comma-separated filter (narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug) to avoid fetching 50KB when only one field is needed. Use this as your default for any turn-specific question.
 
+6. PAYLOAD ARCHIVE (forensic evidence): GET /diagnostics/payload/{sessionId}/{turn} — returns raw DeepSeek prompt+response pairs for each pipeline stage of a specific turn, in pipeline execution order: reality_check -> narrator -> continuity_brain -> condition_bot. Each stage: { prompt: <string|object|null>, response: <string|null> }. Optional ?stage=reality_check|narrator|continuity_brain|condition_bot to return one stage. Optional ?part=prompt|response within a stage. A null stage means that stage did not run that turn (e.g. condition_bot is null on turn 1 or when no active conditions exist) — null is not a crash, it is an expected non-run. ESCALATE to this endpoint when you need verbatim LLM input/output (e.g. "what did DeepSeek extract", "did the CB prompt mention X", "what was the exact narrator response"). Mental model: turnObject = authoritative truth; payload = forensic evidence that supports or challenges the truth — never overwrites it. If a payload entry is missing for a turn entirely, the pipeline may have crashed before turn-close — not the same as a stage being null.
+
+TOOL USE: You have direct access to tools 5 (get_turn_data) and 6 (get_payload) as callable functions. Before invoking any tool, output one sentence as your response content explaining what you are looking for and why — this is visible to the developer and narrates your reasoning step. When a tool returns data, use it to answer the question directly. If the structured data from get_turn_data is insufficient, escalate to get_payload for verbatim LLM strings. Do not invoke tools for questions that can be answered from the engine data already provided in this message.
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
 
 NARRATOR FAILURES: When the narrator hard-fails (timeout, connection reset, thrown error), the normal turn event is not emitted. Instead, a [NARRATION FAILED] entry appears in the Flight Recorder with the failure kind (timeout/econnreset/error) and error message. This marks the exact turn where the failure occurred. Soft failures (narrator_status:malformed) appear as normal turn entries and indicate the narrator returned a response with no usable content. When you see either failure type, correlate with the surrounding continuity packets and token baseline to assess cause.
@@ -295,6 +351,35 @@ function formatTurnBuffer() {
   return lines.join('\n');
 }
 
+// ── Tool executor — called by Mother Brain during function-calling loop ────────
+async function executeToolCall(name, args) {
+  if (!_activeSessionId) {
+    return JSON.stringify({ error: 'no_session_active' });
+  }
+  try {
+    let url;
+    if (name === 'get_turn_data') {
+      const params = args.fields ? `?fields=${encodeURIComponent(args.fields)}` : '';
+      url = `http://${HOST}:${PORT}/diagnostics/turn/${encodeURIComponent(_activeSessionId)}/${args.turn}${params}`;
+    } else if (name === 'get_payload') {
+      const qs = [];
+      if (args.stage) qs.push(`stage=${encodeURIComponent(args.stage)}`);
+      if (args.part)  qs.push(`part=${encodeURIComponent(args.part)}`);
+      url = `http://${HOST}:${PORT}/diagnostics/payload/${encodeURIComponent(_activeSessionId)}/${args.turn}${qs.length ? '?' + qs.join('&') : ''}`;
+    } else {
+      return JSON.stringify({ error: 'unknown_tool', name });
+    }
+    const resp = await axios.get(url, { timeout: 10000 });
+    const raw  = JSON.stringify(resp.data);
+    if (raw.length > 8000) {
+      return raw.slice(0, 8000) + '\n[TRUNCATED — response exceeds 8000 chars. Use fields= or stage= to narrow the query.]';
+    }
+    return raw;
+  } catch (err) {
+    return JSON.stringify({ error: err.message, status: err.response?.status ?? null });
+  }
+}
+
 // ── Ask Mother Brain ───────────────────────────────────────────────────────────
 async function askMotherBrain(question) {
   if (!DEEPSEEK_KEY) {
@@ -354,47 +439,104 @@ async function askMotherBrain(question) {
   };
   const messages = [systemMsg, ..._history, userMsg];
 
-  // Call DeepSeek
-  let aiText     = null;
-  let _mbCallStats = null; // populated after successful API call — read by stats block below
+  // ── Tool-aware DeepSeek call loop ─────────────────────────────────────────
+  let aiText        = null;
+  let _mbCallStats  = null; // populated after loop — reflects totals across all rounds
+  const _loopMsgs   = [...messages]; // mutable local copy for tool rounds
+  const _totUsage   = { pt: 0, ct: 0, tt: 0, ht: 0, mt: 0, ec: 0 };
+  const MAX_ROUNDS  = 5;
+  let   _round      = 0;
+
   try {
-    let resp;
-    try {
-      resp = await axios.post(
-        DEEPSEEK_URL,
-        { model: 'deepseek-chat', messages, temperature: 0.7, max_tokens: 2000 },
-        { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000 }
-      );
-    } catch (firstErr) {
-      if (firstErr?.code === 'ECONNRESET') {
+    while (_round < MAX_ROUNDS) {
+      _round++;
+
+      // Fire one DeepSeek call (ECONNRESET retry on first failure)
+      let resp;
+      try {
         resp = await axios.post(
           DEEPSEEK_URL,
-          { model: 'deepseek-chat', messages, temperature: 0.7, max_tokens: 2000 },
+          { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
+            tools: MB_TOOLS, tool_choice: 'auto' },
           { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000 }
         );
-      } else { throw firstErr; }
+      } catch (firstErr) {
+        if (firstErr?.code === 'ECONNRESET') {
+          resp = await axios.post(
+            DEEPSEEK_URL,
+            { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
+              tools: MB_TOOLS, tool_choice: 'auto' },
+            { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000 }
+          );
+        } else { throw firstErr; }
+      }
+
+      // ── Accumulate token usage across all rounds ──────────────────────────
+      const _u  = resp?.data?.usage || null;
+      if (!_mbUsageShapeLogged) { console.log('[MB] usage object shape:', JSON.stringify(_u)); _mbUsageShapeLogged = true; }
+      const _pt = _u?.prompt_tokens           ?? 0;
+      const _ct = _u?.completion_tokens        ?? 0;
+      const _tt = _u?.total_tokens             ?? 0;
+      const _ht = _u?.prompt_cache_hit_tokens  ?? 0;
+      const _mt = _u?.prompt_cache_miss_tokens ?? 0;
+      const _ec = (_ht > 0 || _mt > 0)
+        ? (_ht * 0.000000028) + (_mt * 0.00000014) + (_ct * 0.00000028)
+        : (_pt  * 0.00000014) + (_ct * 0.00000028);
+      _totUsage.pt += _pt; _totUsage.ct += _ct; _totUsage.tt += _tt;
+      _totUsage.ht += _ht; _totUsage.mt += _mt; _totUsage.ec += _ec;
+
+      const choice      = resp?.data?.choices?.[0];
+      const finishReason = choice?.finish_reason;
+      const message     = choice?.message;
+
+      if (finishReason === 'tool_calls' && message?.tool_calls?.length) {
+        // Print her reasoning sentence (content she wrote before the tool call)
+        if (message.content && message.content.trim()) {
+          const _pre = message.content.trim().split(/\n+/);
+          for (const para of _pre) {
+            if (para.trim()) printLine(g(`  ${para.trim()}`));
+          }
+        }
+
+        // Append assistant message with tool_calls to loop context
+        _loopMsgs.push({ role: 'assistant', content: message.content || null, tool_calls: message.tool_calls });
+
+        // Execute each tool call and append results
+        for (const tc of message.tool_calls) {
+          const tcName  = tc.function?.name || 'unknown';
+          const tcArgs  = JSON.parse(tc.function?.arguments || '{}');
+          const argsStr = Object.entries(tcArgs).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
+          const result  = await executeToolCall(tcName, tcArgs);
+          printLine(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)`));
+          _loopMsgs.push({ role: 'tool', tool_call_id: tc.id, content: result });
+        }
+
+        printLine(g('  Mother Brain: [synthesizing...]'));
+        continue; // next round
+      }
+
+      // finish_reason === 'stop' (or anything else) — final response
+      aiText = message?.content || null;
+      break;
     }
-    aiText = resp?.data?.choices?.[0]?.message?.content || null;
-    // ── Capture usage for token tracking ─────────────────────────────────────
-    const _u  = resp?.data?.usage || null;
-    if (!_mbUsageShapeLogged) { console.log('[MB] usage object shape:', JSON.stringify(_u)); _mbUsageShapeLogged = true; }
-    const _pt = _u?.prompt_tokens           ?? 0;
-    const _ct = _u?.completion_tokens        ?? 0;
-    const _tt = _u?.total_tokens             ?? 0;
-    const _ht = _u?.prompt_cache_hit_tokens  ?? 0;
-    const _mt = _u?.prompt_cache_miss_tokens ?? 0;
-    const _ec = (_ht > 0 || _mt > 0)
-      ? (_ht * 0.000000028) + (_mt * 0.00000014) + (_ct * 0.00000028)
-      : (_pt  * 0.00000014) + (_ct * 0.00000028);
+
+    if (_round >= MAX_ROUNDS && !aiText) {
+      printLine(a('  [MB] Tool round cap reached — partial response may follow.'));
+    }
+
+    // ── Commit accumulated totals to session tracking ─────────────────────────
     _mbSession.calls++;
-    _mbSession.prompt_tokens     += _pt;
-    _mbSession.completion_tokens += _ct;
-    _mbSession.total_tokens      += _tt;
-    _mbSession.cache_hit_tokens  += _ht;
-    _mbSession.est_cost_usd      += _ec;
-    _mbCallHistory.push({ call_num: _mbSession.calls, total_tokens: _tt, prompt_tokens: _pt, completion_tokens: _ct, cache_hit_tokens: _ht, cache_miss_tokens: _mt, est_cost_usd: _ec });
+    _mbSession.prompt_tokens     += _totUsage.pt;
+    _mbSession.completion_tokens += _totUsage.ct;
+    _mbSession.total_tokens      += _totUsage.tt;
+    _mbSession.cache_hit_tokens  += _totUsage.ht;
+    _mbSession.est_cost_usd      += _totUsage.ec;
+    _mbCallHistory.push({ call_num: _mbSession.calls, total_tokens: _totUsage.tt, prompt_tokens: _totUsage.pt,
+      completion_tokens: _totUsage.ct, cache_hit_tokens: _totUsage.ht, cache_miss_tokens: _totUsage.mt, est_cost_usd: _totUsage.ec });
     if (_mbCallHistory.length > 5) _mbCallHistory.shift();
-    _mbCallStats = { prompt_tokens: _pt, completion_tokens: _ct, total_tokens: _tt, cache_hit_tokens: _ht, cache_miss_tokens: _mt, est_cost_usd: _ec };
+    _mbCallStats = { prompt_tokens: _totUsage.pt, completion_tokens: _totUsage.ct, total_tokens: _totUsage.tt,
+      cache_hit_tokens: _totUsage.ht, cache_miss_tokens: _totUsage.mt, est_cost_usd: _totUsage.ec };
+
   } catch (err) {
     printLine(r(`  Mother Brain: Error — ${err.message}`));
     prompt();
@@ -412,7 +554,7 @@ async function askMotherBrain(question) {
   _history.push({ role: 'assistant', content: aiText   });
   _lastExchange = { question, answer: aiText };
 
-  // Display response — clear the [thinking…] line first
+  // Display response — clear the [thinking…] / [synthesizing...] line first
   readline.clearLine(process.stdout, 0);
   readline.cursorTo(process.stdout, 0);
   process.stdout.write(hr() + '\n');

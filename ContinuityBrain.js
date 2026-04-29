@@ -654,6 +654,8 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
     mood_snapshot:   moodSnapshot,
     diagnostics:     diag,
     watch_message,   // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
+    raw,             // v1.84.21: raw LLM response string (for payload archive)
+    prompt,          // v1.84.21: extraction prompt string (for payload archive)
   };
 }
 

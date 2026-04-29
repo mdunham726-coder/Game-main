@@ -138,16 +138,18 @@ Rules:
 - Evaluate each condition independently. Do not cross-reference conditions.
 - Return ONLY the JSON array. No explanation, no wrapper text.`;
 
+  // v1.84.21: Capture messages array before call for payload archive
+  const _capturedMessages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user',   content: userMessage }
+  ];
   let raw = null;
   try {
     const resp = await axios.post(
       DEEPSEEK_URL,
       {
         model: 'deepseek-chat',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user',   content: userMessage }
-        ],
+        messages: _capturedMessages,
         temperature: 0.2,
         max_tokens: 800
       },
@@ -214,7 +216,7 @@ Rules:
     console.log(`[ConditionBot] Condition updated: ${condition.condition_id} — ${_qc}`);
   }
 
-  return { updatedConditions, archive };
+  return { updatedConditions, archive, raw, prompt: _capturedMessages }; // v1.84.21: raw+prompt for payload archive
 }
 
 module.exports = { run, CONDITIONBOT_VERSION };

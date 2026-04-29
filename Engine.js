@@ -155,7 +155,8 @@ function initState(timestampUTC) {
       }
     },
     reputation: {},
-    history: []
+    history: [],
+    payload_archive: {}   // v1.84.21: per-turn raw DeepSeek payload archive (written once at turn-close)
   };
 }
 

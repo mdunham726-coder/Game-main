@@ -732,6 +732,15 @@ async function restoreAutosaveIfAvailable(sessionId, clientState) {
     const raw = await fsPromises.readFile(autosavePath, 'utf8');
     const data = JSON.parse(raw);
     if (!data?.gameState) return;
+    // v1.84.21: Restore payload archive from separate file
+    try {
+      const _paPath = path.join(__dirname, 'saves', sessionId, 'payload_archive.json');
+      await fsPromises.access(_paPath);
+      const _paRaw = await fsPromises.readFile(_paPath, 'utf8');
+      data.gameState.payload_archive = JSON.parse(_paRaw);
+    } catch (_) {
+      data.gameState.payload_archive = data.gameState.payload_archive || {};
+    }
     const logger = createLogger({ sessionId });
     sessionStates.set(sessionId, { gameState: data.gameState, isFirstTurn: false, logger });
     console.log('[AUTOSAVE] Restored session', sessionId, 'from disk autosave — turn', data.gameState?.turn_history?.length ?? '?');
@@ -790,6 +799,10 @@ app.post('/narrate', async (req, res) => {
   }
   if (gameState.player && !gameState.player.conditions_archive) {
     gameState.player.conditions_archive = [];
+  }
+  // v1.84.21: Payload archive backward compat — old saves won't have this field
+  if (!gameState.payload_archive) {
+    gameState.payload_archive = {};
   }
   // v1.84.0: NPC reputation rename — old saves used player_reputation (-25..+25); new schema uses reputation_player (0-100)
   if (gameState.world && Array.isArray(gameState.world.npcs)) {
@@ -2507,6 +2520,12 @@ app.post('/narrate', async (req, res) => {
     const _parsedAction = inputObj?.player_intent?.action || '';
     const _rawInput = (action || '').trim();
 
+    // v1.84.21: Flight recorder — per-turn payload snapshots (written atomically at turn-close)
+    let _rcPayloadSnapshot          = null;
+    let _narratorPayloadSnapshot    = null;
+    let _cbPayloadSnapshot          = null;
+    let _conditionBotPayloadSnapshot = null;
+
     // [REALITY-CHECK] Arbiter Phase 0 — pre-narration reality adjudication (v1.84.2)
     // Awaited and blocking. Fires before narrationContent is built. On failure: hard stop — narrator never called.
     // Skip conditions: Turn 1 (founding premise), move, look, wait.
@@ -2555,6 +2574,7 @@ app.post('/narrate', async (req, res) => {
         _rcEnd = Date.now();
         _rcRawResponse = _rcResp?.data?.choices?.[0]?.message?.content || null;
         _realityAnchor = _rcRawResponse?.trim() || null;
+        _rcPayloadSnapshot = { prompt: _realityQuery, response: _rcRawResponse }; // v1.84.21
         if (!_realityAnchor) throw new Error('empty_response');
         emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, gameSessionId: resolvedSessionId });
         console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}`);
@@ -2865,6 +2885,7 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
       if (response?.data?.choices?.[0]?.message?.content) {
         narrative = String(response.data.choices[0].message.content);
         _lastNarratorRawResponse = narrative;
+        _narratorPayloadSnapshot = { prompt: _lastNarratorPayload, response: narrative }; // v1.84.21
       } else {
         _narratorStatus = 'malformed'; // response received but no content
       }
@@ -2919,6 +2940,10 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         _watchMessageThisTurn = _phaseBResult.watch_message;
         _lastWatchMessage = _watchMessageThisTurn;
       }
+      // v1.84.21: CB payload snapshot
+      if (_phaseBResult) {
+        _cbPayloadSnapshot = { prompt: _phaseBResult.prompt || null, response: _phaseBResult.raw || null };
+      }
     }
 
     // Extract player entity candidate for Mother Brain visibility
@@ -2968,7 +2993,8 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
           }
           _conditionBotRan = true;
           _conditionBotStats = { evaluated: _prevCount, resolved: _resolvedCount, updated: _updatedCount };
-          console.log(`[CONDITION-BOT] ran: evaluated=${_prevCount} resolved=${_resolvedCount} updated=${_updatedCount}`);
+          _conditionBotPayloadSnapshot = { prompt: _cbResult.prompt || null, response: _cbResult.raw || null }; // v1.84.21
+          console.log(`[CONDITION-BOT] ran: evaluated=${_prevCount} resolved=${_resolvedCount} updated=${_updatedCount}`);;
         }
       } catch (_cbErr) {
         console.error('[CONDITION-BOT] Error:', _cbErr.message);
@@ -3400,6 +3426,19 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
     
     // Store turn object in turn history
     gameState.turn_history.push(turnObject);
+
+    // v1.84.21: Atomic payload archive write — single write after all stage snapshots are final
+    if (!gameState.payload_archive) gameState.payload_archive = {};
+    gameState.payload_archive[turnNumber] = {
+      turn: turnNumber,
+      timestamp: new Date().toISOString(),
+      pipeline: {
+        reality_check:    _rcPayloadSnapshot          || null,
+        narrator:         _narratorPayloadSnapshot    || null,
+        continuity_brain: _cbPayloadSnapshot          || null,
+        condition_bot:    _conditionBotPayloadSnapshot || null
+      }
+    };
     
     // Persist updated gameState with turn history
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
@@ -3411,6 +3450,15 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         JSON.stringify({ gameState, sessionId: resolvedSessionId, timestamp: new Date().toISOString() })
       ))
       .catch(err => console.warn('[AUTOSAVE] write failed:', err.message));
+
+    // v1.84.21: Background payload archive write — separate file to keep autosave.json lean
+    // TODO: rolling cap at 200 turns if payload_archive.json grows too large
+    fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
+      .then(() => fsPromises.writeFile(
+        path.join(__dirname, 'saves', resolvedSessionId, 'payload_archive.json'),
+        JSON.stringify(gameState.payload_archive)
+      ))
+      .catch(err => console.warn('[PAYLOAD-ARCHIVE] write failed:', err.message));
 
     // [DIAG-1] Log before returning response
     // C1 (v1.46.0): Phase 3/5b debug instrumentation — narrator mode, emote, do-intent, say target source, pre-speech
@@ -3787,6 +3835,11 @@ function initializeGame() {
 app.get('/', (req, res) => {
   const htmlPath = path.join(__dirname, 'Index.html');
   res.sendFile(htmlPath);
+});
+
+// Keep-alive probe — called every 5 min by the game client to prevent Render spin-down
+app.get('/ping', (req, res) => {
+  res.json({ ok: true });
 });
 
 app.post('/init', (req, res) => {
@@ -5214,6 +5267,96 @@ app.get('/diagnostics/log', (req, res) => {
   });
 
   res.json({ turns, total_turns: history.length });
+});
+
+// Turn archive — GET /diagnostics/turn/:sessionId/:turn
+// Returns the full turnObject for a specific turn from turn_history[].
+// Optional ?fields= comma-separated: narrative, extraction_packet, continuity_snapshot,
+//   authoritative_state, input, stage_times, reality_check, narration_debug
+app.get('/diagnostics/turn/:sessionId/:turn', (req, res) => {
+  const { sessionId, turn } = req.params;
+  const turnNum = parseInt(turn, 10);
+  if (!sessionId || isNaN(turnNum)) {
+    return res.status(400).json({ error: 'sessionId and numeric turn are required' });
+  }
+  const session = sessionStates.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found' });
+  }
+  const history = session.gameState?.turn_history || [];
+  const turnObj = history.find(t => t.turn_number === turnNum);
+  if (!turnObj) {
+    return res.status(404).json({ error: 'turn_not_found', turn: turnNum, total_turns: history.length });
+  }
+  const fieldsParam = req.query.fields;
+  if (!fieldsParam) {
+    return res.json(turnObj);
+  }
+  // Selective field projection
+  const FIELD_MAP = {
+    narrative:           'narrative',
+    extraction_packet:   'narration_debug.extraction_packet',
+    continuity_snapshot: 'narration_debug.continuity_snapshot',
+    authoritative_state: 'authoritative_state',
+    input:               'input',
+    stage_times:         'stage_times',
+    reality_check:       'reality_check',
+    narration_debug:     'narration_debug'
+  };
+  const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
+  const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };
+  for (const field of requested) {
+    if (field in FIELD_MAP) {
+      const key = FIELD_MAP[field];
+      if (key.includes('.')) {
+        const [top, sub] = key.split('.');
+        result[field] = turnObj[top]?.[sub] ?? null;
+      } else {
+        result[field] = turnObj[key] ?? null;
+      }
+    }
+  }
+  return res.json(result);
+});
+
+// Payload archive — GET /diagnostics/payload/:sessionId/:turn
+// Returns raw DeepSeek payload archive for a specific turn (prompt + response per pipeline stage).
+// Pipeline order: reality_check -> narrator -> continuity_brain -> condition_bot
+// Optional ?stage=reality_check|narrator|continuity_brain|condition_bot
+// Optional ?part=prompt|response (only valid with ?stage=)
+// null stage = that stage did not run that turn (not a crash)
+app.get('/diagnostics/payload/:sessionId/:turn', (req, res) => {
+  const { sessionId, turn } = req.params;
+  const turnNum = parseInt(turn, 10);
+  if (!sessionId || isNaN(turnNum)) {
+    return res.status(400).json({ error: 'sessionId and numeric turn are required' });
+  }
+  const session = sessionStates.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found' });
+  }
+  const archive = session.gameState?.payload_archive || {};
+  const entry = archive[turnNum];
+  if (!entry) {
+    return res.status(404).json({ error: 'payload_not_found', turn: turnNum });
+  }
+  const stage = req.query.stage;
+  const part  = req.query.part;
+  if (!stage) {
+    return res.json(entry);
+  }
+  const VALID_STAGES = ['reality_check', 'narrator', 'continuity_brain', 'condition_bot'];
+  if (!VALID_STAGES.includes(stage)) {
+    return res.status(400).json({ error: 'invalid_stage', valid: VALID_STAGES });
+  }
+  const stageData = entry.pipeline?.[stage] ?? null;
+  if (!part) {
+    return res.json({ turn: turnNum, stage, data: stageData });
+  }
+  if (part !== 'prompt' && part !== 'response') {
+    return res.status(400).json({ error: 'invalid_part', valid: ['prompt', 'response'] });
+  }
+  return res.json({ turn: turnNum, stage, part, data: stageData?.[part] ?? null });
 });
 
 // On-demand session summary — GET /diagnostics/summary

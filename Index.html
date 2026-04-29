@@ -305,6 +305,9 @@
     let lastExportedTurn = -1;
     let firstSessionTimestamp = null;
 
+    // Keep-alive: ping the server every 5 min so Render doesn't spin down mid-session
+    setInterval(() => { fetch('/ping').catch(() => {}); }, 5 * 60 * 1000);
+
     // ── Worldgen overlay helpers (D1–D3) ─────────────────────────────────────────
     function _escHtml(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
