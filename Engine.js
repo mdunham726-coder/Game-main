@@ -108,6 +108,8 @@ function initState(timestampUTC) {
         lx: Math.floor(l1w/2), ly: Math.floor(l1h/2),
         x: null, y: null
       },
+      conditions: [],
+      conditions_archive: [],
       quests: [],
       reputation: {},
       birth_record: {

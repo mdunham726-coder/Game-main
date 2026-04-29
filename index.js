@@ -12,6 +12,7 @@ const { validateAndQueueIntent, parseIntent } = require('./ActionProcessor.js');
 const { normalizeUserIntent, resolveEnterTarget } = require('./SemanticParser.js');
 const NC = require('./NarrativeContinuity');
 const CB = require('./ContinuityBrain'); // v1.70.0
+const ConditionBot = require('./conditionbot'); // v1.84.19
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -782,6 +783,13 @@ app.post('/narrate', async (req, res) => {
   // v1.84.0: Birth record backward compat — old saves won't have this field
   if (gameState.player && !gameState.player.birth_record) {
     gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [] };
+  }
+  // v1.84.19: Condition Bot backward compat — old saves won't have these fields
+  if (gameState.player && !gameState.player.conditions) {
+    gameState.player.conditions = [];
+  }
+  if (gameState.player && !gameState.player.conditions_archive) {
+    gameState.player.conditions_archive = [];
   }
   // v1.84.0: NPC reputation rename — old saves used player_reputation (-25..+25); new schema uses reputation_player (0-100)
   if (gameState.world && Array.isArray(gameState.world.npcs)) {
@@ -2573,6 +2581,12 @@ app.post('/narrate', async (req, res) => {
         ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, narrate it as the player's spoken words, thought, or attempted assertion — with no change to the world.)\n`
         : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`)
       : '';
+    const _conditionBlock = (() => {
+      const _activeConds = gameState.player?.conditions;
+      if (!Array.isArray(_activeConds) || _activeConds.length === 0) return '';
+      const _condLines = _activeConds.map(c => `- ${c.description} (since T-${c.created_turn})`).join('\n');
+      return `\nPLAYER CONDITIONS (active):\n${_condLines}\n`;
+    })();
     const _expressiveBlock = (_parsedAction === 'wait' && _rawInput.toLowerCase() !== 'wait' && _rawInput !== '')
       ? `\nPLAYER EXPRESSION: "${_rawInput}"\nRender this concretely as the player's body language, posture, or physical expression in the scene. This is intentional player behavior and must appear in narration, but it does not create or modify game state.\n`
       : '';
@@ -2796,7 +2810,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. If NPCs PRESENT is '(None visible)', no person exists anywhere in this location.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_realityAnchorBlock}`;
+${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_realityAnchorBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -2928,6 +2942,37 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
     // Log narration generation
     if (logger) {
       logger.narrationGenerated(narrative.length);
+    }
+
+    // v1.84.19: Condition Bot — evaluate and update active player conditions
+    let _conditionBotRan = false;
+    let _conditionBotStats = { evaluated: 0, resolved: 0, updated: 0 };
+    if (turnNumber > 1 && Array.isArray(gameState.player.conditions) && gameState.player.conditions.length > 0) {
+      try {
+        const _cbResult = await ConditionBot.run(
+          gameState.player.conditions,
+          turnNumber,
+          process.env.DEEPSEEK_API_KEY || ''
+        );
+        if (_cbResult && typeof _cbResult === 'object' && Array.isArray(_cbResult.updatedConditions)) {
+          const _prevCount = gameState.player.conditions.length;
+          const _resolvedCount = _cbResult.archive ? _cbResult.archive.length : 0;
+          const _updatedCount = _cbResult.updatedConditions.filter((c, i) => {
+            const orig = gameState.player.conditions[i];
+            return orig && c.description !== orig.description;
+          }).length;
+          gameState.player.conditions = _cbResult.updatedConditions;
+          if (_cbResult.archive && _cbResult.archive.length > 0) {
+            if (!Array.isArray(gameState.player.conditions_archive)) gameState.player.conditions_archive = [];
+            gameState.player.conditions_archive.push(..._cbResult.archive);
+          }
+          _conditionBotRan = true;
+          _conditionBotStats = { evaluated: _prevCount, resolved: _resolvedCount, updated: _updatedCount };
+          console.log(`[CONDITION-BOT] ran: evaluated=${_prevCount} resolved=${_resolvedCount} updated=${_updatedCount}`);
+        }
+      } catch (_cbErr) {
+        console.error('[CONDITION-BOT] Error:', _cbErr.message);
+      }
     }
 
     // QA-014: End turn scope and create turn object
@@ -3333,7 +3378,8 @@ ${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFla
         engine_spatial_notes: _engineSpatialBlock || null,
         extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
         dm_note_archived:  _dmNoteArchived,       // v1.66.0: dm_note verbatim at turn completion
-        dm_note_status:    _dmNoteStatus          // v1.66.0: 'updated' | 'preserved_missing' | 'new_game'
+        dm_note_status:    _dmNoteStatus,          // v1.66.0: 'updated' | 'preserved_missing' | 'new_game'
+        condition_bot:     { ran: _conditionBotRan, ...(_conditionBotStats) }
       },
       logs: turnLogs,
       reality_check: {
@@ -4039,7 +4085,30 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         if (Array.isArray(_brec.scenario_notes) && _brec.scenario_notes.length > 0)
           context += `  scenario_notes: ${_brec.scenario_notes.slice(0, 5).join(', ')}${_brec.scenario_notes.length > 5 ? ` (+${_brec.scenario_notes.length - 5} more)` : ''}\n`;
       }
-    }
+      // === PLAYER CONDITIONS ===
+      const _ctxConds = _ctxPlayer.conditions;
+      const _ctxCondsArchive = _ctxPlayer.conditions_archive;
+      context += `\n=== PLAYER CONDITIONS ===\n`;
+      if (!Array.isArray(_ctxConds) || _ctxConds.length === 0) {
+        context += `(no active conditions)\n`;
+      } else {
+        for (const _cond of _ctxConds) {
+          context += `[${_cond.condition_id}] (since T-${_cond.created_turn})\n`;
+          context += `  description: ${_cond.description}\n`;
+          const _recentLog = (_cond.turn_log || []).slice(-5);
+          if (_recentLog.length > 0) {
+            context += `  turn_log (last ${_recentLog.length}):\n`;
+            for (const _le of _recentLog) context += `    ${_le}\n`;
+          }
+          if (Array.isArray(_cond.notes) && _cond.notes.length > 0) {
+            context += `  notes: ${_cond.notes.join(' | ')}\n`;
+          }
+        }
+      }
+      if (Array.isArray(_ctxCondsArchive) && _ctxCondsArchive.length > 0) {
+        context += `archived conditions: ${_ctxCondsArchive.length}\n`;
+      }
+    } // end PLAYER STATE else block
 
     // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===
     const _ctxLoc = gameState.world.active_local_space || gameState.world.active_site || (() => {
@@ -4106,8 +4175,8 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       context += `(no narrations yet)\n`;
     } else {
       for (const _nt of _ctxNarrations) {
-        const _nText  = (_nt.narrative || '').slice(0, 1200);
-        const _nExtra = (_nt.narrative || '').length > 1200 ? '…' : '';
+        const _nText  = (_nt.narrative || '').slice(0, 3000);
+        const _nExtra = (_nt.narrative || '').length > 3000 ? '…' : '';
         context += `Narrator output (T-${_nt.turn_number}): ${_nText}${_nExtra}\n`;
       }
     }

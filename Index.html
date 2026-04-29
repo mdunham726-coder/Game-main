@@ -309,6 +309,20 @@
     function _escHtml(s) {
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
+    function renderNarrative(text) {
+      // Escape HTML, then apply markdown, then wrap in paragraphs
+      const esc = _escHtml(text);
+      const md = esc
+        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>');
+      return md
+        .split(/\n{2,}/)
+        .map(p => p.replace(/\n/g, ' ').trim())
+        .filter(p => p.length > 0)
+        .map(p => `<p style="margin:0 0 0.9em 0">${p}</p>`)
+        .join('');
+    }
     function showWgOverlay() {
       document.getElementById('worldgen-box-title').textContent = 'WORLDGEN — GENERATING...';
       document.getElementById('worldgen-box-title').style.color = '#d4af37';
@@ -535,9 +549,9 @@
 const narrative = data.narrative || data.error || 'No response from server';
 const engineMsg = data.engine_message;
 if (engineMsg) {
-  document.getElementById('narrative').innerHTML = `<div style="border:1px solid #f90; padding:4px 10px; margin-bottom:6px; color:#f90; font-size:0.85em; border-radius:3px;">&#9888; ${engineMsg}</div><p>${narrative}</p>`;
+  document.getElementById('narrative').innerHTML = `<div style="border:1px solid #f90; padding:4px 10px; margin-bottom:6px; color:#f90; font-size:0.85em; border-radius:3px;">&#9888; ${_escHtml(engineMsg)}</div>` + renderNarrative(narrative);
 } else {
-  document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
+  document.getElementById('narrative').innerHTML = renderNarrative(narrative);
 }
 document.getElementById('actionInput').value = '';
 document.getElementById('sayInput').value = '';
@@ -918,9 +932,9 @@ diagLog.innerHTML = `
         const narrative = data.narrative || data.error || 'No response from server';
         const engineMsg = data.engine_message;
         if (engineMsg) {
-          document.getElementById('narrative').innerHTML = `<div style="border:1px solid #f90; padding:4px 10px; margin-bottom:6px; color:#f90; font-size:0.85em; border-radius:3px;">&#9888; ${engineMsg}</div><p>${narrative}</p>`;
+          document.getElementById('narrative').innerHTML = `<div style="border:1px solid #f90; padding:4px 10px; margin-bottom:6px; color:#f90; font-size:0.85em; border-radius:3px;">&#9888; ${_escHtml(engineMsg)}</div>` + renderNarrative(narrative);
         } else {
-          document.getElementById('narrative').innerHTML = `<p>${narrative}</p>`;
+          document.getElementById('narrative').innerHTML = renderNarrative(narrative);
         }
         document.getElementById('sayInput').value = '';
         if (data.narrative) lastNarrative = data.narrative;

@@ -51,6 +51,7 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   const location         = _describeLocation(gameState);
   const entities         = _describeVisibleEntities(gameState);
   const knownPlayerAttrs = _describePlayerAttributes(gameState);
+  const activeConditions = _describeActiveConditions(gameState);
   const prevMood  = previousMoodSnapshot
     ? JSON.stringify(previousMoodSnapshot, null, 2)
     : '(none — first turn)';
@@ -66,6 +67,7 @@ CURRENT ENGINE STATE:
 Active location: ${location}
 Visible entities: ${entities}
 Player character: always present — entity_ref "player" | known attributes: ${knownPlayerAttrs}
+Active player conditions: ${activeConditions}
 
 PREVIOUS MOOD SNAPSHOT:
 ${prevMood}
@@ -79,7 +81,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "environmental_features": [...],
   "spatial_relations": [...],
   "rejected_interpretations": [...],
-  "mood_snapshot": { ... }
+  "mood_snapshot": { ... },
+  "condition_events": [...]
 }
 
 ---
@@ -202,7 +205,35 @@ delta_note
   REJECT: multi-sentence narrative explanation
 
 Respond with ONLY the JSON object. No explanation, no wrapper text.
-${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '\u2014'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with \u2713 if clean, \u26a0 for a warning, \u2715 for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
+
+---
+
+CONDITION EVENTS
+
+Review the narration for evidence of new physical conditions or interactions with existing conditions.
+Active player conditions are listed above.
+
+CRITICAL RULE: Only emit condition_events when there is CLEAR physical evidence in the narration.
+If you are unsure whether something is a new condition, do not emit it.
+If you are unsure whether an interaction matches an existing condition, do not emit it.
+False negatives are preferred over false positives.
+
+event_type rules:
+- "new_condition": narration clearly describes a NEW physical injury or condition not already in the active list. Emit ONLY if the evidence would independently describe a new physical condition without inference.
+- "interaction": narration shows usage, aggravation, or treatment of an EXISTING active condition. Only emit if you can clearly match to a condition in the active list by description. If no strong match exists, do not emit — do not create new conditions from interaction evidence.
+
+Format each event:
+{
+  "event_type": "new_condition" | "interaction",
+  "condition_ref": "<description label matching an existing condition, or brief label for new>",
+  "initial_description": "<new_condition only — plain-language snapshot of current state. No inference. No prognosis. No timeline.>",
+  "interaction_type": "<interaction only — one of: aggravation | treatment | usage>",
+  "evidence": "<exact phrase from narration that supports this event>"
+}
+
+If there are no condition events, emit an empty array: "condition_events": []
+
+${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
 
 // ── Location / entity description helpers ─────────────────────────────────────
@@ -230,6 +261,12 @@ function _describePlayerAttributes(gameState) {
   const attrs = gameState.player?.attributes;
   if (!attrs || !Object.keys(attrs).length) return '(none yet)';
   return Object.values(attrs).map(a => `${a.bucket}:${a.value}`).join(' | ');
+}
+
+function _describeActiveConditions(gameState) {
+  const conditions = gameState.player?.conditions;
+  if (!conditions || !conditions.length) return '(none)';
+  return conditions.map(c => `[${c.condition_id}] ${c.description} (since T-${c.created_turn})`).join('\n');
 }
 
 // ── NPC id resolution ─────────────────────────────────────────────────────────
@@ -382,6 +419,57 @@ function _getL0CellRecord(gameState) {
 
 // ── Phase B ───────────────────────────────────────────────────────────────────
 
+// ── Condition promotion ───────────────────────────────────────────────────────
+
+function _promoteConditions(conditionEvents, gameState, turn) {
+  if (!Array.isArray(conditionEvents) || conditionEvents.length === 0) return;
+  if (!gameState.player) return;
+  if (!Array.isArray(gameState.player.conditions)) gameState.player.conditions = [];
+
+  for (const event of conditionEvents) {
+    if (!event || !event.event_type) continue;
+
+    if (event.event_type === 'new_condition') {
+      if (!event.initial_description) continue;
+      const condition_id = `cond_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+      const firstEntry = `Turn ${turn} [narration]: ${event.evidence || event.initial_description}`;
+      gameState.player.conditions.push({
+        condition_id,
+        created_turn: turn,
+        description: event.initial_description,
+        turn_log: [firstEntry],
+        notes: []
+      });
+      console.log(`[CB] Condition created: ${condition_id} — ${event.initial_description.slice(0, 80)}`);
+
+    } else if (event.event_type === 'interaction') {
+      if (!event.condition_ref || !event.evidence) continue;
+      // Find best matching existing condition by description similarity
+      const conditions = gameState.player.conditions;
+      if (!conditions.length) continue;
+      const refLower = event.condition_ref.toLowerCase();
+      const match = conditions.find(c => {
+        const descLower = c.description.toLowerCase();
+        // Strong match: condition_ref words appear in description, or vice versa
+        const refWords = refLower.split(/\s+/).filter(w => w.length > 3);
+        return refWords.some(w => descLower.includes(w));
+      });
+      if (!match) {
+        console.log(`[CB] Condition interaction dropped — no strong match for ref: "${event.condition_ref}"`);
+        continue;
+      }
+      // Add to notes (rolling 5)
+      const noteEntry = `Turn ${turn}: ${event.evidence}`;
+      match.notes.push(noteEntry);
+      if (match.notes.length > 5) match.notes.shift();
+      // Add [narration] turn_log entry
+      const logEntry = `Turn ${turn} [narration]: ${event.interaction_type || 'interaction'} — ${event.evidence}`;
+      match.turn_log.push(logEntry);
+      console.log(`[CB] Condition interaction recorded on ${match.condition_id} (${event.interaction_type})`);
+    }
+  }
+}
+
 async function runPhaseB(frozenNarration, gameState, watchContext) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length + 1;
@@ -414,7 +502,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
         model: 'deepseek-chat',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,  // low temperature — forensic, not creative
-        max_tokens: 1200
+        max_tokens: 1600
       },
       {
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -441,7 +529,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
   }
 
   // Validate top-level keys (watchpoint: do not let a collapsed schema slip through)
-  const REQUIRED_KEYS = ['entity_candidates', 'environmental_features', 'spatial_relations', 'rejected_interpretations', 'mood_snapshot'];
+  const REQUIRED_KEYS = ['entity_candidates', 'environmental_features', 'spatial_relations', 'rejected_interpretations', 'mood_snapshot', 'condition_events'];
   const missing = REQUIRED_KEYS.filter(k => !(k in extracted));
   if (missing.length) {
     console.error('[CB] Phase B schema missing keys:', missing, '— summary-mode regression?');
@@ -535,6 +623,9 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
   if (!gameState.world.promotion_log) gameState.world.promotion_log = [];
   gameState.world.promotion_log.push(...logEntries);
 
+  // ── Condition events ───────────────────────────────────────────────────────
+  _promoteConditions(extracted.condition_events, gameState, turn);
+
   // ── Mood snapshot ──────────────────────────────────────────────────────────
   const moodSnapshot = extracted.mood_snapshot || null;
   if (moodSnapshot) {
@@ -555,6 +646,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
     spatial_relations_count:   (extracted.spatial_relations || []).length,
     top_level_rejections_count:(extracted.rejected_interpretations || []).length,
     per_entity_rejections_count:(extracted.entity_candidates || []).reduce((s, c) => s + (c.rejected_interpretations || []).length, 0),
+    condition_events_count:      (extracted.condition_events || []).length,
     warnings,
     mood_captured: !!moodSnapshot,
   };
