@@ -2397,7 +2397,8 @@ app.post('/narrate', async (req, res) => {
     if (_continuityEvicted) {
       NC.pushAlert({ severity: 'Info', type: 'continuity_eviction', description: `Continuity evicted (${_continuityEvictionReason})`, entity_ref: null, turn: (gameState.turn_history ? gameState.turn_history.length : 0) + 1 });
     }
-    const _continuityBlock = CB.assembleContinuityPacket(gameState, null); // v1.70.0
+    const _cbMeta = {};  // v1.84.31: accumulator for CB diagnostic passback
+    const _continuityBlock = CB.assembleContinuityPacket(gameState, _cbMeta); // v1.70.0
     _lastRenderedBlock = _continuityBlock; // cache for /diagnostics/continuity
     _continuityBlockHistory.push({ turn: turnNumber, block: _continuityBlock, chars: _continuityBlock.length });
     if (_continuityBlockHistory.length > 3) _continuityBlockHistory.shift();
@@ -2413,7 +2414,7 @@ app.post('/narrate', async (req, res) => {
       const _esPos = gameState.world.position;
       const _esCellKey = _esPos ? `LOC:${_esPos.mx},${_esPos.my}:${_esPos.lx},${_esPos.ly}` : null;
       const _esCellSites = (_esCellKey && gameState.world.cells?.[_esCellKey]?.sites) ? gameState.world.cells[_esCellKey].sites : {};
-      const _esUnentered = Object.values(_esCellSites).filter(s => !s.entered);
+      const _esUnentered = Object.values(_esCellSites).filter(s => s.is_filled === true && !s.entered);
       if (_narDepth === 1) {
         const _esNames = _esUnentered.map(s => s.name || s.site_id).filter(Boolean).join(', ');
         _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L0\nEntered: false\nThe player is NOT inside any structure.\nAny narration describing interior occupancy is INVALID.\n${_esNames ? `Structures visible but NOT entered: ${_esNames}` : 'No structures present.'}`;
@@ -3406,7 +3407,8 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
         dm_note_archived:  _dmNoteArchived,       // v1.66.0: dm_note verbatim at turn completion
         dm_note_status:    _dmNoteStatus,          // v1.66.0: 'updated' | 'preserved_missing' | 'new_game'
-        condition_bot:     { ran: _conditionBotRan, ...(_conditionBotStats) }
+        condition_bot:     { ran: _conditionBotRan, ...(_conditionBotStats) },
+        state_attrs_suppressed: _cbMeta.stateAttrsSuppressed ?? 0  // v1.84.31: # state: facts aged out this turn
       },
       logs: turnLogs,
       reality_check: {
@@ -4124,6 +4126,18 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         context += ` — ${_pAttrStr}`;
       }
       context += `\n`;
+      // v1.84.31: state: decay summary — show how many are active vs suppressed in narrator
+      if (_pAttrCount > 0) {
+        const _allAttrs = Object.values(_ctxPlayer.attributes);
+        const _curTurnDbg = (gameState.turn_history?.length || 0) + 1;
+        const _stateAttrs = _allAttrs.filter(a => a.bucket === 'state');
+        const _activeStateAttrs = _stateAttrs.filter(a => a.turn_set == null || a.turn_set >= _curTurnDbg - 5);
+        const _suppressedState = _stateAttrs.length - _activeStateAttrs.length;
+        const _nonStateAttrs = _allAttrs.filter(a => a.bucket !== 'state').length;
+        context += `state attrs in narrator: ${_activeStateAttrs.length + _nonStateAttrs} active / ${_pAttrCount} total`;
+        if (_suppressedState > 0) context += ` (${_suppressedState} state: suppressed, window=5)`;
+        context += `\n`;
+      }
       const _brec = _ctxPlayer.birth_record;
       if (!_brec) {
         context += `birth_record: (none)\n`;

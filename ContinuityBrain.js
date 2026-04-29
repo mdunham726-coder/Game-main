@@ -36,6 +36,10 @@ const DEEPSEEK_URL      = 'https://api.deepseek.com/v1/chat/completions';
 const MOOD_HISTORY_CAP  = 20;   // hard cap on world.mood_history[]
 const MOOD_WINDOW       = 5;    // entries used for MOOD block in packet
 const EXTRACTION_TIMEOUT = 30000; // ms — Phase B LLM call
+const STATE_ATTR_WINDOW = 5;    // state: bucket decay window — state facts older than this many turns are suppressed from the narrator TRUTH block
+                                // physical: and object: buckets are permanent and always included
+                                // NOTE: state: is a mixed bucket (ephemeral motion + ongoing aftermath); a future pass may split
+                                //   into state:ephemeral (window=1-2) and state:persistent (longer/condition-backed)
 const CB_VERSION        = '1.5.0';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
@@ -679,12 +683,22 @@ function assembleContinuityPacket(gameState, turnContext) {
   let truthLines = 0;
 
   // Player attributes — always first in TRUTH block (layer-agnostic)
+  // state: facts older than STATE_ATTR_WINDOW turns are suppressed (decay) — physical: and object: are permanent
   const player      = gameState.player;
   const playerAttrs = player?.attributes ? Object.values(player.attributes) : [];
   if (playerAttrs.length > 0) {
-    const pStr = playerAttrs.map(a => `${a.bucket}:${a.value}`).join(' | ');
-    lines.push(`You: ${pStr}`);
-    truthLines++;
+    const _curTurn = (gameState.turn_history?.length || 0) + 1;
+    const _stateThreshold = _curTurn - STATE_ATTR_WINDOW;
+    const _activeAttrs = playerAttrs.filter(a =>
+      a.bucket !== 'state' || a.turn_set == null || a.turn_set >= _stateThreshold
+    );
+    const _suppressed = playerAttrs.length - _activeAttrs.length;
+    if (turnContext) turnContext.stateAttrsSuppressed = _suppressed;  // v1.84.31: diagnostic passback
+    if (_activeAttrs.length > 0) {
+      const pStr = _activeAttrs.map(a => `${a.bucket}:${a.value}`).join(' | ');
+      lines.push(`You: ${pStr}`);
+      truthLines++;
+    }
   }
 
   // Entity attributes

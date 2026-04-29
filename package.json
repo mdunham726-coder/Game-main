@@ -1,6 +1,6 @@
 {
   "name": "roguelike-engine",
-  "version": "1.84.29",
+  "version": "1.84.31",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
