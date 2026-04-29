@@ -225,11 +225,13 @@ event_type rules:
 Format each event:
 {
   "event_type": "new_condition" | "interaction",
-  "condition_ref": "<description label matching an existing condition, or brief label for new>",
+  "condition_id": "<interaction only — exact condition_id from the active conditions list above. Must match exactly.>",
   "initial_description": "<new_condition only — plain-language snapshot of current state. No inference. No prognosis. No timeline.>",
   "interaction_type": "<interaction only — one of: aggravation | treatment | usage>",
   "evidence": "<exact phrase from narration that supports this event>"
 }
+
+IMPORTANT for interaction events: you MUST use the exact condition_id string from the active conditions list. Do not use a description label. If you cannot identify the matching condition_id with certainty, do not emit the event.
 
 If there are no condition events, emit an empty array: "condition_events": []
 
@@ -443,19 +445,13 @@ function _promoteConditions(conditionEvents, gameState, turn) {
       console.log(`[CB] Condition created: ${condition_id} — ${event.initial_description.slice(0, 80)}`);
 
     } else if (event.event_type === 'interaction') {
-      if (!event.condition_ref || !event.evidence) continue;
-      // Find best matching existing condition by description similarity
+      if (!event.condition_id || !event.evidence) continue;
+      // Find condition by exact condition_id (no proximity matching — stable identity)
       const conditions = gameState.player.conditions;
       if (!conditions.length) continue;
-      const refLower = event.condition_ref.toLowerCase();
-      const match = conditions.find(c => {
-        const descLower = c.description.toLowerCase();
-        // Strong match: condition_ref words appear in description, or vice versa
-        const refWords = refLower.split(/\s+/).filter(w => w.length > 3);
-        return refWords.some(w => descLower.includes(w));
-      });
+      const match = conditions.find(c => c.condition_id === event.condition_id);
       if (!match) {
-        console.log(`[CB] Condition interaction dropped — no strong match for ref: "${event.condition_ref}"`);
+        console.log(`[CB] Condition interaction dropped — no condition found for id: "${event.condition_id}"`);
         continue;
       }
       // Add to notes (rolling 5)

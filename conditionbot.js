@@ -49,6 +49,7 @@ DESCRIPTION RULES:
 - Minor rewording, paraphrasing, or stylistic rewriting is FORBIDDEN.
 - Valid changes: swelling increases, pain decreases, mobility improves, bleeding stops, bruising deepens, stiffness resolves.
 - Invalid changes: "still hurts" → "still aching" → "remains painful" — these are the same state, do not update.
+- When updating a description, you MUST be able to name the concrete physical change in the qualitative_change field. If you cannot name it, you must return no_change=true.
 
 TURN LOG RULES:
 - The turn log is append-only. Never rewrite or summarize it.
@@ -124,14 +125,16 @@ For each condition, return an object with these fields:
   "condition_id": "<exact condition_id from input>",
   "no_change": true | false,
   "resolved": true | false,
+  "qualitative_change": "<required when no_change=false and resolved=false — name the specific physical change: e.g. 'swelling reduced', 'bruising deepened', 'mobility returned'. Must be concrete. If you cannot name a concrete physical change, return no_change=true instead.>",
   "new_description": "<updated description string, or null if no_change or resolved>",
   "turn_log_entry": "<'Turn N [bot]: ...' string to append, or null if no_change>"
 }
 
 Rules:
-- If nothing has meaningfully changed: no_change=true, resolved=false, new_description=null, turn_log_entry=null
-- If changed but not resolved: no_change=false, resolved=false, new_description="<updated>", turn_log_entry="Turn ${currentTurn} [bot]: <explanation>"
-- If resolved: no_change=false, resolved=true, new_description=null, turn_log_entry="Turn ${currentTurn} [bot]: <final explanation>"
+- If nothing has meaningfully changed: no_change=true, resolved=false, qualitative_change=null, new_description=null, turn_log_entry=null
+- If changed but not resolved: no_change=false, resolved=false, qualitative_change="<concrete physical change>", new_description="<updated>", turn_log_entry="Turn ${currentTurn} [bot]: <explanation>"
+- If resolved: no_change=false, resolved=true, qualitative_change=null, new_description=null, turn_log_entry="Turn ${currentTurn} [bot]: <final explanation>"
+- CRITICAL: if you want to update a description but cannot state a qualitative_change, you MUST return no_change=true. Restating the same condition in different words is not a qualitative change.
 - Evaluate each condition independently. Do not cross-reference conditions.
 - Return ONLY the JSON array. No explanation, no wrapper text.`;
 
@@ -196,12 +199,19 @@ Rules:
       continue;
     }
 
-    // Update
+    // Update — enforce qualitative_change requirement before accepting description change
+    const _qc = (result.qualitative_change || '').trim();
+    if (!_qc || _qc.length < 8) {
+      // Model claimed a change but could not name what changed — treat as no_change
+      console.warn(`[ConditionBot] Update rejected — no qualitative_change stated for ${condition.condition_id} (got: "${_qc || 'null'}")`);
+      updatedConditions.push(condition);
+      continue;
+    }
     const updated = { ...condition };
     if (result.new_description) updated.description = result.new_description;
     if (result.turn_log_entry)  updated.turn_log = [...updated.turn_log, result.turn_log_entry];
     updatedConditions.push(updated);
-    console.log(`[ConditionBot] Condition updated: ${condition.condition_id}`);
+    console.log(`[ConditionBot] Condition updated: ${condition.condition_id} — ${_qc}`);
   }
 
   return { updatedConditions, archive };
