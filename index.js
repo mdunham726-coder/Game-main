@@ -76,7 +76,6 @@ function getSessionState(sessionId) {
 }
 
 // File system helper functions for save/load system
-const fs = require('fs');
 const fsPromises = require('fs').promises;
 
 function getSavePath(sessionId) {

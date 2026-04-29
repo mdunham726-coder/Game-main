@@ -806,15 +806,20 @@ function assembleContinuityPacket(gameState, turnContext) {
   // ── CONTEXT — RECENT LOCATION (L0 only, single-use) ─────────────────────────
   // Shows env facts canonically accepted by Phase B for the player's prior position.
   // NOT current-scene truth — prior-cell context for narrative continuity.
-  // Cleared after one read so stale facts never linger across turns.
+  // Suppressed on cell-move turns (v1.84.34): if the player has moved to a new cell,
+  // the prior-cell features are the wrong biome and actively mislead the narrator.
+  // Cleared after one read (regardless of suppression) so stale facts never linger.
   const _ctxLoc = w._lastPhaseBLoc;
-  if (_ctxLoc && Array.isArray(_ctxLoc.features) && _ctxLoc.features.length > 0) {
+  const _pos = w.position;
+  const _currentCellRef = _pos ? `cell(${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly})` : null;
+  const _ctxIsMoved = _ctxLoc && _currentCellRef && _ctxLoc.locationRef !== _currentCellRef;
+  if (_ctxLoc && !_ctxIsMoved && Array.isArray(_ctxLoc.features) && _ctxLoc.features.length > 0) {
     lines.push('');
     lines.push('CONTEXT — RECENT LOCATION');
     lines.push('─────────────────────────────────────────────');
     lines.push(`[${_ctxLoc.locationRef} — prior position]: ${_ctxLoc.features.join(' | ')}`);
-    w._lastPhaseBLoc = null; // single-use: clear after read
   }
+  w._lastPhaseBLoc = null; // single-use: clear after read (even when suppressed)
 
   return lines.join('\n');
 }
