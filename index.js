@@ -1,4 +1,5 @@
 ﻿const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const axios = require('axios');
@@ -2245,12 +2246,12 @@ app.post('/narrate', async (req, res) => {
 
     let invStr = JSON.stringify(scene.inventory || []);
 
-    // Phase 5B: Build site context block from current cell's sites
+    // Phase 5B: Build site context block from current cell's sites (filled only — unfilled slots are engine-internal placeholders, never narrator-visible)
     let _siteContextBlock = '';
-    const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites) : [];
+    const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites).filter(s => s.is_filled === true) : [];
     if (_narCellSites.length > 0) {
       const _siteLines = _narCellSites
-        .map(s => `- site_id: ${s.site_id} | name: ${s.name ?? '(unnamed)'} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_filled: ${s.is_filled ? 'YES' : 'NO'} | is_community: ${s.is_community ? 'YES' : 'NO'}${s.site_size != null ? ` | site_size: ${s.site_size}` : ''}`)
+        .map(s => `- site_id: ${s.site_id} | name: ${s.name} | enterable: ${s.enterable === false ? 'NO' : 'YES (has a navigable interior — building, cave, structure, or enclosed space)'} | is_community: ${s.is_community ? 'YES' : 'NO'}${s.site_size != null ? ` | site_size: ${s.site_size}` : ''}`)
         .join('\n');
       const _instructionLines = '\nAll sites above have stored names. Use them exactly as written — do not invent alternatives.' +
                                 '\nWhen narrating the overworld, refer to any named site by its proper name rather than a generic description.' +
@@ -4389,6 +4390,73 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     }
   }
 
+  // === WORLD SITES SUMMARY (loaded cells only) ===
+  {
+    const _wsPos   = gameState.world.position;
+    const _wsW     = gameState.world.l0_grid?.width  || 8;
+    const _wsH     = gameState.world.l0_grid?.height || 8;
+    context += `\n=== WORLD SITES SUMMARY (loaded cells only) ===\n`;
+    context += `Note: reflects sites in currently generated/visited cells only — unvisited areas may have undiscovered sites.\n`;
+
+    // Collect all filled site slots across all loaded cells
+    const _wsSites = [];
+    for (const _wsCell of Object.values(gameState.world.cells || {})) {
+      if (!_wsCell || Array.isArray(_wsCell.sites)) continue;
+      for (const _wsSite of Object.values(_wsCell.sites || {})) {
+        if (!_wsSite || !_wsSite.is_filled) continue;
+        _wsSites.push({
+          site_id:  _wsSite.site_id  || '(unknown)',
+          name:     _wsSite.name     || '(unnamed)',
+          mx: _wsCell.mx, my: _wsCell.my,
+          lx: _wsCell.lx, ly: _wsCell.ly,
+          enterable: _wsSite.enterable !== false,
+          interior: _getSiteInteriorState(_wsSite, gameState.world.sites)
+        });
+      }
+    }
+
+    if (_wsSites.length === 0) {
+      context += `(no filled sites in any loaded cell — unvisited areas may have undiscovered sites)\n`;
+    } else {
+      context += `total_filled_sites: ${_wsSites.length}\n`;
+
+      // by_macro_cell — cap at 20
+      const _wsMacroMap = {};
+      for (const _ws of _wsSites) {
+        const _mk = `(${_ws.mx},${_ws.my})`;
+        _wsMacroMap[_mk] = (_wsMacroMap[_mk] || 0) + 1;
+      }
+      const _wsMacroEntries = Object.entries(_wsMacroMap).sort(([a],[b]) => a.localeCompare(b));
+      const _playerMacroKey = _wsPos ? `(${_wsPos.mx},${_wsPos.my})` : null;
+      context += `by_macro_cell (loaded):\n`;
+      if (_playerMacroKey && !_wsMacroMap[_playerMacroKey]) {
+        context += `  player ${_playerMacroKey}: 0 sites\n`;
+      }
+      let _wsMacroShown = 0;
+      for (const [_mk, _cnt] of _wsMacroEntries) {
+        if (_wsMacroShown >= 20) { context += `  ...${_wsMacroEntries.length - 20} more macro cells not shown\n`; break; }
+        const _label = (_playerMacroKey && _mk === _playerMacroKey) ? `player ${_mk}` : _mk;
+        context += `  ${_label}: ${_cnt} site${_cnt !== 1 ? 's' : ''}\n`;
+        _wsMacroShown++;
+      }
+
+      // nearest_filled_sites — top 3 by toroidal Manhattan distance
+      if (_wsPos) {
+        const _wsDist = (s) => {
+          const dMx = ((s.mx - _wsPos.mx + Math.floor(_wsW/2)) % _wsW + _wsW) % _wsW - Math.floor(_wsW/2);
+          const dMy = ((s.my - _wsPos.my + Math.floor(_wsH/2)) % _wsH + _wsH) % _wsH - Math.floor(_wsH/2);
+          return Math.abs(dMx * 128 + (s.lx - _wsPos.lx)) + Math.abs(dMy * 128 + (s.ly - _wsPos.ly));
+        };
+        const _wsNearest = _wsSites.slice().sort((a,b) => _wsDist(a) - _wsDist(b)).slice(0, 3);
+        context += `nearest_filled_sites (loaded):\n`;
+        for (const _ws of _wsNearest) {
+          context += `  ${_ws.site_id} | ${_ws.name} | cell(${_ws.mx},${_ws.my}:${_ws.lx},${_ws.ly}) | ~${_wsDist(_ws)} cells away | enterable:${_ws.enterable ? 'YES' : 'NO'}\n`;
+        }
+      }
+      context += `Use get_sites(radius=N) for filtered queries. Unvisited areas may have undiscovered sites.\n`;
+    }
+  }
+
   // === WORLD MAP 5x5 (player-centered, toroidal) ===
   {
     const _wPos = gameState.world.position;
@@ -5496,6 +5564,119 @@ app.get('/diagnostics/sites', (req, res) => {
     active_local_space:  activeLocalSpace,
     fill_log:            Array.isArray(gs.world._fillLog) ? gs.world._fillLog : []
   });
+});
+
+// World site registry query — GET /diagnostics/sites-query
+// Used by Mother Brain get_sites tool. Queries all filled site slots across loaded cells.
+// Params: mx, my (exact macro cell), radius (macro-cell radius around player, toroidal),
+//         filled_only (default true). Results sorted by distance from player.
+// NOTE: only covers currently loaded/generated cells — unvisited areas are unknown.
+app.get('/diagnostics/sites-query', (req, res) => {
+  if (!_lastGameState) {
+    return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  }
+  const gs        = _lastGameState;
+  const pos       = gs.world.position;
+  const macroW    = gs.world.l0_grid?.width  || 8;
+  const macroH    = gs.world.l0_grid?.height || 8;
+  const filledOnly = req.query.filled_only !== 'false'; // default true
+  const filterMx  = req.query.mx !== undefined ? parseInt(req.query.mx, 10) : null;
+  const filterMy  = req.query.my !== undefined ? parseInt(req.query.my, 10) : null;
+  const radius    = req.query.radius !== undefined ? parseInt(req.query.radius, 10) : null;
+
+  // Collect matching sites from all loaded cells
+  const results = [];
+  for (const cell of Object.values(gs.world.cells || {})) {
+    if (!cell || Array.isArray(cell.sites)) continue;
+    // Macro cell filter
+    if (filterMx !== null && filterMy !== null) {
+      if (cell.mx !== filterMx || cell.my !== filterMy) continue;
+    }
+    // Radius filter (toroidal Manhattan on macro grid)
+    if (radius !== null && pos) {
+      const dMx = ((cell.mx - pos.mx + Math.floor(macroW/2)) % macroW + macroW) % macroW - Math.floor(macroW/2);
+      const dMy = ((cell.my - pos.my + Math.floor(macroH/2)) % macroH + macroH) % macroH - Math.floor(macroH/2);
+      if (Math.abs(dMx) > radius || Math.abs(dMy) > radius) continue;
+    }
+    for (const s of Object.values(cell.sites || {})) {
+      if (!s) continue;
+      if (filledOnly && !s.is_filled) continue;
+      const distCells = pos
+        ? (() => {
+            const dMx = ((cell.mx - pos.mx + Math.floor(macroW/2)) % macroW + macroW) % macroW - Math.floor(macroW/2);
+            const dMy = ((cell.my - pos.my + Math.floor(macroH/2)) % macroH + macroH) % macroH - Math.floor(macroH/2);
+            return Math.abs(dMx * 128 + (cell.lx - pos.lx)) + Math.abs(dMy * 128 + (cell.ly - pos.ly));
+          })()
+        : null;
+      results.push({
+        site_id:              s.site_id   ?? null,
+        name:                 s.name      ?? null,
+        description:          s.description ?? null,
+        identity:             s.identity  ?? null,
+        mx: cell.mx, my: cell.my, lx: cell.lx, ly: cell.ly,
+        enterable:            s.enterable !== false,
+        is_filled:            s.is_filled ?? false,
+        interior_state:       _getSiteInteriorState(s, gs.world.sites),
+        distance_from_player: distCells
+      });
+    }
+  }
+
+  // Sort by distance (nulls last)
+  results.sort((a, b) => {
+    if (a.distance_from_player === null) return 1;
+    if (b.distance_from_player === null) return -1;
+    return a.distance_from_player - b.distance_from_player;
+  });
+
+  res.json({
+    loaded_cells_only: true,
+    note: 'Only covers currently loaded/generated cells. Unvisited areas may have undiscovered sites.',
+    total: results.length,
+    sites: results
+  });
+});
+
+// Source slice reader — GET /diagnostics/source
+// Used by Mother Brain get_source_slice tool for targeted implementation verification.
+// Auth: requires x-diagnostics-key header matching DIAGNOSTICS_KEY env var.
+// Disabled entirely (503) when DIAGNOSTICS_KEY is not set — safe default.
+// Params: ?file= (required, filename only), ?from= (1-based line, default 1), ?to= (default from+199, hard cap from+299)
+const _SOURCE_ALLOWLIST = new Set([
+  'index.js', 'Engine.js', 'ActionProcessor.js', 'NPCs.js', 'WorldGen.js',
+  'NarrativeContinuity.js', 'ContinuityBrain.js', 'SemanticParser.js',
+  'continuity.js', 'QuestSystem.js', 'logger.js', 'logging.js',
+  'diagnostics.js', 'motherbrain.js', 'conditionbot.js'
+]);
+app.get('/diagnostics/source', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) {
+    return res.status(503).json({ error: 'source_access_disabled', message: 'DIAGNOSTICS_KEY env var is not set.' });
+  }
+  if (req.headers['x-diagnostics-key'] !== diagKey) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const file = req.query.file;
+  if (!file || /[\\/]|\.\./.test(file)) {
+    return res.status(400).json({ error: 'invalid_file', message: 'file param must be a plain filename with no path separators or ..' });
+  }
+  if (!_SOURCE_ALLOWLIST.has(file)) {
+    return res.status(403).json({ error: 'not_allowed', message: `${file} is not in the source allowlist.` });
+  }
+  const fromLine = Math.max(1, parseInt(req.query.from, 10) || 1);
+  const maxTo    = fromLine + 299;
+  const toLine   = Math.min(maxTo, Math.max(fromLine, parseInt(req.query.to, 10) || (fromLine + 199)));
+  try {
+    const filePath  = path.join(__dirname, file);
+    const allLines  = fs.readFileSync(filePath, 'utf8').split('\n');
+    const total     = allLines.length;
+    const sliceFrom = Math.min(fromLine, total);
+    const sliceTo   = Math.min(toLine, total);
+    const lines     = allLines.slice(sliceFrom - 1, sliceTo).join('\n');
+    return res.json({ file, from: sliceFrom, to: sliceTo, total_lines: total, lines });
+  } catch (err) {
+    return res.status(500).json({ error: 'read_failed', message: err.message });
+  }
 });
 
 // Session bootstrap probe for Mother Brain — GET /diagnostics/session

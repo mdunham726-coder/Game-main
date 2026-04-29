@@ -14,10 +14,21 @@ const readline = require('readline');
 const axios    = require('axios');
 const { spawn } = require('child_process');
 
+// Dedicated HTTP agent for executeToolCall — keepAlive:false so each localhost
+// diagnostic request closes its socket immediately, preventing listener accumulation
+// on http.globalAgent across multi-call tool chains.
+const _toolHttpAgent = new http.Agent({ keepAlive: false });
+
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.34';
+const MB_VERSION = '2.8.40';
 
 const MB_VERSION_HISTORY = [
+  { version: '2.8.40', date: 'April 29, 2026', note: 'Source slice access (v1.84.29): added GET /diagnostics/source endpoint to index.js — authenticated (x-diagnostics-key header / DIAGNOSTICS_KEY env var), disabled by default (503 when env var not set), read-only, hardcoded allowlist of 14 source files, 300-line hard cap, path-traversal rejection. Added get_source_slice as tool 8 in MB_TOOLS with file/from/to parameters. Added executeToolCall branch — passes x-diagnostics-key auth header inline, handles its own early return. Added tool 8 description to system prompt (targeted verification only, narrow ranges, not for browsing). Updated KNOWLEDGE TIERS: get_source_slice listed as Tier 3 static implementation truth.' },
+  { version: '2.8.39', date: 'April 29, 2026', note: 'World site visibility (v1.84.27): (1) WORLD SITES SUMMARY added to buildDebugContext — compact section showing total filled sites in loaded cells, counts by macro cell (cap 20), top 3 nearest with exact coordinates and distance. Labeled "loaded cells only" throughout with explicit unvisited-area caveat. (2) GET /diagnostics/sites-query endpoint added to index.js — queryable by mx+my, radius, filled_only; sorted by distance; returns loaded_cells_only:true. (3) get_sites added to MB_TOOLS as tool 7 with full parameter schema and loaded-cells-only disclaimer. executeToolCall branch added. (4) System prompt: WORLD SITES SUMMARY bullet added (with overconfidence guard and scope-boundary rule); item 7 get_sites tool description added; KNOWLEDGE TIERS section added before EVIDENCE REQUIREMENT (Tier 1=current state, Tier 2=summary/FR rows, Tier 3=tool results); DO NOT FETCH updated with WORLD SITES SUMMARY exemption and unloaded-area exception.' },
+  { version: '2.8.38', date: 'April 29, 2026', note: 'Fix MaxListenersExceededWarning (v1.84.26): added module-level _toolHttpAgent = new http.Agent({ keepAlive: false }) and passed it as httpAgent option in executeToolCall axios.get. Each tool call now closes its socket immediately after response — zero listeners accumulate on http.globalAgent across multi-call tool chains. keepAlive:false is safe for localhost diagnostic calls (sub-1ms RTT, no TCP handshake cost). SSE client and DeepSeek axios calls are unaffected.' },
+  { version: '2.8.37', date: 'April 29, 2026', note: 'Payload truncation fix (v1.84.25): raised executeToolCall truncation limit from 8000 to 16000 chars — covers full-stage get_payload responses (narrator prompts top out ~10-12KB, CB prompts ~5-6KB). Updated TRUNCATED message text. Added part= guidance to FETCH PROCEDURE: when calling get_payload for a specific part, always pass part= explicitly to avoid truncation on large stages, with examples for response and prompt parts. Eliminates unnecessary recovery round on large payload fetches.' },
+  { version: '2.8.36', date: 'April 29, 2026', note: 'EVIDENCE REQUIREMENT behavioral contract (v1.84.24): replaced TOOL USE block with structured four-part contract. (1) Category A/B decision rule: Category B = specific turn number, condition origin, system behavior, "why" questions — must fetch, FR rows are not evidence. (2) FETCH PROCEDURE: get_turn_data first, escalate to get_payload only if insufficient — no skipping ahead. (3) EVIDENCE STANDARDS: cite turn if grounded in tool data; label as "inference only" if Category B and no fetch done. (4) PRIORITY ORDER: retrieved evidence > structured context > inference. DO NOT FETCH exemptions for Category A (current state, last 5 narrations, last 3 CB packets, last turn RC/extraction) preserved. No code changes — prompt text only.' },
+  { version: '2.8.35', date: 'April 29, 2026', note: 'TOOL USE prompt tightened (v1.84.23): replaced advisory wording with prescriptive MANDATORY FETCH RULES. FETCH IS REQUIRED for: (a) specific past-turn content questions — FR rows are one-line summaries only, not evidence; (b) causal/forensic questions; (c) verbatim LLM string requests. Added loophole-closing sentence: must fetch even if FR summary appears relevant — Flight Recorder rows are summaries only, not evidence. Added DO NOT FETCH exemptions for data already in context. Added FETCH PROTOCOL: get_turn_data first, escalate to get_payload for verbatim. No code changes — prompt text only.' },
   { version: '2.8.34', date: 'April 29, 2026', note: 'Agentic tool use (v1.84.22): Mother Brain can now invoke get_turn_data and get_payload as real DeepSeek function calls mid-reasoning. MB_TOOLS constant defines both functions. executeToolCall() helper resolves sessionId from module scope, fires axios.get, truncates at 8000 chars with TRUNCATED note. askMotherBrain() single DS call replaced with 5-round tool loop: on finish_reason=tool_calls, prints her reasoning sentence (message.content), dim [tool] line, executes call, appends tool result, loops with [synthesizing...]; on stop breaks and displays final response. Token tracking accumulates across all rounds. Tool messages not stored in _history[]. System prompt TOOL USE rule added: output one reasoning sentence before each tool call; use get_turn_data first, escalate to get_payload for verbatim strings; do not invoke if answer is in provided context. Package v1.84.22.' },
   { version: '2.8.33', date: 'April 29, 2026', note: 'Flight Recorder cold archive (v1.84.21): two new retrieval endpoints added. GET /diagnostics/turn/{sessionId}/{turn} returns full structured turnObject from turn_history[] for any past turn (optional ?fields= filter). GET /diagnostics/payload/{sessionId}/{turn} returns raw DeepSeek prompt+response per pipeline stage in order: reality_check -> narrator -> continuity_brain -> condition_bot (optional ?stage= and ?part= filters). payload_archive written atomically at turn-close, persisted to saves/{sessionId}/payload_archive.json, restored on session restore. Mental model: /turn = structured truth (use first), /payload = forensic evidence (escalate to). null stage = stage did not run that turn. TOOLS AND DATA ACCESS items 5 and 6 added.' },
   { version: '2.8.32', date: 'April 29, 2026', note: 'Condition Bot (v1.84.19): PLAYER CONDITIONS paragraph added to SYSTEM_PROMPT. player.conditions[] is the active condition array; player.conditions_archive[] holds resolved conditions. Each condition: condition_id, created_turn, description (live snapshot), turn_log (append-only, [narration]/[bot] provenance), notes (rolling 5-entry evidence window from CB). Condition Bot evaluates lifecycle each turn post-CB — description changes only on qualitative shift; [bot] turn_log entries required for every change; no-op = silence. CB owns creation; ConditionBot owns progression/resolution. Narrator sees description only (not notes or bot log entries). buildDebugContext PLAYER CONDITIONS section added showing full condition state. Package v1.84.19.' },
@@ -117,6 +128,60 @@ const MB_TOOLS = [
         required: ['turn']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_sites',
+      description: 'Query the world site registry for filled sites across loaded/generated cells. Use this when the WORLD SITES SUMMARY in context is insufficient — e.g., for exact site details, all sites in a specific macro cell, or all sites within a radius of the player. Returns site_id, name, description, identity, cell coordinates, enterable, is_filled, interior_state, and distance_from_player sorted nearest first. NOTE: like the summary, this only covers currently loaded/generated cells — unvisited areas may have undiscovered sites. If the question scope exceeds loaded data (e.g., "anywhere in the world"), make that limitation explicit in your answer. Omit all parameters to get every filled site across all loaded cells.',
+      parameters: {
+        type: 'object',
+        properties: {
+          mx: {
+            type: 'integer',
+            description: 'Optional: macro cell X to filter by. Use with my to target a specific macro cell.'
+          },
+          my: {
+            type: 'integer',
+            description: 'Optional: macro cell Y to filter by. Use with mx to target a specific macro cell.'
+          },
+          radius: {
+            type: 'integer',
+            description: 'Optional: macro-cell radius around the player\'s current position (toroidal). radius=1 = immediate macro neighbors, radius=3 = wide area search.'
+          },
+          filled_only: {
+            type: 'boolean',
+            description: 'Optional: if false, include unfilled/pending site slots. Defaults to true (filled sites only).'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_source_slice',
+      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js. Returns: file, from, to, total_lines, lines (the raw source text).',
+      parameters: {
+        type: 'object',
+        properties: {
+          file: {
+            type: 'string',
+            description: 'Filename only (no path) — must be one of the allowed files listed above. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js.'
+          },
+          from: {
+            type: 'integer',
+            description: 'Optional: 1-based line number to start reading from. Default: 1.'
+          },
+          to: {
+            type: 'integer',
+            description: 'Optional: 1-based line number to read to (inclusive). Hard cap: from+299. Default: from+199.'
+          }
+        },
+        required: ['file']
+      }
+    }
   }
 ];
 
@@ -197,6 +262,7 @@ TOOLS AND DATA ACCESS: You have access to two live data sources that are provide
    - SPATIAL BLOCK (last turn): the exact engine_spatial_notes text that was injected into the narrator's prompt for the last turn — shows biome, terrain, nearby cells, site list, and movement context as the narrator received it
    - VISIBLE CELLS (Sample): a header line states the macro cell being sampled and notes the player cell is excluded (e.g. "Macro cell (3,2) — sample of up to 5 other local cells within this macro cell (player cell excluded):"), followed by up to 5 rows in cell(mx,my:lx,ly) type/subtype format. The player's own cell is intentionally omitted — it is fully shown in CURRENT AUTHORITATIVE PLAY SPACE. If no other cells are loaded in the macro cell, shows "(No other loaded cells in current macro)" — this does NOT mean the player's cell is missing, only that no neighbors are loaded yet. Do not flag this as a position anomaly. Do not proactively analyze or comment on this section in your responses unless the user asks about it or a WARNING line is present — coordinates and proximity values in this block are not diagnostic signals and do not need commentary.
    - SITE INTERIOR STATE (current cell): for each site slot at the player's current L0 cell, each line reads: site_id | name | slot_identity:VAL | enterable:YES/NO | filled:YES/NO | interior:STATE — where slot_identity reflects the canonical cell.sites slot identity field (slot_identity:(null) means identity has not been filled yet) and STATE is one of six codes: NOT_APPLICABLE (non-enterable landmark, no interior exists), PENDING_FILL (enterable but slot not yet filled — name or identity absent), MISSING_INTERIOR_KEY (filled but interior_key absent — engine registration gap, should not happen in healthy save), MISSING_INTERIOR_RECORD (interior_key present but no world.sites mirror — stub was never created, registration failure), NOT_GENERATED (stub mirror exists but player has not yet entered, interior not yet generated), GENERATED (full site record, is_stub===false, interior exists and was previously entered). If cell.sites is unexpectedly an array a WARNING line appears. Use this section to determine which sites exist at the current cell, which are enterable, which are ready to enter, and whether any registration state is broken. IS_FILLED RULE: is_filled=true requires all three canonical slot fields to be non-null: name, description, and slot_identity (identity). A site showing filled:NO with name populated but slot_identity:(null) is a partial fill fault (applies to v1.83.4+ saves; pre-v1.83.4 saves may have name without slot_identity as an expected legacy migration state, not a fault). slot_identity in the context line corresponds to the identity field in /diagnostics/sites — both reflect the canonical slot (cell.sites). If the active_local_space shows name===null or description===null while the player is at depth 3 (inside a local space), that is a genuine fault — the player is inside an unnamed or undescribed space.
+   - WORLD SITES SUMMARY (loaded cells only): compact registry of filled sites across all currently generated/visited cells. Shows: total_filled_sites count, by_macro_cell counts (up to 20 macro cells), and top 3 nearest_filled_sites with exact cell(mx,my:lx,ly) coordinates and estimated distance. IMPORTANT: this reflects loaded cells only — it is partial world knowledge, not complete world truth. Never say "no sites exist" based on this summary — say "no filled sites found in loaded cells." If a question asks about unvisited areas, the entire world, or areas the player has not traveled through, you must call get_sites() rather than answering from the summary alone — the summary cannot prove absence of sites in unloaded areas.
    - WORLD MAP 5x5: ASCII 5x5 grid of macro-cells centered on the player (radius 2, toroidal wrap). [*] = player position, [S] = macro-cell with at least one enterable filled site, [TC] = 2-char terrain code from the dominant cell type. Legend shows only codes that appear in the current grid. Use this to understand the player's geographic context and identify nearby sites without querying individual cells
    - ACTION RESOLUTION (last turn): player input, parsed_action, and movement outcome. Positions use format cell(mx,my:lx,ly) where mx/my are macro-grid coords (0-7) and lx/ly are local-grid coords within the macro cell (0-127, 128x128 grid per macro cell) — values in these ranges are valid and normal. For successful moves: direction, from/to positions, from/to cell types. For blocked moves: block_reason is a deterministic code — NO_DIRECTION (invalid or missing direction string), NO_POSITION (world.position unavailable — engine bug), ENGINE_GUARD (depth=3 with no active_local_space — engine inconsistency), VOID_CELL (target cell not in cells map), L2_BOUNDARY (move blocked at L2 edge when exit is not allowed). NO_RESOLVE_LOG means player_move_resolved was never called (engine gap — the move branch executed but the logger was never reached)
    - NARRATOR I/O (last turn): available only when fetched with ?level=narrator_io. Shows the complete messages payload sent to DeepSeek (role + full prompt content) and the complete raw response string before any processing. Use this to audit exactly what the narrator received and returned — zero abbreviation.
@@ -224,7 +290,43 @@ REALITY CHECK (Arbiter Phase 0): Before each narration turn (except Turn 1 and s
 
 6. PAYLOAD ARCHIVE (forensic evidence): GET /diagnostics/payload/{sessionId}/{turn} — returns raw DeepSeek prompt+response pairs for each pipeline stage of a specific turn, in pipeline execution order: reality_check -> narrator -> continuity_brain -> condition_bot. Each stage: { prompt: <string|object|null>, response: <string|null> }. Optional ?stage=reality_check|narrator|continuity_brain|condition_bot to return one stage. Optional ?part=prompt|response within a stage. A null stage means that stage did not run that turn (e.g. condition_bot is null on turn 1 or when no active conditions exist) — null is not a crash, it is an expected non-run. ESCALATE to this endpoint when you need verbatim LLM input/output (e.g. "what did DeepSeek extract", "did the CB prompt mention X", "what was the exact narrator response"). Mental model: turnObject = authoritative truth; payload = forensic evidence that supports or challenges the truth — never overwrites it. If a payload entry is missing for a turn entirely, the pipeline may have crashed before turn-close — not the same as a stage being null.
 
-TOOL USE: You have direct access to tools 5 (get_turn_data) and 6 (get_payload) as callable functions. Before invoking any tool, output one sentence as your response content explaining what you are looking for and why — this is visible to the developer and narrates your reasoning step. When a tool returns data, use it to answer the question directly. If the structured data from get_turn_data is insufficient, escalate to get_payload for verbatim LLM strings. Do not invoke tools for questions that can be answered from the engine data already provided in this message.
+7. WORLD SITE REGISTRY QUERY: GET /diagnostics/sites-query — returns filled site slots across all loaded/generated cells. Optional params: mx+my (specific macro cell), radius (macro-cell radius around player, toroidal), filled_only (default true). Results include site_id, name, coordinates, enterable, is_filled, interior_state, distance_from_player, sorted nearest first. Use this when the WORLD SITES SUMMARY in context is insufficient — e.g., for exact details, a specific macro cell, or a radius search. NOTE: like the summary, this only covers loaded cells. The response includes loaded_cells_only:true — always reflect this limitation when answering.
+
+8. SOURCE SLICE READER (targeted verification only): GET /diagnostics/source — returns a bounded line-range slice of a game source file. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing — use only when you know approximately where to look. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js. Returns: file, from, to, total_lines, lines (raw source). Results are Tier 3 — authoritative for implementation truth, but static (source code, not runtime state).
+
+KNOWLEDGE TIERS: Every answer you give draws from one of three tiers:
+  Tier 1 — Current state (authoritative): current game state snapshot, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn RC/extraction. Fully reliable for present-moment questions.
+  Tier 2 — Summary data (partial coverage): Flight Recorder rows (one-line summaries only, not evidence), WORLD SITES SUMMARY (loaded cells only). Useful for quick answers but limited in scope — absence in Tier 2 does not prove absence in the world.
+  Tier 3 — Tool results (most complete available): get_turn_data, get_payload, get_sites, get_source_slice. Best truth available for the data that exists. get_source_slice is static implementation truth (source code) — authoritative for how the engine works, but not runtime state.
+When the distinction matters, be explicit about which tier your answer comes from.
+
+EVIDENCE REQUIREMENT
+
+Every question you receive falls into one of two categories:
+  A) Answerable from current context — answer directly.
+  B) Requires historical truth — you MUST retrieve evidence before answering.
+
+Category B applies whenever the question references a specific turn number, the origin of a condition/object/state, what a system (RC, narrator, CB, ConditionBot) did on a specific turn, or asks "why" something happened. Flight Recorder rows are one-line summaries only — they are not evidence. A Flight Recorder row that appears relevant does not satisfy Category B. You must still fetch.
+
+FETCH PROCEDURE (Category B only):
+  Step 1 — Call get_turn_data(turn). This returns the full structured turnObject: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check.
+  Step 2 — If the structured data is insufficient and you need verbatim LLM input/output (exact prompts, raw responses), escalate to get_payload(turn, stage?, part?).
+  Do not skip to get_payload on the first call. Always try get_turn_data first.
+  When calling get_payload for a specific part, always pass part= explicitly rather than fetching the full stage — this avoids truncation on large stages. Example: get_payload(turn=N, stage="continuity_brain", part="response") for the raw DS output; part="prompt" for the exact text sent to DS.
+  Before each tool call, output one sentence explaining what you are looking for and why — this is your visible reasoning step.
+
+EVIDENCE STANDARDS:
+  - If your answer is grounded in retrieved tool data: state what you found and cite the turn.
+  - If your answer is based on inference from context (Category A): that is acceptable — but do not present inference as retrieved fact.
+  - If you were required to fetch (Category B) but did not: you must explicitly say "Note: I did not retrieve evidence for this — this is inference only."
+
+PRIORITY ORDER:
+  1. Retrieved evidence (tool result) — highest authority
+  2. Structured context already in this message (current state, last 5 narrations, last 3 CB packets, last turn RC/extraction)
+  3. Inference — lowest authority; must be labeled if used for a Category B question
+
+DO NOT FETCH for Category A questions: current game state, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn's CB extraction/warnings/reality check, WORLD SITES SUMMARY (for proximity/nearest-site questions scoped to loaded cells). If the full answer is already present, respond directly. Exception: if the question scope exceeds loaded cells (e.g., "anywhere in the world", unvisited areas), you must call get_sites — the summary cannot prove absence in unloaded areas.
+
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
 
 NARRATOR FAILURES: When the narrator hard-fails (timeout, connection reset, thrown error), the normal turn event is not emitted. Instead, a [NARRATION FAILED] entry appears in the Flight Recorder with the failure kind (timeout/econnreset/error) and error message. This marks the exact turn where the failure occurred. Soft failures (narrator_status:malformed) appear as normal turn entries and indicate the narrator returned a response with no usable content. When you see either failure type, correlate with the surrounding continuity packets and token baseline to assess cause.
@@ -366,13 +468,32 @@ async function executeToolCall(name, args) {
       if (args.stage) qs.push(`stage=${encodeURIComponent(args.stage)}`);
       if (args.part)  qs.push(`part=${encodeURIComponent(args.part)}`);
       url = `http://${HOST}:${PORT}/diagnostics/payload/${encodeURIComponent(_activeSessionId)}/${args.turn}${qs.length ? '?' + qs.join('&') : ''}`;
+    } else if (name === 'get_sites') {
+      const qs = [];
+      if (args.mx         !== undefined) qs.push(`mx=${encodeURIComponent(args.mx)}`);
+      if (args.my         !== undefined) qs.push(`my=${encodeURIComponent(args.my)}`);
+      if (args.radius     !== undefined) qs.push(`radius=${encodeURIComponent(args.radius)}`);
+      if (args.filled_only !== undefined) qs.push(`filled_only=${encodeURIComponent(args.filled_only)}`);
+      url = `http://${HOST}:${PORT}/diagnostics/sites-query${qs.length ? '?' + qs.join('&') : ''}`;
+    } else if (name === 'get_source_slice') {
+      const qs = [`file=${encodeURIComponent(args.file)}`];
+      if (args.from !== undefined) qs.push(`from=${encodeURIComponent(args.from)}`);
+      if (args.to   !== undefined) qs.push(`to=${encodeURIComponent(args.to)}`);
+      url = `http://${HOST}:${PORT}/diagnostics/source?${qs.join('&')}`;
+      const diagKey = process.env.DIAGNOSTICS_KEY || '';
+      const resp = await axios.get(url, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
+      const raw  = JSON.stringify(resp.data);
+      if (raw.length > 16000) {
+        return raw.slice(0, 16000) + '\n[TRUNCATED — narrow the range with from= and to=]';
+      }
+      return raw;
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }
-    const resp = await axios.get(url, { timeout: 10000 });
+    const resp = await axios.get(url, { timeout: 10000, httpAgent: _toolHttpAgent });
     const raw  = JSON.stringify(resp.data);
-    if (raw.length > 8000) {
-      return raw.slice(0, 8000) + '\n[TRUNCATED — response exceeds 8000 chars. Use fields= or stage= to narrow the query.]';
+    if (raw.length > 16000) {
+      return raw.slice(0, 16000) + '\n[TRUNCATED — response exceeds 16000 chars. Use stage= and part= to narrow the query.]';
     }
     return raw;
   } catch (err) {
