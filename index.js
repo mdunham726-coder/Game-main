@@ -2587,6 +2587,11 @@ app.post('/narrate', async (req, res) => {
       // Parser returned success:false — we don't know what the action is.
       // RC must not run: querying RC on uncertain input produces a consequence that validates unknown existence claims.
       _rcSkippedReason = 'parser_failure_fallback';
+    } else if (debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') {
+      // Action degraded because target is not a loose cell item (e.g. item held by NPC, non-existent item).
+      // RC must not fire: narrator prompt already routes this to state_claim rejection — an RC advisory would
+      // contradict that instruction and give the narrator a concrete consequence to follow instead.
+      _rcSkippedReason = 'target_not_found_in_cell';
     } else {
       // Build query — SAY channel with matched NPC gets role context
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
@@ -2627,13 +2632,16 @@ app.post('/narrate', async (req, res) => {
       ? `\n\nPossible consequences of the player's action (advisory):\n${_realityAnchor}\nUse these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.\n`
       : '';
     const _DIRECTION_SHORTHAND = {n:'north',s:'south',e:'east',w:'west',ne:'northeast',nw:'northwest',se:'southeast',sw:'southwest',u:'up',d:'down'};
-    const _movementDisplayInput = (_parsedAction === 'move' && _DIRECTION_SHORTHAND[_rawInput.toLowerCase()])
-      ? _DIRECTION_SHORTHAND[_rawInput.toLowerCase()]
+    const _MOVEMENT_DIR_WORDS = new Set(['north','south','east','west','northeast','northwest','southeast','southwest','up','down','n','s','e','w','ne','nw','se','sw','u','d']);
+    const _lastMoveDir = (inputObj?.player_intent?.dir) || null;
+    const _allDirectionWords = (_parsedAction === 'move') && (() => { const ws = _rawInput.toLowerCase().trim().split(/\s+/); return ws.length > 0 && ws.every(w => _MOVEMENT_DIR_WORDS.has(w)); })();
+    const _movementDisplayInput = _allDirectionWords
+      ? `moves ${_lastMoveDir || 'somewhere'}`
       : _rawInput;
     const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
       ? (_parsedAction === 'state_claim' || (inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') || (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK')
-        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
+        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
         : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`)
       : '';
     const _conditionBlock = (() => {

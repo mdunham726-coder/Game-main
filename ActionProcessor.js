@@ -639,7 +639,7 @@ function findByNameCaseInsensitive(list, prop, query){
 }
 
 function resolveCellItemByName(state, query){
-  const { items } = getCellEntities(state);
+  const { items, npcs } = getCellEntities(state);
   // Prefer aliasScore if available (matching inventory resolver style)
   let best = null;
   let bestScore = -1e9;
@@ -649,7 +649,31 @@ function resolveCellItemByName(state, query){
       : (String(it?.name||'').toLowerCase() === String(query||'').trim().toLowerCase() ? 10 : 0);
     if (score > bestScore){ bestScore = score; best = it; }
   }
-  return bestScore >= 6 ? best : null; // threshold similar to inventory resolver
+  if (bestScore >= 6) return best;
+  // Fallback: scan NPC object: bucket attributes for narration-promoted held objects.
+  // Only the object: bucket is checked — not state: or physical: — to avoid matching
+  // body descriptors or condition flags as takable targets.
+  // Score per token of multi-word values (e.g. query "newspaper" matches "folded newspaper").
+  const q = String(query || '').trim().toLowerCase();
+  if (q && typeof aliasScore === 'function') {
+    for (const npc of npcs) {
+      const attrs = npc?.attributes || {};
+      for (const [key, attr] of Object.entries(attrs)) {
+        if (!key.startsWith('object:')) continue;
+        const val = typeof attr === 'string' ? attr : (attr?.value || '');
+        if (!val) continue;
+        const tokens = val.toLowerCase().split(/\s+/);
+        const topScore = Math.max(
+          aliasScore(query, val, [], 2),
+          ...tokens.map(tok => aliasScore(query, tok, [], 2))
+        );
+        if (topScore >= 6) {
+          return { targetType: 'npcHeldObject', npcId: npc.id || npc._id, label: val, _found: true };
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function resolveSiteByName(state, query) {
