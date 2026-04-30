@@ -1822,6 +1822,13 @@ app.post('/narrate', async (req, res) => {
         if (parsed && parsed.action === "move" && parsed.dir) {
           inputObj.player_intent.dir = parsed.dir;
         }
+        // [PARSER-FAILURE-FALLBACK] Stamp degraded path so RC skip and anti-instantiation fire correctly.
+        // Only applies to FREEFORM fallback — MOVE fallback (parsed.action==='move') never reaches _freeformBlock.
+        if (inferredKind === 'FREEFORM') {
+          inputObj.degraded = true;
+          debug.degraded_from = 'PARSER_FAILURE_FALLBACK';
+          debug.path = 'PARSER_FAILURE_FREEFORM';
+        }
       }
 
       if (!engineOutput) {
@@ -2576,6 +2583,10 @@ app.post('/narrate', async (req, res) => {
       // Non-executable input — not a valid engine action, not a harmless skip action.
       // RC must not fire: treating a bare assertion as true would allow narrator to instantiate it.
       _rcSkippedReason = 'state_claim';
+    } else if (debug?.degraded_from === 'PARSER_FAILURE_FALLBACK') {
+      // Parser returned success:false — we don't know what the action is.
+      // RC must not run: querying RC on uncertain input produces a consequence that validates unknown existence claims.
+      _rcSkippedReason = 'parser_failure_fallback';
     } else {
       // Build query — SAY channel with matched NPC gets role context
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
@@ -2621,8 +2632,8 @@ app.post('/narrate', async (req, res) => {
       : _rawInput;
     const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
-      ? (_parsedAction === 'state_claim'
-        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, narrate it as the player's spoken words, thought, or attempted assertion — with no change to the world.)\n`
+      ? (_parsedAction === 'state_claim' || (inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') || (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK')
+        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, narrate it as the player's spoken words, thought, or attempted assertion — with no change to the world. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
         : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`)
       : '';
     const _conditionBlock = (() => {
@@ -2837,7 +2848,7 @@ ${_narSceneDesc}
 ${nearbyStr}
 
 INVENTORY: ${invStr}
-POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. Exception: the player may naturally acquire items through the scene (picking up from the ground, receiving from an NPC).
+POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. Exception: items the narrator introduces into the scene through narration, or items an NPC physically gives to the player. The player may pick up or use what the narrator has placed. What is blocked is the player asserting the existence of an item that the narrator has not established — the source of the item must be the narrator or an NPC, never a player claim.
 NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
 The player has already moved. They are now in the location described above.
 
