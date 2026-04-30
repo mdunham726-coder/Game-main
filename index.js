@@ -2837,6 +2837,7 @@ ${_narSceneDesc}
 ${nearbyStr}
 
 INVENTORY: ${invStr}
+POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. Exception: the player may naturally acquire items through the scene (picking up from the ground, receiving from an NPC).
 NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
 The player has already moved. They are now in the location described above.
 

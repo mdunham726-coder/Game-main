@@ -608,11 +608,10 @@ async function askMotherBrain(question) {
   let _mbCallStats  = null; // populated after loop — reflects totals across all rounds
   const _loopMsgs   = [...messages]; // mutable local copy for tool rounds
   const _totUsage   = { pt: 0, ct: 0, tt: 0, ht: 0, mt: 0, ec: 0 };
-  const MAX_ROUNDS  = 7;
   let   _round      = 0;
 
   try {
-    while (_round < MAX_ROUNDS) {
+    while (true) {
       _round++;
 
       // Fire one DeepSeek call (ECONNRESET retry on first failure)
@@ -682,10 +681,6 @@ async function askMotherBrain(question) {
       // finish_reason === 'stop' (or anything else) — final response
       aiText = message?.content || null;
       break;
-    }
-
-    if (_round >= MAX_ROUNDS && !aiText) {
-      printLine(a('  [MB] Tool round cap reached — partial response may follow.'));
     }
 
     // ── Commit accumulated totals to session tracking ─────────────────────────
