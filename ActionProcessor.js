@@ -383,7 +383,48 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     }
     return;
   }
-  if (act === 'look'){ 
+  if (act === 'throw'){
+    // v1.84.59: throw transfers object to current cell — same path as drop
+    const target = actions?.target||'';
+    const res = resolveItemByName(state, target);
+    let throwSucceeded = false;
+    if (res && res[0] === 'inventory'){
+      const item = res[1];
+      const inv = state.player.inventory;
+      const idx = inv.findIndex(it => (it?.id) === item?.id);
+      if (idx >= 0){
+        inv.splice(idx,1);
+        deltas.push({ op:'set', path:'/player/inventory', value: inv });
+        flags.inventory_rev = true;
+        throwSucceeded = true;
+      }
+    } else if (res && res[0] === 'object_ids') {
+      const rec = res[1];
+      const pos = state.world?.position;
+      const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
+      if (cellKey) {
+        const turnNum = actions?._turn || 0;
+        const result = transferObjectDirect(state, rec.id, 'grid', cellKey, turnNum, 'player_throw');
+        if (result.success) {
+          deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
+          flags.inventory_rev = true;
+          throwSucceeded = true;
+          // v1.84.57: proof of AP-executed transfer — suppresses CB duplicate
+          if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+          state._apExecutedTransfers.push(rec.id);
+        } else {
+          console.warn(`[ACTIONS] throw OR object failed: ${result.error} (${rec.id})`);
+        }
+      } else {
+        console.warn('[ACTIONS] throw OR object: could not derive cell key (no world.position)');
+      }
+    }
+    if (logger) {
+      logger.action_resolved('throw', throwSucceeded, throwSucceeded ? `threw ${target}` : `could not throw ${target}`);
+    }
+    return;
+  } 
+  if (act === 'look'){
     if (logger) {
       logger.action_resolved('look', true, 'observed surroundings');
     }
@@ -862,6 +903,14 @@ function validateAndQueueIntent(state, normalizedIntent){
     }
 
     if (action === 'drop'){
+      const target = act?.target||'';
+      const inInv = hasInventoryItem(state, target);
+      sv.targetInInventory = inInv;
+      if (!inInv) return { valid:false, queue:[], reason:"TARGET_NOT_IN_INVENTORY", stateValidation:sv };
+      continue;
+    }
+
+    if (action === 'throw'){
       const target = act?.target||'';
       const inInv = hasInventoryItem(state, target);
       sv.targetInInventory = inInv;

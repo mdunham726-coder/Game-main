@@ -1440,6 +1440,8 @@ app.post('/narrate', async (req, res) => {
         }
       }
       
+      // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
+      if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
       engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
@@ -1819,6 +1821,8 @@ app.post('/narrate', async (req, res) => {
           }
           // ── END HYBRID ENTRY RESOLVER ─────────────────────────────────────────────
 
+          // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
+          if (mapped?.player_intent && typeof mapped.player_intent === 'object') mapped.player_intent._turn = turnNumber;
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
@@ -1855,6 +1859,8 @@ app.post('/narrate', async (req, res) => {
       }
 
       if (!engineOutput) {
+        // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
+        if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
         engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       }
       

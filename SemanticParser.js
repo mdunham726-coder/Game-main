@@ -70,7 +70,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
   const _doInstructions = [
     // === PHASE 3C: Quest actions added to valid actions list ===
     // NOTE: 'help' removed — Help channel bypasses parser entirely (Phase 1/5a)
-    "Valid actions: move, take, drop, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, state_claim",
+    "Valid actions: move, take, drop, throw, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, state_claim",
     "state_claim: the player is attempting to establish or revise a fact about themselves, their possessions, another entity, the environment, or the world without that fact being grounded in current engine-confirmed reality. This is a routing signal, not an engine action and not a source of truth. Its purpose is to detect inputs whose main effect would be to author unsupported reality rather than attempt an action within already-established reality. Use it to preserve the claim as player expression while preventing the claim from becoming fact. Do not use it when the player is making a genuine attempt to investigate, interact with, move through, communicate with, or otherwise test uncertain reality. A state_claim must never create, modify, or confirm any fact by itself; it only routes the input toward bounded narration that acknowledges the claim, checks it against engine truth, and refuses to promote unsupported reality.",
     "",
     "Directions: north, south, east, west, up, down",
@@ -78,6 +78,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
     "action='move' REQUIRES a compass direction (north/south/east/west/up/down). Never set action='move' without a clear compass direction.",
     "Use action='enter' for phrases like: 'go to [place]', 'go into [X]', 'head to [X]', 'get in/inside [X]', or any phrase that targets a named location without a compass direction. action='enter' REQUIRES a structure or location as target — if the target is a person or NPC, use action='talk' instead; if the target is an object, use 'examine' or 'take'.",
     "Use action='talk' for phrases like: 'talk to [person]', 'speak with [person]', 'walk over and talk to [X]', or any phrase directed at an NPC or person. The target should be the person or NPC name/role.",
+    "Use action='throw' for phrases like: 'throw [item]', 'toss [item]', 'hurl [item]', 'fling [item]', 'chuck [item]', 'lob [item]', 'pitch [item]', or any phrase where the player propels, launches, or forcefully releases an item away from themselves. Target should be the item name.",
     "Use action='exit' for phrases like: 'out of', 'go out', 'leave', 'exit', 'get out'. exit is an action, not a direction value. Never use dir='exit'.",
     "If the player's input is expressive, theatrical, or physical-performance language with no clear mechanical intent (e.g., dancing, spinning, performing, celebrating), set action to 'wait' and confidence to 0.3.",
     "",
