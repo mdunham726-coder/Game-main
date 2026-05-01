@@ -62,8 +62,10 @@ function resolveItemByName(state, query){
   cands.sort((a,b)=>b[0]-a[0]);
   const best = cands[0];
   const second = cands[1] || [-9999,'',{}];
-  // v1.84.56: exact-match short-circuit for OR objects (no aliases — can never reach 20)
-  if (best[0] >= 10 && (best[0] - (typeof second[0]==='number'?second[0]:-9999)) >= 5){
+  // v1.84.60: exact-match short-circuit — score>=10 means exact name match, no gap needed.
+  // Two identically-named items both score 12; gap would be 0, blocking a valid pick.
+  // Just take the first (deterministic sort order). >= 20 gate below handles fuzzy alias cases.
+  if (best[0] >= 10){
     return [best[1], best[2]];
   }
   if (best[0] >= 20 && (best[0] - (typeof second[0]==='number'?second[0]:-9999)) >= 10){
