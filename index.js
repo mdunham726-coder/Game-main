@@ -2679,6 +2679,39 @@ app.post('/narrate', async (req, res) => {
       const _condLines = _activeConds.map(c => `- ${c.description} (since T-${c.created_turn})`).join('\n');
       return `\nPLAYER CONDITIONS (active):\n${_condLines}\n`;
     })();
+
+    // v1.84.63: Object Conditions block — physical state history for tracked objects in scene
+    const _objectConditionsBlock = (() => {
+      const _objs = gameState.objects || {};
+      const _w    = gameState.world || {};
+      const _pos  = _w.position;
+      const _loc  = _w.active_local_space || _w.active_site;
+      // Collect in-scene container IDs
+      const _sceneCids = new Set(['player']);
+      if (_pos) _sceneCids.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
+      const _visNpcs = (_loc && _loc._visible_npcs) || [];
+      for (const _npc of _visNpcs) { if (_npc.id) _sceneCids.add(_npc.id); }
+      // Build lines for objects with conditions
+      const _condLines = [];
+      for (const _r of Object.values(_objs)) {
+        if (_r.status !== 'active') continue;
+        if (!_sceneCids.has(_r.current_container_id)) continue;
+        if (!Array.isArray(_r.conditions) || _r.conditions.length === 0) continue;
+        const _containerLabel = _r.current_container_type === 'player' ? 'held by you'
+          : _r.current_container_type === 'npc' ? `held by ${_r.current_container_id}`
+          : 'in this area';
+        const _prose = _r.conditions.map(c => {
+          const _ev = (c.evidence || '').trim();
+          const _evTrunc = _ev.length > 80 ? _ev.slice(0, 80) + '...' : _ev;
+          return _evTrunc
+            ? `On turn ${c.set_turn}, ${_evTrunc}.`
+            : `On turn ${c.set_turn}, it became: ${c.description}.`;
+        }).join(' ');
+        _condLines.push(`- ${_r.id} (${_r.name}, ${_containerLabel}): ${_prose}`);
+      }
+      if (_condLines.length === 0) return '';
+      return `\nOBJECT CONDITIONS (physical history — last sentence = current state; honor in narration):\n${_condLines.join('\n')}\n`;
+    })();
     const _expressiveBlock = (_parsedAction === 'wait' && _rawInput.toLowerCase() !== 'wait' && _rawInput !== '')
       ? `\nPLAYER EXPRESSION: "${_rawInput}"\nRender this concretely as the player's body language, posture, or physical expression in the scene. This is intentional player behavior and must appear in narration, but it does not create or modify game state.\n`
       : '';
@@ -2886,7 +2919,7 @@ ${nearbyStr}
 
 INVENTORY: ${invStr}
 POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. Exception: items the narrator introduces into the scene through narration, or items an NPC physically gives to the player. The player may pick up or use what the narrator has placed. What is blocked is the player asserting the existence of an item that the narrator has not established — the source of the item must be the narrator or an NPC, never a player claim.
-NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
+${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
 The player has already moved. They are now in the location described above.
 
 ---
@@ -3035,7 +3068,8 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         transferred: 0,
         errors: 0,
         audit: [],
-        error_entries: []
+        error_entries: [],
+        condition_updates: []
       };
       if (_phaseBResult) {
         const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
@@ -3064,6 +3098,44 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         } else {
           _objectRealityDebug.skip_reason = 'empty_quarantine';
         }
+
+        // v1.84.64: Object condition updates — CB annotation of tracked object states per turn
+        const _cbConditionUpdates = Array.isArray(_phaseBResult.object_condition_updates) ? _phaseBResult.object_condition_updates : [];
+        const _conditionUpdateResults = [];
+        for (const cu of _cbConditionUpdates) {
+          if (!cu || (!cu.object_id && !cu.name_match) || !cu.condition) {
+            _conditionUpdateResults.push({ applied: false, reason: 'malformed_entry', entry: cu });
+            continue;
+          }
+          if (cu.object_id) {
+            // Preferred path — exact object_id from tracked list
+            const _cuResult = ObjectHelper.applyConditionUpdate(gameState, cu.object_id, cu.condition, cu.evidence || '', turnNumber);
+            _conditionUpdateResults.push(_cuResult);
+          } else if (cu.name_match) {
+            // Broadcast path — same-name ambiguity could not be resolved; apply to all matching objects in scene scope
+            const _bcWorld = gameState.world || {};
+            const _bcPos   = _bcWorld.position;
+            const _bcLoc   = _bcWorld.active_local_space || _bcWorld.active_site;
+            const _bcCids  = new Set(['player']);
+            if (_bcPos) _bcCids.add(`LOC:${_bcPos.mx},${_bcPos.my}:${_bcPos.lx},${_bcPos.ly}`);
+            for (const _bn of ((_bcLoc && _bcLoc._visible_npcs) || [])) { if (_bn.id) _bcCids.add(_bn.id); }
+            const _bcNameNorm = cu.name_match.toLowerCase();
+            const _bcMatches  = Object.values(gameState.objects || {}).filter(r =>
+              r.status === 'active' && _bcCids.has(r.current_container_id) && (r.name || '').toLowerCase() === _bcNameNorm
+            );
+            let _bcApplied = 0;
+            for (const _bm of _bcMatches) {
+              const _br = ObjectHelper.applyConditionUpdate(gameState, _bm.id, cu.condition, cu.evidence || '', turnNumber);
+              _conditionUpdateResults.push(_br);
+              if (_br.applied) _bcApplied++;
+            }
+            console.log(`[NARRATE] ObjectConditions broadcast "${cu.name_match}" → applied ${_bcApplied}/${_bcMatches.length}`);
+          }
+        }
+        if (_cbConditionUpdates.length > 0) {
+          console.log(`[NARRATE] ObjectConditions: ${_conditionUpdateResults.filter(r => r.applied).length}/${_cbConditionUpdates.length} entries processed`);
+        }
+        _objectRealityDebug.condition_updates = _conditionUpdateResults;
       } else {
         _objectRealityDebug.skip_reason = 'no_phaseB_result';
       }

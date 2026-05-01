@@ -1945,7 +1945,12 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const nameColor  = isActive ? '#e0e0e0' : '#888';
         const statusTag  = isActive ? '' : ` <span style="color:#e67e22; font-size:10px;">[${_escHtml(status)}]</span>`;
         const idLine     = `<div style="color:#555; font-size:10px;">${_escHtml(id)}</div>`;
-        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${idLine}</div>`;
+        // v1.84.63: show latest condition as subtitle (latest = current state)
+        const _conds = Array.isArray(rec.conditions) ? rec.conditions : [];
+        const condLine = _conds.length > 0
+          ? `<div style="color:#888; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
+          : '';
+        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${condLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }

@@ -203,6 +203,7 @@ async function run(gameState, quarantine, turnNumber) {
       owner_id:               null,
       source:                 'continuity_brain',
       status:                 'active',
+      conditions:             [],
       events:                 []
     };
     gameState.objects[objectId] = record;
@@ -398,4 +399,36 @@ function transferObjectDirect(gameState, objectId, toContainerType, toContainerI
   return { success: true };
 }
 
-module.exports = { run, transferObjectDirect, OH_VERSION };
+// ── applyConditionUpdate ─────────────────────────────────────────────────────
+// Writes a condition entry to an ObjectRecord. Deduplicates by description
+// (case-insensitive). Caps at 10 entries FIFO. Safe to call multiple times per
+// turn — only genuinely new states are appended.
+function applyConditionUpdate(gameState, objectId, conditionDesc, evidence, turnNumber) {
+  if (!gameState.objects || !gameState.objects[objectId]) {
+    return { applied: false, objectId, reason: 'object_not_found' };
+  }
+  const record = gameState.objects[objectId];
+  if (record.status !== 'active') {
+    return { applied: false, objectId, reason: 'object_not_active' };
+  }
+  const desc = String(conditionDesc || '').trim();
+  if (!desc) return { applied: false, objectId, reason: 'empty_condition' };
+
+  // Ensure conditions array exists (backcompat for records created before v1.84.63)
+  if (!Array.isArray(record.conditions)) record.conditions = [];
+
+  // Dedup — skip if same description already recorded
+  const normalised = desc.toLowerCase();
+  if (record.conditions.some(c => c.description.toLowerCase() === normalised)) {
+    return { applied: false, objectId, reason: 'duplicate' };
+  }
+
+  // Append, cap at 10 (FIFO)
+  record.conditions.push({ description: desc, set_turn: turnNumber, evidence: String(evidence || '').trim() });
+  if (record.conditions.length > 10) record.conditions.shift();
+
+  console.log(`[ObjectHelper] conditionUpdate: ${objectId} (${record.name}) += "${desc}"`);
+  return { applied: true, objectId, reason: 'appended' };
+}
+
+module.exports = { run, transferObjectDirect, applyConditionUpdate, OH_VERSION };

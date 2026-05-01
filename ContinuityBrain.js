@@ -56,6 +56,8 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   const entities         = _describeVisibleEntities(gameState);
   const knownPlayerAttrs = _describePlayerAttributes(gameState);
   const activeConditions = _describeActiveConditions(gameState);
+  const trackedObjects   = _describeTrackedObjects(gameState);
+  const apContext        = _describeApActionsThisTurn(gameState);
   const prevMood  = previousMoodSnapshot
     ? JSON.stringify(previousMoodSnapshot, null, 2)
     : '(none — first turn)';
@@ -79,6 +81,9 @@ Active location: ${location}
 Visible entities: ${entities}
 Player character: always present — entity_ref "player" | known attributes: ${knownPlayerAttrs}
 Active player conditions: ${activeConditions}
+Tracked objects in scene:
+${trackedObjects}
+${apContext ? `\nPlayer actions this turn (use to identify which specific object was physically affected):\n${apContext}` : ''}
 
 PREVIOUS MOOD SNAPSHOT:
 ${prevMood}
@@ -95,7 +100,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "mood_snapshot": { ... },
   "condition_events": [...],
   "object_candidates": [],
-  "object_transfers": []${isFoundingTurn ? `,
+  "object_transfers": [],
+  "object_condition_updates": []${isFoundingTurn ? `,
   "founding_premise": {
     "form": null,
     "location_premise": null,
@@ -318,6 +324,39 @@ IMPORTANT: identify the object by temp_ref (same-turn object from object_candida
 
 If no transfers occurred, emit: "object_transfers": []
 
+---
+
+OBJECT CONDITION UPDATES (optional)
+
+Annotate tracked objects whose physical condition changed in this narration.
+Only use object_ids listed in "Tracked objects in scene" above — exact IDs only.
+
+ACCEPT: concrete, observable physical changes — split skin, bruised, cracked, soaked, half-buried, burned, bent, shattered, dented, torn, bleeding.
+REJECT: pristine or default states — unblemished, intact, undamaged, normal, clean, fine, whole.
+REJECT: inferences or implied states — "looks worse for wear", "seems damaged".
+
+Rules:
+- Only emit when narration EXPLICITLY describes the physical change to the object.
+- If PLAYER ACTIONS THIS TURN names the affected object, use that object_id.
+- If two tracked objects share a name and the narration does not clearly distinguish them, and no player action context resolves it, emit a name_match entry instead — never omit a real condition.
+- One entry per affected object only.
+
+Preferred form (use when object_id is unambiguous):
+{
+  "object_id": "<exact id from tracked objects list>",
+  "condition": "<concrete physical state — short phrase only>",
+  "evidence": "<exact phrase from narration>"
+}
+
+Fallback form (use only when same-name ambiguity cannot be resolved):
+{
+  "name_match": "<object name — exact text from narration>",
+  "condition": "<concrete physical state — short phrase only>",
+  "evidence": "<exact phrase from narration>"
+}
+
+If no object condition changes are present, emit: "object_condition_updates": []
+
 ${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
 
@@ -352,6 +391,44 @@ function _describeActiveConditions(gameState) {
   const conditions = gameState.player?.conditions;
   if (!conditions || !conditions.length) return '(none)';
   return conditions.map(c => `[${c.condition_id}] ${c.description} (since T-${c.created_turn})`).join('\n');
+}
+
+function _describeTrackedObjects(gameState) {
+  const objects = gameState.objects || {};
+  const w       = gameState.world || {};
+  const pos     = w.position;
+  const loc     = w.active_local_space || w.active_site;
+
+  const validContainers = new Set(['player']);
+  if (pos) validContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
+  const visible = (loc && loc._visible_npcs) || [];
+  for (const npc of visible) { if (npc.id) validContainers.add(npc.id); }
+
+  const tracked = Object.values(objects).filter(r =>
+    r.status === 'active' && validContainers.has(r.current_container_id)
+  );
+  if (!tracked.length) return '(none)';
+  return tracked.map(r => {
+    const containerLabel = r.current_container_type === 'player' ? 'player'
+      : r.current_container_type === 'npc' ? `npc:${r.current_container_id}`
+      : `cell:${r.current_container_id}`;
+    return `- ${r.id} | ${r.name} | container: ${containerLabel}`;
+  }).join('\n');
+}
+
+function _describeApActionsThisTurn(gameState) {
+  const apIds   = Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : [];
+  const objects = gameState.objects || {};
+  const lines   = [];
+  for (const id of apIds) {
+    const rec = objects[id];
+    if (!rec) continue;
+    const events    = rec.events || [];
+    const lastEvent = events.length ? events[events.length - 1] : null;
+    const reason    = lastEvent ? (lastEvent.reason || 'unknown') : 'unknown';
+    lines.push(`- ${id} (${rec.name}): ${reason}`);
+  }
+  return lines.length ? lines.join('\n') : null;
 }
 
 // ── NPC id resolution ─────────────────────────────────────────────────────────
@@ -763,8 +840,9 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
     watch_message,          // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
     raw,                    // v1.84.21: raw LLM response string (for payload archive)
     prompt,                 // v1.84.21: extraction prompt string (for payload archive)
-    object_candidates: Array.isArray(extracted.object_candidates) ? extracted.object_candidates : [],
-    object_transfers:  Array.isArray(extracted.object_transfers)  ? extracted.object_transfers  : [],
+    object_candidates:        Array.isArray(extracted.object_candidates)        ? extracted.object_candidates        : [],
+    object_transfers:         Array.isArray(extracted.object_transfers)         ? extracted.object_transfers         : [],
+    object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],
   };
 }
 
