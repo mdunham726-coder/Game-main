@@ -2005,7 +2005,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
                      : or.skip_reason || 'unknown reason';
         lines.push(`  ObjectHelper: skipped (${reason})`);
       } else {
-        lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}`);
+        lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}  pre_rejected:${or.pre_rejected || 0}`);
         for (const a of audit) {
           if (a.action === 'promoted') {
             lines.push(`    [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}`);
@@ -2017,6 +2017,13 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         }
         for (const e of errs) {
           lines.push(`    ERROR  ${e.action || '?'} | "${e.object_name || '?'}" | ${e.reason || '?'}`);
+        }
+        // v1.84.65: retirement display
+        const _retUpdates = Array.isArray(or.retirement_updates) ? or.retirement_updates : [];
+        for (const r of _retUpdates) {
+          if (r.retired) {
+            lines.push(`    [retired]  ${r.objectId}`);
+          }
         }
       }
 

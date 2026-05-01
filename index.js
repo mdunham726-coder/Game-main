@@ -3064,12 +3064,14 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         cb_candidates: [],
         cb_transfers: [],
         quarantine_size: 0,
+        pre_rejected: 0,
         promoted: 0,
         transferred: 0,
         errors: 0,
         audit: [],
         error_entries: [],
-        condition_updates: []
+        condition_updates: [],
+        retirement_updates: []
       };
       if (_phaseBResult) {
         const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
@@ -3085,10 +3087,28 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         const _quarantine = [];
         for (const c of _cbCandidates)        _quarantine.push({ action: 'promote',  ...c, detected_turn: turnNumber });
         for (const t of _cbTransfersFiltered) _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
+        // v1.84.65: pre-flight normalization gate — reject grid promote entries with invalid container_id
+        if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
+        let _preRejected = 0;
+        for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
+          const _qe = _quarantine[_i];
+          if (_qe.action !== 'promote' || _qe.container_type !== 'grid') continue;
+          const _cid = String(_qe.container_id || '');
+          const _isCellPfx = _cid.startsWith('cell:');
+          const _isInvalid = _isCellPfx || !/^LOC:\d+,\d+:\d+,\d+$/.test(_cid);
+          if (!_isInvalid) continue;
+          const _pfxReason = _isCellPfx ? '"cell:" prefix — CB format drift' : 'not a valid LOC key';
+          console.warn(`[NARRATE] pre-flight: grid container_id rejected (${_pfxReason}): ${_cid}`);
+          gameState.object_errors.push({ stage: 'quarantine_validation', reason: 'missing_authoritative_container', container_type: _qe.container_type, container_id: _cid, object_name: _qe.name, turn: turnNumber });
+          if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+          _quarantine.splice(_i, 1);
+          _preRejected++;
+        }
+        _objectRealityDebug.pre_rejected = _preRejected;
         _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
           const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
-          console.log(`[NARRATE] ObjectHelper: promoted=${_ohResult.promoted} transferred=${_ohResult.transferred} errors=${_ohResult.errors}`);
+          console.log(`[NARRATE] ObjectHelper: promoted=${_ohResult.promoted} transferred=${_ohResult.transferred} errors=${_ohResult.errors} | pre_rejected=${_preRejected}`);
           _objectRealityDebug.ran          = true;
           _objectRealityDebug.promoted     = _ohResult.promoted;
           _objectRealityDebug.transferred  = _ohResult.transferred;
@@ -3136,6 +3156,22 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
           console.log(`[NARRATE] ObjectConditions: ${_conditionUpdateResults.filter(r => r.applied).length}/${_cbConditionUpdates.length} entries processed`);
         }
         _objectRealityDebug.condition_updates = _conditionUpdateResults;
+
+        // v1.84.65: Object retirements — CB signals original object ceased to exist as itself
+        const _cbRetirements = Array.isArray(_phaseBResult.object_retirements) ? _phaseBResult.object_retirements : [];
+        const _retirementResults = [];
+        for (const ret of _cbRetirements) {
+          if (!ret || !ret.object_id) {
+            _retirementResults.push({ retired: false, reason: 'malformed_entry', entry: ret });
+            continue;
+          }
+          const _retResult = ObjectHelper.retireObject(gameState, ret.object_id, ret.reason || '', turnNumber);
+          _retirementResults.push(_retResult);
+        }
+        if (_cbRetirements.length > 0) {
+          console.log(`[NARRATE] ObjectRetirements: ${_retirementResults.filter(r => r.retired).length}/${_cbRetirements.length} retired`);
+        }
+        _objectRealityDebug.retirement_updates = _retirementResults;
       } else {
         _objectRealityDebug.skip_reason = 'no_phaseB_result';
       }

@@ -63,6 +63,14 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
     : '(none — first turn)';
   const isFoundingTurn = (gameState.turn_history || []).length === 0;
 
+  // v1.84.65: build authoritative valid containers list for this turn's scope
+  const _vcPos  = (gameState.world || {}).position;
+  const _vcLoc  = (gameState.world || {}).active_local_space || (gameState.world || {}).active_site;
+  const _vcLines = ['- player  (player inventory)'];
+  if (_vcPos) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
+  for (const _vn of ((_vcLoc && _vcLoc._visible_npcs) || [])) { if (_vn.id) _vcLines.push(`- ${_vn.id}  (NPC: ${_vn.npc_name || _vn.id})`); }
+  const _validContainersList = _vcLines.join('\n');
+
   return `EXTRACTION TASK — TURN ${(gameState.turn_history || []).length}
 
 You are a forensic extraction system. Your job is to read the narration below and identify structured facts. You are NOT summarizing. You are NOT interpreting. You are identifying what a stationary camera in the room would capture.
@@ -78,6 +86,9 @@ ${frozenNarration}
 
 CURRENT ENGINE STATE:
 Active location: ${location}
+Valid containers for object placement this turn:
+${_validContainersList}
+Grid container_id MUST be an exact LOC:... value from this list. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
 Visible entities: ${entities}
 Player character: always present — entity_ref "player" | known attributes: ${knownPlayerAttrs}
 Active player conditions: ${activeConditions}
@@ -101,7 +112,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "condition_events": [...],
   "object_candidates": [],
   "object_transfers": [],
-  "object_condition_updates": []${isFoundingTurn ? `,
+  "object_condition_updates": [],
+  "object_retirements": []${isFoundingTurn ? `,
   "founding_premise": {
     "form": null,
     "location_premise": null,
@@ -296,7 +308,7 @@ For each object, emit one entry in the "object_candidates" array:
   "name": "<object name, lowercase, specific>",
   "description": "<brief physical description>",
   "container_type": "grid" | "npc" | "player",
-  "container_id": "<cell key, npc_id, or 'player'>",
+  "container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this placement>"
 }
 
@@ -316,9 +328,9 @@ IMPORTANT: identify the object by temp_ref (same-turn object from object_candida
   "temp_ref": "<if the object was promoted this turn — must match an entry in object_candidates>",
   "object_id": "<if the object already exists from a prior turn>",
   "from_container_type": "grid" | "npc" | "player",
-  "from_container_id": "<cell key, npc_id, or 'player'>",
+  "from_container_id": "<exact value from valid containers list above>",
   "to_container_type": "grid" | "npc" | "player",
-  "to_container_id": "<cell key, npc_id, or 'player'>",
+  "to_container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this transfer>"
 }
 
@@ -356,6 +368,20 @@ Fallback form (use only when same-name ambiguity cannot be resolved):
 }
 
 If no object condition changes are present, emit: "object_condition_updates": []
+
+---
+
+OBJECT RETIREMENTS (optional)
+
+When narration explicitly describes a tracked object physically ceasing to exist as itself — split into named sub-objects, fully consumed/eaten, destroyed with no remaining form — emit a retirement entry for the original.
+
+EMIT for: object split into distinct sub-objects, object fully consumed/eaten, object burned to nothing.
+DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
+Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
+
+{ "object_id": "<exact id from tracked objects list>", "reason": "<exact narration phrase — what happened to it>" }
+
+If none, emit: "object_retirements": []
 
 ${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
@@ -411,7 +437,7 @@ function _describeTrackedObjects(gameState) {
   return tracked.map(r => {
     const containerLabel = r.current_container_type === 'player' ? 'player'
       : r.current_container_type === 'npc' ? `npc:${r.current_container_id}`
-      : `cell:${r.current_container_id}`;
+      : `${r.current_container_id}`;
     return `- ${r.id} | ${r.name} | container: ${containerLabel}`;
   }).join('\n');
 }
@@ -843,6 +869,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
     object_candidates:        Array.isArray(extracted.object_candidates)        ? extracted.object_candidates        : [],
     object_transfers:         Array.isArray(extracted.object_transfers)         ? extracted.object_transfers         : [],
     object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],
+    object_retirements:       Array.isArray(extracted.object_retirements)       ? extracted.object_retirements       : [],
   };
 }
 

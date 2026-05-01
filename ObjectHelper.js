@@ -261,6 +261,13 @@ async function run(gameState, quarantine, turnNumber) {
       continue;
     }
 
+    // v1.84.65: status guard — consumed/retired objects cannot be transferred
+    if (record.status !== 'active') {
+      _pushError(gameState, { turn: turnNumber, action: 'transfer', object_id: objectId, object_name: record.name, reason: 'transfer_of_inactive_object', status: record.status, ts });
+      errors++;
+      continue;
+    }
+
     // v1.84.57: destination idempotency — already there, no-op (not an error)
     if (record.current_container_type === to_container_type && record.current_container_id === to_container_id) {
       audit.push({ turn: turnNumber, action: 'transfer_skipped_already_at_destination', object_id: objectId, object_name: record.name, to_container_type, to_container_id, ts });
@@ -359,6 +366,12 @@ function transferObjectDirect(gameState, objectId, toContainerType, toContainerI
     return { success: false, error: 'object_not_found_in_registry' };
   }
 
+  // v1.84.65: status guard — consumed/retired objects cannot be transferred
+  if (record.status !== 'active') {
+    _pushError(gameState, { turn: turnNumber, action: 'transfer_direct', object_id: objectId, object_name: record.name, reason: 'transfer_of_inactive_object', status: record.status, ts });
+    return { success: false, error: 'transfer_of_inactive_object' };
+  }
+
   const fromContainerType = record.current_container_type;
   const fromContainerId   = record.current_container_id;
 
@@ -431,4 +444,41 @@ function applyConditionUpdate(gameState, objectId, conditionDesc, evidence, turn
   return { applied: true, objectId, reason: 'appended' };
 }
 
-module.exports = { run, transferObjectDirect, applyConditionUpdate, OH_VERSION };
+// ── retireObject ──────────────────────────────────────────────────────────────────
+// Marks an object as consumed — removes from its container's object_ids[] and
+// sets status:'consumed'. Record is preserved in gameState.objects for audit history.
+//
+// Returns { retired: bool, objectId, reason }.
+// On failure, returns without modifying state.
+function retireObject(gameState, objectId, reason, turnNumber) {
+  const ts = new Date().toISOString();
+
+  if (!gameState.objects || !gameState.objects[objectId]) {
+    return { retired: false, objectId, reason: 'object_not_found' };
+  }
+
+  const record = gameState.objects[objectId];
+  if (record.status !== 'active') {
+    return { retired: false, objectId, reason: 'not_active' };
+  }
+
+  // Remove from container's object_ids[]
+  const containerIds = _resolveContainerIds(gameState, record.current_container_type, record.current_container_id);
+  if (containerIds) {
+    const idx = containerIds.indexOf(objectId);
+    if (idx !== -1) containerIds.splice(idx, 1);
+  }
+
+  // Set consumed status
+  record.status = 'consumed';
+
+  // Append event (FIFO cap 10)
+  if (!Array.isArray(record.events)) record.events = [];
+  record.events.push({ turn: turnNumber, action: 'retired', reason: String(reason || '').trim(), ts });
+  if (record.events.length > 10) record.events.shift();
+
+  console.log(`[ObjectHelper] retired: ${objectId} (${record.name}) — ${reason}`);
+  return { retired: true, objectId, reason: 'consumed' };
+}
+
+module.exports = { run, transferObjectDirect, applyConditionUpdate, retireObject, OH_VERSION };
