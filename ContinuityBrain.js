@@ -93,7 +93,9 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "spatial_relations": [...],
   "rejected_interpretations": [...],
   "mood_snapshot": { ... },
-  "condition_events": [...]${isFoundingTurn ? `,
+  "condition_events": [...],
+  "object_candidates": [],
+  "object_transfers": []${isFoundingTurn ? `,
   "founding_premise": {
     "form": null,
     "location_premise": null,
@@ -272,7 +274,51 @@ Fields:
   status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
   scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
 
-` : ''}${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
+` : ''}
+
+---
+
+OBJECT CANDIDATES (optional)
+
+Identify concrete, discrete, portable physical objects explicitly mentioned in the narration.
+Do NOT include furniture, architecture, or fixed features.
+Do NOT include objects that are ambiguous or only implied.
+
+For each object, emit one entry in the "object_candidates" array:
+{
+  "temp_ref": "<short stable handle — reuse the same ref if this object appears again in a later turn>",
+  "name": "<object name, lowercase, specific>",
+  "description": "<brief physical description>",
+  "container_type": "grid" | "npc" | "player",
+  "container_id": "<cell key, npc_id, or 'player'>",
+  "reason": "<exact phrase from narration supporting this placement>"
+}
+
+If no qualifying objects are present, emit: "object_candidates": []
+
+---
+
+OBJECT TRANSFERS (optional)
+
+Identify objects that clearly changed hands or location in this narration.
+Only emit when the narration explicitly describes the movement (e.g. handed over, dropped, taken).
+
+For each transfer, emit one entry in the "object_transfers" array.
+IMPORTANT: identify the object by temp_ref (same-turn object from object_candidates above) OR by object_id (if it was established in a prior turn). Do NOT use name-only references.
+
+{
+  "temp_ref": "<if the object was promoted this turn — must match an entry in object_candidates>",
+  "object_id": "<if the object already exists from a prior turn>",
+  "from_container_type": "grid" | "npc" | "player",
+  "from_container_id": "<cell key, npc_id, or 'player'>",
+  "to_container_type": "grid" | "npc" | "player",
+  "to_container_id": "<cell key, npc_id, or 'player'>",
+  "reason": "<exact phrase from narration supporting this transfer>"
+}
+
+If no transfers occurred, emit: "object_transfers": []
+
+${watchContext ? `\n---\n\nMOTHER WATCH BRIEF`\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
 
 // ── Location / entity description helpers ─────────────────────────────────────
@@ -710,13 +756,15 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
   _setDiag(diag);
 
   return {
-    extracted,       // full LLM output (stored in narration_debug.extraction_packet)
+    extracted,              // full LLM output (stored in narration_debug.extraction_packet)
     log_entries:     logEntries,
     mood_snapshot:   moodSnapshot,
     diagnostics:     diag,
-    watch_message,   // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
-    raw,             // v1.84.21: raw LLM response string (for payload archive)
-    prompt,          // v1.84.21: extraction prompt string (for payload archive)
+    watch_message,          // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
+    raw,                    // v1.84.21: raw LLM response string (for payload archive)
+    prompt,                 // v1.84.21: extraction prompt string (for payload archive)
+    object_candidates: Array.isArray(extracted.object_candidates) ? extracted.object_candidates : [],
+    object_transfers:  Array.isArray(extracted.object_transfers)  ? extracted.object_transfers  : [],
   };
 }
 

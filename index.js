@@ -13,6 +13,7 @@ const { validateAndQueueIntent, parseIntent } = require('./ActionProcessor.js');
 const { normalizeUserIntent, resolveEnterTarget } = require('./SemanticParser.js');
 const NC = require('./NarrativeContinuity');
 const CB = require('./ContinuityBrain'); // v1.70.0
+const ObjectHelper = require('./ObjectHelper'); // v1.84.52
 const ConditionBot = require('./conditionbot'); // v1.84.19
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -803,6 +804,13 @@ app.post('/narrate', async (req, res) => {
   // v1.84.21: Payload archive backward compat — old saves won't have this field
   if (!gameState.payload_archive) {
     gameState.payload_archive = {};
+  }
+  // v1.84.52: Object Reality System — initialize engine object registries on old saves
+  if (!gameState.objects)       gameState.objects       = {};
+  if (!gameState.object_errors) gameState.object_errors = [];
+  if (gameState.player && !Array.isArray(gameState.player.object_ids)) gameState.player.object_ids = [];
+  if (gameState.world && Array.isArray(gameState.world.npcs)) {
+    gameState.world.npcs.forEach(npc => { if (!Array.isArray(npc.object_ids)) npc.object_ids = []; });
   }
   // v1.84.0: NPC reputation rename — old saves used player_reputation (-25..+25); new schema uses reputation_player (0-100)
   if (gameState.world && Array.isArray(gameState.world.npcs)) {
@@ -2992,6 +3000,17 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
       // v1.84.21: CB payload snapshot
       if (_phaseBResult) {
         _cbPayloadSnapshot = { prompt: _phaseBResult.prompt || null, response: _phaseBResult.raw || null };
+      }
+      // v1.84.52: Object Reality System — build local quarantine from CB output, then process
+      // index.js owns the quarantine write; CB is a pure interpreter; quarantine is never on gameState
+      if (_phaseBResult) {
+        const _quarantine = [];
+        for (const c of (_phaseBResult.object_candidates || [])) _quarantine.push({ action: 'promote', ...c, detected_turn: turnNumber });
+        for (const t of (_phaseBResult.object_transfers  || [])) _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
+        if (_quarantine.length > 0) {
+          const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
+          console.log(`[NARRATE] ObjectHelper: promoted=${_ohResult.promoted} transferred=${_ohResult.transferred} errors=${_ohResult.errors}`);
+        }
       }
     }
 
@@ -5430,7 +5449,8 @@ app.get('/diagnostics/turn/:sessionId/:turn', (req, res) => {
     input:               'input',
     stage_times:         'stage_times',
     reality_check:       'reality_check',
-    narration_debug:     'narration_debug'
+    narration_debug:     'narration_debug',
+    logs:                'logs'
   };
   const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
   const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };

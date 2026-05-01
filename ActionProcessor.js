@@ -656,6 +656,19 @@ function resolveCellItemByName(state, query){
   // Score per token of multi-word values (e.g. query "newspaper" matches "folded newspaper").
   const q = String(query || '').trim().toLowerCase();
   if (q && typeof aliasScore === 'function') {
+    // v1.84.52: prefer engine.objects (Object Reality System) when initialised
+    if (state.objects && typeof state.objects === 'object') {
+      for (const record of Object.values(state.objects)) {
+        if (record.status !== 'active') continue;
+        if (record.current_container_type !== 'npc') continue;
+        const npcId = record.current_container_id;
+        const score = aliasScore(query, record.name || '', [], 2);
+        if (score >= 6) {
+          return { targetType: 'npcHeldObject', npcId, label: record.name, objectId: record.id, _found: true };
+        }
+      }
+    }
+    // Legacy fallback: npc.attributes["object:*"] — covers pre-v1.84.52 saves
     for (const npc of npcs) {
       const attrs = npc?.attributes || {};
       for (const [key, attr] of Object.entries(attrs)) {
