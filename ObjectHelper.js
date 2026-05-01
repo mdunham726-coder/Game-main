@@ -228,6 +228,13 @@ async function run(gameState, quarantine, turnNumber) {
       continue;
     }
 
+    // v1.84.57: destination idempotency — already there, no-op (not an error)
+    if (record.current_container_type === to_container_type && record.current_container_id === to_container_id) {
+      audit.push({ turn: turnNumber, action: 'transfer_skipped_already_at_destination', object_id: objectId, object_name: record.name, to_container_type, to_container_id, ts });
+      transferred++;
+      continue;
+    }
+
     if (!from_container_type || !from_container_id || !to_container_type || !to_container_id) {
       _pushError(gameState, {
         turn: turnNumber, action: 'transfer', object_id: objectId, object_name: record.name,

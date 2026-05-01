@@ -3036,9 +3036,15 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];
         _objectRealityDebug.cb_candidates = _cbCandidates;
         _objectRealityDebug.cb_transfers  = _cbTransfers;
+        // v1.84.57: suppress CB transfers for objects AP already transferred this turn.
+        // AP writes object IDs to gameState._apExecutedTransfers[] on success only — fail = no proof = CB fallback stays.
+        // Temp-ref-only entries (no object_id) pass through unfiltered; destination idempotency in ObjectHelper catches any duplicates.
+        const _apDoneIds = new Set(Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : []);
+        gameState._apExecutedTransfers = []; // consume and clear for next turn
+        const _cbTransfersFiltered = _cbTransfers.filter(t => !t.object_id || !_apDoneIds.has(t.object_id));
         const _quarantine = [];
-        for (const c of _cbCandidates) _quarantine.push({ action: 'promote',  ...c, detected_turn: turnNumber });
-        for (const t of _cbTransfers)  _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
+        for (const c of _cbCandidates)        _quarantine.push({ action: 'promote',  ...c, detected_turn: turnNumber });
+        for (const t of _cbTransfersFiltered) _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
         _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
           const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);

@@ -329,6 +329,9 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
         flags.inventory_rev = true;
         takeSucceeded = true;
+        // v1.84.57: proof of AP-executed transfer — index.js uses this to suppress CB duplicate
+        if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+        state._apExecutedTransfers.push(found.objectId);
       } else {
         console.warn(`[ACTIONS] take OR object failed: ${result.error} (${found.objectId})`);
       }
@@ -365,6 +368,9 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
           flags.inventory_rev = true;
           dropSucceeded = true;
+          // v1.84.57: proof of AP-executed transfer — index.js uses this to suppress CB duplicate
+          if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+          state._apExecutedTransfers.push(rec.id);
         } else {
           console.warn(`[ACTIONS] drop OR object failed: ${result.error} (${rec.id})`);
         }
