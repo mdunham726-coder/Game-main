@@ -295,4 +295,68 @@ async function run(gameState, quarantine, turnNumber) {
   return { promoted, transferred, errors, audit };
 }
 
-module.exports = { run, OH_VERSION };
+// ── transferObjectDirect ──────────────────────────────────────────────────────
+// Synchronous, engine-authoritative transfer for a single known object.
+// Used by ActionProcessor (drop, take) so AP never mutates object state directly.
+// ObjectHelper remains sole mutation authority.
+//
+// Returns { success: true } or { success: false, error: string }.
+// On failure, a structured entry is pushed to gameState.object_errors and the
+// object's state is left unchanged (fail-closed).
+function transferObjectDirect(gameState, objectId, toContainerType, toContainerId, turnNumber, reason) {
+  const ts = new Date().toISOString();
+
+  if (!objectId || !toContainerType || !toContainerId) {
+    return { success: false, error: 'missing_required_args' };
+  }
+  if (!gameState.objects || typeof gameState.objects !== 'object') {
+    return { success: false, error: 'no_object_registry' };
+  }
+
+  const record = gameState.objects[objectId];
+  if (!record) {
+    _pushError(gameState, { turn: turnNumber, action: 'transfer_direct', object_id: objectId, reason: 'object_not_found_in_registry', ts });
+    return { success: false, error: 'object_not_found_in_registry' };
+  }
+
+  const fromContainerType = record.current_container_type;
+  const fromContainerId   = record.current_container_id;
+
+  const fromIds = _resolveContainerIds(gameState, fromContainerType, fromContainerId);
+  if (!fromIds || !fromIds.includes(objectId)) {
+    _pushError(gameState, { turn: turnNumber, action: 'transfer_direct', object_id: objectId, object_name: record.name, reason: 'from_container_does_not_own_object', from_container_type: fromContainerType, from_container_id: fromContainerId, ts });
+    return { success: false, error: 'from_container_does_not_own_object' };
+  }
+
+  const toIds = _resolveContainerIds(gameState, toContainerType, toContainerId);
+  if (!toIds) {
+    _pushError(gameState, { turn: turnNumber, action: 'transfer_direct', object_id: objectId, object_name: record.name, reason: 'to_container_not_found', to_container_type: toContainerType, to_container_id: toContainerId, ts });
+    return { success: false, error: 'to_container_not_found' };
+  }
+
+  // Perform transfer
+  const fromIdx = fromIds.indexOf(objectId);
+  fromIds.splice(fromIdx, 1);
+  toIds.push(objectId);
+
+  // One-container enforcement
+  const allContainers = _findAllContainers(gameState, objectId);
+  if (allContainers.length > 1) {
+    // Undo transfer, restore to from_container
+    toIds.pop();
+    fromIds.push(objectId);
+    _pushError(gameState, { turn: turnNumber, action: 'transfer_direct', object_id: objectId, object_name: record.name, reason: 'one_container_violation_after_transfer', found_in: allContainers, ts });
+    return { success: false, error: 'one_container_violation_after_transfer' };
+  }
+
+  // Update record
+  record.current_container_type = toContainerType;
+  record.current_container_id   = toContainerId;
+  record.events.push({ turn: turnNumber, action: 'transferred', from_container_type: fromContainerType, from_container_id: fromContainerId, to_container_type: toContainerType, to_container_id: toContainerId, reason: reason || null, ts });
+  if (record.events.length > 10) record.events.shift();
+
+  console.log(`[ObjectHelper] transferDirect: ${objectId} (${record.name}) ${fromContainerType}/${fromContainerId} → ${toContainerType}/${toContainerId}`);
+  return { success: true };
+}
+
+module.exports = { run, transferObjectDirect, OH_VERSION };

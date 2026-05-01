@@ -1,5 +1,6 @@
 // ActionProcessor.js — extracted from v103-1/v118 (no refactors; same behavior)
 const crypto = require('crypto');
+const { transferObjectDirect } = require('./ObjectHelper'); // v1.84.55: OR system bridge
 
 // Keep defaults for consistency (not used heavily here but stable)
 const DEFAULTS = {
@@ -48,10 +49,23 @@ function resolveItemByName(state, query){
     const sc = aliasScore(query, it?.name||'', it?.aliases||[], 2);
     cands.push([sc, 'inventory', it]);
   }
+  // v1.84.55: also check Object Reality player.object_ids[]
+  const orIds = Array.isArray(state?.player?.object_ids) ? state.player.object_ids : [];
+  const orReg = (state?.objects && typeof state.objects === 'object') ? state.objects : {};
+  for (const id of orIds) {
+    const rec = orReg[id];
+    if (!rec || rec.status !== 'active') continue;
+    const sc = aliasScore(query, rec.name || '', [], 2);
+    cands.push([sc, 'object_ids', rec]);
+  }
   if (!cands.length) return null;
   cands.sort((a,b)=>b[0]-a[0]);
   const best = cands[0];
   const second = cands[1] || [-9999,'',{}];
+  // v1.84.56: exact-match short-circuit for OR objects (no aliases — can never reach 20)
+  if (best[0] >= 10 && (best[0] - (typeof second[0]==='number'?second[0]:-9999)) >= 5){
+    return [best[1], best[2]];
+  }
   if (best[0] >= 20 && (best[0] - (typeof second[0]==='number'?second[0]:-9999)) >= 10){
     return [best[1], best[2]];
   }
@@ -304,18 +318,26 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
   }
   
   if (act === 'take'){
-    // TODO: Implement take action logic
-    // This should:
-    //   1. Parse target item from player intent
-    //   2. Check if item exists in current cell or NPC inventory
-    //   3. Validate player carrying capacity
-    //   4. Mutate game state to move item to player inventory
-    //   5. Return success/failure status for narrative
-    console.log('[ACTIONS] Take action stub - needs implementation');
-    if (logger) {
-      logger.action_resolved('take', false, 'not implemented');
+    const target = actions?.target||'';
+    const found  = resolveCellItemByName(state, target);
+    let takeSucceeded = false;
+    if (found && found.objectId) {
+      // v1.84.55: Object Reality object (npcHeldObject or gridObject)
+      const turnNum = actions?._turn || 0;
+      const result  = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'player_take');
+      if (result.success) {
+        deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
+        flags.inventory_rev = true;
+        takeSucceeded = true;
+      } else {
+        console.warn(`[ACTIONS] take OR object failed: ${result.error} (${found.objectId})`);
+      }
     }
-    return; 
+    // Legacy cell.items[] take: not implemented (only present on pre-v1.84.52 saves)
+    if (logger) {
+      logger.action_resolved('take', takeSucceeded, takeSucceeded ? `took ${target}` : `could not take ${target}`);
+    }
+    return;
   }
   if (act === 'drop'){
     const target = actions?.target||'';
@@ -330,6 +352,24 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         deltas.push({ op:'set', path:'/player/inventory', value: inv });
         flags.inventory_rev = true;
         dropSucceeded = true;
+      }
+    } else if (res && res[0] === 'object_ids') {
+      // v1.84.55: OR system object — route through ObjectHelper (sole mutation authority)
+      const rec = res[1];
+      const pos = state.world?.position;
+      const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
+      if (cellKey) {
+        const turnNum = actions?._turn || 0;
+        const result = transferObjectDirect(state, rec.id, 'grid', cellKey, turnNum, 'player_drop');
+        if (result.success) {
+          deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
+          flags.inventory_rev = true;
+          dropSucceeded = true;
+        } else {
+          console.warn(`[ACTIONS] drop OR object failed: ${result.error} (${rec.id})`);
+        }
+      } else {
+        console.warn('[ACTIONS] drop OR object: could not derive cell key (no world.position)');
       }
     }
     if (logger) {
@@ -686,6 +726,22 @@ function resolveCellItemByName(state, query){
       }
     }
   }
+  // v1.84.55: check Object Reality grid objects in current cell
+  if (state?.objects && typeof state.objects === 'object') {
+    const pos = state.world?.position;
+    const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
+    if (cellKey) {
+      for (const rec of Object.values(state.objects)) {
+        if (rec.status !== 'active') continue;
+        if (rec.current_container_type !== 'grid') continue;
+        if (rec.current_container_id !== cellKey) continue;
+        const score = aliasScore(query, rec.name || '', [], 2);
+        if (score >= 6) {
+          return { targetType: 'gridObject', cellKey, label: rec.name, objectId: rec.id, _found: true };
+        }
+      }
+    }
+  }
   return null;
 }
 
@@ -704,8 +760,8 @@ function resolveSiteByName(state, query) {
 }
 
 function hasInventoryItem(state, name){
-  const inv = (((state||{}).player||{}).inventory)||[];
-  return !!findByNameCaseInsensitive(inv, 'name', name);
+  // v1.84.55: delegate to resolveItemByName so validation and resolution share one code path
+  return !!resolveItemByName(state, name);
 }
 
 function isNPCPresent(state, nameOrRole){
