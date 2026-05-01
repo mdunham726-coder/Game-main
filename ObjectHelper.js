@@ -127,6 +127,10 @@ async function run(gameState, quarantine, turnNumber) {
   const ts          = new Date().toISOString();
 
   // ── Pass 1: Promotions ────────────────────────────────────────────────────
+  // v1.84.61: track which existing object IDs have already been claimed this pass
+  // so that two same-named objects in the same container each claim a distinct slot.
+  const _claimedObjectIds = new Set();
+
   for (const entry of quarantine) {
     if (entry.action !== 'promote') continue;
 
@@ -141,11 +145,38 @@ async function run(gameState, quarantine, turnNumber) {
       continue;
     }
 
+    // v1.84.61: name-match dedup guard — if an active object with the same name already
+    // occupies this container, reuse its ID instead of creating a phantom duplicate.
+    // CB re-emits promote candidates for existing objects every turn (it has no memory
+    // of prior temp_refs), so without this guard a throw/drop followed by a re-narration
+    // of the held item creates a ghost copy in the player's object_ids array.
+    const _nameLower = String(name).toLowerCase().trim();
+    let _existingMatch = null;
+    for (const [_oid, _orec] of Object.entries(gameState.objects)) {
+      if (
+        _orec.status === 'active' &&
+        _orec.current_container_type === container_type &&
+        _orec.current_container_id   === container_id &&
+        String(_orec.name).toLowerCase().trim() === _nameLower &&
+        !_claimedObjectIds.has(_oid)
+      ) {
+        _existingMatch = _orec;
+        break;
+      }
+    }
+    if (_existingMatch) {
+      tempRefMap[temp_ref] = _existingMatch.id;
+      _claimedObjectIds.add(_existingMatch.id);
+      audit.push({ turn: turnNumber, action: 'promote_skipped_name_match', object_id: _existingMatch.id, object_name: name, container_type, container_id, temp_ref, ts });
+      continue;
+    }
+
     const objectId = _generateObjectId(name, container_type, container_id, temp_ref);
 
     // If this ID already exists (same object re-narrated on a later turn), skip silently.
     if (gameState.objects[objectId]) {
       tempRefMap[temp_ref] = objectId; // still populate map for transfer pass
+      _claimedObjectIds.add(objectId);
       audit.push({ turn: turnNumber, action: 'promote_skipped_existing', object_id: objectId, object_name: name, temp_ref, ts });
       continue;
     }
@@ -196,6 +227,7 @@ async function run(gameState, quarantine, turnNumber) {
     if (record.events.length > 10) record.events.shift();
 
     tempRefMap[temp_ref] = objectId;
+    _claimedObjectIds.add(objectId);
     promoted++;
     audit.push({ turn: turnNumber, action: 'promoted', object_id: objectId, object_name: name, container_type, container_id, temp_ref, ts });
     console.log(`[ObjectHelper] Promoted: ${objectId} (${name}) → ${container_type}/${container_id}`);
