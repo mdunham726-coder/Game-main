@@ -3070,6 +3070,7 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         errors: 0,
         audit: [],
         error_entries: [],
+        initial_condition_updates: [],
         condition_updates: [],
         retirement_updates: []
       };
@@ -3118,6 +3119,30 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         } else {
           _objectRealityDebug.skip_reason = 'empty_quarantine';
         }
+
+        // v1.84.66: Initial condition pass — applies initial_condition from CB candidate to newly-promoted objects
+        // Runs before object_condition_updates so initial state is first in the conditions[] chain
+        const _icResults = [];
+        for (const _cand of _cbCandidates) {
+          if (!_cand || !_cand.initial_condition || !_cand.name) continue;
+          const _icNameNorm = _cand.name.toLowerCase();
+          const _icCtype    = _cand.container_type;
+          const _icCid      = _cand.container_id;
+          // Match candidate against this turn's audit entries by name + container
+          const _icAudit = (_objectRealityDebug.audit || []).find(a =>
+            (a.action === 'promoted' || a.action === 'promote_skipped_name_match' || a.action === 'promote_skipped_existing') &&
+            (a.object_name || '').toLowerCase() === _icNameNorm &&
+            a.container_type === _icCtype &&
+            a.container_id   === _icCid
+          );
+          if (!_icAudit) continue;
+          const _icRes = ObjectHelper.applyConditionUpdate(gameState, _icAudit.object_id, _cand.initial_condition, _cand.initial_evidence || '', turnNumber);
+          _icResults.push(Object.assign({}, _icRes, { condition: _cand.initial_condition }));
+        }
+        if (_icResults.length > 0) {
+          console.log(`[NARRATE] ObjectInitialConditions: ${_icResults.filter(r => r.applied).length}/${_icResults.length} applied`);
+        }
+        _objectRealityDebug.initial_condition_updates = _icResults;
 
         // v1.84.64: Object condition updates — CB annotation of tracked object states per turn
         const _cbConditionUpdates = Array.isArray(_phaseBResult.object_condition_updates) ? _phaseBResult.object_condition_updates : [];

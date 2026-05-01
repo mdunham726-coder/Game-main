@@ -309,8 +309,16 @@ For each object, emit one entry in the "object_candidates" array:
   "description": "<brief physical description>",
   "container_type": "grid" | "npc" | "player",
   "container_id": "<exact value from valid containers list above>",
-  "reason": "<exact phrase from narration supporting this placement>"
+  "reason": "<exact phrase from narration supporting this placement>",
+  "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
+  "initial_evidence": "<optional — exact narration phrase that establishes the initial condition>"
 }
+
+initial_condition rules:
+- EMIT when the object is introduced already damaged, modified, or in a non-default state (e.g. split skin, cracked, soaked, bent).
+- DO NOT EMIT for objects in their original, unmodified state (pristine, intact, undamaged, normal, clean, whole).
+- Same ACCEPT/REJECT rules as object_condition_updates.
+- Omit both fields entirely if the object is in its original state.
 
 If no qualifying objects are present, emit: "object_candidates": []
 

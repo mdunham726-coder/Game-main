@@ -2025,6 +2025,13 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
             lines.push(`    [retired]  ${r.objectId}`);
           }
         }
+        // v1.84.66: initial condition display
+        const _icUpdates = Array.isArray(or.initial_condition_updates) ? or.initial_condition_updates : [];
+        for (const ic of _icUpdates) {
+          if (ic.applied) {
+            lines.push(`    [init_cond] ${ic.objectId}  "${ic.condition || ''}"`)
+          }
+        }
       }
 
       const entry = lines.join('\n') + '\n';
