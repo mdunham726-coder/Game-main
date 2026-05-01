@@ -20,7 +20,7 @@ const { spawn } = require('child_process');
 const _toolHttpAgent = new http.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.46';
+const MB_VERSION = '2.8.47';
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
 /*
@@ -102,7 +102,7 @@ const MB_TOOLS = [
           },
           fields: {
             type: 'string',
-            description: 'Optional comma-separated list of fields to return: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs. Omit for the full turnObject. Use logs for engine-event tracing (player_action_parsed, move, location_changed events) — not for LLM prompts or responses (use get_payload for those). Event presence in logs is version-dependent — absence is not proof an event did not occur.'
+            description: 'Optional comma-separated list of fields to return: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs, object_reality. Omit for the full turnObject. Use logs for engine-event tracing (player_action_parsed, move, location_changed events) — not for LLM prompts or responses (use get_payload for those). Event presence in logs is version-dependent — absence is not proof an event did not occur.'
           }
         },
         required: ['turn']
@@ -167,13 +167,13 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'get_source_slice',
-      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js. Returns: file, from, to, total_lines, lines (the raw source text).',
+      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, ObjectHelper.js. Returns: file, from, to, total_lines, lines (the raw source text).',
       parameters: {
         type: 'object',
         properties: {
           file: {
             type: 'string',
-            description: 'Filename only (no path) — must be one of the allowed files listed above. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js.'
+            description: 'Filename only (no path) — must be one of the allowed files listed above. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js.'
           },
           from: {
             type: 'integer',
@@ -202,10 +202,78 @@ const MB_TOOLS = [
           },
           file: {
             type: 'string',
-            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js.'
+            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js.'
           }
         },
         required: ['query']
+      }
+    }
+  },
+  // v1.84.54: Object Reality tools
+  {
+    type: 'function',
+    function: {
+      name: 'query_objects',
+      description: 'Query the live object registry. Use when: inventory UI vs engine state diverges; investigating object_errors; confirming an object\'s current container; listing all objects held by an NPC, player, or in a cell. Returns all matching object records plus a by_container index and last 20 object_errors. Objects that have been transferred to different containers persist with their current_container_type/current_container_id updated.',
+      parameters: {
+        type: 'object',
+        properties: {
+          container_type: {
+            type: 'string',
+            description: 'Optional: filter by container type. One of: player, npc, cell. Omit to return all.'
+          },
+          container_id: {
+            type: 'string',
+            description: 'Optional: filter by container ID (e.g. an NPC ID or cell key). Use with container_type.'
+          },
+          status: {
+            type: 'string',
+            description: 'Optional: active (default) or all. Use all to include transferred/archived objects.'
+          },
+          include_events: {
+            type: 'boolean',
+            description: 'Optional: if true, includes the event log on each returned object record. Default: false.'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'inspect_entity',
+      description: 'Fetch the full raw engine record for any entity. entity_type=object: returns the full ObjectRecord including event log (history of all promotions/transfers for this specific object); entity_type=npc: returns full NPC record including object_ids[], attributes{}, conditions[] — covers both world.npcs and active_site.npcs; entity_type=player: returns full player record including object_ids[], conditions[], birth_record, attributes{}; entity_type=cell: returns full cell record including object_ids[], sites{}, attributes{}. Use this to compare the raw record against what the narrator described.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity_type: {
+            type: 'string',
+            description: 'Required. One of: object, npc, player, cell.'
+          },
+          entity_id: {
+            type: 'string',
+            description: 'Required for entity_type=object, npc, or cell. Omit for entity_type=player.'
+          }
+        },
+        required: ['entity_type']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'trace_object',
+      description: 'Reconstruct the full lifecycle of a specific object by scanning all frozen turn_history object_reality entries. Returns: current record from registry, timeline of all audit events across turns (promotions/transfers/skips), error entries from object_errors, and turns_with_data count. NOTE: only covers turns since v1.84.54 deploy — turns_with_data shows coverage depth. Use when investigating unexpected object state, container mismatch, repeated errors on the same object, or to verify an object was correctly promoted.',
+      parameters: {
+        type: 'object',
+        properties: {
+          object_id: {
+            type: 'string',
+            description: 'Required. The sha256-derived object ID to trace (e.g. obj_65f8eeeb6546).'
+          }
+        },
+        required: ['object_id']
       }
     }
   }
@@ -305,6 +373,18 @@ STATE DECLARATION CHANNEL: state_declare is a valid parser action type. When par
 
 PLAYER ATTRIBUTE DECAY (state: bucket): player.attributes has three buckets — physical: (e.g. wearing boots), state: (e.g. stepping north, crouching), and object: (e.g. holding lantern). physical: and object: facts are permanent and always appear in the narrator TRUTH block. state: facts older than 5 turns are suppressed from the narrator You: line — they remain in storage with their original turn_set values and are visible in full in buildDebugContext (the "state attrs in narrator: N active / M total" line and the T-N labels). narration_debug.state_attrs_suppressed gives the per-turn suppressed count. Seeing state: facts in buildDebugContext with turn_set much older than the current turn is correct behavior — suppression is working. Do not flag the presence of old state: facts in storage as a bug.
 
+OBJECT REALITY SYSTEM (v1.84.54): The Object Reality System is a two-pass post-narration processor that manages physical objects in the world. It runs after the narrator's freeze on every turn. Pass A (quarantine): parses the narrator's output for object creation, transfer, and lifecycle events described in prose. Pass B (promotion): validates each quarantine entry and writes it to gameState.objects (the ObjectRecord registry) or gameState.player.object_ids / npc.object_ids / cell.object_ids as appropriate. The pipeline returns a debug snapshot frozen as object_reality on the turn record (available via get_turn_data fields=object_reality). The OBJECT REALITY STATE section in the game state context gives you the last-turn signal. Use the three Object Reality tools for deeper investigation.
+
+ObjectRecord schema: id (sha256-derived, format obj_[12 hex chars]), name, description, status (active|transferred|archived), current_container_type (player|npc|cell), current_container_id, created_turn, events[] (array of lifecycle events — each: action, from_container_type, from_container_id, to_container_type, to_container_id, turn, timestamp). Identity is deterministic: the same object name in the same context always produces the same ID. This is intentional — it prevents duplicate registry entries when the narrator re-describes the same object across turns.
+
+object_reality frozen turn field shape: { ran: bool, promoted: int, transferred: int, errors: int, skip_reason: string|null, error_entries: [{action, object_name, object_id, reason}], audit: [{object_id, action, from_container_type, from_container_id, to_container_type, to_container_id}] }. When ran:false, skip_reason is populated (e.g. empty_quarantine, no_phaseB_result). When ran:true, promoted and transferred are the counts for that turn. Errors are non-fatal — the pipeline continues; error_entries give the per-error detail. Use trace_object to see all audit entries for a specific object across turns.
+
+Container model: every object has exactly one container at any time. Container types: player (gameState.player.object_ids[]), npc (an NPC record's object_ids[]), cell (a cell record's object_ids[]). Transfer updates current_container_type, current_container_id, and adds a transfer event. One-container enforcement: if an object appears in two containers, the system emits an error and resolves to the most recent assignment. object_ids[] on the container side is authoritative; current_container_* on the ObjectRecord mirrors it.
+
+Fault classification: 'from_container_not_owner' — transfer requested but the source container does not hold the object; indicates narrator described a transfer that the engine state does not support. 'duplicate_id' — two distinct objects produced the same sha256 ID; extremely rare, indicates naming collision. 'promotion_failed' — Phase B could not write the record (e.g. malformed data from Phase A). 'quarantine_parse_error' — Phase A failed to extract structured data from narrator output. Any error with errors>0 in the OBJECT REALITY STATE section warrants investigation — use trace_object as first step.
+
+POC scope notes (v1.84.54): The Object Reality System is a POC integration. It reads narrator prose; it does not write to the narrator. Narrator outputs are not guaranteed to describe object events on every turn — the narrator may describe an object being picked up without the system detecting it if phrasing is ambiguous. turns_with_data in trace_object reflects actual coverage. An object with no timeline entries is not proof it never moved — it means the system did not record a transfer event for it. Always cross-reference with inspect_entity on the player/npc/cell to verify container membership via object_ids[].
+
 STATE CLAIM ROUTING: state_claim is a parser routing verdict, not an engine action. It signals that the player input was a bare assertion (possession, existence, identity, condition, or world fact) with no concrete mechanical intent. When parsed_action is state_claim, the engine intercepts before validation, routes to the freeform channel (debug.path: STATE_CLAIM_FREEFORM), and skips the Reality Check (skipped_reason: state_claim). The narrator receives a directed state_claim instruction (not the generic freeform block): claim is unsupported, do not instantiate objects/inventory/conditions/NPCs/authority/world facts, reflect only existing engine state, narrate as speech/thought/attempted assertion with no world change. The claim is not instantiated as engine state. This is correct behavior, not a fault. Do not flag debug.path: STATE_CLAIM_FREEFORM or skipped_reason: state_claim as anomalies.
 
 ARBITER: After each narration freeze, an Arbiter IIFE evaluates the turn and emits an arbiter_verdict SSE event with two responsibilities: (1) REPUTATION — reputation_changes (array of {npc_id, old_val, new_val, delta, reason}); reputation_player (0-100, 50=neutral) is the NPC's opinion of the player, NPCs start in the 40-60 range. (2) NAME LEARNING — is_learned_changes (array of {npc_id, revealed_name, event_type, applied, reason}); when the Arbiter determines the player learned an NPC's name via a textually evident in-world event, it sets is_learned:true on the live NPC object and the narrator receives the real npc_name from the next turn onward. An arbiter_verdict error field means the Arbiter call failed. Flight recorder rows show arb: summary. Arbiter writes hard engine state; ContinuityBrain records narrative memory — both run in parallel from the same frozen narration.
@@ -314,20 +394,26 @@ NPC FILL PIPELINE: [NPC-FILL] fires before each narration turn and fills DS-owne
 REALITY CHECK (Arbiter Phase 0): Before each narration turn (except Turn 1 and skip-action turns: move/look/wait/enter/exit), a blocking awaited Reality Check call fires. It takes the player's raw input and constructs a plain-language consequence query appended with the verbatim suffix: 'Focus on immediate physical, social, and legal consequences. be accurate, but concise and brief. distill the answer to the essence of the event.' The DeepSeek result is frozen as reality_check.result in the turn record and injected into the narrator's prompt as an advisory block headed 'Possible consequences of the player's action (advisory):'. The narrator uses this as guidance only — it selects, adapts, or ignores as appropriate, and honors the current scene, engine state, and system prompt. The narrator retains full scene authority; RC output does not override it. If the check fires and fails, the turn halts with REALITY_CHECK_FAILED — the narrator is never called. Skipped turns emit reality_check with fired:false and skipped_reason. The post-narration Arbiter IIFE (reputation/name-learning) continues to fire separately after narration. reality_check in turn_history: { fired, skipped_reason, query, result, raw_response, anchor_block }. stage_times in turn_history: { rc_start, rc_end, narrator_start, narrator_end }. The === REALITY CHECK (last turn) === section in the context snapshot mirrors exactly what the narrator received — raw_response is the verbatim DeepSeek output before any formatting; anchor_block is the exact text injected into the narrator prompt. Use these to diagnose discrepancies between RC advisory content and narrator output.
 
 4. FLIGHT RECORDER — TURN HISTORY: A rolling record of the last ${TURN_BUFFER} game turns, showing for each turn: player input, resolved action, spatial position, movement result (move:OK or move:✗(CODE) where CODE is a deterministic block reason \u2014 see ACTION RESOLUTION section for code definitions), continuity injection status, token usage, delta from previous turn, avg5 (5-turn rolling token average for baseline comparison), narrator_status (ok = success; malformed = response received but content was empty or unparseable), player_extraction (you:Nf = N facts extracted about the player this turn by ContinuityBrain), and any engine violations. Hard narrator failures (timeout, connection reset, thrown error) appear as explicit [NARRATION FAILED] entries with failure kind and error message \u2014 these mark turns where no turn event was emitted.
-5. TURN ARCHIVE (structured truth): GET /diagnostics/turn/{sessionId}/{turn} — returns the full structured turnObject for any past turn from turn_history[]. Contains: narrative (full narration text), narration_debug.extraction_packet (CB parsed JSON), narration_debug.continuity_snapshot (TRUTH+MOOD packet sent to narrator), authoritative_state (full position/NPC snapshot), input (raw action + parsed_intent), stage_times (RC/narrator durations), reality_check (fired/result/raw_response/anchor_block), logs (structured engine event array — per-turn events like player_action_parsed, player_move_attempted, player_move_resolved, location_changed; event presence is version-dependent — absence is not proof an event did not occur; does not contain LLM prompts or responses — use get_payload for those). Optional ?fields= comma-separated filter (narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs) to avoid fetching 50KB when only one field is needed. Use narration_debug fields first; escalate to logs only for engine-event tracing; escalate to get_payload for verbatim LLM strings. Use this as your default for any turn-specific question.
+5. TURN ARCHIVE (structured truth): GET /diagnostics/turn/{sessionId}/{turn} — returns the full structured turnObject for any past turn from turn_history[]. Contains: narrative (full narration text), narration_debug.extraction_packet (CB parsed JSON), narration_debug.continuity_snapshot (TRUTH+MOOD packet sent to narrator), authoritative_state (full position/NPC snapshot), input (raw action + parsed_intent), stage_times (RC/narrator durations), reality_check (fired/result/raw_response/anchor_block), logs (structured engine event array — per-turn events like player_action_parsed, player_move_attempted, player_move_resolved, location_changed; event presence is version-dependent — absence is not proof an event did not occur; does not contain LLM prompts or responses — use get_payload for those). Optional ?fields= comma-separated filter (narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs, object_reality) to avoid fetching 50KB when only one field is needed. Use narration_debug fields first; escalate to logs only for engine-event tracing; escalate to get_payload for verbatim LLM strings. Use this as your default for any turn-specific question.
 
 6. PAYLOAD ARCHIVE (forensic evidence): GET /diagnostics/payload/{sessionId}/{turn} — returns raw DeepSeek prompt+response pairs for each pipeline stage of a specific turn, in pipeline execution order: reality_check -> narrator -> continuity_brain -> condition_bot. Each stage: { prompt: <string|object|null>, response: <string|null> }. Optional ?stage=reality_check|narrator|continuity_brain|condition_bot to return one stage. Optional ?part=prompt|response within a stage. A null stage means that stage did not run that turn (e.g. condition_bot is null on turn 1 or when no active conditions exist) — null is not a crash, it is an expected non-run. ESCALATE to this endpoint when you need verbatim LLM input/output (e.g. "what did DeepSeek extract", "did the CB prompt mention X", "what was the exact narrator response"). Mental model: turnObject = authoritative truth; payload = forensic evidence that supports or challenges the truth — never overwrites it. If a payload entry is missing for a turn entirely, the pipeline may have crashed before turn-close — not the same as a stage being null.
 
 7. WORLD SITE REGISTRY QUERY: GET /diagnostics/sites-query — returns filled site slots across all loaded/generated cells. Optional params: mx+my (specific macro cell), radius (macro-cell radius around player, toroidal), filled_only (default true). Results include site_id, name, coordinates, enterable, is_filled, interior_state, distance_from_player, sorted nearest first. Use this when the WORLD SITES SUMMARY in context is insufficient — e.g., for exact details, a specific macro cell, or a radius search. NOTE: like the summary, this only covers loaded cells. The response includes loaded_cells_only:true — always reflect this limitation when answering.
 
-8. SOURCE SLICE READER (targeted verification only): GET /diagnostics/source — returns a bounded line-range slice of a game source file. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing — use only when you know approximately where to look. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js. Returns: file, from, to, total_lines, lines (raw source). Results are Tier 3 — authoritative for implementation truth, but static (source code, not runtime state).
+8. SOURCE SLICE READER (targeted verification only): GET /diagnostics/source — returns a bounded line-range slice of a game source file. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing — use only when you know approximately where to look. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js. Returns: file, from, to, total_lines, lines (raw source). Results are Tier 3 — authoritative for implementation truth, but static (source code, not runtime state).
 
-9. SOURCE SEARCH (code discovery): GET /diagnostics/source-search — literal string search across allowlisted source files. Use this when you do not know which file or line number a symbol lives in. Returns up to 20 matches each with file, line_number, matching line, and 2 lines of context (context_before / context_after). The intended workflow is: search_source to discover location → get_source_slice to read surrounding code. Use specific identifiers as queries — function names, variable names, error code strings, string literals. Scope to a specific file with file= when possible (faster, less noise). Do NOT use short or common tokens as queries. Minimum 3 characters. Results are Tier 3 — static implementation truth, not runtime state.
+9. SOURCE SEARCH (code discovery): GET /diagnostics/source-search — literal string search across allowlisted source files. Use this when you do not know which file or line number a symbol lives in. Returns up to 20 matches each with file, line_number, matching line, and 2 lines of context (context_before / context_after). The intended workflow is: search_source to discover location → get_source_slice to read surrounding code. Use specific identifiers as queries — function names, variable names, error code strings, string literals. Scope to a specific file with file= when possible (faster, less noise). Do NOT use short or common tokens as queries. Minimum 3 characters. Results are Tier 3 — static implementation truth, not runtime state. Allowed files include ObjectHelper.js (v1.84.54).
+
+10. OBJECT REGISTRY QUERY (live object state): GET /diagnostics/objects — returns a filtered view of gameState.objects (the live ObjectRecord registry) plus a by_container index and the last 20 object_errors. Optional filters: container_type (player|npc|cell), container_id, status (active default, all), include_events (bool). Use when: the inventory UI disagrees with engine state; an object_errors entry appeared last turn; you need to list all objects a specific NPC or cell holds. Total and status_filter always present. Tier 1 — runtime state (authoritative for present-moment questions).
+
+11. ENTITY INSPECTOR (raw engine record): GET /diagnostics/entity — returns the complete raw engine record for any entity. entity_type=object: full ObjectRecord including events[] (every promotion/transfer event ever recorded for this object); entity_type=npc: full NPC record including object_ids[], attributes{}, conditions[], _fill_frozen state; entity_type=player: full player record including object_ids[], conditions[], birth_record, attributes{}; entity_type=cell: full cell record including object_ids[], sites{}, attributes{}, biome. Requires entity_id for all types except player. Use to deep-inspect a specific record when surface-level data is insufficient. Tier 1 — runtime state.
+
+12. OBJECT TRACER (lifecycle history): GET /diagnostics/objects/trace — reconstructs the full lifecycle of one object by scanning all frozen turn_history object_reality entries. Returns: current_record (registry entry or null), timeline (array of audit events per turn: action, from/to container, turn number), errors (object_errors entries for this object), turns_with_data (count of turns with frozen object_reality). Only covers turns since v1.84.54 deploy — turns_with_data reflects coverage depth. Use when investigating container mismatch, repeated errors, unexpected status, or to verify an object was correctly promoted. Tier 1/2 hybrid — current_record is runtime state; timeline depth depends on turn coverage.
 
 KNOWLEDGE TIERS: Every answer you give draws from one of three tiers:
   Tier 1 — Current state (authoritative): current game state snapshot, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn RC/extraction. Fully reliable for present-moment questions.
   Tier 2 — Summary data (partial coverage): Flight Recorder rows (one-line summaries only, not evidence), WORLD SITES SUMMARY (loaded cells only). Useful for quick answers but limited in scope — absence in Tier 2 does not prove absence in the world.
-  Tier 3 — Tool results (most complete available): get_turn_data, get_payload, get_sites, get_source_slice, search_source. Best truth available for the data that exists. get_source_slice and search_source are static implementation truth (source code) — authoritative for how the engine works, but not runtime state. search_source discovers where code lives; get_source_slice reads it.
+  Tier 3 — Tool results (most complete available): get_turn_data, get_payload, get_sites, get_source_slice, search_source, query_objects, inspect_entity, trace_object. Best truth available for the data that exists. get_source_slice and search_source are static implementation truth (source code) — authoritative for how the engine works, but not runtime state. search_source discovers where code lives; get_source_slice reads it. query_objects, inspect_entity, and trace_object are Tier 1 runtime state accessed via tool call.
 When the distinction matters, be explicit about which tier your answer comes from.
 
 EVIDENCE REQUIREMENT
@@ -383,6 +469,7 @@ CAPABILITIES: You are well-suited to detect:
 - Narrative dissonance: what the narrator wrote vs. what the engine actually recorded
 - Causal chains: events from earlier turns that explain current state
 - System drift: NPC behavior vs. their defined role; generation tone vs. world tone
+- Object Reality faults: container mismatches, promotion errors, objects described in narration but missing from registry; use query_objects, inspect_entity, and trace_object to investigate
 When you spot any of these, say so clearly and point to the specific data.`;
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -530,6 +617,22 @@ async function executeToolCall(name, args) {
         return searchRaw.slice(0, 16000) + '\n[TRUNCATED — scope to a specific file with file= to reduce results]';
       }
       return searchRaw;
+    } else if (name === 'query_objects') {
+      // v1.84.54: Object registry query
+      const qs = [`sessionId=${encodeURIComponent(_activeSessionId)}`];
+      if (args.container_type !== undefined) qs.push(`container_type=${encodeURIComponent(args.container_type)}`);
+      if (args.container_id   !== undefined) qs.push(`container_id=${encodeURIComponent(args.container_id)}`);
+      if (args.status         !== undefined) qs.push(`status=${encodeURIComponent(args.status)}`);
+      if (args.include_events !== undefined) qs.push(`include_events=${encodeURIComponent(args.include_events)}`);
+      url = `http://${HOST}:${PORT}/diagnostics/objects?${qs.join('&')}`;
+    } else if (name === 'inspect_entity') {
+      // v1.84.54: Entity inspector
+      const qs = [`sessionId=${encodeURIComponent(_activeSessionId)}`, `entity_type=${encodeURIComponent(args.entity_type)}`];
+      if (args.entity_id !== undefined) qs.push(`entity_id=${encodeURIComponent(args.entity_id)}`);
+      url = `http://${HOST}:${PORT}/diagnostics/entity?${qs.join('&')}`;
+    } else if (name === 'trace_object') {
+      // v1.84.54: Object lifecycle trace
+      url = `http://${HOST}:${PORT}/diagnostics/objects/trace?sessionId=${encodeURIComponent(_activeSessionId)}&object_id=${encodeURIComponent(args.object_id)}`;
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }

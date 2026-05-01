@@ -909,6 +909,21 @@ app.post('/narrate', async (req, res) => {
   // ... [REST OF EXISTING /NARRATE LOGIC REMAINS UNCHANGED] ...
   // Continue with existing SemanticParser, Engine, and DeepSeek API flow
   // (Preserving all existing code below this point)
+
+  // v1.84.52: Object Reality debug accumulator — hoisted outside try so catch block can include it in error response
+  let _objectRealityDebug = {
+    ran: false,
+    skip_reason: null,
+    cb_candidates: [],
+    cb_transfers: [],
+    quarantine_size: 0,
+    promoted: 0,
+    transferred: 0,
+    errors: 0,
+    audit: [],
+    error_entries: []
+  };
+
   let parseResult = null;
   try {
     parseResult = await normalizeUserIntent(userInput, gameContext, resolvedChannel);
@@ -3003,14 +3018,42 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
       }
       // v1.84.52: Object Reality System — build local quarantine from CB output, then process
       // index.js owns the quarantine write; CB is a pure interpreter; quarantine is never on gameState
+      // _objectRealityDebug is hoisted above try/catch so catch can include it in error responses
+      _objectRealityDebug = {
+        ran: false,
+        skip_reason: null,
+        cb_candidates: [],
+        cb_transfers: [],
+        quarantine_size: 0,
+        promoted: 0,
+        transferred: 0,
+        errors: 0,
+        audit: [],
+        error_entries: []
+      };
       if (_phaseBResult) {
+        const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
+        const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];
+        _objectRealityDebug.cb_candidates = _cbCandidates;
+        _objectRealityDebug.cb_transfers  = _cbTransfers;
         const _quarantine = [];
-        for (const c of (_phaseBResult.object_candidates || [])) _quarantine.push({ action: 'promote', ...c, detected_turn: turnNumber });
-        for (const t of (_phaseBResult.object_transfers  || [])) _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
+        for (const c of _cbCandidates) _quarantine.push({ action: 'promote',  ...c, detected_turn: turnNumber });
+        for (const t of _cbTransfers)  _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
+        _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
           const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
           console.log(`[NARRATE] ObjectHelper: promoted=${_ohResult.promoted} transferred=${_ohResult.transferred} errors=${_ohResult.errors}`);
+          _objectRealityDebug.ran          = true;
+          _objectRealityDebug.promoted     = _ohResult.promoted;
+          _objectRealityDebug.transferred  = _ohResult.transferred;
+          _objectRealityDebug.errors       = _ohResult.errors;
+          _objectRealityDebug.audit        = _ohResult.audit || [];
+          _objectRealityDebug.error_entries = (gameState.object_errors || []).filter(e => e.turn === turnNumber);
+        } else {
+          _objectRealityDebug.skip_reason = 'empty_quarantine';
         }
+      } else {
+        _objectRealityDebug.skip_reason = 'no_phaseB_result';
       }
     }
 
@@ -3490,7 +3533,8 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
         rc_end: _rcEnd,
         narrator_start: _narratorStart,
         narrator_end: _narratorEnd
-      }
+      },
+      object_reality: _objectRealityDebug   // v1.84.54: frozen for get_turn_data + trace_object
     };
     
     // Store turn object in turn history
@@ -3825,6 +3869,7 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
       diagnostics,
       visibility: visibilityPayload,
       worldgen_log: gameState.world?.worldgen_log || null,
+      object_reality: _objectRealityDebug,
       debug 
     });
   } catch (err) {
@@ -3847,6 +3892,7 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
       scene,
       diagnostics,
       visibility: visibilityPayload,
+      object_reality: _objectRealityDebug,
       error: `narration_failed: ${err.message}`,
       debug
     });
@@ -4243,6 +4289,33 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         context += `archived conditions: ${_ctxCondsArchive.length}\n`;
       }
     } // end PLAYER STATE else block
+
+    // === OBJECT REALITY STATE (v1.84.54) ===
+    context += `\n=== OBJECT REALITY STATE ===\n`;
+    const _lastTurnOr = (gameState.turn_history || []).slice(-1)[0]?.object_reality ?? null;
+    if (!_lastTurnOr) {
+      context += `Last turn: no data\n`;
+    } else if (_lastTurnOr.ran) {
+      context += `Last turn: ran:YES | promoted:${_lastTurnOr.promoted}  transferred:${_lastTurnOr.transferred}  errors:${_lastTurnOr.errors}\n`;
+      if (_lastTurnOr.errors > 0 && Array.isArray(_lastTurnOr.error_entries)) {
+        for (const _orErr of _lastTurnOr.error_entries.slice(0, 3)) {
+          context += `  ERROR: ${_orErr.action || '?'} | "${_orErr.object_name || '?'}" | ${_orErr.reason || '?'} -> use trace_object\n`;
+        }
+      }
+    } else {
+      context += `Last turn: skipped (${_lastTurnOr.skip_reason || 'no_data'})\n`;
+    }
+    const _orPlayerIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : [];
+    const _orObjects   = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {};
+    if (_orPlayerIds.length === 0) {
+      context += `Player: (none)\n`;
+    } else {
+      const _orInvLines = _orPlayerIds.map(id => {
+        const rec = _orObjects[id];
+        return rec ? `"${rec.name}" [${id}]` : `[unresolved: ${id}]`;
+      });
+      context += `Player: ${_orInvLines.join(', ')}\n`;
+    }
 
     // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===
     const _ctxLoc = gameState.world.active_local_space || gameState.world.active_site || (() => {
@@ -5450,7 +5523,8 @@ app.get('/diagnostics/turn/:sessionId/:turn', (req, res) => {
     stage_times:         'stage_times',
     reality_check:       'reality_check',
     narration_debug:     'narration_debug',
-    logs:                'logs'
+    logs:                'logs',
+    object_reality:      'object_reality'   // v1.84.54
   };
   const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
   const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };
@@ -5722,12 +5796,147 @@ app.get('/diagnostics/sites-query', (req, res) => {
 // Used by Mother Brain get_source_slice tool for targeted implementation verification.
 // Auth: requires x-diagnostics-key header matching DIAGNOSTICS_KEY env var.
 // Disabled entirely (503) when DIAGNOSTICS_KEY is not set — safe default.
+// =============================================================================
+// v1.84.54: OBJECT REALITY DIAGNOSTIC ENDPOINTS
+// =============================================================================
+
+// Object registry query — GET /diagnostics/objects
+// Returns filtered view of gameState.objects with by_container index and recent errors.
+// Params: sessionId (required), container_type, container_id, status (active|all), include_events (bool)
+app.get('/diagnostics/objects', (req, res) => {
+  const { sessionId, container_type, container_id, status: statusFilter = 'active', include_events } = req.query;
+  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+  const session = sessionStates.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'session_not_found' });
+  const gs = session.gameState;
+  const includeEvents = include_events === 'true';
+  const allObjects = (gs.objects && typeof gs.objects === 'object') ? gs.objects : {};
+
+  let filtered = Object.values(allObjects);
+  if (statusFilter !== 'all') filtered = filtered.filter(o => (o.status || 'active') === statusFilter);
+  if (container_type) filtered = filtered.filter(o => o.current_container_type === container_type);
+  if (container_id)   filtered = filtered.filter(o => o.current_container_id   === container_id);
+
+  // Build by_container index from ALL objects matching statusFilter only
+  const by_container = { player: [], npc: {}, cell: {} };
+  for (const obj of Object.values(allObjects)) {
+    if (statusFilter !== 'all' && (obj.status || 'active') !== statusFilter) continue;
+    const ct = obj.current_container_type;
+    const ci = obj.current_container_id;
+    if (ct === 'player') {
+      by_container.player.push(obj.id);
+    } else if (ct === 'npc') {
+      if (!by_container.npc[ci]) by_container.npc[ci] = [];
+      by_container.npc[ci].push(obj.id);
+    } else if (ct === 'cell' || ct === 'grid') {
+      if (!by_container.cell[ci]) by_container.cell[ci] = [];
+      by_container.cell[ci].push(obj.id);
+    }
+  }
+
+  const result = filtered.map(o => {
+    const rec = { id: o.id, name: o.name, description: o.description, status: o.status || 'active',
+                  created_turn: o.created_turn, current_container_type: o.current_container_type,
+                  current_container_id: o.current_container_id };
+    if (includeEvents) rec.events = o.events || [];
+    return rec;
+  });
+
+  return res.json({
+    total: result.length,
+    status_filter: statusFilter,
+    objects: result,
+    by_container,
+    object_errors: (gs.object_errors || []).slice(-20)
+  });
+});
+
+// Entity inspector — GET /diagnostics/entity
+// Returns the raw engine record for any entity type: object, npc, player, or cell.
+// Params: sessionId (required), entity_type (object|npc|player|cell), entity_id (required except for player)
+app.get('/diagnostics/entity', (req, res) => {
+  const { sessionId, entity_type, entity_id } = req.query;
+  if (!sessionId)   return res.status(400).json({ error: 'sessionId required' });
+  if (!entity_type) return res.status(400).json({ error: 'entity_type required (object/npc/player/cell)' });
+  const session = sessionStates.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'session_not_found' });
+  const gs = session.gameState;
+
+  if (entity_type === 'object') {
+    if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=object' });
+    const record = gs.objects?.[entity_id];
+    if (!record) return res.status(404).json({ error: 'object_not_found', entity_id });
+    return res.json(record);
+  }
+  if (entity_type === 'player') {
+    return res.json(gs.player || {});
+  }
+  if (entity_type === 'npc') {
+    if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=npc' });
+    const allNpcs = [
+      ...(Array.isArray(gs.world?.npcs) ? gs.world.npcs : []),
+      ...(Array.isArray(gs.world?.active_site?.npcs) ? gs.world.active_site.npcs : [])
+    ];
+    const npc = allNpcs.find(n => (n.npc_id || n.id) === entity_id);
+    if (!npc) return res.status(404).json({ error: 'npc_not_found', entity_id });
+    return res.json(npc);
+  }
+  if (entity_type === 'cell') {
+    if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=cell' });
+    const cell = gs.world?.cells?.[entity_id];
+    if (!cell) return res.status(404).json({ error: 'cell_not_found', entity_id });
+    return res.json(cell);
+  }
+  return res.status(400).json({ error: 'invalid_entity_type', valid: ['object', 'npc', 'player', 'cell'] });
+});
+
+// Object lifecycle trace — GET /diagnostics/objects/trace
+// Reconstructs the full history of one object across all frozen turn_history entries.
+// Params: sessionId (required), object_id (required)
+app.get('/diagnostics/objects/trace', (req, res) => {
+  const { sessionId, object_id } = req.query;
+  if (!sessionId)  return res.status(400).json({ error: 'sessionId required' });
+  if (!object_id)  return res.status(400).json({ error: 'object_id required' });
+  const session = sessionStates.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'session_not_found' });
+  const gs = session.gameState;
+
+  const currentRecord = gs.objects?.[object_id] ?? null;
+  const turnHistory   = gs.turn_history || [];
+  const turnsWithData = turnHistory.filter(t => t.object_reality && Array.isArray(t.object_reality.audit)).length;
+
+  const timeline = [];
+  for (const turn of turnHistory) {
+    if (!turn.object_reality?.audit) continue;
+    for (const entry of turn.object_reality.audit) {
+      if (entry.object_id === object_id) {
+        timeline.push({ turn: turn.turn_number, ...entry });
+      }
+    }
+  }
+
+  const errors = (gs.object_errors || []).filter(e => e.object_id === object_id);
+
+  return res.json({
+    object_id,
+    found_in_registry: !!currentRecord,
+    current_record: currentRecord,
+    timeline,
+    errors,
+    turns_with_data: turnsWithData   // only turns after v1.84.54 deploy will have frozen object_reality
+  });
+});
+
+// =============================================================================
+// END v1.84.54 OBJECT REALITY DIAGNOSTIC ENDPOINTS
+// =============================================================================
+
 // Params: ?file= (required, filename only), ?from= (1-based line, default 1), ?to= (default from+199, hard cap from+299)
 const _SOURCE_ALLOWLIST = new Set([
   'index.js', 'Engine.js', 'ActionProcessor.js', 'NPCs.js', 'WorldGen.js',
   'NarrativeContinuity.js', 'ContinuityBrain.js', 'SemanticParser.js',
   'continuity.js', 'QuestSystem.js', 'logger.js', 'logging.js',
-  'diagnostics.js', 'motherbrain.js', 'conditionbot.js'
+  'diagnostics.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js'  // v1.84.54
 ]);
 app.get('/diagnostics/source', (req, res) => {
   const diagKey = process.env.DIAGNOSTICS_KEY;

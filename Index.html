@@ -98,6 +98,11 @@
   <h1>Ultimate Dungeon Master</h1>
   <div id="narrative"><p>You stand at the edge of a vast dungeon...</p></div>
 
+  <div id="inventoryBox" style="position:fixed; top:20px; right:20px; width:200px; padding:12px 14px; background:#1a1a2e; border:2px solid #d4af37; border-radius:4px; font-family:monospace; z-index:100;">
+    <div style="color:#d4af37; font-size:12px; font-weight:bold; letter-spacing:1px; margin-bottom:8px;">INVENTORY</div>
+    <div id="inventory-live" style="font-size:12px; color:#aaa; line-height:1.6;">Inventory: (empty)</div>
+  </div>
+
   <!-- Three-Channel Input Bars -->
   <div id="inputBars" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px;">
 
@@ -229,6 +234,15 @@
     <button onclick="navigator.clipboard.writeText(_continuityLogBuffer.join('\n'))" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Continuity Log</button>
   </div>
   <div id="continuity-log" style="height: 380px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #0f0;"></div>
+</div>
+
+<!-- Object Reality Log Panel -->
+<div id="objectRealityPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #e67e22; border-radius: 4px; max-height: 460px; overflow: hidden;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+    <h3 style="margin: 0; color: #e67e22;">OBJECT REALITY LOG</h3>
+    <button onclick="navigator.clipboard.writeText(_orLogBuffer.join('\n'))" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy OR Log</button>
+  </div>
+  <div id="object-reality-log" style="height: 380px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #e8a87c;"></div>
 </div>
 
   </div>
@@ -556,6 +570,8 @@ if (engineMsg) {
 } else {
   document.getElementById('narrative').innerHTML = renderNarrative(narrative);
 }
+updateInventoryBox(data);
+appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
 document.getElementById('actionInput').value = '';
 document.getElementById('sayInput').value = '';
 
@@ -939,6 +955,8 @@ diagLog.innerHTML = `
         } else {
           document.getElementById('narrative').innerHTML = renderNarrative(narrative);
         }
+        updateInventoryBox(data);
+        appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
         document.getElementById('sayInput').value = '';
         if (data.narrative) lastNarrative = data.narrative;
         lastTurnCounter = data.state?.turn_counter ?? 0;
@@ -1893,6 +1911,119 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         logsResponse.style.display = 'block';
         logsResponse.style.color = '#e74c3c';
       }
+    }
+
+    // ========== v1.84.52: OBJECT REALITY LOG + LIVE INVENTORY ==========
+
+    let _orLogBuffer  = [];   // rolling text entries, capped at 50
+    let _invLastTurn  = -1;   // stale-response guard: ignore updates older than last accepted turn
+
+    function updateInventoryBox(data) {
+      if (!data || !data.state) return;
+      const turnNum = data.state.turn_counter ?? 0;
+      if (turnNum <= _invLastTurn) return; // stale / out-of-order — skip
+      _invLastTurn = turnNum;
+
+      const objectIds = Array.isArray(data.state.player?.object_ids) ? data.state.player.object_ids : [];
+      const objects   = (data.state.objects && typeof data.state.objects === 'object') ? data.state.objects : {};
+      const dom = document.getElementById('inventory-live');
+      if (!dom) return;
+
+      if (objectIds.length === 0) {
+        dom.innerHTML = '<span style="color:#555;">Inventory: (empty)</span>';
+        return;
+      }
+
+      const lines = objectIds.map(id => {
+        const rec = objects[id];
+        if (!rec) {
+          return `<div style="margin-bottom:4px;"><span style="color:#e67e22;">[unresolved: ${_escHtml(id)}]</span></div>`;
+        }
+        const name   = _escHtml(rec.name || '(unnamed)');
+        const status = rec.status || 'unknown';
+        const isActive = status === 'active';
+        const nameColor  = isActive ? '#e0e0e0' : '#888';
+        const statusTag  = isActive ? '' : ` <span style="color:#e67e22; font-size:10px;">[${_escHtml(status)}]</span>`;
+        const idLine     = `<div style="color:#555; font-size:10px;">${_escHtml(id)}</div>`;
+        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${idLine}</div>`;
+      });
+      dom.innerHTML = lines.join('');
+    }
+
+    function appendObjectRealityLog(data, turnNumber) {
+      const orDom = document.getElementById('object-reality-log');
+      if (!orDom) return;
+
+      const ts = new Date().toTimeString().slice(0, 8);
+      const label = `[T-${turnNumber} | ${ts}] OBJECT REALITY`;
+
+      if (!data.object_reality) {
+        const entry = `${label}\n  -- object_reality field absent from response\n`;
+        _orLogBuffer.unshift(entry);
+        if (_orLogBuffer.length > 50) _orLogBuffer.pop();
+        const block = document.createElement('div');
+        block.style.cssText = 'border-bottom:1px solid #333; padding-bottom:6px; margin-bottom:6px; white-space:pre;';
+        block.textContent = entry;
+        orDom.insertBefore(block, orDom.firstChild);
+        while (orDom.children.length > 50) orDom.removeChild(orDom.lastChild);
+        return;
+      }
+
+      const or = data.object_reality;
+      const cands    = Array.isArray(or.cb_candidates) ? or.cb_candidates : [];
+      const xfers    = Array.isArray(or.cb_transfers)  ? or.cb_transfers  : [];
+      const audit    = Array.isArray(or.audit)         ? or.audit         : [];
+      const errs     = Array.isArray(or.error_entries) ? or.error_entries : [];
+
+      const lines = [label];
+
+      // CB summary
+      lines.push(`  CB: ${cands.length} candidate(s), ${xfers.length} transfer(s)`);
+      for (const c of cands) {
+        const name     = c.name        || '?';
+        const ctype    = c.container_type  || '?';
+        const cid      = c.container_id    || '?';
+        const ref      = c.temp_ref        || '?';
+        lines.push(`    + candidate  "${name}"  ${ctype}:${cid}  temp_ref:${ref}`);
+      }
+      for (const t of xfers) {
+        const ref    = t.temp_ref    || t.object_id || '?';
+        const from   = `${t.from_container_type || '?'}:${t.from_container_id || '?'}`;
+        const to     = `${t.to_container_type   || '?'}:${t.to_container_id   || '?'}`;
+        lines.push(`    > transfer   ${from} -> ${to}  ref:${ref}`);
+      }
+
+      // ObjectHelper result
+      if (!or.ran) {
+        const reason = or.skip_reason === 'no_phaseB_result'   ? 'CB did not produce output'
+                     : or.skip_reason === 'empty_quarantine'   ? 'CB found no candidates or transfers'
+                     : or.skip_reason || 'unknown reason';
+        lines.push(`  ObjectHelper: skipped (${reason})`);
+      } else {
+        lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}`);
+        for (const a of audit) {
+          if (a.action === 'promoted') {
+            lines.push(`    [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}`);
+          } else if (a.action === 'transferred') {
+            lines.push(`    [${a.object_id}] "${a.object_name}" moved ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
+          } else if (a.action === 'promote_skipped_existing') {
+            lines.push(`    [${a.object_id}] "${a.object_name}" already exists — skipped`);
+          }
+        }
+        for (const e of errs) {
+          lines.push(`    ERROR  ${e.action || '?'} | "${e.object_name || '?'}" | ${e.reason || '?'}`);
+        }
+      }
+
+      const entry = lines.join('\n') + '\n';
+      _orLogBuffer.unshift(entry);
+      if (_orLogBuffer.length > 50) _orLogBuffer.pop();
+
+      const block = document.createElement('div');
+      block.style.cssText = 'border-bottom:1px solid #332200; padding-bottom:6px; margin-bottom:6px; white-space:pre;';
+      block.textContent = entry;
+      orDom.insertBefore(block, orDom.firstChild);
+      while (orDom.children.length > 50) orDom.removeChild(orDom.lastChild);
     }
 
     // ========== v1.58.0: NARRATIVE CONTINUITY OBSERVABILITY ==========
