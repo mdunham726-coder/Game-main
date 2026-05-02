@@ -98,11 +98,6 @@
   <h1>Ultimate Dungeon Master</h1>
   <div id="narrative"><p>You stand at the edge of a vast dungeon...</p></div>
 
-  <div id="inventoryBox" style="position:fixed; top:20px; right:20px; width:200px; padding:12px 14px; background:#1a1a2e; border:2px solid #d4af37; border-radius:4px; font-family:monospace; z-index:100;">
-    <div style="color:#d4af37; font-size:12px; font-weight:bold; letter-spacing:1px; margin-bottom:8px;">INVENTORY</div>
-    <div id="inventory-live" style="font-size:12px; color:#aaa; line-height:1.6;">Inventory: (empty)</div>
-  </div>
-
   <!-- Three-Channel Input Bars -->
   <div id="inputBars" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px;">
 
@@ -139,12 +134,36 @@
     <div id="helpResponse" style="display:none; padding:10px; background:#111; border:1px solid #3a5a3a; border-radius:3px; color:#bdb; font-size:14px; line-height:1.5; font-style:italic;"></div>
 
   </div>
+
+  <!-- Status Row: Inventory / Ground / Conditions (v1.84.74) -->
+  <style>
+    #statusRow { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0 16px 0; }
+    .status-pane { flex:1; min-width:140px; padding:12px 14px; background:#1a1a2e; border:2px solid #d4af37; border-radius:4px; font-family:monospace; box-sizing:border-box; }
+    .status-pane-header { color:#d4af37; font-size:11px; font-weight:bold; letter-spacing:1px; margin-bottom:8px; }
+    .status-pane-body { font-size:12px; color:#e5e5e5; line-height:1.6; }
+    @media (max-width:600px) { #statusRow { flex-direction:column; } .status-pane { min-width:0; } }
+  </style>
+  <div id="statusRow">
+    <div class="status-pane">
+      <div class="status-pane-header">INVENTORY</div>
+      <div id="inventory-live" class="status-pane-body"><span style="color:#888;">Nothing in inventory.</span></div>
+    </div>
+    <div class="status-pane">
+      <div class="status-pane-header">GROUND</div>
+      <div id="cell-objects-live" class="status-pane-body"><span style="color:#888;">Nothing on the ground here.</span></div>
+    </div>
+    <div class="status-pane">
+      <div class="status-pane-header">CONDITIONS</div>
+      <div id="player-conditions-live" class="status-pane-body"><span style="color:#4a8a4a;">Healthy</span></div>
+    </div>
+  </div>
+
 <!-- Continuity Panel (v1.59.0: moved before diagnostics) -->
 <div id="continuityPanel" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #3498db; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #ccc;">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
     <h3 style="margin: 0; color: #3498db;">CONTINUITY</h3>
   </div>
-  <div id="continuity-live" style="color: #555; font-size: 11px;">(no continuity data yet)</div>
+  <div id="continuity-live" style="color: #aaa; font-size: 11px;">(no continuity data yet)</div>
 </div>
 
 <!-- Diagnostic Panel -->
@@ -571,8 +590,9 @@ if (engineMsg) {
   document.getElementById('narrative').innerHTML = renderNarrative(narrative);
 }
 updateInventoryBox(data);
+updateCellObjectsBox(data);
+updateConditionsBox(data);
 appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
-document.getElementById('actionInput').value = '';
 document.getElementById('sayInput').value = '';
 
 // Display diagnostics (rebind to authoritative turn_history state)
@@ -956,6 +976,8 @@ diagLog.innerHTML = `
           document.getElementById('narrative').innerHTML = renderNarrative(narrative);
         }
         updateInventoryBox(data);
+        updateCellObjectsBox(data);
+        updateConditionsBox(data);
         appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
         document.getElementById('sayInput').value = '';
         if (data.narrative) lastNarrative = data.narrative;
@@ -1942,15 +1964,50 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const name   = _escHtml(rec.name || '(unnamed)');
         const status = rec.status || 'unknown';
         const isActive = status === 'active';
-        const nameColor  = isActive ? '#e0e0e0' : '#888';
+        const nameColor  = isActive ? '#e5e5e5' : '#888';
         const statusTag  = isActive ? '' : ` <span style="color:#e67e22; font-size:10px;">[${_escHtml(status)}]</span>`;
-        const idLine     = `<div style="color:#555; font-size:10px;">${_escHtml(id)}</div>`;
+        const idLine     = `<div style="color:#777; font-size:10px;">${_escHtml(id)}</div>`;
         // v1.84.63: show latest condition as subtitle (latest = current state)
         const _conds = Array.isArray(rec.conditions) ? rec.conditions : [];
         const condLine = _conds.length > 0
-          ? `<div style="color:#888; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
+          ? `<div style="color:#aaa; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
           : '';
         return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${condLine}${idLine}</div>`;
+      });
+      dom.innerHTML = lines.join('');
+    }
+
+    // v1.84.74: Ground box — reads strictly from object registry, current cell container only
+    function updateCellObjectsBox(data) {
+      const dom = document.getElementById('cell-objects-live');
+      if (!dom) return;
+      if (!data || !data.state) return;
+      const pos = data.state.world?.position;
+      if (!pos) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
+      const cellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
+      const objects = (data.state.objects && typeof data.state.objects === 'object') ? data.state.objects : {};
+      const cellItems = Object.values(objects).filter(r => r.current_container_id === cellKey && r.status === 'active');
+      if (cellItems.length === 0) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
+      const lines = cellItems.map(rec => {
+        const name = _escHtml(rec.name || '(unnamed)');
+        const _conds = Array.isArray(rec.conditions) ? rec.conditions : [];
+        const condLine = _conds.length > 0
+          ? `<div style="color:#aaa; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
+          : '';
+        return `<div style="margin-bottom:6px;"><span style="color:#e5e5e5;">${name}</span>${condLine}</div>`;
+      });
+      dom.innerHTML = lines.join('');
+    }
+
+    // v1.84.74: Conditions box — reads strictly from player.conditions (MedBot output)
+    function updateConditionsBox(data) {
+      const dom = document.getElementById('player-conditions-live');
+      if (!dom) return;
+      if (!data || !data.state) return;
+      const conds = Array.isArray(data.state.player?.conditions) ? data.state.player.conditions : [];
+      if (conds.length === 0) { dom.innerHTML = '<span style="color:#4a8a4a;">Healthy</span>'; return; }
+      const lines = conds.map(c => {
+        return `<div style="margin-bottom:6px;"><span style="color:#e67e22;">${_escHtml(c.description || '(unknown)')}</span><div style="color:#aaa; font-size:10px;">since T-${c.created_turn ?? '?'}</div></div>`;
       });
       dom.innerHTML = lines.join('');
     }

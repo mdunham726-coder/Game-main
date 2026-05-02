@@ -2611,7 +2611,7 @@ app.post('/narrate', async (req, res) => {
     let _rcRawResponse = null;
     let _rcStart = null;
     let _rcEnd = null;
-    const _rcSuffix = 'Focus on immediate physical, social, and legal consequences. be accurate, but concise and brief. distill the answer to the essence of the event.';
+    const _rcSuffix = 'Focus on immediate physical, social, and legal consequences. Respond in plain prose, 2-3 sentences maximum. No headers, no bullet points. Be direct and specific.';
     if (turnNumber === 1) {
       _rcSkippedReason = 'turn_1';
     } else if (_parsedAction === 'move') {
@@ -2655,7 +2655,7 @@ app.post('/narrate', async (req, res) => {
         const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.3,
-          max_tokens: 150,
+          max_tokens: 300,
           messages: [{ role: 'user', content: _realityQuery }]
         }, {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
@@ -2664,10 +2664,13 @@ app.post('/narrate', async (req, res) => {
         _rcEnd = Date.now();
         _rcRawResponse = _rcResp?.data?.choices?.[0]?.message?.content || null;
         _realityAnchor = _rcRawResponse?.trim() || null;
+        const _rcFinishReason = _rcResp?.data?.choices?.[0]?.finish_reason || null;
+        const _rcTruncated = _rcFinishReason === 'length';
+        if (_rcTruncated) console.warn(`[REALITY-CHECK] response truncated (finish_reason=length) — turn ${turnNumber}, increase max_tokens if this persists`);
         _rcPayloadSnapshot = { prompt: _realityQuery, response: _rcRawResponse }; // v1.84.21
         if (!_realityAnchor) throw new Error('empty_response');
-        emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, gameSessionId: resolvedSessionId });
-        console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}`);
+        emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, truncated: _rcTruncated || false, gameSessionId: resolvedSessionId });
+        console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}${_rcTruncated ? ' [TRUNCATED]' : ''}`);
       } catch (_rcErr) {
         console.error('[REALITY-CHECK] HARD FAILURE:', _rcErr.message, '— turn halted, narrator not called');
         emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: null, error: _rcErr.message, gameSessionId: resolvedSessionId });
