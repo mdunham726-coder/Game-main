@@ -593,7 +593,7 @@ updateInventoryBox(data);
 updateCellObjectsBox(data);
 updateConditionsBox(data);
 appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
-document.getElementById('sayInput').value = '';
+document.getElementById(inputId).value = '';
 
 // Display diagnostics (rebind to authoritative turn_history state)
 const diagLog = document.getElementById('diagnostic-log');
@@ -1017,6 +1017,7 @@ diagLog.innerHTML = `
         });
         const data = await response.json();
         document.getElementById('helpResponse').textContent = data.answer || '(No answer)';
+        document.getElementById('helpInput').value = '';
       } catch (err) {
         document.getElementById('helpResponse').textContent = `Error: ${err.message}`;
       }
