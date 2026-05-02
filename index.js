@@ -1677,13 +1677,17 @@ app.post('/narrate', async (req, res) => {
           const _inputTokens = _tokenize(userInput);
           const _allPlayerAttrs = Object.values(gameState.player?.attributes || {});
           const _objectBucketAttrs = _allPlayerAttrs.filter(a => a.bucket === 'object');
-          const _abilityBucketAttrs = _allPlayerAttrs.filter(a => a.bucket === 'declared' || a.bucket === 'physical');
+          // v1.84.76: declared passes free (founding identity); physical requires keyword overlap (CB-promoted descriptions must be relevant)
+          const _declaredAttrs = _allPlayerAttrs.filter(a => a.bucket === 'declared');
           const _matchingObjectAttrs = _objectBucketAttrs.filter(a =>
+            _tokenize(a.value).some(t => _inputTokens.includes(t))
+          );
+          const _matchingPhysicalAttrs = _allPlayerAttrs.filter(a => a.bucket === 'physical' &&
             _tokenize(a.value).some(t => _inputTokens.includes(t))
           );
           const _supportedAttrs = _isObjectAccess
             ? _matchingObjectAttrs
-            : [..._matchingObjectAttrs, ..._abilityBucketAttrs];
+            : [..._declaredAttrs, ..._matchingObjectAttrs, ..._matchingPhysicalAttrs];
           const _foundingAttrStrings = _supportedAttrs.map(a => `${a.bucket}:${a.value}`);
           console.log(`[STATE-CLAIM] objectAccess=${_isObjectAccess}, supported=${_foundingAttrStrings.length}`);
           if (_foundingAttrStrings.length > 0) {
@@ -2658,9 +2662,9 @@ app.post('/narrate', async (req, res) => {
       const _rcTruthFragment = _rcFoundingAttrs.length > 0
         ? `Relevant established attributes: ${_rcFoundingAttrs.slice(0, 8).join(' | ')}. `
         : '';
-      // v1.84.75: Validation clause — injected only for established_trait_action RC calls
+      // v1.84.76: Validation clause — injected only for established_trait_action RC calls
       const _rcValidationClause = (_parsedAction === 'established_trait_action')
-        ? ' If the action requires an item or ability not in the relevant established attributes above, state that the player does not have it and the action fails.'
+        ? ' If the action requires an item or ability not in the relevant established attributes above, state that the player does not have it and the action fails. Do not substitute or materialize any other item in its place as a consolation or alternative.'
         : '';
       _realityQuery = _rcNpcRole
         ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}?${_rcValidationClause} ${_rcSuffix}`
