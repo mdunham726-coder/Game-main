@@ -1659,17 +1659,34 @@ app.post('/narrate', async (req, res) => {
             delete _pa.dir;
           }
         }
-        // [STATE-CLAIM] Pre-validation intercept (v1.84.13): state_claim is a parser routing verdict,
-        // not an engine action. Intercept before validateAndQueueIntent to ensure player_intent.action
-        // is preserved as 'state_claim' when _parsedAction is read by the RC skip block.
+        // [STATE-CLAIM] Pre-validation intercept (v1.84.13 / v1.84.70):
+        // v1.84.70: Founding attributes computed here so the reclassification gate can read them.
+        // If founding attrs (declared/physical/object) exist, reclassify as RC-eligible freeform action.
+        // If not, keep existing blanket denial path.
+        const _playerFoundingAttrs = (() => {
+          const _attrs = gameState.player?.attributes;
+          if (!_attrs) return [];
+          return Object.values(_attrs)
+            .filter(a => a.bucket === 'declared' || a.bucket === 'physical' || a.bucket === 'object')
+            .map(a => `${a.bucket}:${a.value}`);
+        })();
+        let _reclassifiedFromStateClaim = false;
         let _degradedToFreeform = false;
         if (parseResult?.intent?.primaryAction?.action === 'state_claim') {
           inputObj = mapActionToInput(userInput, 'FREEFORM');
-          inputObj.player_intent.action = 'state_claim';
           inputObj.player_intent.channel = resolvedChannel;
           _degradedToFreeform = true;
-          debug.path = 'STATE_CLAIM_FREEFORM';
-          console.log('[STATE-CLAIM] non-executable input intercepted — routing to freeform, RC skip');
+          if (_playerFoundingAttrs.length > 0) {
+            // v1.84.70: Founding attributes present — reclassify as RC-eligible freeform
+            inputObj.player_intent.action = 'freeform';
+            _reclassifiedFromStateClaim = true;
+            debug.path = 'STATE_CLAIM_RECLASSIFIED';
+            console.log('[STATE-CLAIM] reclassified — founding attributes present, RC will fire');
+          } else {
+            inputObj.player_intent.action = 'state_claim';
+            debug.path = 'STATE_CLAIM_FREEFORM';
+            console.log('[STATE-CLAIM] non-executable input intercepted — routing to freeform, RC skip');
+          }
         }
 
         // Phase 4: validate queue and execute sequentially
@@ -2626,9 +2643,13 @@ app.post('/narrate', async (req, res) => {
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
         ? (_npcTalkResult?.npc?.job || _rawNpcTarget)
         : null;
+      // v1.84.70: Compact truth fragment — only for reclassified state claims (birth-backed ability context)
+      const _rcTruthFragment = _reclassifiedFromStateClaim && _playerFoundingAttrs.length > 0
+        ? `Given that I have the following established attributes: ${_playerFoundingAttrs.slice(0, 8).join(' | ')}. `
+        : '';
       _realityQuery = _rcNpcRole
-        ? `What happens when I say "${_rawInput}" to the ${_rcNpcRole}? ${_rcSuffix}`
-        : `What happens when I ${_rawInput}? ${_rcSuffix}`;
+        ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}? ${_rcSuffix}`
+        : `${_rcTruthFragment}What happens when I ${_rawInput}? ${_rcSuffix}`;
       try {
         _rcStart = Date.now();
         const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
@@ -2669,23 +2690,17 @@ app.post('/narrate', async (req, res) => {
       : _rawInput;
     const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
 
-    // v1.84.69: For state_claim escape hatch — collect permanent founding attributes
-    const _playerFoundingAttrs = (() => {
-      const _attrs = gameState.player?.attributes;
-      if (!_attrs) return [];
-      return Object.values(_attrs)
-        .filter(a => a.bucket === 'declared' || a.bucket === 'physical' || a.bucket === 'object')
-        .map(a => `${a.bucket}:${a.value}`);
-    })();
-
+    // v1.84.70: _playerFoundingAttrs and _reclassifiedFromStateClaim are declared earlier (pre-intercept).
+    // _freeformBlock branches: reclassified (established ability) → minimal real-action hint;
+    // state_claim (no attrs) → blanket denial; degraded → blanket denial; else → no-effect.
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
-      ? (_parsedAction === 'state_claim'
-        ? (_playerFoundingAttrs.length > 0
-          ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has the following established attributes confirmed in engine state: ${_playerFoundingAttrs.join(' | ')}. If the player's attempted action is a direct or natural expression of any of these established attributes, treat it as a real action attempt with real consequences — narrate it as happening. Only apply the denial below for claims that introduce something entirely absent from these established attributes. For anything not supported by the above attributes: the player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
-          : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`)
-        : ((inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') || (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK')
+      ? (_reclassifiedFromStateClaim
+        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is using an established ability or attribute confirmed in engine state — treat this as a real action attempt with real consequences.)\n`
+        : (_parsedAction === 'state_claim'
           ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
-          : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`))
+          : ((inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') || (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK')
+            ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
+            : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location.)\n`)))
       : '';
     const _conditionBlock = (() => {
       const _activeConds = gameState.player?.conditions;
