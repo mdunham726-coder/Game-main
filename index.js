@@ -1668,19 +1668,30 @@ app.post('/narrate', async (req, res) => {
           inputObj = mapActionToInput(userInput, 'FREEFORM');
           inputObj.player_intent.channel = resolvedChannel;
           _degradedToFreeform = true;
-          const _foundingAttrs = (() => {
-            const _attrs = gameState.player?.attributes;
-            if (!_attrs) return [];
-            return Object.values(_attrs)
-              .filter(a => a.bucket === 'declared' || a.bucket === 'physical' || a.bucket === 'object')
-              .map(a => `${a.bucket}:${a.value}`);
-          })();
-          if (_foundingAttrs.length > 0) {
-            // v1.84.72: Founding attributes present — reclassify as established_trait_action
+          // v1.84.75: Object-access detector + discriminated relevance gate.
+          // Object-access verbs require a matching object: attr; declared/physical attrs cannot authorize item access.
+          const _OBJECT_ACCESS_VERBS = ['pull out','take out','draw out','produce','retrieve','equip','wield','unsheathe','unholster','eat ','drink ','use my ','hand over','give my','open my ','hold out','pick up'];
+          const _STOPWORDS = ['the','and','out','my','you','your','with','from','into','onto','for','off'];
+          const _tokenize = str => str.toLowerCase().split(/\W+/).filter(t => t.length >= 3 && !_STOPWORDS.includes(t));
+          const _isObjectAccess = _OBJECT_ACCESS_VERBS.some(v => userInput.toLowerCase().includes(v));
+          const _inputTokens = _tokenize(userInput);
+          const _allPlayerAttrs = Object.values(gameState.player?.attributes || {});
+          const _objectBucketAttrs = _allPlayerAttrs.filter(a => a.bucket === 'object');
+          const _abilityBucketAttrs = _allPlayerAttrs.filter(a => a.bucket === 'declared' || a.bucket === 'physical');
+          const _matchingObjectAttrs = _objectBucketAttrs.filter(a =>
+            _tokenize(a.value).some(t => _inputTokens.includes(t))
+          );
+          const _supportedAttrs = _isObjectAccess
+            ? _matchingObjectAttrs
+            : [..._matchingObjectAttrs, ..._abilityBucketAttrs];
+          const _foundingAttrStrings = _supportedAttrs.map(a => `${a.bucket}:${a.value}`);
+          console.log(`[STATE-CLAIM] objectAccess=${_isObjectAccess}, supported=${_foundingAttrStrings.length}`);
+          if (_foundingAttrStrings.length > 0) {
+            // v1.84.75: Relevant supporting attributes present — reclassify as established_trait_action
             inputObj.player_intent.action = 'established_trait_action';
-            inputObj.player_intent._foundingAttrs = _foundingAttrs;
+            inputObj.player_intent._foundingAttrs = _foundingAttrStrings;
             debug.path = 'STATE_CLAIM_RECLASSIFIED';
-            console.log('[STATE-CLAIM] reclassified — founding attributes present, RC will fire');
+            console.log('[STATE-CLAIM] reclassified — supported attributes present, RC will fire');
           } else {
             inputObj.player_intent.action = 'state_claim';
             debug.path = 'STATE_CLAIM_FREEFORM';
@@ -2642,14 +2653,18 @@ app.post('/narrate', async (req, res) => {
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
         ? (_npcTalkResult?.npc?.job || _rawNpcTarget)
         : null;
-      // v1.84.72: Compact truth fragment — only for established_trait_action (birth-backed ability context)
+      // v1.84.75: Relevant truth fragment — only supported attrs forwarded to RC
       const _rcFoundingAttrs = (_parsedAction === 'established_trait_action') ? (inputObj?.player_intent?._foundingAttrs || []) : [];
       const _rcTruthFragment = _rcFoundingAttrs.length > 0
-        ? `Given that I have the following established attributes: ${_rcFoundingAttrs.slice(0, 8).join(' | ')}. `
+        ? `Relevant established attributes: ${_rcFoundingAttrs.slice(0, 8).join(' | ')}. `
+        : '';
+      // v1.84.75: Validation clause — injected only for established_trait_action RC calls
+      const _rcValidationClause = (_parsedAction === 'established_trait_action')
+        ? ' If the action requires an item or ability not in the relevant established attributes above, state that the player does not have it and the action fails.'
         : '';
       _realityQuery = _rcNpcRole
-        ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}? ${_rcSuffix}`
-        : `${_rcTruthFragment}What happens when I ${_rawInput}? ${_rcSuffix}`;
+        ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}?${_rcValidationClause} ${_rcSuffix}`
+        : `${_rcTruthFragment}What happens when I ${_rawInput}?${_rcValidationClause} ${_rcSuffix}`;
       try {
         _rcStart = Date.now();
         const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
@@ -2697,7 +2712,7 @@ app.post('/narrate', async (req, res) => {
     // state_claim (no attrs) → blanket denial; degraded → blanket denial; else → no-effect.
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
       ? (_parsedAction === 'established_trait_action'
-        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is using an established ability or attribute confirmed in engine state — treat this as a real action attempt with real consequences.)\n`
+        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted an action supported by an established attribute or ability. Follow the Reality Check result above — if the action requires an item or ability not in the player's relevant established attributes, narrate that they do not have it and the action fails. Do not invent or materialize any item not already established.)\n`
         : (_parsedAction === 'state_claim'
           ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
           : ((inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') || (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK')
