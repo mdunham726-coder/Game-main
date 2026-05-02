@@ -752,6 +752,37 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
     gameState.player.birth_record.status_claims    = Array.isArray(fp.status_claims) ? fp.status_claims : [];
     gameState.player.birth_record.scenario_notes   = Array.isArray(fp.scenario_notes)? fp.scenario_notes: [];
     console.log('[CB] birth_record populated on Turn 1:', JSON.stringify(gameState.player.birth_record).slice(0, 200));
+
+    // v1.84.68: Promote status_claims → player.attributes[declared:] — idempotent, Turn 1 only
+    // Bridges the gap between birth_record ingestion and narrator TRUTH block.
+    // declared: bucket is permanent (not subject to STATE_ATTR_WINDOW aging).
+    if (!gameState.player.attributes) gameState.player.attributes = {};
+    let _declaredPromoted = 0;
+    for (const _claim of (gameState.player.birth_record.status_claims || [])) {
+      const _dKey = `declared:${_claim}`;
+      if (!gameState.player.attributes[_dKey]) {
+        gameState.player.attributes[_dKey] = { value: _claim, bucket: 'declared', turn_set: 1, confidence: 'initial' };
+        _declaredPromoted++;
+      }
+    }
+    if (_declaredPromoted > 0) {
+      console.log(`[CB] birth_record promoted ${_declaredPromoted} declared attribute(s) to player.attributes`);
+    }
+
+    // v1.84.69: Promote possessions → player.attributes[object:] — idempotent, Turn 1 only
+    // Normalised as "carrying ${item}" to match CB-extracted object: bucket style.
+    let _possessionsPromoted = 0;
+    for (const _poss of (gameState.player.birth_record.possessions || [])) {
+      const _pVal = `carrying ${_poss}`;
+      const _pKey = `object:${_pVal}`;
+      if (!gameState.player.attributes[_pKey]) {
+        gameState.player.attributes[_pKey] = { value: _pVal, bucket: 'object', turn_set: 1, confidence: 'initial' };
+        _possessionsPromoted++;
+      }
+    }
+    if (_possessionsPromoted > 0) {
+      console.log(`[CB] birth_record promoted ${_possessionsPromoted} possession(s) to player.attributes`);
+    }
   }
 
   // ── Association + Promotion ────────────────────────────────────────────────
