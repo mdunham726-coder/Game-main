@@ -1659,27 +1659,26 @@ app.post('/narrate', async (req, res) => {
             delete _pa.dir;
           }
         }
-        // [STATE-CLAIM] Pre-validation intercept (v1.84.13 / v1.84.70):
-        // v1.84.70: Founding attributes computed here so the reclassification gate can read them.
-        // If founding attrs (declared/physical/object) exist, reclassify as RC-eligible freeform action.
-        // If not, keep existing blanket denial path.
-        const _playerFoundingAttrs = (() => {
-          const _attrs = gameState.player?.attributes;
-          if (!_attrs) return [];
-          return Object.values(_attrs)
-            .filter(a => a.bucket === 'declared' || a.bucket === 'physical' || a.bucket === 'object')
-            .map(a => `${a.bucket}:${a.value}`);
-        })();
-        let _reclassifiedFromStateClaim = false;
+        // [STATE-CLAIM] Pre-validation intercept (v1.84.13 / v1.84.72):
+        // v1.84.72: Reclassified state claims get action='established_trait_action' — a proper internal
+        // action type that carries meaning across scope boundaries without cross-scope flags.
+        // Founding attrs stored on inputObj.player_intent._foundingAttrs for RC truth fragment use.
         let _degradedToFreeform = false;
         if (parseResult?.intent?.primaryAction?.action === 'state_claim') {
           inputObj = mapActionToInput(userInput, 'FREEFORM');
           inputObj.player_intent.channel = resolvedChannel;
           _degradedToFreeform = true;
-          if (_playerFoundingAttrs.length > 0) {
-            // v1.84.70: Founding attributes present — reclassify as RC-eligible freeform
-            inputObj.player_intent.action = 'freeform';
-            _reclassifiedFromStateClaim = true;
+          const _foundingAttrs = (() => {
+            const _attrs = gameState.player?.attributes;
+            if (!_attrs) return [];
+            return Object.values(_attrs)
+              .filter(a => a.bucket === 'declared' || a.bucket === 'physical' || a.bucket === 'object')
+              .map(a => `${a.bucket}:${a.value}`);
+          })();
+          if (_foundingAttrs.length > 0) {
+            // v1.84.72: Founding attributes present — reclassify as established_trait_action
+            inputObj.player_intent.action = 'established_trait_action';
+            inputObj.player_intent._foundingAttrs = _foundingAttrs;
             debug.path = 'STATE_CLAIM_RECLASSIFIED';
             console.log('[STATE-CLAIM] reclassified — founding attributes present, RC will fire');
           } else {
@@ -2643,9 +2642,10 @@ app.post('/narrate', async (req, res) => {
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
         ? (_npcTalkResult?.npc?.job || _rawNpcTarget)
         : null;
-      // v1.84.70: Compact truth fragment — only for reclassified state claims (birth-backed ability context)
-      const _rcTruthFragment = _reclassifiedFromStateClaim && _playerFoundingAttrs.length > 0
-        ? `Given that I have the following established attributes: ${_playerFoundingAttrs.slice(0, 8).join(' | ')}. `
+      // v1.84.72: Compact truth fragment — only for established_trait_action (birth-backed ability context)
+      const _rcFoundingAttrs = (_parsedAction === 'established_trait_action') ? (inputObj?.player_intent?._foundingAttrs || []) : [];
+      const _rcTruthFragment = _rcFoundingAttrs.length > 0
+        ? `Given that I have the following established attributes: ${_rcFoundingAttrs.slice(0, 8).join(' | ')}. `
         : '';
       _realityQuery = _rcNpcRole
         ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}? ${_rcSuffix}`
@@ -2690,11 +2690,10 @@ app.post('/narrate', async (req, res) => {
       : _rawInput;
     const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
 
-    // v1.84.70: _playerFoundingAttrs and _reclassifiedFromStateClaim are declared earlier (pre-intercept).
-    // _freeformBlock branches: reclassified (established ability) → minimal real-action hint;
+    // v1.84.72: _freeformBlock branches: established_trait_action (birth-backed ability) → real-action hint;
     // state_claim (no attrs) → blanket denial; degraded → blanket denial; else → no-effect.
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
-      ? (_reclassifiedFromStateClaim
+      ? (_parsedAction === 'established_trait_action'
         ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is using an established ability or attribute confirmed in engine state — treat this as a real action attempt with real consequences.)\n`
         : (_parsedAction === 'state_claim'
           ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory.)\n`
@@ -2792,7 +2791,8 @@ app.post('/narrate', async (req, res) => {
       !inputObj.degraded &&
       _parsedAction &&
       _parsedAction !== 'wait' &&
-      _parsedAction !== 'move'
+      _parsedAction !== 'move' &&
+      _parsedAction !== 'established_trait_action'
     )
       ? `\nPLAYER INTENT (for flavor only): "${_rawInput}"\nVALIDATED ACTION: ${_parsedAction}${_doIntentTarget ? ' \u2014 ' + _doIntentTarget : ''}\nUse the phrasing, tone, and body language from PLAYER INTENT freely to color how the moment feels. VALIDATED ACTION is the only mechanical reality — do NOT narrate any capability, outcome, or consequence for elements of PLAYER INTENT that are not reflected in VALIDATED ACTION. "Sneak," "run," "fly," and similar verbs describe expressive style only — not checks, not conditions, not systems.\n`
       : '';
