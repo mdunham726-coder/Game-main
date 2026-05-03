@@ -127,6 +127,22 @@ async function run(gameState, quarantine, turnNumber) {
   const ts          = new Date().toISOString();
 
   // ── Pass 1: Promotions ────────────────────────────────────────────────────
+  // v1.84.83: pre-pass — detect promote+transfer same-temp_ref collisions.
+  // When CB emits both a promote and a transfer for the same temp_ref, and an active
+  // object with the same normalized name already exists in scene containers, the promote
+  // is spurious (CB re-promoted an already-tracked object). Suppress the promote and bind
+  // tempRefMap[temp_ref] to the existing object so Pass 2 transfer moves the original.
+  // Newborn case: same-temp_ref collision but no existing name match → promote runs normally.
+  const _transferTempRefs = new Set(
+    quarantine.filter(e => e.action === 'transfer' && e.temp_ref).map(e => e.temp_ref)
+  );
+  const _w   = gameState.world || {};
+  const _pos = _w.position;
+  const _loc = _w.active_local_space || _w.active_site;
+  const _sceneContainerIds = new Set(['player']);
+  if (_pos) _sceneContainerIds.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
+  for (const _sn of ((_loc && _loc._visible_npcs) || [])) { if (_sn.id) _sceneContainerIds.add(_sn.id); }
+
   // v1.84.61: track which existing object IDs have already been claimed this pass
   // so that two same-named objects in the same container each claim a distinct slot.
   const _claimedObjectIds = new Set();
@@ -143,6 +159,34 @@ async function run(gameState, quarantine, turnNumber) {
       });
       errors++;
       continue;
+    }
+
+    // v1.84.83: promote+transfer same-temp_ref collision check.
+    // If this temp_ref is also used in a transfer entry, check whether an active object
+    // with the same name already exists anywhere in scene containers. If so, the promote
+    // is spurious — CB re-promoted an already-tracked object. Suppress and bind tempRefMap
+    // to the existing object so Pass 2 transfer resolves against the original.
+    if (_transferTempRefs.has(temp_ref)) {
+      const _nameLower83 = String(name).toLowerCase().trim();
+      let _sceneMatch = null;
+      for (const [_oid83, _orec83] of Object.entries(gameState.objects)) {
+        if (
+          _orec83.status === 'active' &&
+          _sceneContainerIds.has(_orec83.current_container_id) &&
+          String(_orec83.name).toLowerCase().trim() === _nameLower83 &&
+          !_claimedObjectIds.has(_oid83)
+        ) {
+          _sceneMatch = _orec83;
+          break;
+        }
+      }
+      if (_sceneMatch) {
+        tempRefMap[temp_ref] = _sceneMatch.id;
+        _claimedObjectIds.add(_sceneMatch.id);
+        audit.push({ turn: turnNumber, action: 'promote_suppressed_transfer_conflict', object_id: _sceneMatch.id, object_name: name, container_type, container_id, temp_ref, ts });
+        continue;
+      }
+      // No existing scene match → newborn object being created and moved same turn; fall through to normal promote.
     }
 
     // v1.84.61: name-match dedup guard — if an active object with the same name already

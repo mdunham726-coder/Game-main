@@ -337,6 +337,11 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       } else {
         console.warn(`[ACTIONS] take OR object failed: ${result.error} (${found.objectId})`);
       }
+    } else if (found && found.targetType === 'environmentFeature') {
+      // v1.84.79: environmental gather — AP does not create the item.
+      // Stamp intent on state so narrator receives a targeted block; CB/narrator own the outcome.
+      state._environmentGatherIntent = { label: found.label, featureValue: found.featureValue };
+      takeSucceeded = true; // treated as resolved so logger doesn't report failure
     }
     // Legacy cell.items[] take: not implemented (only present on pre-v1.84.52 saves)
     if (logger) {
@@ -787,6 +792,28 @@ function resolveCellItemByName(state, query){
         const score = aliasScore(query, rec.name || '', [], 2);
         if (score >= 6) {
           return { targetType: 'gridObject', cellKey, label: rec.name, objectId: rec.id, _found: true };
+        }
+      }
+    }
+  }
+  // v1.84.79: environment attribute fallback — checks CB-promoted env: features in the current location record.
+  // Conservative exact-word-boundary match only: tokenize on whitespace/hyphens/underscores, then require
+  // strict equality. No fuzzy/levenshtein. Minimum length 3 on both query and token.
+  // Prefer false negatives: partial substrings ("stone" in "milestone") must not match.
+  if (q && q.length >= 3) {
+    const _envLocRec = (state?.world?.active_local_space) || (state?.world?.active_site) || (state?.world?.current_cell) || null;
+    if (_envLocRec && typeof _envLocRec.attributes === 'object') {
+      for (const [_eKey, _eAttr] of Object.entries(_envLocRec.attributes)) {
+        if (!_eAttr || _eAttr.bucket !== 'environment') continue;
+        const _eVal = typeof _eAttr.value === 'string' ? _eAttr.value : '';
+        if (!_eVal) continue;
+        const _eTokens = _eVal.toLowerCase().split(/[\s\-_]+/).filter(t => t.length >= 3);
+        // v1.84.81: two-path match — exact token equality (fast path) or prefix variant (handles
+        // plurals/light suffixes e.g. "rose"→"roses"); length differential cap ≤2 prevents
+        // short queries matching longer unrelated tokens ("bar" in "barrier" → diff 4 → blocked).
+        const _eMatch = _eTokens.includes(q) || _eTokens.some(t => t.startsWith(q) && t.length - q.length <= 2);
+        if (_eMatch) {
+          return { targetType: 'environmentFeature', label: q, featureValue: _eVal, _found: true };
         }
       }
     }

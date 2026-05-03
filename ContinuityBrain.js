@@ -303,6 +303,10 @@ OBJECT CANDIDATES (optional)
 Identify concrete, discrete, portable physical objects explicitly mentioned in the narration.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
+Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
+If a tracked object moved to a new container this turn, capture that movement in object_transfers
+using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
+an already-tracked object creates a phantom duplicate with a new ID.
 
 For each object, emit one entry in the "object_candidates" array:
 {
@@ -329,13 +333,18 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
                           pressed, passed, dropped at player's feet. NPC is causal agent.
                           Player input irrelevant. ALLOW.
 
-  environment_interaction — ALL THREE must be true:
+  environment_interaction — ALL FOUR must be true:
                           (1) Player input was an acquisition request (take, pick up, grab,
                               collect, lift, break, tear, scoop, pull from ground, etc.)
                           (2) Item has environmental basis in described scene (ground, floor,
                               attached to something visible, plausible feature of location).
                           (3) Player input does NOT frame item as already held, carried,
-                              or being displayed. ALLOW.
+                              or being displayed.
+                          (4) Narration explicitly confirms the item was successfully acquired —
+                              described as detached, collected, plucked, or transferred to the
+                              player. If the narration shows the attempt failing, the item
+                              remaining in place, or the item staying attached or embedded,
+                              do NOT emit an object_candidate for this item. ALLOW.
 
   narrator_independent  — Narrator introduced the item with no player request and no NPC
                           transfer. Player input did not reference the item in any way. ALLOW.
@@ -362,6 +371,7 @@ Only emit when the narration explicitly describes the movement (e.g. handed over
 
 For each transfer, emit one entry in the "object_transfers" array.
 IMPORTANT: identify the object by temp_ref (same-turn object from object_candidates above) OR by object_id (if it was established in a prior turn). Do NOT use name-only references.
+For objects already listed in TRACKED OBJECTS, always use the exact object_id field — never use temp_ref alone for a tracked object. temp_ref is only valid for objects born this turn via a promote candidate in object_candidates.
 
 {
   "temp_ref": "<if the object was promoted this turn — must match an entry in object_candidates>",
@@ -441,7 +451,8 @@ function _describeVisibleEntities(gameState) {
   const visible = loc._visible_npcs || [];
   if (!visible.length) return '(none)';
   return visible.map(n => {
-    const label = n.npc_name ? `${n.npc_name} (${n.id})` : `unnamed ${n.job_category || 'person'} (${n.id})`;
+    // v1.84.82: respect is_learned — do not expose npc_name to CB context until the player has learned it
+    const label = (n.is_learned && n.npc_name) ? `${n.npc_name} (${n.id})` : `unnamed ${n.job_category || 'person'} (${n.id})`;
     return label;
   }).join(', ');
 }
@@ -984,7 +995,8 @@ function assembleContinuityPacket(gameState, turnContext) {
   // Entity attributes
   for (const npc of visible) {
     if (!npc.attributes || !Object.keys(npc.attributes).length) continue;
-    const label = npc.npc_name ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
+    // v1.84.82: respect is_learned — do not expose npc_name in TRUTH block until the player has learned it
+    const label = (npc.is_learned && npc.npc_name) ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
     const attrs = Object.values(npc.attributes)
       .map(a => a.value)
       .join(' | ');

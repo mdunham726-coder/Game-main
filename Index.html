@@ -1995,7 +1995,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const condLine = _conds.length > 0
           ? `<div style="color:#aaa; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
           : '';
-        return `<div style="margin-bottom:6px;"><span style="color:#e5e5e5;">${name}</span>${condLine}</div>`;
+        const idLine = `<div style="color:#777; font-size:10px;">${_escHtml(rec.id || '')}</div>`;
+        return `<div style="margin-bottom:6px;"><span style="color:#e5e5e5;">${name}</span>${condLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }

@@ -2647,10 +2647,6 @@ app.post('/narrate', async (req, res) => {
       // Non-executable input — not a valid engine action, not a harmless skip action.
       // RC must not fire: treating a bare assertion as true would allow narrator to instantiate it.
       _rcSkippedReason = 'state_claim';
-    } else if (debug?.degraded_from === 'PARSER_FAILURE_FALLBACK') {
-      // Parser returned success:false — we don't know what the action is.
-      // RC must not run: querying RC on uncertain input produces a consequence that validates unknown existence claims.
-      _rcSkippedReason = 'parser_failure_fallback';
     } else if (debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') {
       // Action degraded because target is not a loose cell item (e.g. item held by NPC, non-existent item).
       // RC must not fire: narrator prompt already routes this to state_claim rejection — an RC advisory would
@@ -2723,9 +2719,22 @@ app.post('/narrate', async (req, res) => {
         ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted an action supported by an established attribute or ability. Follow the Reality Check result above — if the action requires an item or ability not in the player's relevant established attributes, narrate that they do not have it and the action fails. Do not invent or materialize any item not already established. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`
         : (_parsedAction === 'state_claim'
           ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`
-          : ((inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL') || (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK')
+          : (inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL'
             ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`
-            : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`)))
+            : (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK'
+              ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The parser could not classify this input as a known mechanical action, but that does not mean the attempt failed. Treat this as a genuine physical action attempt. Do not treat it as a state claim unless the wording is clearly declarative. Narrate the outcome based on the physical reality of the scene — success, partial success, or failure are all valid. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state.)\n`
+              : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`))))
+      : '';
+    // v1.84.79: environmental gather block — fires when AP resolved a take against a CB-promoted env: feature.
+    // Reads and clears state._environmentGatherIntent (set by ActionProcessor take handler).
+    // Explicitly lifts the POSSESSION RULE / FOUNDING TURN RULE for this code path.
+    const _envGatherIntent = gameState._environmentGatherIntent || null;
+    if (_envGatherIntent) delete gameState._environmentGatherIntent;
+    // v1.84.80: preserve the attempted label for the quarantine-time failure gate below.
+    // If the narrator describes failure the label is used to block spurious grid promotions.
+    const _envGatherLabel = _envGatherIntent ? _envGatherIntent.label.toLowerCase() : null;
+    const _environmentGatherBlock = _envGatherIntent
+      ? `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item was established as a feature of the current scene by the engine: "${_envGatherIntent.featureValue}". This is a legitimate physical interaction with the narrated world — the POSSESSION RULE's item-instantiation prohibition and the FOUNDING TURN RULE do not apply to this attempt. The item pre-exists in the narrated scene; the player is not asserting something from thin air. Narrate the gather based on the physical nature of the item: if it is detachable or collectable (a plant, a flower, loose material, scattered debris, something lying on the ground), narrate the player successfully gathering it. If it is a permanent feature (a cliff face, a carved structure, a flowing stream), narrate clearly that it cannot be taken. Do not deny this attempt on the basis that the item is not yet listed in INVENTORY.\n`
       : '';
     const _conditionBlock = (() => {
       const _activeConds = gameState.player?.conditions;
@@ -2991,7 +3000,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. If NPCs PRESENT is '(None visible)', no person exists anywhere in this location.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_realityAnchorBlock}`;
+${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_realityAnchorBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -3144,6 +3153,23 @@ ${_conditionBlock}${_freeformBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBl
             return true;
           });
           _objectRealityDebug.origin_blocked = (gameState.object_errors || []).filter(e => e.stage === 'cb_origin_gate').length;
+        }
+        // v1.84.80: env gather failure gate — when an environment gather attempt was made this turn
+        // but the narrator described failure (item not acquired), block any grid-level promote candidate
+        // for that item. Invariant: successful grab → CB emits container_type:'player' (not caught here);
+        // failed grab → CB emits container_type:'grid' → name matches label → blocked.
+        // Deterministic: matches _envGatherLabel derived from AP's _environmentGatherIntent, not prose inspection.
+        if (_envGatherLabel && Array.isArray(_phaseBResult.object_candidates)) {
+          _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+            if (c.container_type === 'grid' && c.transfer_origin === 'environment_interaction' && String(c.name || '').toLowerCase() === _envGatherLabel) {
+              console.warn(`[ORIGIN-GATE] env_gather_not_acquired blocked: "${c.name}"`);
+              if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
+              gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'env_gather_not_acquired', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
+              if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+              return false;
+            }
+            return true;
+          });
         }
         const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
         const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];

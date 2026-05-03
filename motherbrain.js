@@ -10,6 +10,7 @@
 'use strict';
 
 const http     = require('http');
+const https    = require('https');
 const readline = require('readline');
 const axios    = require('axios');
 const { spawn } = require('child_process');
@@ -18,6 +19,11 @@ const { spawn } = require('child_process');
 // diagnostic request closes its socket immediately, preventing listener accumulation
 // on http.globalAgent across multi-call tool chains.
 const _toolHttpAgent = new http.Agent({ keepAlive: false });
+
+// Dedicated HTTPS agent for DeepSeek API calls — same rationale: keepAlive:false
+// closes each TLS socket after the response, preventing error-listener accumulation
+// on the global HTTPS agent across multi-round tool chains.
+const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
 const MB_VERSION = '2.8.47';
@@ -736,7 +742,7 @@ async function askMotherBrain(question) {
           DEEPSEEK_URL,
           { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
             tools: MB_TOOLS, tool_choice: 'auto' },
-          { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000 }
+          { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000, httpsAgent: _deepseekHttpsAgent }
         );
       } catch (firstErr) {
         if (firstErr?.code === 'ECONNRESET') {
@@ -744,7 +750,7 @@ async function askMotherBrain(question) {
             DEEPSEEK_URL,
             { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
               tools: MB_TOOLS, tool_choice: 'auto' },
-            { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000 }
+            { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000, httpsAgent: _deepseekHttpsAgent }
           );
         } else { throw firstErr; }
       }
