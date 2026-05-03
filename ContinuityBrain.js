@@ -51,7 +51,7 @@ function _setDiag(d) { _lastRunDiagnostics = d; }
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext) {
+function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext, rawInput) {
   const location         = _describeLocation(gameState);
   const entities         = _describeVisibleEntities(gameState);
   const knownPlayerAttrs = _describePlayerAttributes(gameState);
@@ -89,6 +89,8 @@ Active location: ${location}
 Valid containers for object placement this turn:
 ${_validContainersList}
 Grid container_id MUST be an exact LOC:... value from this list. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
+Current player input (this turn): "${rawInput || ''}"
+Confirmed player inventory (pre-turn): ${(() => { const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : []; const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {}; const _cbNames = _cbIds.map(id => _cbObjs[id]?.status === 'active' ? _cbObjs[id].name : null).filter(Boolean); return _cbNames.length ? _cbNames.join(', ') : '(empty)'; })()}
 Visible entities: ${entities}
 Player character: always present — entity_ref "player" | known attributes: ${knownPlayerAttrs}
 Active player conditions: ${activeConditions}
@@ -311,7 +313,8 @@ For each object, emit one entry in the "object_candidates" array:
   "container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this placement>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
-  "initial_evidence": "<optional — exact narration phrase that establishes the initial condition>"
+  "initial_evidence": "<optional — exact narration phrase that establishes the initial condition>",
+  "transfer_origin": "<required when container_type is 'player' AND item is not in Confirmed player inventory above — see TRANSFER ORIGIN RULES below>"
 }
 
 initial_condition rules:
@@ -319,6 +322,34 @@ initial_condition rules:
 - DO NOT EMIT for objects in their original, unmodified state (pristine, intact, undamaged, normal, clean, whole).
 - Same ACCEPT/REJECT rules as object_condition_updates.
 - Omit both fields entirely if the object is in its original state.
+
+TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
+
+  npc_transfer          — An NPC performed an explicit physical transfer: gave, handed,
+                          pressed, passed, dropped at player's feet. NPC is causal agent.
+                          Player input irrelevant. ALLOW.
+
+  environment_interaction — ALL THREE must be true:
+                          (1) Player input was an acquisition request (take, pick up, grab,
+                              collect, lift, break, tear, scoop, pull from ground, etc.)
+                          (2) Item has environmental basis in described scene (ground, floor,
+                              attached to something visible, plausible feature of location).
+                          (3) Player input does NOT frame item as already held, carried,
+                              or being displayed. ALLOW.
+
+  narrator_independent  — Narrator introduced the item with no player request and no NPC
+                          transfer. Player input did not reference the item in any way. ALLOW.
+
+  player_claimed        — Player input mentioned, implied, or gestured the item as currently
+                          held, gathered, shown, or carried — in any form: speech ("I have X"),
+                          emote (*holds up X*), assertion, or background claim
+                          ("I've been gathering X"). BLOCK.
+
+TIE-BREAK: when in doubt, classify as player_claimed.
+
+OVERRIDE: if the item name or a clear reference to it appears in the player's input
+framed as held, shown, or gathered — that is player_claimed with no exceptions.
+The narrator's prose does not change this classification.
 
 If no qualifying objects are present, emit: "object_candidates": []
 
@@ -660,7 +691,7 @@ function _promoteConditions(conditionEvents, gameState, turn) {
   }
 }
 
-async function runPhaseB(frozenNarration, gameState, watchContext) {
+async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length + 1;
 
@@ -683,7 +714,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext) {
   const previousMood = moodHistory.length ? moodHistory[moodHistory.length - 1] : null;
 
   // ── LLM extraction call ────────────────────────────────────────────────────
-  const prompt = _buildExtractionPrompt(frozenNarration, gameState, previousMood, watchContext);
+  const prompt = _buildExtractionPrompt(frozenNarration, gameState, previousMood, watchContext, rawInput);
   let raw = null;
   // v1.84.38: extract into closure for ECONNRESET retry
   const _makeExtractionCall = () => axios.post(
