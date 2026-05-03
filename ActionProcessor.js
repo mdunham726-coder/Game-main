@@ -484,6 +484,25 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       console.log(`[ACTIONS] exit: exited local space "${_lsName}" back to L1`);
       state.world._exitHandledByAP = true;
     } else if (state.world.active_site) {
+      // v1.84.86: targeted exit guard — if the player names a localspace they've already left,
+      // do NOT pop to L0. E.g. "exit hardees" at L1 after leaving Hardee's = already outside.
+      const _exitTarget = String(actions?.target || '').trim();
+      if (_exitTarget.length >= 3) {
+        const _normTarget = _exitTarget.toLowerCase().replace(/['\s\-&.]/g, '');
+        const _lsSpaces = state.world.active_site.local_spaces || {};
+        for (const _lsKey of Object.keys(_lsSpaces)) {
+          const _bld = _lsSpaces[_lsKey];
+          const _lsRawName = (_bld._generated_interior?.name || _bld.name || '');
+          const _normLs = _lsRawName.toLowerCase().replace(/['\s\-&.]/g, '');
+          if (_normLs && (_normTarget.includes(_normLs) || _normLs.includes(_normTarget))) {
+            state.world._exitTargetedAlreadyOutside = { name: _lsRawName };
+            if (logger) logger.action_resolved(act, true, `targeted exit of "${_lsRawName}" — already outside`);
+            console.log(`[ACTIONS] exit: targeted "${_exitTarget}" but player already outside "${_lsRawName}"`);
+            state.world._exitHandledByAP = true;
+            return;
+          }
+        }
+      }
       // L1 → L0: exit site
       const _siteName = state.world.active_site.name || 'site';
       state.world.active_site = null;
@@ -792,6 +811,38 @@ function resolveCellItemByName(state, query){
         const score = aliasScore(query, rec.name || '', [], 2);
         if (score >= 6) {
           return { targetType: 'gridObject', cellKey, label: rec.name, objectId: rec.id, _found: true };
+        }
+      }
+    }
+  }
+  // v1.84.86: check Object Reality localspace objects in current active interior.
+  // Only runs when the player is inside a local space (L2). Scoped strictly to
+  // active_local_space.local_space_id — non-current or unloaded interiors are invisible.
+  // Two-pass: exact/alias match first (aliasScore >= 6), then whole-word token match
+  // for single-word queries (e.g. "fry" matches "desiccated french fry").
+  if (state?.objects && typeof state.objects === 'object' && state.world?.active_local_space) {
+    const _lsId = state.world.active_local_space.local_space_id;
+    if (_lsId) {
+      // Pass A: aliasScore exact/alias match
+      for (const rec of Object.values(state.objects)) {
+        if (rec.status !== 'active') continue;
+        if (rec.current_container_type !== 'localspace') continue;
+        if (rec.current_container_id !== _lsId) continue;
+        const score = aliasScore(query, rec.name || '', [], 2);
+        if (score >= 6) {
+          return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true };
+        }
+      }
+      // Pass B: whole-word token match — single-word queries only (no spaces, >= 3 chars)
+      if (q && q.length >= 3 && !q.includes(' ')) {
+        for (const rec of Object.values(state.objects)) {
+          if (rec.status !== 'active') continue;
+          if (rec.current_container_type !== 'localspace') continue;
+          if (rec.current_container_id !== _lsId) continue;
+          const _recTokens = String(rec.name || '').toLowerCase().split(' ');
+          if (_recTokens.includes(q)) {
+            return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true };
+          }
         }
       }
     }

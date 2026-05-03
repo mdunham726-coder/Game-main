@@ -161,6 +161,8 @@ async function run(gameState, quarantine, turnNumber) {
   const _loc = _w.active_local_space || _w.active_site;
   const _sceneContainerIds = new Set(['player']);
   if (_pos) _sceneContainerIds.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
+  // v1.84.86: include active localspace container so v1.84.83 dedup can see floor objects
+  if (_w.active_local_space?.local_space_id) _sceneContainerIds.add(_w.active_local_space.local_space_id);
   for (const _sn of ((_loc && _loc._visible_npcs) || [])) { if (_sn.id) _sceneContainerIds.add(_sn.id); }
 
   // v1.84.61: track which existing object IDs have already been claimed this pass

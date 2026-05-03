@@ -3,6 +3,9 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const axios = require('axios');
+const https = require('https');
+// v1.84.88: shared agent for all DeepSeek calls — keepAlive:false prevents listener accumulation on global https.globalAgent
+const _sharedHttpsAgent = new https.Agent({ keepAlive: false });
 const Engine = require('./Engine.js');
 const WorldGen = require('./WorldGen.js');
 const { createLogger } = require('./logger.js');
@@ -1211,6 +1214,7 @@ app.post('/narrate', async (req, res) => {
                 temperature: 0.4
               }, {
                 headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+                httpsAgent: _sharedHttpsAgent,
                 timeout: 30000
               });
               let _lssRaw = _lssResp?.data?.choices?.[0]?.message?.content || '';
@@ -1281,6 +1285,7 @@ app.post('/narrate', async (req, res) => {
                 temperature: 0.4
               }, {
                 headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+                httpsAgent: _sharedHttpsAgent,
                 timeout: 30000
               });
               let _l1Raw = _l1Resp?.data?.choices?.[0]?.message?.content || '';
@@ -1892,7 +1897,21 @@ app.post('/narrate', async (req, res) => {
       if (!engineOutput) {
         // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
         if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
+        // v1.84.89: snapshot localspace ID before engine runs — used for state: boundary clear below
+        const _preActionLsId = gameState.world?.active_local_space?.local_space_id ?? null;
         engineOutput = Engine.buildOutput(gameState, inputObj, logger);
+        // v1.84.89: if localspace boundary was crossed (any L2 transition), clear transient state: attributes
+        // so stale posture/position facts don't bleed into the narrator's TRUTH block on re-entry.
+        // physical:, object:, declared: are permanent and untouched.
+        if (engineOutput?.state) {
+          const _postActionLsId = engineOutput.state.world?.active_local_space?.local_space_id ?? null;
+          if (_preActionLsId !== _postActionLsId && engineOutput.state.player?.attributes) {
+            const _attrs = engineOutput.state.player.attributes;
+            for (const key of Object.keys(_attrs)) {
+              if (_attrs[key]?.bucket === 'state') delete _attrs[key];
+            }
+          }
+        }
       }
       
       // Log player movement if position changed
@@ -2077,6 +2096,7 @@ app.post('/narrate', async (req, res) => {
               'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
               'Content-Type': 'application/json'
             },
+            httpsAgent: _sharedHttpsAgent,
             timeout: 30000
           });
           let _sfRaw = _sfResp?.data?.choices?.[0]?.message?.content || '';
@@ -2141,9 +2161,11 @@ app.post('/narrate', async (req, res) => {
         const _lsfSpaceList = _lsfUnfilled.map(([key, s]) => ({
           local_space_id: key,
           x: s.x,
-          y: s.y
+          y: s.y,
+          // v1.84.89: pass NPC count so fill LLM does not invent staff for empty spaces
+          npc_count: Array.isArray(s.npc_ids) ? s.npc_ids.length : 0
         }));
-        const _lsfPrompt = `${_lsfSiteContext}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+        const _lsfPrompt = `${_lsfSiteContext}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfSpaceList)}\n\nIf a space has npc_count 0, its description must not mention any staff, employees, workers, or people — the space is unpopulated. If npc_count > 0, general presence is permitted but do not name or describe specific individuals.\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
         try {
           const _lsfResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
             model: 'deepseek-chat',
@@ -2154,6 +2176,7 @@ app.post('/narrate', async (req, res) => {
               'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
               'Content-Type': 'application/json'
             },
+            httpsAgent: _sharedHttpsAgent,
             timeout: 30000
           });
           let _lsfRaw = _lsfResp?.data?.choices?.[0]?.message?.content || '';
@@ -2244,8 +2267,8 @@ app.post('/narrate', async (req, res) => {
               ? `\nPlayer's founding premise: "${_lsfaRawContext}" — this is the specific place the player starts in. Name this local space to match the founding premise as closely as possible, using the proper name of the establishment or location.`
               : '';
             // Send short key in prompt — DS response must echo it back for the write guard to match.
-            const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y }];
-            const _lsfaPrompt   = `${_lsfaSiteCtx}${_lsfaPremiseDirective}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+            const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y, npc_count: Array.isArray(_lsfaStub.npc_ids) ? _lsfaStub.npc_ids.length : 0 }];
+            const _lsfaPrompt   = `${_lsfaSiteCtx}${_lsfaPremiseDirective}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nIf a space has npc_count 0, its description must not mention any staff, employees, workers, or people — the space is unpopulated. If npc_count > 0, general presence is permitted but do not name or describe specific individuals.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
             try {
               const _lsfaResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
                 model: 'deepseek-chat',
@@ -2253,6 +2276,7 @@ app.post('/narrate', async (req, res) => {
                 temperature: 0.3
               }, {
                 headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+                httpsAgent: _sharedHttpsAgent,
                 timeout: 30000
               });
               let _lsfaRaw     = _lsfaResp?.data?.choices?.[0]?.message?.content || '';
@@ -2375,6 +2399,7 @@ app.post('/narrate', async (req, res) => {
             temperature: 0.7
           }, {
             headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+            httpsAgent: _sharedHttpsAgent,
             timeout: 30000
           });
           let _fillRaw = _fillResp?.data?.choices?.[0]?.message?.content || '';
@@ -2505,11 +2530,11 @@ app.post('/narrate', async (req, res) => {
       const _esUnentered = Object.values(_esCellSites).filter(s => s.is_filled === true && !s.entered);
       if (_narDepth === 1) {
         const _esNames = _esUnentered.map(s => s.name || s.site_id).filter(Boolean).join(', ');
-        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L0\nEntered: false\nThe player is NOT inside any structure.\nAny narration describing interior occupancy is INVALID.\n${_esNames ? `Structures visible but NOT entered: ${_esNames}` : 'No structures present.'}`;
+        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L0\nEntered: false\nThe player is NOT inside any structure.\nAny narration describing interior occupancy is INVALID.\n${_esNames ? `Structures visible but NOT entered: ${_esNames}` : 'No structures present.'}\nIf any CONTINUITY — TRUTH or CONTINUITY — MOOD content describes the player's location, posture, or movement in a way that contradicts this spatial state, disregard it. This block is the authoritative location record.`;
       } else if (_narDepth === 2 && _narActiveSite) {
-        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L1 (open site area — ${_narActiveSite.name || _narActiveSite.site_id})\nThe player is NOT inside any building or local space.`;
+        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L1 (open site area — ${_narActiveSite.name || _narActiveSite.site_id})\nThe player is NOT inside any building or local space.\nIf any CONTINUITY — TRUTH or CONTINUITY — MOOD content describes the player's location, posture, or movement in a way that contradicts this spatial state, disregard it. This block is the authoritative location record.`;
       } else if (_narDepth === 3 && gameState.world.active_local_space) {
-        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L2. Player is inside ${gameState.world.active_local_space.name || gameState.world.active_local_space.local_space_id}. Interior narration is confirmed.`;
+        _engineSpatialBlock = `[ENGINE SPATIAL STATE — AUTHORITY]\nLayer: L2. Player is inside ${gameState.world.active_local_space.name || gameState.world.active_local_space.local_space_id}. Interior narration is confirmed.\nIf any CONTINUITY — TRUTH or CONTINUITY — MOOD content describes the player's location, posture, or movement in a way that contradicts this spatial state, disregard it. This block is the authoritative location record.`;
       }
     }
     // Consume _engineMessage (transient — clear after capture so it doesn't repeat)
@@ -2678,6 +2703,7 @@ app.post('/narrate', async (req, res) => {
           messages: [{ role: 'user', content: _realityQuery }]
         }, {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+          httpsAgent: _sharedHttpsAgent,
           timeout: 15000
         });
         _rcEnd = Date.now();
@@ -2982,7 +3008,7 @@ ${_narSceneDesc}
 ${nearbyStr}
 
 INVENTORY: ${invStr}
-POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. Exception: items the narrator introduces into the scene through narration, or items an NPC physically gives to the player. The player may pick up or use what the narrator has placed. What is blocked is the player asserting the existence of an item that the narrator has not established — the source of the item must be the narrator or an NPC, never a player claim. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, discovery, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, retroactive discovery, or any other mechanism that traces back to something the player claimed or implied this turn. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
+POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location (in a crevice, on the floor, wedged against the machine, resting on a surface) — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
 The player has already moved. They are now in the location described above.
 
@@ -2997,7 +3023,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not assign specific proper names, business names, or official designations to any building, organization, or landmark unless that entity is explicitly listed in the site data above. Treat this as a strict world-truth constraint — the narrator describes what the engine has established, not the reverse. Generic architectural description is permitted; narrator-invented proper nouns are not.
-- Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. If NPCs PRESENT is '(None visible)', no person exists anywhere in this location.
+- Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The SCENE DESCRIPTION below is engine-generated flavor text — if it references any staff, employee, worker, or other character by role or name, treat that as a drafting artifact only and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
 ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_realityAnchorBlock}`;
@@ -3020,6 +3046,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
             'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
             'Content-Type': 'application/json'
           },
+          httpsAgent: _sharedHttpsAgent,
           timeout: 90000,
           signal: _nCtrl.signal
         });
@@ -3147,6 +3174,26 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
               console.warn(`[ORIGIN-GATE] player_claimed item blocked: "${c.name}"`);
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'player_claimed_item_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
+              if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+              return false;
+            }
+            // v1.84.88: narrator_independent items must land on grid/localspace — never directly in player inventory
+            if (c.container_type === 'player' && c.transfer_origin === 'narrator_independent') {
+              console.warn(`[ORIGIN-GATE] narrator_independent player item blocked: "${c.name}"`);
+              if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
+              gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'narrator_independent_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
+              if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+              return false;
+            }
+            // v1.84.90: environment_interaction + player is only valid when the action's semantic class
+            // is acquisition. All acquisition verbs (grab, pick up, collect, etc.) normalize to
+            // _parsedAction === 'take' in the engine. Discovery, examination, listening, movement,
+            // and freeform actions may reveal objects in the environment — they may NOT place objects
+            // directly in player inventory.
+            if (c.container_type === 'player' && c.transfer_origin === 'environment_interaction' && _parsedAction !== 'take') {
+              console.warn(`[ORIGIN-GATE] environment_interaction non-acquisition player item blocked: "${c.name}" (action: ${_parsedAction})`);
+              if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
+              gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'environment_interaction_non_acquisition_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
               return false;
             }
@@ -3984,6 +4031,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           ]
         }, {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+          httpsAgent: _sharedHttpsAgent,
           timeout: 30000
         });
         const _wRaw = _wResp?.data?.choices?.[0]?.message?.content || '(no response)';
@@ -4042,6 +4090,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           ]
         }, {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+          httpsAgent: _sharedHttpsAgent,
           timeout: 30000
         });
         const _arbRaw = _arbResp?.data?.choices?.[0]?.message?.content || '{}';

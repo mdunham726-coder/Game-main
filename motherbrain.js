@@ -26,7 +26,7 @@ const _toolHttpAgent = new http.Agent({ keepAlive: false });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.47';
+const MB_VERSION = '2.8.51';
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
 /*
@@ -990,7 +990,7 @@ function connectSSE() {
                 if (wasNull && !_cachedContext) {
                   axios.get(
                     `http://${HOST}:${PORT}${CTX_PATH}?sessionId=${encodeURIComponent(_activeSessionId)}&level=detailed`,
-                    { timeout: 10000 }
+                    { timeout: 10000, httpAgent: _toolHttpAgent }
                   ).then(r => {
                     const ctx = r.data?.context || null;
                     if (ctx) _cachedContext = ctx;

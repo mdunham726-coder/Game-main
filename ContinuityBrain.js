@@ -67,9 +67,11 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   const _vcPos  = (gameState.world || {}).position;
   const _vcLoc  = (gameState.world || {}).active_local_space || (gameState.world || {}).active_site;
   const _vcLines = ['- player  (player inventory)'];
-  if (_vcPos) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
+  // v1.84.87: suppress cell key when inside a localspace — the interior floor is the correct container,
+  // not the parent outdoor tile. Emitting both caused CB to pick the cell key (prior training bias).
+  if (_vcPos && !(_vcLoc && _vcLoc.local_space_id)) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
   // v1.84.85: add localspace floor when player is at L2 depth
-  if (_vcLoc && _vcLoc.local_space_id) _vcLines.push(`- ${_vcLoc.local_space_id}  (localspace floor: ${_vcLoc.name || _vcLoc.local_space_id})`);
+  if (_vcLoc && _vcLoc.local_space_id) _vcLines.push(`- ${_vcLoc.local_space_id}  (localspace floor: ${_vcLoc.name || _vcLoc.local_space_id})`);;
   for (const _vn of ((_vcLoc && _vcLoc._visible_npcs) || [])) { if (_vn.id) _vcLines.push(`- ${_vn.id}  (NPC: ${_vn.npc_name || _vn.id})`); }
   const _validContainersList = _vcLines.join('\n');
 
@@ -338,6 +340,14 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
   environment_interaction — ALL FOUR must be true:
                           (1) Player input was an acquisition request (take, pick up, grab,
                               collect, lift, break, tear, scoop, pull from ground, etc.)
+                              IMPORTANT: examine, search, check, look, inspect, and
+                              investigate are NOT acquisition verbs — they are discovery
+                              actions. If the player's input uses any of these verbs with
+                              no accompanying take/grab/pick-up instruction, condition (1)
+                              is NOT met. Classify such items as narrator_independent
+                              (container_type: 'localspace' if the player is currently
+                              inside a localspace at L2 depth, or 'grid' if at L0/L1),
+                              NOT environment_interaction.
                           (2) Item has environmental basis in described scene (ground, floor,
                               attached to something visible, plausible feature of location).
                           (3) Player input does NOT frame item as already held, carried,
@@ -349,7 +359,19 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
                               do NOT emit an object_candidate for this item. ALLOW.
 
   narrator_independent  — Narrator introduced the item with no player request and no NPC
-                          transfer. Player input did not reference the item in any way. ALLOW.
+                          transfer. Player input did not reference the item in any way.
+                          CONTAINER RESTRICTION: must use container_type 'localspace' or
+                          'grid' only — NEVER 'player'. Use 'localspace' (with the active
+                          localspace ID as container_id) when the player is currently inside
+                          a localspace at L2 depth. Use 'grid' (with the current LOC cell
+                          key as container_id) when at L0 or L1. The narrator may place
+                          items in the environment (on a table, on the floor, on the
+                          ground), but narrator prose alone cannot put an item in the
+                          player's hand. If the narration described the item as "in your
+                          hand" or "in your pocket" but the player never requested it and
+                          no NPC gave it, classify container_type as 'localspace' (if at
+                          L2) or 'grid' (if at L0/L1) — not 'player'.
+                          ALLOW for localspace/grid.
 
   player_claimed        — Player input mentioned, implied, or gestured the item as currently
                           held, gathered, shown, or carried — in any form: speech ("I have X"),
@@ -919,7 +941,12 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
   const moodSnapshot = extracted.mood_snapshot || null;
   if (moodSnapshot) {
     if (!gameState.world.mood_history) gameState.world.mood_history = [];
-    gameState.world.mood_history.push({ turn, ...moodSnapshot });
+    // v1.84.89: tag each snapshot with the current location so stale cross-location entries
+    // can be filtered out of the MOOD BLOCK when the player changes scenes.
+    const _moodLocKey = gameState.world.active_local_space?.local_space_id
+      || gameState.world.active_site?.site_id
+      || null;
+    gameState.world.mood_history.push({ turn, location_key: _moodLocKey, ...moodSnapshot });
     // Hard cap
     if (gameState.world.mood_history.length > MOOD_HISTORY_CAP) {
       gameState.world.mood_history.shift();
@@ -1030,7 +1057,15 @@ function assembleContinuityPacket(gameState, turnContext) {
   lines.push('─────────────────────────────────────────────');
 
   const moodHistory = w.mood_history || [];
-  const recent = moodHistory.slice(-MOOD_WINDOW);
+  // v1.84.89: filter mood history to current location before slicing.
+  // Prevents stale cross-location snapshots (e.g. "exiting into parking lot") from
+  // bleeding into the narrator when the player re-enters a localspace or site.
+  // Snapshots with no location_key (old saves) pass through unconditionally.
+  const _moodLocKey = w.active_local_space?.local_space_id || w.active_site?.site_id || null;
+  const _moodFiltered = _moodLocKey
+    ? moodHistory.filter(m => m.location_key == null || m.location_key === _moodLocKey)
+    : moodHistory;
+  const recent = _moodFiltered.slice(-MOOD_WINDOW);
 
   if (!recent.length) {
     lines.push('(no mood data yet)');
