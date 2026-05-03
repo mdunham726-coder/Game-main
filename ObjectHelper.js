@@ -65,6 +65,18 @@ function _resolveContainerIds(gameState, containerType, containerId) {
     if (!Array.isArray(cells[containerId].object_ids)) cells[containerId].object_ids = [];
     return cells[containerId].object_ids;
   }
+  if (containerType === 'localspace') {
+    // v1.84.85: localspace floor container. containerId must match bld._generated_interior.local_space_id exactly.
+    const _lsMap = (gameState.world?.active_site?.local_spaces) || {};
+    for (const _shortKey of Object.keys(_lsMap)) {
+      const _gen = _lsMap[_shortKey]?._generated_interior;
+      if (_gen && _gen.local_space_id === containerId) {
+        if (!Array.isArray(_gen.object_ids)) _gen.object_ids = [];
+        return _gen.object_ids;
+      }
+    }
+    return null;
+  }
   return null;
 }
 
@@ -86,6 +98,14 @@ function _findAllContainers(gameState, objectId) {
   for (const [key, cell] of Object.entries(cells)) {
     if (Array.isArray(cell.object_ids) && cell.object_ids.includes(objectId)) {
       found.push({ containerType: 'grid', containerId: key });
+    }
+  }
+  // v1.84.85: scan localspace floors
+  const _lsMap2 = (gameState.world?.active_site?.local_spaces) || {};
+  for (const _shortKey2 of Object.keys(_lsMap2)) {
+    const _gen2 = _lsMap2[_shortKey2]?._generated_interior;
+    if (_gen2 && Array.isArray(_gen2.object_ids) && _gen2.object_ids.includes(objectId)) {
+      found.push({ containerType: 'localspace', containerId: _gen2.local_space_id });
     }
   }
   return found;

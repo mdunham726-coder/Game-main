@@ -3201,6 +3201,21 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           _quarantine.splice(_i, 1);
           _preRejected++;
         }
+        // v1.84.85: pre-flight gate for localspace promotes — container_id must match active localspace exactly
+        for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
+          const _qe = _quarantine[_i];
+          if (_qe.action !== 'promote' || _qe.container_type !== 'localspace') continue;
+          const _activeLs = gameState.world?.active_local_space;
+          const _cid = String(_qe.container_id || '');
+          const _lsInvalid = !_activeLs || _activeLs.local_space_id !== _cid;
+          if (!_lsInvalid) continue;
+          const _lsReason = !_activeLs ? 'no active localspace' : `container_id mismatch (expected ${_activeLs.local_space_id})`;
+          console.warn(`[NARRATE] pre-flight: localspace container_id rejected (${_lsReason}): ${_cid}`);
+          gameState.object_errors.push({ stage: 'quarantine_validation', reason: 'missing_authoritative_container', container_type: _qe.container_type, container_id: _cid, object_name: _qe.name, turn: turnNumber });
+          if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+          _quarantine.splice(_i, 1);
+          _preRejected++;
+        }
         _objectRealityDebug.pre_rejected = _preRejected;
         _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
@@ -4556,6 +4571,18 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         return rec ? `"${rec.name}" [${id}]` : `[unresolved: ${id}]`;
       });
       context += `Player: ${_orInvLines.join(', ')}\n`;
+    }
+    // v1.84.86: show localspace floor objects when player is at L2 depth
+    const _orActiveLs = gameState.world?.active_local_space;
+    if (_orActiveLs) {
+      const _orLsId   = _orActiveLs.local_space_id;
+      const _orLsName = _orActiveLs.name || _orLsId;
+      const _orLsFloor = Object.values(_orObjects).filter(o => (o.status || 'active') === 'active' && o.current_container_type === 'localspace' && o.current_container_id === _orLsId);
+      if (_orLsFloor.length === 0) {
+        context += `Floor (${_orLsName}): (none)\n`;
+      } else {
+        context += `Floor (${_orLsName}): ${_orLsFloor.map(o => `"${o.name}" [${o.id}]`).join(', ')}\n`;
+      }
     }
 
     // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===
@@ -6059,7 +6086,7 @@ app.get('/diagnostics/objects', (req, res) => {
   if (container_id)   filtered = filtered.filter(o => o.current_container_id   === container_id);
 
   // Build by_container index from ALL objects matching statusFilter only
-  const by_container = { player: [], npc: {}, cell: {} };
+  const by_container = { player: [], npc: {}, cell: {}, localspace: {} }; // v1.84.86: added localspace
   for (const obj of Object.values(allObjects)) {
     if (statusFilter !== 'all' && (obj.status || 'active') !== statusFilter) continue;
     const ct = obj.current_container_type;
@@ -6072,6 +6099,9 @@ app.get('/diagnostics/objects', (req, res) => {
     } else if (ct === 'cell' || ct === 'grid') {
       if (!by_container.cell[ci]) by_container.cell[ci] = [];
       by_container.cell[ci].push(obj.id);
+    } else if (ct === 'localspace') {
+      if (!by_container.localspace[ci]) by_container.localspace[ci] = [];
+      by_container.localspace[ci].push(obj.id);
     }
   }
 

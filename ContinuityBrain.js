@@ -68,6 +68,8 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   const _vcLoc  = (gameState.world || {}).active_local_space || (gameState.world || {}).active_site;
   const _vcLines = ['- player  (player inventory)'];
   if (_vcPos) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
+  // v1.84.85: add localspace floor when player is at L2 depth
+  if (_vcLoc && _vcLoc.local_space_id) _vcLines.push(`- ${_vcLoc.local_space_id}  (localspace floor: ${_vcLoc.name || _vcLoc.local_space_id})`);
   for (const _vn of ((_vcLoc && _vcLoc._visible_npcs) || [])) { if (_vn.id) _vcLines.push(`- ${_vn.id}  (NPC: ${_vn.npc_name || _vn.id})`); }
   const _validContainersList = _vcLines.join('\n');
 
@@ -313,8 +315,8 @@ For each object, emit one entry in the "object_candidates" array:
   "temp_ref": "<short stable handle — reuse the same ref if this object appears again in a later turn>",
   "name": "<object name, lowercase, specific>",
   "description": "<brief physical description>",
-  "container_type": "grid" | "npc" | "player",
-  "container_id": "<exact value from valid containers list above>",
+  "container_type": "grid" | "npc" | "player" | "localspace",
+  "container_id": "<exact value from valid containers list above — use the localspace ID when inside a localspace>",
   "reason": "<exact phrase from narration supporting this placement>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
   "initial_evidence": "<optional — exact narration phrase that establishes the initial condition>",

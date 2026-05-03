@@ -2320,7 +2320,8 @@ function generateLocalSpace(local_space_id, localSpaceData, siteSize = 1) {
     width: w,
     height: h,
     grid,
-    npc_ids
+    npc_ids,
+    object_ids: [] // v1.84.85: localspace floor container for ORS
     // npcs field intentionally absent: local spaces never own NPC records.
     // All NPC resolution uses parent active_site.npcs as registry. (v1.81.3)
   };

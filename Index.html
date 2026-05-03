@@ -1987,7 +1987,11 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       if (!pos) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
       const cellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
       const objects = (data.state.objects && typeof data.state.objects === 'object') ? data.state.objects : {};
-      const cellItems = Object.values(objects).filter(r => r.current_container_id === cellKey && r.status === 'active');
+      // v1.84.86: also show localspace floor objects when player is at L2 depth
+      const _activeLsId = data.state.world?.active_local_space?.local_space_id || null;
+      const cellItems = Object.values(objects).filter(r => r.status === 'active' &&
+        (r.current_container_id === cellKey ||
+         (_activeLsId && r.current_container_type === 'localspace' && r.current_container_id === _activeLsId)));
       if (cellItems.length === 0) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
       const lines = cellItems.map(rec => {
         const name = _escHtml(rec.name || '(unnamed)');
