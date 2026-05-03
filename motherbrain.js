@@ -26,7 +26,7 @@ const _toolHttpAgent = new http.Agent({ keepAlive: false });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.51';
+const MB_VERSION = '2.8.52';
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
 /*
@@ -620,8 +620,8 @@ async function executeToolCall(name, args) {
       const diagKey = process.env.DIAGNOSTICS_KEY || '';
       const resp = await axios.get(url, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
       const raw  = JSON.stringify(resp.data);
-      if (raw.length > 16000) {
-        return raw.slice(0, 16000) + '\n[TRUNCATED — narrow the range with from= and to=]';
+      if (raw.length > 32000) {
+        return raw.slice(0, 32000) + '\n[TRUNCATED — narrow the range with from= and to=]';
       }
       return raw;
     } else if (name === 'search_source') {
@@ -631,8 +631,8 @@ async function executeToolCall(name, args) {
       const searchKey  = process.env.DIAGNOSTICS_KEY || '';
       const searchResp = await axios.get(searchUrl, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': searchKey } });
       const searchRaw  = JSON.stringify(searchResp.data);
-      if (searchRaw.length > 16000) {
-        return searchRaw.slice(0, 16000) + '\n[TRUNCATED — scope to a specific file with file= to reduce results]';
+      if (searchRaw.length > 32000) {
+        return searchRaw.slice(0, 32000) + '\n[TRUNCATED — scope to a specific file with file= to reduce results]';
       }
       return searchRaw;
     } else if (name === 'query_objects') {
@@ -656,8 +656,8 @@ async function executeToolCall(name, args) {
     }
     const resp = await axios.get(url, { timeout: 10000, httpAgent: _toolHttpAgent });
     const raw  = JSON.stringify(resp.data);
-    if (raw.length > 16000) {
-      return raw.slice(0, 16000) + '\n[TRUNCATED — response exceeds 16000 chars. Use stage= and part= to narrow the query.]';
+    if (raw.length > 32000) {
+      return raw.slice(0, 32000) + '\n[TRUNCATED — response exceeds 32000 chars. Use stage= and part= to narrow the query.]';
     }
     return raw;
   } catch (err) {
