@@ -1989,9 +1989,17 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       const objects = (data.state.objects && typeof data.state.objects === 'object') ? data.state.objects : {};
       // v1.84.86: also show localspace floor objects when player is at L2 depth
       const _activeLsId = data.state.world?.active_local_space?.local_space_id || null;
+      // v1.84.92: also show site floor objects when player is at L1 depth inside a site
+      const _activeSite92 = data.state.world?.active_site;
+      const _activeLs92 = data.state.world?.active_local_space;
+      const _siteId92 = (_activeSite92 && !_activeLs92) ? (_activeSite92.id || _activeSite92.site_id) : null;
+      const _siteX92 = data.state.player?.position?.x;
+      const _siteY92 = data.state.player?.position?.y;
+      const _activeSiteKey = (_siteId92 != null && _siteX92 != null && _siteY92 != null) ? `${_siteId92}:${_siteX92},${_siteY92}` : null;
       const cellItems = Object.values(objects).filter(r => r.status === 'active' &&
         (r.current_container_id === cellKey ||
-         (_activeLsId && r.current_container_type === 'localspace' && r.current_container_id === _activeLsId)));
+         (_activeLsId && r.current_container_type === 'localspace' && r.current_container_id === _activeLsId) ||
+         (_activeSiteKey && r.current_container_type === 'site' && r.current_container_id === _activeSiteKey)));
       if (cellItems.length === 0) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
       const lines = cellItems.map(rec => {
         const name = _escHtml(rec.name || '(unnamed)');

@@ -1018,6 +1018,10 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 
   // Stored object IS the active object — no secondary generation, no split references.
   state.world.active_site = state.world.sites[interior_key];
+  // v1.84.92: restore floor_positions from stub if present (persisted on exitSite)
+  if (state.world.sites[interior_key].floor_positions) {
+    state.world.active_site.floor_positions = state.world.sites[interior_key].floor_positions;
+  }
   state.world.active_site._source_cell_key = cell_key;  // used by auto-exit guard
   state.world.active_local_space = null;
   state.world.current_depth = 2;
@@ -1079,6 +1083,13 @@ function enterLocalSpace(state, local_space_id_short) {
  */
 function exitSite(state) {
   if (!state || !state.world) return;
+  // v1.84.92: persist floor_positions back to stub before clearing active_site
+  if (state.world.active_site && state.world.active_site.floor_positions) {
+    const _exitSiteId = state.world.active_site.id || state.world.active_site.site_id;
+    if (_exitSiteId && state.world.sites && state.world.sites[_exitSiteId]) {
+      state.world.sites[_exitSiteId].floor_positions = state.world.active_site.floor_positions;
+    }
+  }
   state.world.active_site = null;
   state.world.current_depth = 1;
   if (!state.player) state.player = {};

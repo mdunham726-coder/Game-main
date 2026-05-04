@@ -847,6 +847,38 @@ function resolveCellItemByName(state, query){
       }
     }
   }
+  // v1.84.92: check Object Reality site floor objects when player is at L1 inside a site.
+  // Scoped strictly to the player's current x,y position key — other positions are not visible.
+  if (state?.objects && typeof state.objects === 'object' && state.world?.active_site && !state.world?.active_local_space) {
+    const _site92 = state.world.active_site;
+    const _siteId92 = _site92.id || _site92.site_id;
+    const _spX92 = state.player?.position?.x;
+    const _spY92 = state.player?.position?.y;
+    if (_siteId92 != null && _spX92 != null && _spY92 != null) {
+      const _siteKey92 = `${_siteId92}:${_spX92},${_spY92}`;
+      for (const rec of Object.values(state.objects)) {
+        if (rec.status !== 'active') continue;
+        if (rec.current_container_type !== 'site') continue;
+        if (rec.current_container_id !== _siteKey92) continue;
+        const score = aliasScore(query, rec.name || '', [], 2);
+        if (score >= 6) {
+          return { targetType: 'siteObject', siteKey: _siteKey92, label: rec.name, objectId: rec.id, _found: true };
+        }
+      }
+      // token match fallback for single-word queries
+      if (q && q.length >= 3 && !q.includes(' ')) {
+        for (const rec of Object.values(state.objects)) {
+          if (rec.status !== 'active') continue;
+          if (rec.current_container_type !== 'site') continue;
+          if (rec.current_container_id !== _siteKey92) continue;
+          const _recTokens92 = String(rec.name || '').toLowerCase().split(' ');
+          if (_recTokens92.includes(q)) {
+            return { targetType: 'siteObject', siteKey: _siteKey92, label: rec.name, objectId: rec.id, _found: true };
+          }
+        }
+      }
+    }
+  }
   // v1.84.79: environment attribute fallback — checks CB-promoted env: features in the current location record.
   // Conservative exact-word-boundary match only: tokenize on whitespace/hyphens/underscores, then require
   // strict equality. No fuzzy/levenshtein. Minimum length 3 on both query and token.

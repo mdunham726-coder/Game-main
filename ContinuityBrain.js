@@ -317,7 +317,7 @@ For each object, emit one entry in the "object_candidates" array:
   "temp_ref": "<short stable handle — reuse the same ref if this object appears again in a later turn>",
   "name": "<object name, lowercase, specific>",
   "description": "<brief physical description>",
-  "container_type": "grid" | "npc" | "player" | "localspace",
+  "container_type": "grid" | "npc" | "player" | "localspace" | "site",
   "container_id": "<exact value from valid containers list above — use the localspace ID when inside a localspace>",
   "reason": "<exact phrase from narration supporting this placement>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
@@ -346,7 +346,8 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
                               no accompanying take/grab/pick-up instruction, condition (1)
                               is NOT met. Classify such items as narrator_independent
                               (container_type: 'localspace' if the player is currently
-                              inside a localspace at L2 depth, or 'grid' if at L0/L1),
+                              inside a localspace at L2 depth, 'site' if inside a site
+                              at L1, or 'grid' if at L0),
                               NOT environment_interaction.
                           (2) Item has environmental basis in described scene (ground, floor,
                               attached to something visible, plausible feature of location).
@@ -361,17 +362,19 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
   narrator_independent  — Narrator introduced the item with no player request and no NPC
                           transfer. Player input did not reference the item in any way.
                           CONTAINER RESTRICTION: must use container_type 'localspace' or
-                          'grid' only — NEVER 'player'. Use 'localspace' (with the active
-                          localspace ID as container_id) when the player is currently inside
-                          a localspace at L2 depth. Use 'grid' (with the current LOC cell
-                          key as container_id) when at L0 or L1. The narrator may place
+                          'grid' or 'site' only — NEVER 'player'. Use 'localspace' (with
+                          the active localspace ID as container_id) when the player is
+                          currently inside a localspace at L2 depth. Use 'site' (with the
+                          site container_id from the valid containers list above) when inside a site
+                          at L1 depth. Use 'grid' (with the current LOC cell key as
+                          container_id) when at L0. The narrator may place
                           items in the environment (on a table, on the floor, on the
                           ground), but narrator prose alone cannot put an item in the
                           player's hand. If the narration described the item as "in your
                           hand" or "in your pocket" but the player never requested it and
                           no NPC gave it, classify container_type as 'localspace' (if at
-                          L2) or 'grid' (if at L0/L1) — not 'player'.
-                          ALLOW for localspace/grid.
+                          L2), 'site' (if at L1), or 'grid' (if at L0) — not 'player'.
+                          ALLOW for localspace/site/grid.
 
   player_claimed        — Player input mentioned, implied, or gestured the item as currently
                           held, gathered, shown, or carried — in any form: speech ("I have X"),
@@ -400,9 +403,9 @@ For objects already listed in TRACKED OBJECTS, always use the exact object_id fi
 {
   "temp_ref": "<if the object was promoted this turn — must match an entry in object_candidates>",
   "object_id": "<if the object already exists from a prior turn>",
-  "from_container_type": "grid" | "npc" | "player",
+  "from_container_type": "grid" | "npc" | "player" | "localspace" | "site",
   "from_container_id": "<exact value from valid containers list above>",
-  "to_container_type": "grid" | "npc" | "player",
+  "to_container_type": "grid" | "npc" | "player" | "localspace" | "site",
   "to_container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this transfer>"
 }

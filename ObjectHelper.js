@@ -77,6 +77,19 @@ function _resolveContainerIds(gameState, containerType, containerId) {
     }
     return null;
   }
+  if (containerType === 'site') {
+    // v1.84.92: site floor container. containerId format: ${site_id}:${x},${y}
+    const _activeSite = gameState.world?.active_site;
+    if (!_activeSite) return null;
+    const _siteIdExpected = _activeSite.id || _activeSite.site_id;
+    const _siteMatch = containerId.match(/^(.+):(-?\d+),(-?\d+)$/);
+    if (!_siteMatch || _siteMatch[1] !== _siteIdExpected) return null;
+    const _coordKey = `${_siteMatch[2]},${_siteMatch[3]}`;
+    if (!_activeSite.floor_positions) _activeSite.floor_positions = {};
+    if (!_activeSite.floor_positions[_coordKey]) _activeSite.floor_positions[_coordKey] = { object_ids: [] };
+    if (!Array.isArray(_activeSite.floor_positions[_coordKey].object_ids)) _activeSite.floor_positions[_coordKey].object_ids = [];
+    return _activeSite.floor_positions[_coordKey].object_ids;
+  }
   return null;
 }
 
@@ -106,6 +119,14 @@ function _findAllContainers(gameState, objectId) {
     const _gen2 = _lsMap2[_shortKey2]?._generated_interior;
     if (_gen2 && Array.isArray(_gen2.object_ids) && _gen2.object_ids.includes(objectId)) {
       found.push({ containerType: 'localspace', containerId: _gen2.local_space_id });
+    }
+  }
+  // v1.84.92: scan site floor_positions
+  const _siteFloor = gameState.world?.active_site?.floor_positions || {};
+  for (const [_fpKey, _fp] of Object.entries(_siteFloor)) {
+    if (Array.isArray(_fp.object_ids) && _fp.object_ids.includes(objectId)) {
+      const _siteId = gameState.world.active_site.id || gameState.world.active_site.site_id;
+      found.push({ containerType: 'site', containerId: `${_siteId}:${_fpKey}` });
     }
   }
   return found;
@@ -163,6 +184,15 @@ async function run(gameState, quarantine, turnNumber) {
   if (_pos) _sceneContainerIds.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
   // v1.84.86: include active localspace container so v1.84.83 dedup can see floor objects
   if (_w.active_local_space?.local_space_id) _sceneContainerIds.add(_w.active_local_space.local_space_id);
+  // v1.84.92: include active site floor position so dedup can see site-floor objects
+  if (_w.active_site && !_w.active_local_space) {
+    const _siteId92 = _w.active_site.id || _w.active_site.site_id;
+    const _px92 = gameState.player?.position?.x;
+    const _py92 = gameState.player?.position?.y;
+    if (_siteId92 != null && _px92 != null && _py92 != null) {
+      _sceneContainerIds.add(`${_siteId92}:${_px92},${_py92}`);
+    }
+  }
   for (const _sn of ((_loc && _loc._visible_npcs) || [])) { if (_sn.id) _sceneContainerIds.add(_sn.id); }
 
   // v1.84.61: track which existing object IDs have already been claimed this pass

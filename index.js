@@ -3263,6 +3263,25 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           _quarantine.splice(_i, 1);
           _preRejected++;
         }
+        // v1.84.92: pre-flight gate for site promotes — container_id must match active site + current player x,y
+        for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
+          const _qe = _quarantine[_i];
+          if (_qe.action !== 'promote' || _qe.container_type !== 'site') continue;
+          const _activeSite92 = gameState.world?.active_site;
+          const _cid92 = String(_qe.container_id || '');
+          const _siteId92 = _activeSite92 ? (_activeSite92.id || _activeSite92.site_id) : null;
+          const _px92 = gameState.player?.position?.x;
+          const _py92 = gameState.player?.position?.y;
+          const _expectedSiteKey = (_siteId92 != null && _px92 != null && _py92 != null) ? `${_siteId92}:${_px92},${_py92}` : null;
+          const _siteInvalid = !_activeSite92 || !_expectedSiteKey || _cid92 !== _expectedSiteKey;
+          if (!_siteInvalid) continue;
+          const _siteReason = !_activeSite92 ? 'no active site' : !_expectedSiteKey ? 'player position unavailable' : `container_id mismatch (expected ${_expectedSiteKey})`;
+          console.warn(`[NARRATE] pre-flight: site container_id rejected (${_siteReason}): ${_cid92}`);
+          gameState.object_errors.push({ stage: 'quarantine_validation', reason: 'missing_authoritative_container', container_type: _qe.container_type, container_id: _cid92, object_name: _qe.name, turn: turnNumber });
+          if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+          _quarantine.splice(_i, 1);
+          _preRejected++;
+        }
         _objectRealityDebug.pre_rejected = _preRejected;
         _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
@@ -6135,7 +6154,7 @@ app.get('/diagnostics/objects', (req, res) => {
   if (container_id)   filtered = filtered.filter(o => o.current_container_id   === container_id);
 
   // Build by_container index from ALL objects matching statusFilter only
-  const by_container = { player: [], npc: {}, cell: {}, localspace: {} }; // v1.84.86: added localspace
+  const by_container = { player: [], npc: {}, cell: {}, localspace: {}, site: {} }; // v1.84.92: added site
   for (const obj of Object.values(allObjects)) {
     if (statusFilter !== 'all' && (obj.status || 'active') !== statusFilter) continue;
     const ct = obj.current_container_type;
@@ -6151,6 +6170,9 @@ app.get('/diagnostics/objects', (req, res) => {
     } else if (ct === 'localspace') {
       if (!by_container.localspace[ci]) by_container.localspace[ci] = [];
       by_container.localspace[ci].push(obj.id);
+    } else if (ct === 'site') {
+      if (!by_container.site[ci]) by_container.site[ci] = [];
+      by_container.site[ci].push(obj.id);
     }
   }
 
