@@ -4692,6 +4692,24 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       } else {
         context += `Floor (${_orLsName}): ${_orLsFloor.map(o => `"${o.name}" [${o.id}]`).join(', ')}\n`;
       }
+    } else if (gameState.world?.active_site) {
+      // v1.84.97: show site floor objects when player is at L1 depth
+      const _orSite97   = gameState.world.active_site;
+      const _orSiteId97 = _orSite97.site_id || _orSite97.id?.replace(/\/l2$/, '');
+      const _orSiteName = _orSite97.name || _orSiteId97;
+      const _orPx97 = gameState.player?.position?.x;
+      const _orPy97 = gameState.player?.position?.y;
+      if (_orSiteId97 != null && _orPx97 != null && _orPy97 != null) {
+        const _orSiteKey97 = `${_orSiteId97}:${_orPx97},${_orPy97}`;
+        const _orSiteFloor = Object.values(_orObjects).filter(o => (o.status || 'active') === 'active' && o.current_container_type === 'site' && o.current_container_id === _orSiteKey97);
+        if (_orSiteFloor.length === 0) {
+          context += `Floor (${_orSiteName}): (none)\n`;
+        } else {
+          context += `Floor (${_orSiteName}): ${_orSiteFloor.map(o => `"${o.name}" [${o.id}]`).join(', ')}\n`;
+        }
+      } else {
+        context += `Floor (${_orSiteName}): (position unavailable)\n`;
+      }
     }
 
     // === ENTITY ATTRIBUTES (v1.70.0 — ContinuityBrain promoted facts) ===

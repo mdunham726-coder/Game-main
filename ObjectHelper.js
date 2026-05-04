@@ -81,7 +81,7 @@ function _resolveContainerIds(gameState, containerType, containerId) {
     // v1.84.92: site floor container. containerId format: ${site_id}:${x},${y}
     const _activeSite = gameState.world?.active_site;
     if (!_activeSite) return null;
-    const _siteIdExpected = _activeSite.id || _activeSite.site_id;
+    const _siteIdExpected = _activeSite.site_id || _activeSite.id?.replace(/\/l2$/, '');
     const _siteMatch = containerId.match(/^(.+):(-?\d+),(-?\d+)$/);
     if (!_siteMatch || _siteMatch[1] !== _siteIdExpected) return null;
     const _coordKey = `${_siteMatch[2]},${_siteMatch[3]}`;

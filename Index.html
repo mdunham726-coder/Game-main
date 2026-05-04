@@ -1992,7 +1992,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       // v1.84.92: also show site floor objects when player is at L1 depth inside a site
       const _activeSite92 = data.state.world?.active_site;
       const _activeLs92 = data.state.world?.active_local_space;
-      const _siteId92 = (_activeSite92 && !_activeLs92) ? (_activeSite92.id || _activeSite92.site_id) : null;
+      const _siteId92 = (_activeSite92 && !_activeLs92) ? (_activeSite92.site_id || _activeSite92.id?.replace(/\/l2$/, '')) : null;
       const _siteX92 = data.state.player?.position?.x;
       const _siteY92 = data.state.player?.position?.y;
       const _activeSiteKey = (_siteId92 != null && _siteX92 != null && _siteY92 != null) ? `${_siteId92}:${_siteX92},${_siteY92}` : null;
