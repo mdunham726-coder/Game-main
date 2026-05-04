@@ -851,7 +851,7 @@ function resolveCellItemByName(state, query){
   // Scoped strictly to the player's current x,y position key — other positions are not visible.
   if (state?.objects && typeof state.objects === 'object' && state.world?.active_site && !state.world?.active_local_space) {
     const _site92 = state.world.active_site;
-    const _siteId92 = _site92.id || _site92.site_id;
+    const _siteId92 = _site92.site_id || _site92.id?.replace(/\/l2$/, '');
     const _spX92 = state.player?.position?.x;
     const _spY92 = state.player?.position?.y;
     if (_siteId92 != null && _spX92 != null && _spY92 != null) {

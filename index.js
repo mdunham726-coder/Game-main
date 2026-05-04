@@ -3302,7 +3302,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           if (_qe.action !== 'promote' || _qe.container_type !== 'site') continue;
           const _activeSite94 = gameState.world?.active_site;
           const _cid94 = String(_qe.container_id || '');
-          const _siteId94 = _activeSite94 ? (_activeSite94.id || _activeSite94.site_id) : null;
+          const _siteId94 = _activeSite94 ? (_activeSite94.site_id || _activeSite94.id?.replace(/\/l2$/, '')) : null;
           const _px94 = gameState.player?.position?.x;
           const _py94 = gameState.player?.position?.y;
           const _expectedSiteKey94 = (_siteId94 != null && _px94 != null && _py94 != null) ? `${_siteId94}:${_px94},${_py94}` : null;

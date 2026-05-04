@@ -125,7 +125,7 @@ function _findAllContainers(gameState, objectId) {
   const _siteFloor = gameState.world?.active_site?.floor_positions || {};
   for (const [_fpKey, _fp] of Object.entries(_siteFloor)) {
     if (Array.isArray(_fp.object_ids) && _fp.object_ids.includes(objectId)) {
-      const _siteId = gameState.world.active_site.id || gameState.world.active_site.site_id;
+      const _siteId = gameState.world.active_site.site_id || gameState.world.active_site.id?.replace(/\/l2$/, '');
       found.push({ containerType: 'site', containerId: `${_siteId}:${_fpKey}` });
     }
   }
@@ -186,7 +186,7 @@ async function run(gameState, quarantine, turnNumber) {
   if (_w.active_local_space?.local_space_id) _sceneContainerIds.add(_w.active_local_space.local_space_id);
   // v1.84.92: include active site floor position so dedup can see site-floor objects
   if (_w.active_site && !_w.active_local_space) {
-    const _siteId92 = _w.active_site.id || _w.active_site.site_id;
+    const _siteId92 = _w.active_site.site_id || _w.active_site.id?.replace(/\/l2$/, '');
     const _px92 = gameState.player?.position?.x;
     const _py92 = gameState.player?.position?.y;
     if (_siteId92 != null && _px92 != null && _py92 != null) {

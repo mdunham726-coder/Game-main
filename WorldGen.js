@@ -2277,6 +2277,7 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
 
   return {
     id: siteId,
+    site_id: siteId.replace(/\/l2$/, ''),
     name: null,
     site_size: typeof site_size === 'number' ? site_size : 3,
     start_local_space_id,

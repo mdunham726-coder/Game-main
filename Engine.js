@@ -300,6 +300,7 @@ function recordSiteToCell(state, cellKey, site) {
     }
     state.world.sites[site.interior_key] = {
       id:             site.interior_key,
+      site_id:        site.site_id,
       name:           site.name ?? null,
       type:           site.identity || null,
       npcs:           [],
@@ -1018,6 +1019,8 @@ function enterSite(state, { cell_key, site_id, entry_dir = null }, logger) {
 
   // Stored object IS the active object — no secondary generation, no split references.
   state.world.active_site = state.world.sites[interior_key];
+  // v1.84.95: backfill site_id (bare, no /l2) for container key construction — old saves lack this field
+  if (state.world.active_site && !state.world.active_site.site_id) state.world.active_site.site_id = sid;
   // v1.84.92: restore floor_positions from stub if present (persisted on exitSite)
   if (state.world.sites[interior_key].floor_positions) {
     state.world.active_site.floor_positions = state.world.sites[interior_key].floor_positions;
