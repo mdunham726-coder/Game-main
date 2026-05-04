@@ -3232,12 +3232,44 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         for (const c of _cbCandidates)        _quarantine.push({ action: 'promote',  ...c, detected_turn: turnNumber });
         for (const t of _cbTransfersFiltered) _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
         // v1.84.65: pre-flight normalization gate — reject grid promote entries with invalid container_id
+        // v1.84.93: grid promotes at L1/L2 are REWRITTEN to the correct container (not rejected)
+        //   L1 (active_site, no active_local_space): grid → site, container_id = ${siteId}:${x},${y}
+        //   L2 (active_local_space set): grid → localspace, container_id = active_local_space.local_space_id
         if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
         let _preRejected = 0;
+        let _preRewritten = 0;
         for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
           const _qe = _quarantine[_i];
           if (_qe.action !== 'promote' || _qe.container_type !== 'grid') continue;
           const _cid = String(_qe.container_id || '');
+          // v1.84.93: depth-based reroute — check BEFORE format validation
+          const _rwActiveLs = gameState.world?.active_local_space;
+          const _rwActiveSite = gameState.world?.active_site;
+          if (_rwActiveLs) {
+            // L2: grid → localspace
+            const _rwLsId = _rwActiveLs.local_space_id;
+            if (_rwLsId) {
+              console.log(`[NARRATE] pre-flight: grid promote rewritten L2 -> localspace:${_rwLsId} (was: ${_cid}) for "${_qe.name}"`);
+              _qe.container_type = 'localspace';
+              _qe.container_id = _rwLsId;
+              _preRewritten++;
+              continue;
+            }
+          } else if (_rwActiveSite) {
+            // L1: grid → site
+            const _rwSiteId = _rwActiveSite.id || _rwActiveSite.site_id;
+            const _rwPx = gameState.player?.position?.x;
+            const _rwPy = gameState.player?.position?.y;
+            if (_rwSiteId != null && _rwPx != null && _rwPy != null) {
+              const _rwSiteKey = `${_rwSiteId}:${_rwPx},${_rwPy}`;
+              console.log(`[NARRATE] pre-flight: grid promote rewritten L1 -> site:${_rwSiteKey} (was: ${_cid}) for "${_qe.name}"`);
+              _qe.container_type = 'site';
+              _qe.container_id = _rwSiteKey;
+              _preRewritten++;
+              continue;
+            }
+          }
+          // L0 (or reroute data unavailable): validate format and reject if invalid
           const _isCellPfx = _cid.startsWith('cell:');
           const _isInvalid = _isCellPfx || !/^LOC:\d+,\d+:\d+,\d+$/.test(_cid);
           if (!_isInvalid) continue;
@@ -3283,6 +3315,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           _preRejected++;
         }
         _objectRealityDebug.pre_rejected = _preRejected;
+        _objectRealityDebug.pre_rewritten = _preRewritten;
         _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
           const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);

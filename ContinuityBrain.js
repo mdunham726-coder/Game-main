@@ -93,6 +93,7 @@ Active location: ${location}
 Valid containers for object placement this turn:
 ${_validContainersList}
 Grid container_id MUST be an exact LOC:... value from this list. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
+CRITICAL: 'grid' is ONLY valid at L0 (overworld). If the player is inside a site (L1) or localspace interior (L2), the 'grid' container type is invalid — use the site or localspace container ID listed above instead.
 Current player input (this turn): "${rawInput || ''}"
 Confirmed player inventory (pre-turn): ${(() => { const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : []; const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {}; const _cbNames = _cbIds.map(id => _cbObjs[id]?.status === 'active' ? _cbObjs[id].name : null).filter(Boolean); return _cbNames.length ? _cbNames.join(', ') : '(empty)'; })()}
 Visible entities: ${entities}
