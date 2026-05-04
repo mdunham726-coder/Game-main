@@ -26,7 +26,7 @@ const _toolHttpAgent = new http.Agent({ keepAlive: false });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.54';
+const MB_VERSION = '2.8.55';
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
 /*

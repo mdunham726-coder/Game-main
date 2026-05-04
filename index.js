@@ -3296,23 +3296,31 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           _preRejected++;
         }
         // v1.84.92: pre-flight gate for site promotes — container_id must match active site + current player x,y
+        // v1.84.94: rewrite-on-mismatch (same principle as v1.84.93 grid gate) — CB may emit wrong container_id format
         for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
           const _qe = _quarantine[_i];
           if (_qe.action !== 'promote' || _qe.container_type !== 'site') continue;
-          const _activeSite92 = gameState.world?.active_site;
-          const _cid92 = String(_qe.container_id || '');
-          const _siteId92 = _activeSite92 ? (_activeSite92.id || _activeSite92.site_id) : null;
-          const _px92 = gameState.player?.position?.x;
-          const _py92 = gameState.player?.position?.y;
-          const _expectedSiteKey = (_siteId92 != null && _px92 != null && _py92 != null) ? `${_siteId92}:${_px92},${_py92}` : null;
-          const _siteInvalid = !_activeSite92 || !_expectedSiteKey || _cid92 !== _expectedSiteKey;
-          if (!_siteInvalid) continue;
-          const _siteReason = !_activeSite92 ? 'no active site' : !_expectedSiteKey ? 'player position unavailable' : `container_id mismatch (expected ${_expectedSiteKey})`;
-          console.warn(`[NARRATE] pre-flight: site container_id rejected (${_siteReason}): ${_cid92}`);
-          gameState.object_errors.push({ stage: 'quarantine_validation', reason: 'missing_authoritative_container', container_type: _qe.container_type, container_id: _cid92, object_name: _qe.name, turn: turnNumber });
-          if (gameState.object_errors.length > 100) gameState.object_errors.shift();
-          _quarantine.splice(_i, 1);
-          _preRejected++;
+          const _activeSite94 = gameState.world?.active_site;
+          const _cid94 = String(_qe.container_id || '');
+          const _siteId94 = _activeSite94 ? (_activeSite94.id || _activeSite94.site_id) : null;
+          const _px94 = gameState.player?.position?.x;
+          const _py94 = gameState.player?.position?.y;
+          const _expectedSiteKey94 = (_siteId94 != null && _px94 != null && _py94 != null) ? `${_siteId94}:${_px94},${_py94}` : null;
+          if (!_activeSite94 || !_expectedSiteKey94) {
+            // Hard reject only when rewrite data is unavailable
+            const _siteReason94 = !_activeSite94 ? 'no active site' : 'player position unavailable';
+            console.warn(`[NARRATE] pre-flight: site promote rejected (${_siteReason94}): ${_cid94}`);
+            gameState.object_errors.push({ stage: 'quarantine_validation', reason: 'missing_authoritative_container', container_type: _qe.container_type, container_id: _cid94, object_name: _qe.name, turn: turnNumber });
+            if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+            _quarantine.splice(_i, 1);
+            _preRejected++;
+            continue;
+          }
+          if (_cid94 === _expectedSiteKey94) continue; // already correct
+          // Rewrite wrong container_id to authoritative site floor key
+          console.log(`[NARRATE] pre-flight: site promote rewritten -> site:${_expectedSiteKey94} (was: ${_cid94}) for "${_qe.name}"`);
+          _qe.container_id = _expectedSiteKey94;
+          _preRewritten++;
         }
         _objectRealityDebug.pre_rejected = _preRejected;
         _objectRealityDebug.pre_rewritten = _preRewritten;
