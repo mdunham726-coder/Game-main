@@ -36,12 +36,27 @@ function aliasScore(query, name, aliases, ctxBonus=0){
   let score = 0;
   if (q === nNorm) score += 10;
   if (Array.isArray(aliases) && aliases.some(al => q === String(al||'').trim().toLowerCase())) score += 6;
-  // Token containment: a reference whose tokens are all present in the name's token set is a
-  // valid structural identifier of that object (+10, same confidence tier as exact name match).
+  // Token containment — two tiers, both +10 (same confidence as exact name match):
+  // Tier 1 (exact): all query tokens are literally present in the name token set.
+  // Tier 2 (fuzzy): each query token matches some name token within a length-derived edit
+  //   distance tolerance (min(2, floor(len/3)) for tokens >= 4 chars; 0 otherwise).
+  //   This covers minor input corruption such as transpositions and 1-char misspellings.
   if (score < 10 && q.length > 0) {
-    const qTokens = q.split(/\s+/);
-    const nTokens = new Set(nNorm.split(/\s+/));
-    if (qTokens.every(t => nTokens.has(t))) score += 10;
+    const qTokens  = q.split(/\s+/);
+    const nTokens  = new Set(nNorm.split(/\s+/));
+    const nTokenArr = [...nTokens];
+    if (qTokens.every(t => nTokens.has(t))) {
+      score += 10; // Tier 1: exact token containment
+    } else {
+      // Tier 2: fuzzy token containment
+      const fuzzyMatch = qTokens.every(t => {
+        if (nTokens.has(t)) return true;
+        const tol = t.length >= 4 ? Math.min(2, Math.floor(t.length / 3)) : 0;
+        if (tol === 0) return false;
+        return nTokenArr.some(nt => levenshtein(t, nt) <= tol);
+      });
+      if (fuzzyMatch) score += 10;
+    }
   }
   const dists = [levenshtein(q, nNorm)];
   if (Array.isArray(aliases)) for (const al of aliases) dists.push(levenshtein(q, String(al||'')));

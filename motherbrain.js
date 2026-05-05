@@ -26,7 +26,7 @@ const _toolHttpAgent = new http.Agent({ keepAlive: false });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '3.0.0';
+const MB_VERSION = '3.0.1';
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
 /*
@@ -449,6 +449,8 @@ FETCH PROCEDURE (Category B only):
   When calling get_payload for a specific part, always pass part= explicitly rather than fetching the full stage — this avoids truncation on large stages. Example: get_payload(turn=N, stage="continuity_brain", part="response") for the raw DS output; part="prompt" for the exact text sent to DS.
   Before each tool call, output one sentence explaining what you are looking for and why — this is your visible reasoning step.
 
+FAILURE INVESTIGATION PROTOCOL: When investigating any input resolution failure — TARGET_NOT_IN_INVENTORY, TARGET_NOT_FOUND_IN_CELL, NPC_NOT_PRESENT, INVALID_DIRECTION, ITEM_NOT_FOUND, or any case where the engine could not match the player's input to a world entity — your first step, before tracing code paths, source files, or system logic, is to read the literal rawInput string from the failing turn's input field. Extract exactly what characters the player submitted. Compare that string directly against the stored names and aliases of the relevant entities. Only after that ground check should you begin system analysis. A system that works correctly for one input does not explain a failure for a different input. Always verify the literal event before analyzing the architecture.
+
 EVIDENCE STANDARDS:
   - If your answer is grounded in retrieved tool data: state what you found and cite the turn.
   - If your answer is based on inference from context (Category A): that is acceptable — but do not present inference as retrieved fact.
@@ -461,7 +463,7 @@ PRIORITY ORDER:
 
 DO NOT FETCH for Category A questions: current game state, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn's CB extraction/warnings/reality check, WORLD SITES SUMMARY (for proximity/nearest-site questions scoped to loaded cells). If the full answer is already present, respond directly. Exception: if the question scope exceeds loaded cells (e.g., "anywhere in the world", unvisited areas), you must call get_sites — the summary cannot prove absence in unloaded areas.
 
-SEARCH EFFICIENCY: If a tool call returns empty, null, or no matching results, do not repeat the same query. Either try a meaningfully different search term or synthesize from available context. Repeating an identical or near-identical query that already failed wastes a round and will produce the same result.
+SEARCH EFFICIENCY: If a tool call returns empty, null, or no matching results, do not repeat the same query. Either try a meaningfully different search term or synthesize from available context. Repeating an identical or near-identical query that already failed wastes a round and will produce the same result. When an investigation has consumed many tool rounds without producing a definitive conclusion, recognize that your evidence may already be sufficient to form a working hypothesis. Synthesize what you know: state your best explanation, what evidence supports it, and what remains unconfirmed. This is more useful to the developer than probing adjacent systems speculatively. Continue following evidence only when there is a clear, specific next step — not when you are speculating outward into secondary systems with no remaining lead.
 
 SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it.
   index.js — turn orchestration, narrator/RC/CB/ORS pipeline, all prompt assembly, gates, and intercepts | read when tracing a turn pipeline fault, prompt instruction, or gate behavior
@@ -810,14 +812,24 @@ async function askMotherBrain(question) {
         _loopMsgs.push({ role: 'assistant', content: message.content || null, tool_calls: message.tool_calls });
 
         // Execute each tool call and append results
+        let _toolParseError = false;
         for (const tc of message.tool_calls) {
-          const tcName  = tc.function?.name || 'unknown';
-          const tcArgs  = JSON.parse(tc.function?.arguments || '{}');
+          const tcName = tc.function?.name || 'unknown';
+          let tcArgs;
+          try {
+            tcArgs = JSON.parse(tc.function?.arguments || '{}');
+          } catch (parseErr) {
+            printLine(r(`  Mother Brain: Tool-call JSON parse failed (round ${_round}) — ${parseErr.message}. Ending trace.`));
+            aiText = `[Tool loop terminated: malformed tool-call JSON in round ${_round} — ${parseErr.message}. Evidence gathered before this point may still be useful for analysis.]`;
+            _toolParseError = true;
+            break;
+          }
           const argsStr = Object.entries(tcArgs).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
           const result  = await executeToolCall(tcName, tcArgs);
           printLine(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)`));
           _loopMsgs.push({ role: 'tool', tool_call_id: tc.id, content: result });
         }
+        if (_toolParseError) break;
 
         printLine(g('  Mother Brain: [synthesizing...]'));
         continue; // next round
