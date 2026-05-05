@@ -71,7 +71,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
     // === PHASE 3C: Quest actions added to valid actions list ===
     // NOTE: 'help' removed — Help channel bypasses parser entirely (Phase 1/5a)
     "Valid actions: move, take, drop, throw, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, state_claim",
-    "state_claim: the player is attempting to establish or revise a fact about themselves, their possessions, another entity, the environment, or the world without that fact being grounded in current engine-confirmed reality. This is a routing signal, not an engine action and not a source of truth. Its purpose is to detect inputs whose main effect would be to author unsupported reality rather than attempt an action within already-established reality. Use it to preserve the claim as player expression while preventing the claim from becoming fact. Do not use it when the player is making a genuine attempt to investigate, interact with, move through, communicate with, or otherwise test uncertain reality. A state_claim must never create, modify, or confirm any fact by itself; it only routes the input toward bounded narration that acknowledges the claim, checks it against engine truth, and refuses to promote unsupported reality.",
+    "state_claim: State claims are declarative assertions of already-true possession, identity, condition, or world fact. Imperative action attempts must not be classified as state claims merely because success would change possession or world state. The parser classifies intent — the engine determines whether the object or condition exists. Use state_claim only when the input's primary structure is a declarative assertion (e.g. 'I have X', 'I am X', 'there is X here') with no imperative acquisition or interaction verb driving it. Physical acquisition verbs (grab, snatch, take, get, pick up, lift, collect, pluck, retrieve, etc.) must be classified as action='take' — never state_claim. A state_claim must never create, modify, or confirm any fact by itself; it only routes the input toward bounded narration that acknowledges the claim, checks it against engine truth, and refuses to promote unsupported reality.",
     "",
     "Directions: north, south, east, west, up, down",
     "Only assign action='move' when the player clearly intends to travel to a new location. Do not infer movement from body-part words (e.g., 'right foot', 'left hand') or positional language used in non-travel contexts.",
@@ -191,6 +191,30 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
   const raw = (typeof userInput === "string") ? userInput.trim() : "";
   if (!raw) {
     return { success: false, error: "EMPTY_INPUT" };
+  }
+
+  // v1.84.99: Pre-LLM fast path for unambiguously imperative acquisition verbs.
+  // "grab" and "snatch" have no false-positive risk in text adventure context —
+  // they always mean take. Parser classifies intent; engine validates existence.
+  // Do channel only; target text required after article-strip.
+  if (channel === 'do') {
+    const _rawLower = raw.toLowerCase();
+    const _fastMatch = _rawLower.match(/^(grab|snatch)\s+(.+)$/);
+    if (_fastMatch) {
+      const _verb = _fastMatch[1];
+      const _targetRaw = _fastMatch[2].replace(/^(a|an|the)\s+/i, '').trim();
+      if (_targetRaw.length > 0) {
+        log('fast_path', `verb="${_verb}" -> action=take target="${_targetRaw}"`);
+        const _fastResult = {
+          success: true,
+          intent: { primaryAction: { action: 'take', target: _targetRaw, dir: null }, secondaryActions: [], compound: false },
+          confidence: 0.97
+        };
+        const _fastKey = hashKey(`${channel}|${raw}|fast_path`);
+        setToCache(_fastKey, _fastResult);
+        return _fastResult;
+      }
+    }
   }
 
   const contextStr = serializeContext(gameContext);

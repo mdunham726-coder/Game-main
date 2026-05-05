@@ -1090,7 +1090,7 @@ function validateAndQueueIntent(state, normalizedIntent){
 function computeVisibleNpcs(site, playerPos, npcRegistry = site?.npcs || []) {
   const MAX_VISIBLE_NPCS = 5; // tunable — not a simulation rule
   if (!site || !playerPos) return [];
-  const { grid = [], site_id } = site;
+  const { grid = [] } = site;
   const { x, y } = playerPos;
   const idSet = new Set();
   // Exact tile only — no adjacency radius
@@ -1101,7 +1101,7 @@ function computeVisibleNpcs(site, playerPos, npcRegistry = site?.npcs || []) {
     : (tile?.npc_ids || []);
   tileNpcIds.forEach(id => idSet.add(id));
   const resolved = [...idSet]
-    .map(id => npcRegistry.find(n => n.id === id && (!site_id || n.site_id === site_id)))
+    .map(id => npcRegistry.find(n => n.id === id))
     .filter(Boolean)
     .slice(0, MAX_VISIBLE_NPCS);
   const unresolvedCount = idSet.size - resolved.length;
