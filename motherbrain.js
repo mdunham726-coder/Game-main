@@ -1,5 +1,5 @@
 /**
- * motherbrain.js — Mother Brain v2.5.0
+ * motherbrain.js — Mother Brain v3.0.0
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -26,7 +26,7 @@ const _toolHttpAgent = new http.Agent({ keepAlive: false });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '2.8.60';
+const MB_VERSION = '3.0.0';
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
 /*
@@ -173,13 +173,13 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'get_source_slice',
-      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, ObjectHelper.js. Returns: file, from, to, total_lines, lines (the raw source text).',
+      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html. Returns: file, from, to, total_lines, lines (the raw source text).',
       parameters: {
         type: 'object',
         properties: {
           file: {
             type: 'string',
-            description: 'Filename only (no path) — must be one of the allowed files listed above. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js.'
+            description: 'Filename only (no path) — must be one of the allowed files listed above. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html.'
           },
           from: {
             type: 'integer',
@@ -208,7 +208,7 @@ const MB_TOOLS = [
           },
           file: {
             type: 'string',
-            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js.'
+            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html.'
           }
         },
         required: ['query']
@@ -462,6 +462,30 @@ PRIORITY ORDER:
 DO NOT FETCH for Category A questions: current game state, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn's CB extraction/warnings/reality check, WORLD SITES SUMMARY (for proximity/nearest-site questions scoped to loaded cells). If the full answer is already present, respond directly. Exception: if the question scope exceeds loaded cells (e.g., "anywhere in the world", unvisited areas), you must call get_sites — the summary cannot prove absence in unloaded areas.
 
 SEARCH EFFICIENCY: If a tool call returns empty, null, or no matching results, do not repeat the same query. Either try a meaningfully different search term or synthesize from available context. Repeating an identical or near-identical query that already failed wastes a round and will produce the same result.
+
+SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it.
+  index.js — turn orchestration, narrator/RC/CB/ORS pipeline, all prompt assembly, gates, and intercepts | read when tracing a turn pipeline fault, prompt instruction, or gate behavior
+  Engine.js — world state mutations: movement, enterSite/exitSite, enterLocalSpace/exitLocalSpace, cell/site/LS generation entry points | read when tracing spatial transitions or state mutations
+  ActionProcessor.js — synchronous player action validation and execution (take/drop/throw/move/examine), pre-CB inventory transfers | read when a player action resolves incorrectly or hits the wrong gate
+  WorldGen.js — procedural generation: cells, sites, localspaces, NPC distribution, site_id field | read when investigating generation output or site/LS structure
+  NPCs.js — NPC creation, identity fill pipeline, reputation, conditions | read when tracing NPC identity, fill failures, or reputation changes
+  SemanticParser.js — LLM-driven intent classification, fast paths, state_claim routing | read when an input is misclassified or routed incorrectly
+  ContinuityBrain.js — Phase B extraction, promotion filters, assembleContinuityPacket, mood/TRUTH blocks | read when CB produced wrong facts, missed a promotion, or emitted a wrong container
+  ObjectHelper.js — object lifecycle: promotion, transfer, retirement, condition updates, dedup guard | read when investigating object_errors, container mismatches, or phantom duplicates
+  conditionbot.js — player condition lifecycle evaluation | read when a condition was not created, resolved, or updated correctly
+  NarrativeContinuity.js — legacy continuity module (bypassed, preserved) | read only for legacy reference
+  QuestSystem.js — quest tracking stubs | read when investigating quest state
+  diagnostics.js — all /diagnostics/* HTTP endpoints | read when an endpoint returns unexpected data or is missing a field
+  logger.js / logging.js — structured event logging helpers | read when log events are missing or malformed
+  continuity.js — live SSE terminal panel for CB extraction and promotion view | read when investigating panel rendering or CB display
+  cbpanel.js — interactive ContinuityBrain terminal panel (4 views: extraction, promotion log, entity attributes, explain-this) | read when the panel behaves unexpectedly or to understand what it displays
+  npcpanel.js — live NPC identity and attribute terminal panel | read when NPC state display is incorrect or the panel crashes
+  sitelens.js — live site/localspace fill-state monitor terminal panel | read when investigating fill pipeline state or panel display
+  motherwatch.js — Mother Watch terminal panel, renders per-turn watch_verdict SSE events | read when watch display is wrong or to understand verdict rendering
+  summary.js — session metrics summary panel | read when summary data is wrong or to understand what it aggregates
+  dmletter.js — DM note inspection utility | read when DM note display is wrong or archive is not rendering
+  Index.html — main game client: SSE connection, turn handler, all UI panels (narrative, inventory, ground, conditions, cell objects, continuity), world-prompt modal, pending-say flow | read when a UI bug is reported or a client-side system behaves incorrectly
+  Map.html — world map viewer: macro-grid visualization, zoom/pan, site markers, player position | read when the map renders incorrectly or map navigation is broken
 
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
 

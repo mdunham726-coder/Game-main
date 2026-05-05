@@ -6338,7 +6338,9 @@ const _SOURCE_ALLOWLIST = new Set([
   'index.js', 'Engine.js', 'ActionProcessor.js', 'NPCs.js', 'WorldGen.js',
   'NarrativeContinuity.js', 'ContinuityBrain.js', 'SemanticParser.js',
   'continuity.js', 'QuestSystem.js', 'logger.js', 'logging.js',
-  'diagnostics.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js'  // v1.84.54
+  'diagnostics.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js',  // v1.84.54
+  'cbpanel.js', 'npcpanel.js', 'sitelens.js', 'motherwatch.js',              // v1.85.1
+  'summary.js', 'dmletter.js', 'Index.html', 'Map.html'                      // v1.85.1
 ]);
 app.get('/diagnostics/source', (req, res) => {
   const diagKey = process.env.DIAGNOSTICS_KEY;
