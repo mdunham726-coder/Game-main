@@ -1939,7 +1939,11 @@ app.post('/narrate', async (req, res) => {
         // physical:, object:, declared: are permanent and untouched.
         if (engineOutput?.state) {
           const _postActionLsId = engineOutput.state.world?.active_local_space?.local_space_id ?? null;
-          if (_preActionLsId !== _postActionLsId && engineOutput.state.player?.attributes) {
+          // v1.85.5: also fire on L0↔L1 site-boundary crossings (extends v1.84.89 policy to site transitions)
+          // _preTurnLoc.siteId captured before engine ran (v1.85.4); null-safe via optional chain + ?? null
+          const _postActionSiteId = engineOutput.state.world?.active_site?.id ?? null;
+          const _siteChanged = (_preTurnLoc?.siteId ?? null) !== _postActionSiteId;
+          if ((_preActionLsId !== _postActionLsId || _siteChanged) && engineOutput.state.player?.attributes) {
             const _attrs = engineOutput.state.player.attributes;
             for (const key of Object.keys(_attrs)) {
               if (_attrs[key]?.bucket === 'state') delete _attrs[key];
@@ -2925,6 +2929,14 @@ app.post('/narrate', async (req, res) => {
       ? `\nNARRATION TASK [MANDATORY]: This is an exit turn.\nThe player's authored action — "${_rawInput}" — is the narrative event.\nTheir phrasing describes how they exited. Use it.\nDo NOT replace it with a generic exit description.\nDo NOT open with environment description before the exit action.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
       : '';
 
+    // v1.85.5: enter arrival anchor — mirrors _exitTaskBlock pattern; gates on successful entry only
+    const _enterTaskBlock = (_parsedAction === 'enter' && !_actionHadNoEffect)
+      ? (() => {
+          const _enteredSiteName = gameState.world?.active_site?.name || 'the site';
+          return `\nNARRATION TASK [MANDATORY]: This is an entry turn. The player has arrived in ${_enteredSiteName}.\nThey are now inside the site boundary. Lead with arrival — what they immediately encounter upon entering.\nDo NOT narrate approach, travel toward the site, or exterior description.\nDo NOT open with environment description before the arrival event.\nDo NOT replace the player's authored action with a generic or alternative action.\nThe player is already there.\n`;
+        })()
+      : '';
+
     // v1.53.0: Dynamic primary narration task bullet.
     // Replaces the static "Write a vivid paragraph describing surroundings" bullet in the CORE INSTRUCTIONS
     // bullet list with a turn-specific task definition. This is the upstream fix — the bullet is read
@@ -2939,6 +2951,11 @@ app.post('/narrate', async (req, res) => {
       }
       if (_parsedAction === 'exit') {
         return `Write a vivid paragraph that opens with how the player exited. Their specific phrasing from "${_rawInput}" is the narrative event — do not open with the destination environment before the exit action.`;
+      }
+      // v1.85.5: enter arrival anchor — gates on successful entry only (_actionHadNoEffect excludes failed/ambiguous)
+      if (_parsedAction === 'enter' && !_actionHadNoEffect) {
+        const _enteredSiteName = gameState.world?.active_site?.name || 'the site';
+        return `Write a vivid paragraph that opens with the player's arrival into ${_enteredSiteName}. They are now inside the site boundary — lead with what they immediately encounter upon arrival. Do not narrate travel toward the site; the player is already there.`;
       }
       return `Write a vivid paragraph describing the player's current surroundings as they experience them now`;
     })();
@@ -3061,7 +3078,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_realityAnchorBlock}`;
+${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -4744,6 +4761,23 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         }
       } else {
         context += `Floor (${_orSiteName}): (position unavailable)\n`;
+      }
+    } else {
+      // v1.85.5: L0 ground objects — expose grid-container objects at current cell to narrator
+      // Fires only when active_local_space and active_site are both null (L0 only, structurally watertight)
+      const _orL0Pos = gameState.world?.position;
+      if (_orL0Pos) {
+        const _orL0Key = `LOC:${_orL0Pos.mx},${_orL0Pos.my}:${_orL0Pos.lx},${_orL0Pos.ly}`;
+        const _orL0Floor = Object.values(_orObjects).filter(o =>
+          (o.status || 'active') === 'active' &&
+          o.current_container_type === 'grid' &&
+          o.current_container_id === _orL0Key
+        );
+        if (_orL0Floor.length === 0) {
+          context += `Ground (overworld): (none)\n`;
+        } else {
+          context += `Ground (overworld): ${_orL0Floor.map(o => `"${o.name}" [${o.id}]`).join(', ')}\n`;
+        }
       }
     }
 
