@@ -76,7 +76,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
     "Directions: north, south, east, west, up, down",
     "Only assign action='move' when the player clearly intends to travel to a new location. Do not infer movement from body-part words (e.g., 'right foot', 'left hand') or positional language used in non-travel contexts.",
     "action='move' REQUIRES a compass direction (north/south/east/west/up/down). Never set action='move' without a clear compass direction.",
-    "Use action='enter' for phrases like: 'go to [place]', 'go into [X]', 'head to [X]', 'get in/inside [X]', or any phrase that targets a named location without a compass direction. action='enter' REQUIRES a structure or location as target — if the target is a person or NPC, use action='talk' instead; if the target is an object, use 'examine' or 'take'.",
+    "Use action='enter' for phrases like: 'go to [place]', 'go into [X]', 'head to [X]', 'get in/inside [X]', 'enter', 'go in', 'go inside', or any phrase that implies entry. If the player names a structure, capture it in target. If the player's phrasing implies entry without naming a structure (e.g. bare 'enter', 'go in', 'go inside'), set target to null — the engine resolves contextually. If a named target is present, it must be captured in target; do not return target: null when a location is named. If the target is a person or NPC, use action='talk' instead; if the target is an object, use 'examine' or 'take'.",
     "Use action='talk' for phrases like: 'talk to [person]', 'speak with [person]', 'walk over and talk to [X]', or any phrase directed at an NPC or person. The target should be the person or NPC name/role.",
     "Use action='throw' for phrases like: 'throw [item]', 'toss [item]', 'hurl [item]', 'fling [item]', 'chuck [item]', 'lob [item]', 'pitch [item]', or any phrase where the player propels, launches, or forcefully releases an item away from themselves. Target should be the item name.",
     "Use action='exit' for phrases like: 'out of', 'go out', 'leave', 'exit', 'get out'. exit is an action, not a direction value. Never use dir='exit'.",
@@ -214,6 +214,20 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
         setToCache(_fastKey, _fastResult);
         return _fastResult;
       }
+    }
+    // v1.85.4: bare-entry fast-path — strictly end-anchored, do channel only.
+    // Matches complete bare entry phrases with no named target.
+    // Targeted enters (e.g. "enter the tavern") fall through to LLM path.
+    if (/^(enter|go in|go inside|go back in|head inside|head back in|get inside)$/i.test(raw)) {
+      log('fast_path', `bare_entry raw="${raw}" -> action=enter target=null`);
+      const _bareEntryResult = {
+        success: true,
+        intent: { primaryAction: { action: 'enter', target: null, dir: null }, secondaryActions: [], compound: false },
+        confidence: 0.97
+      };
+      const _bareEntryKey = hashKey(`${channel}|${raw}|fast_path`);
+      setToCache(_bareEntryKey, _bareEntryResult);
+      return _bareEntryResult;
     }
   }
 

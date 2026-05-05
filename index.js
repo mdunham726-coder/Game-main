@@ -976,6 +976,9 @@ app.post('/narrate', async (req, res) => {
   // First turn: seed world using WORLD_PROMPT through Engine
   let engineOutput = null;
   let inputObj = null; // Declared in outer scope — assigned in if/else branches below
+  let _enterAmbiguous = false;    // v1.85.4: true when null-target enter finds >1 enterable site
+  let _preTurnLoc = null;         // v1.85.4: location fingerprint captured before Engine.buildOutput
+  let _actionHadNoEffect = false; // v1.85.4: true when move/enter/exit intent produced no state change
   if (isFirstTurn === true) {
     isFirstTurn = false;
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
@@ -1782,7 +1785,7 @@ app.post('/narrate', async (req, res) => {
 
           // ── HYBRID ENTRY RESOLVER ─────────────────────────────────────────────────
           // Runs BEFORE buildOutput so Engine receives annotated player_intent.
-          // Only fires on 'enter' with a non-empty target phrase.
+          // Fires on 'enter' at L0: handles targeted resolution (P1/P2) and null-target disambiguation.
           if (queuedAction.action === 'enter' && !gameState.world.active_site) {
             const _resolverPhrase = (queuedAction.target || '').toLowerCase().trim().replace(/^(the|a|an)\s+/, '');
             const _resolverTrace = {
@@ -1850,6 +1853,24 @@ app.post('/narrate', async (req, res) => {
                   }
                 }
               }
+            } else {
+              // null-target enter: contextual disambiguation from current cell (v1.85.4)
+              const _rPos     = gameState.world.position;
+              const _rCellKey = `LOC:${_rPos.mx},${_rPos.my}:${_rPos.lx},${_rPos.ly}`;
+              const _rCell    = gameState.world.cells && gameState.world.cells[_rCellKey];
+              const _rSites   = _rCell ? Object.values(_rCell.sites || {}) : [];
+              const _ntCandidates = _rSites.filter(s => s.enterable === true && s.is_filled === true);
+              if (_ntCandidates.length === 1) {
+                mapped.player_intent.resolved_site_id = _ntCandidates[0].site_id;
+                _resolverTrace.resolved_site_id = _ntCandidates[0].site_id;
+                console.log('[RESOLVER] null-target: auto-resolved to', _ntCandidates[0].site_id);
+              } else if (_ntCandidates.length > 1) {
+                mapped.player_intent.ambiguous_ids = _ntCandidates.map(s => s.site_id);
+                _enterAmbiguous = true;
+                _resolverTrace.p1 = { result: 'ambiguous', pass: 'null_target', matchCount: _ntCandidates.length };
+                console.log('[RESOLVER] null-target: ambiguous', _ntCandidates.length, 'sites');
+              }
+              // else: 0 candidates — engine receives null-target enter, handles as no-op
             }
 
             // Write trace to world state so frontend diagnostic panel can read it.
@@ -1859,6 +1880,12 @@ app.post('/narrate', async (req, res) => {
 
           // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
           if (mapped?.player_intent && typeof mapped.player_intent === 'object') mapped.player_intent._turn = turnNumber;
+          // v1.85.4: capture location fingerprint before engine processes action
+          _preTurnLoc = {
+            siteId: gameState.world?.active_site?.id ?? null,
+            lsId:   gameState.world?.active_local_space?.local_space_id ?? null,
+            posKey: `${gameState.world?.position?.mx},${gameState.world?.position?.my}:${gameState.world?.position?.lx},${gameState.world?.position?.ly}`
+          };
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
@@ -1868,6 +1895,13 @@ app.post('/narrate', async (req, res) => {
             console.log('[POINT-E-PERSIST] Before sessionStates.set - gameState.world.position:', gameState.world.position);
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
             console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
+          }
+          // v1.85.4: no-movement detection for enter/exit/move intents
+          const _ma = mapped?.player_intent?.action;
+          if (_preTurnLoc && (_ma === 'enter' || _ma === 'exit' || _ma === 'move')) {
+            _actionHadNoEffect = (_preTurnLoc.siteId === (gameState.world?.active_site?.id ?? null))
+              && (_preTurnLoc.lsId   === (gameState.world?.active_local_space?.local_space_id ?? null))
+              && (_preTurnLoc.posKey === `${gameState.world?.position?.mx},${gameState.world?.position?.my}:${gameState.world?.position?.lx},${gameState.world?.position?.ly}`);
           }
         }
         engineOutput = allResponses[allResponses.length - 1];
@@ -2965,7 +2999,7 @@ LAYER CONSTRAINT [MANDATORY]:
 ${_narDepth === 3
   ? `You are inside a local space (Layer L2). The player is already within this environment — do NOT reintroduce or restate the room at the start of this turn.
 
-${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}
+${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : _actionHadNoEffect && _enterAmbiguous ? `Multiple enterable structures are present at this location. The player's input did not specify which one. Acknowledge this directly and briefly — the player must name the structure to proceed. Do not describe movement, approach, or entry of any kind.` : _actionHadNoEffect && _parsedAction === 'enter' ? `The player attempted to enter but there is nothing enterable here. Briefly acknowledge this. Do not describe movement, approach, or entry.` : _actionHadNoEffect ? `This action had no mechanical effect — the player's location is unchanged. Narrate a brief grounded moment in the player's current position. Do not describe movement, travel, or approach.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}
 
 Environment appears only as it is encountered, interacted with, or newly revealed through the action. Avoid repeating static descriptions (air, smell, walls, lighting, hum) unless something has changed or the player is actively examining their surroundings.${_parsedAction === 'move' ? `
 
@@ -2975,7 +3009,7 @@ The player is actively observing — environment description is warranted here. 
   : _narDepth >= 2
   ? `You are narrating Layer L1 — the open interior of ${_narActiveSite?.name || 'the site'}: streets, paths, and open areas between buildings. The player is traversing this site. Their action is the opening beat of this turn — streets and paths are what they move through, not a scene to re-establish each turn. Do not open with a description of the ground, air, or ambient sounds as if the player is standing still. Do not repeat static environmental phrases from prior turns.
 
-${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
+${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : _actionHadNoEffect && _enterAmbiguous ? `Multiple enterable structures are present at this location. The player's input did not specify which one. Acknowledge this directly and briefly — the player must name the structure to proceed. Do not describe movement, approach, or entry of any kind.` : _actionHadNoEffect && _parsedAction === 'enter' ? `The player attempted to enter but there is nothing enterable here. Briefly acknowledge this. Do not describe movement, approach, or entry.` : _actionHadNoEffect ? `This action had no mechanical effect — the player's location is unchanged. Narrate a brief grounded moment in the player's current position. Do not describe movement, travel, or approach.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
 
 The player is moving through the site. Use their exact phrasing in the first sentence. The street or path is what they pass through — not what they stop to describe.` : (_parsedAction === 'look' || _parsedAction === 'examine') ? `
 
@@ -2984,7 +3018,7 @@ The player is actively observing. Observation is warranted here — describe wha
 You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2. Any local spaces listed below are navigation references only — do NOT import their smell, atmosphere, or character into your description.`
   : `You are narrating Layer L0 — the overworld. The player is traversing open terrain. Their action is the opening beat of this turn — terrain is the medium they are moving through, not the primary subject of the narration. Do not open with a description of the landscape as if the player is standing still surveying it. Do not repeat static terrain phrases from prior turns.
 
-${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
+${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : _actionHadNoEffect && _enterAmbiguous ? `Multiple enterable structures are present at this location. The player's input did not specify which one. Acknowledge this directly and briefly — the player must name the structure to proceed. Do not describe movement, approach, or entry of any kind.` : _actionHadNoEffect && _parsedAction === 'enter' ? `The player attempted to enter but there is nothing enterable here. Briefly acknowledge this. Do not describe movement, approach, or entry.` : _actionHadNoEffect ? `This action had no mechanical effect — the player's location is unchanged. Narrate a brief grounded moment in the player's current position. Do not describe movement, travel, or approach.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
 
 The player is moving across terrain. Use their exact phrasing in the first sentence. The terrain and landscape are what they pass through — not what they stop to describe.` : (_parsedAction === 'look' || _parsedAction === 'examine') ? `
 
