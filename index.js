@@ -2715,6 +2715,10 @@ app.post('/narrate', async (req, res) => {
       // RC must not fire: narrator prompt already routes this to state_claim rejection — an RC advisory would
       // contradict that instruction and give the narrator a concrete consequence to follow instead.
       _rcSkippedReason = 'target_not_found_in_cell';
+    } else if (gameState._environmentGatherIntent?.synthetic) {
+      // v1.85.6: take action forwarded to narrator for plausibility resolution (ORS had no prior record).
+      // RC must not fire: the narrator already receives a targeted plausibility-judgment block.
+      _rcSkippedReason = 'synthetic_env_gather';
     } else {
       // Build query — SAY channel with matched NPC gets role context
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
@@ -2790,6 +2794,7 @@ app.post('/narrate', async (req, res) => {
               : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`))))
       : '';
     // v1.84.79: environmental gather block — fires when AP resolved a take against a CB-promoted env: feature.
+    // v1.85.6: also fires for synthetic=true (ORS had no prior record — narrator resolves plausibility).
     // Reads and clears state._environmentGatherIntent (set by ActionProcessor take handler).
     // Explicitly lifts the POSSESSION RULE / FOUNDING TURN RULE for this code path.
     const _envGatherIntent = gameState._environmentGatherIntent || null;
@@ -2798,7 +2803,9 @@ app.post('/narrate', async (req, res) => {
     // If the narrator describes failure the label is used to block spurious grid promotions.
     const _envGatherLabel = _envGatherIntent ? _envGatherIntent.label.toLowerCase() : null;
     const _environmentGatherBlock = _envGatherIntent
-      ? `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item was established as a feature of the current scene by the engine: "${_envGatherIntent.featureValue}". This is a legitimate physical interaction with the narrated world — the POSSESSION RULE's item-instantiation prohibition and the FOUNDING TURN RULE do not apply to this attempt. The item pre-exists in the narrated scene; the player is not asserting something from thin air. Narrate the gather based on the physical nature of the item: if it is detachable or collectable (a plant, a flower, loose material, scattered debris, something lying on the ground), narrate the player successfully gathering it. If it is a permanent feature (a cliff face, a carved structure, a flowing stream), narrate clearly that it cannot be taken. Do not deny this attempt on the basis that the item is not yet listed in INVENTORY.\n`
+      ? (_envGatherIntent.synthetic
+        ? `\nENVIRONMENTAL GATHER ATTEMPT: The player is physically attempting to grab or pick up "${_envGatherIntent.label}". The engine has no prior record of this item — judge plausibility against the current scene only. If this type of item could plausibly exist in this environment (a loose natural object, scattered material, something that belongs here), narrate an appropriate outcome — successful grab, partial success, or not found here. If the item is implausible for this location, narrate clearly that it isn't here. This is a physical interaction with the environment — the POSSESSION RULE item-instantiation prohibition does not apply. Do not deny this attempt solely because the item is not yet in the engine registry.\n`
+        : `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item was established as a feature of the current scene by the engine: "${_envGatherIntent.featureValue}". This is a legitimate physical interaction with the narrated world — the POSSESSION RULE's item-instantiation prohibition and the FOUNDING TURN RULE do not apply to this attempt. The item pre-exists in the narrated scene; the player is not asserting something from thin air. Narrate the gather based on the physical nature of the item: if it is detachable or collectable (a plant, a flower, loose material, scattered debris, something lying on the ground), narrate the player successfully gathering it. If it is a permanent feature (a cliff face, a carved structure, a flowing stream), narrate clearly that it cannot be taken. Do not deny this attempt on the basis that the item is not yet listed in INVENTORY.\n`)
       : '';
     const _conditionBlock = (() => {
       const _activeConds = gameState.player?.conditions;

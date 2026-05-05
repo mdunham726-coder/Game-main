@@ -367,6 +367,12 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       // Stamp intent on state so narrator receives a targeted block; CB/narrator own the outcome.
       state._environmentGatherIntent = { label: found.label, featureValue: found.featureValue };
       takeSucceeded = true; // treated as resolved so logger doesn't report failure
+    } else if (!found) {
+      // v1.85.6: ORS has no record — forward to narrator for plausibility resolution.
+      // Do not log "took X" here; narrator outcome determines what CB/ORS does.
+      state._environmentGatherIntent = { label: target, featureValue: null, synthetic: true };
+      if (logger) logger.action_resolved('take', null, `forwarded to narrator for resolution: ${target}`);
+      return;
     }
     // Legacy cell.items[] take: not implemented (only present on pre-v1.84.52 saves)
     if (logger) {
@@ -1035,7 +1041,8 @@ function validateAndQueueIntent(state, normalizedIntent){
       const target = act?.target||'';
       const found = resolveCellItemByName(state, target);
       sv.targetInCell = !!found;
-      if (!found) return { valid:false, queue:[], reason:"TARGET_NOT_FOUND_IN_CELL", stateValidation:sv };
+      // v1.85.6: no longer a hard failure — if ORS has no record, forward to narrator for plausibility resolution.
+      // AP will stamp _environmentGatherIntent.synthetic so the narrator receives the correct instruction.
       continue;
     }
 
