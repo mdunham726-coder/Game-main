@@ -32,11 +32,21 @@ function levenshtein(a,b){
 
 function aliasScore(query, name, aliases, ctxBonus=0){
   const q = String(query||'').trim().toLowerCase();
+  const nNorm = String(name||'').trim().toLowerCase();
   let score = 0;
-  if (q === String(name||'').trim().toLowerCase()) score += 10;
+  if (q === nNorm) score += 10;
   if (Array.isArray(aliases) && aliases.some(al => q === String(al||'').trim().toLowerCase())) score += 6;
-  const dists = [levenshtein(q, String(name||''))];
+  // Token containment: a reference whose tokens are all present in the name's token set is a
+  // valid structural identifier of that object (+10, same confidence tier as exact name match).
+  if (score < 10 && q.length > 0) {
+    const qTokens = q.split(/\s+/);
+    const nTokens = new Set(nNorm.split(/\s+/));
+    if (qTokens.every(t => nTokens.has(t))) score += 10;
+  }
+  const dists = [levenshtein(q, nNorm)];
   if (Array.isArray(aliases)) for (const al of aliases) dists.push(levenshtein(q, String(al||'')));
+  // Include per-token distances so a query matching a name token is not penalized by full-name distance.
+  for (const t of nNorm.split(/\s+/)) dists.push(levenshtein(q, t));
   const dist = Math.min(...dists);
   if (dist > 2) score -= 2;
   score += Math.max(0, Math.min(ctxBonus, 4));
