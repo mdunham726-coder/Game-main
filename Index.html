@@ -321,7 +321,44 @@
       document.getElementById('worldPromptInput').addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { startFromPrompt(); }
       });
-      document.getElementById('worldPromptInput').focus();
+
+      // v1.85.15: Android reload reconnect — sessionStorage is cleared on background reload;
+      // if localStorage has a persisted session ID and game state, skip the intro and restore UI.
+      try {
+        if (!currentSessionId) {
+          const _persistedId = localStorage.getItem('gameSessionId_persist');
+          if (_persistedId) {
+            const _persistedStateRaw = localStorage.getItem('gameState_' + _persistedId);
+            if (_persistedStateRaw) {
+              const _persistedState = JSON.parse(_persistedStateRaw);
+              // Restore session ID so all future requests send x-session-id
+              currentSessionId = _persistedId;
+              sessionStorage.setItem('gameSessionId', currentSessionId);
+              // Hide intro, show game UI
+              document.getElementById('world-prompt-modal').style.display = 'none';
+              // Restore last narrative (blank is fine if missing)
+              const _persistedNarrative = localStorage.getItem('gameNarrative_' + _persistedId) || '';
+              document.getElementById('narrative').innerHTML = _persistedNarrative
+                ? renderNarrative(_persistedNarrative)
+                : '<p style="margin:0 0 0.9em 0; color:#888;">[Session restored. Continue your adventure.]</p>';
+              // Restore panels using the same functions normal turns use
+              const _fakeData = { state: _persistedState };
+              updateInventoryBox(_fakeData);
+              updateCellObjectsBox(_fakeData);
+              updateConditionsBox(_fakeData);
+              // Focus DO input — player is in active game mode
+              document.getElementById('actionInput').focus();
+              console.log('[SESSION] Reconnected from localStorage:', currentSessionId);
+            }
+          }
+        }
+      } catch(_reconnectErr) {
+        console.warn('[SESSION] Reconnect restore failed, showing intro:', _reconnectErr);
+      }
+
+      if (!currentSessionId) {
+        document.getElementById('worldPromptInput').focus();
+      }
     });
 
     // Store session ID across page loads
@@ -529,11 +566,15 @@
         if (data.sessionId) {
           currentSessionId = data.sessionId;
           sessionStorage.setItem('gameSessionId', currentSessionId);
+          // v1.85.15: also persist to localStorage so Android reload can reconnect without intro screen
+          localStorage.setItem('gameSessionId_persist', currentSessionId);
           console.log('[SESSION] SessionId stored:', currentSessionId);
           // v1.59.0: Persist gameState to localStorage so Render wakes can self-restore
           if (data.state) {
             try { localStorage.setItem('gameState_' + currentSessionId, JSON.stringify(data.state)); } catch(_) {}
           }
+          // v1.85.15: persist last narrative for reconnect restore
+          try { localStorage.setItem('gameNarrative_' + currentSessionId, data.narrative || ''); } catch(_) {}
         } else {
           console.log('[SESSION] WARNING: No sessionId in response, currentSessionId remains:', currentSessionId);
         }
