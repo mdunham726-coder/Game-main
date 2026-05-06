@@ -328,7 +328,8 @@ async function run(gameState, quarantine, turnNumber) {
     tempRefMap[temp_ref] = objectId;
     _claimedObjectIds.add(objectId);
     promoted++;
-    audit.push({ turn: turnNumber, action: 'promoted', object_id: objectId, object_name: name, container_type, container_id, temp_ref, ts });
+    // v1.85.10: stamp parent_object_id so UI can distinguish fission vs normal promoted rows
+    audit.push({ turn: turnNumber, action: 'promoted', object_id: objectId, object_name: name, container_type, container_id, temp_ref, parent_object_id: entry.parent_object_id || null, ts });
     console.log(`[ObjectHelper] Promoted: ${objectId} (${name}) → ${container_type}/${container_id}`);
   }
 

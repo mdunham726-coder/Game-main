@@ -2069,16 +2069,20 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         lines.push(`    > transfer   ${from} -> ${to}  ref:${ref}`);
       }
 
-      // ObjectHelper result
+      // ObjectHelper quarantine pass result
+      // v1.85.10: audit rows filtered to exclude fission entries (parent_object_id present) to prevent duplication.
+      // Fission rows are rendered separately in the always-evaluated section below.
       if (!or.ran) {
         const reason = or.skip_reason === 'no_phaseB_result'        ? 'CB did not produce output'
                      : or.skip_reason === 'empty_quarantine'        ? 'CB produced no candidates or transfers'
                      : or.skip_reason === 'ap_dedup_all_transfers'  ? 'transfers handled by ActionProcessor (AP-dedup)'
                      : or.skip_reason || 'unknown reason';
-        lines.push(`  ObjectHelper: skipped (${reason})`);
+        const fissionSuffix = (or.fission_retired > 0) ? ' | fission pass ran separately' : '';
+        lines.push(`  ObjectHelper: skipped (${reason})${fissionSuffix}`);
       } else {
         lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}  pre_rejected:${or.pre_rejected || 0}`);
-        for (const a of audit) {
+        // Normal (non-fission) audit rows only — fission rows rendered below
+        for (const a of audit.filter(a => !a.parent_object_id)) {
           if (a.action === 'promoted') {
             lines.push(`    [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}`);
           } else if (a.action === 'transferred') {
@@ -2090,18 +2094,28 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         for (const e of errs) {
           lines.push(`    ERROR  ${e.action || '?'} | "${e.object_name || '?'}" | ${e.reason || '?'}`);
         }
-        // v1.84.65: retirement display
-        const _retUpdates = Array.isArray(or.retirement_updates) ? or.retirement_updates : [];
-        for (const r of _retUpdates) {
-          if (r.retired) {
-            lines.push(`    [retired]  ${r.objectId}`);
-          }
-        }
         // v1.84.66: initial condition display
         const _icUpdates = Array.isArray(or.initial_condition_updates) ? or.initial_condition_updates : [];
         for (const ic of _icUpdates) {
           if (ic.applied) {
             lines.push(`    [init_cond] ${ic.objectId}  "${ic.condition || ''}"`)
+          }
+        }
+      }
+
+      // v1.85.10: Always-evaluated retirement + fission section.
+      // Fires on every turn regardless of whether the quarantine pass ran.
+      // Retirement rows
+      const _retUpdates = Array.isArray(or.retirement_updates) ? or.retirement_updates : [];
+      for (const r of _retUpdates) {
+        if (r.retired) lines.push(`    [retired]  ${r.objectId}`);
+      }
+      // Fission stats + fission audit rows (discriminated by parent_object_id in audit entry)
+      if ((or.fission_retired || 0) > 0) {
+        lines.push(`  Fission: retired:${or.fission_retired}  successors:${or.fission_successors_injected || 0}`);
+        for (const a of audit.filter(a => a.parent_object_id)) {
+          if (a.action === 'promoted') {
+            lines.push(`    [fission] [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}  (parent:${a.parent_object_id})`);
           }
         }
       }
