@@ -461,7 +461,16 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       logger.action_resolved('throw', throwSucceeded, throwSucceeded ? `threw ${target}` : `could not throw ${target}`);
     }
     return;
-  } 
+  }
+
+  // v1.85.9: smash — destructive/impact intent. Zero state mutation. RC/narrator/CB own outcome.
+  if (act === 'smash') {
+    const target = String(actions?.target || '').trim();
+    console.log(`[ACTIONS] smash: target="${target}" — forwarded to narrator/RC (no AP transfer)`);
+    if (logger) logger.action_resolved('smash', true, `smash intent: "${target}" forwarded to narrator`);
+    return;
+  }
+
   if (act === 'look'){
     if (logger) {
       logger.action_resolved('look', true, 'observed surroundings');
@@ -1059,6 +1068,14 @@ function validateAndQueueIntent(state, normalizedIntent){
       const inInv = hasInventoryItem(state, target);
       sv.targetInInventory = inInv;
       if (!inInv) return { valid:false, queue:[], reason:"TARGET_NOT_IN_INVENTORY", stateValidation:sv };
+      continue;
+    }
+
+    // v1.85.9: smash — first-class destructive/impact intent. AP validates target presence only.
+    // AP mutates nothing. Both frames supported: held-item-against-surface and target-struck-by-instrument.
+    if (action === 'smash'){
+      const target = act?.target||'';
+      if (!target) return { valid:false, queue:[], reason:"SMASH_NO_TARGET", stateValidation:sv };
       continue;
     }
 

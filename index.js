@@ -3223,7 +3223,9 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         error_entries: [],
         initial_condition_updates: [],
         condition_updates: [],
-        retirement_updates: []
+        retirement_updates: [],
+        fission_retired: 0,
+        fission_successors_injected: 0
       };
       if (_phaseBResult) {
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
@@ -3288,6 +3290,11 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         const _apDoneIds = new Set(Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : []);
         gameState._apExecutedTransfers = []; // consume and clear for next turn
         const _cbTransfersFiltered = _cbTransfers.filter(t => !t.object_id || !_apDoneIds.has(t.object_id));
+        // v1.85.9: detect ap_dedup_all_transfers — CB produced transfers but all were AP-claimed.
+        // Distinct from empty_quarantine (CB produced nothing) — improves diagnostic clarity.
+        if (_cbCandidates.length === 0 && _cbTransfers.length > 0 && _cbTransfersFiltered.length === 0) {
+          _objectRealityDebug.skip_reason = 'ap_dedup_all_transfers';
+        }
         const _quarantine = [];
         for (const c of _cbCandidates)        _quarantine.push({ action: 'promote',  ...c, detected_turn: turnNumber });
         for (const t of _cbTransfersFiltered) _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
@@ -3461,20 +3468,59 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         _objectRealityDebug.condition_updates = _conditionUpdateResults;
 
         // v1.84.65: Object retirements — CB signals original object ceased to exist as itself
+        // v1.85.8: refactored to _retirementPairs to carry entry+result for fission second pass
         const _cbRetirements = Array.isArray(_phaseBResult.object_retirements) ? _phaseBResult.object_retirements : [];
-        const _retirementResults = [];
+        const _retirementPairs = []; // [{ entry, result }] — entry kept for successor extraction
         for (const ret of _cbRetirements) {
           if (!ret || !ret.object_id) {
-            _retirementResults.push({ retired: false, reason: 'malformed_entry', entry: ret });
+            _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'malformed_entry' } });
             continue;
           }
           const _retResult = ObjectHelper.retireObject(gameState, ret.object_id, ret.reason || '', turnNumber);
-          _retirementResults.push(_retResult);
+          _retirementPairs.push({ entry: ret, result: _retResult });
         }
+        const _retirementResults = _retirementPairs.map(p => p.result);
         if (_cbRetirements.length > 0) {
           console.log(`[NARRATE] ObjectRetirements: ${_retirementResults.filter(r => r.retired).length}/${_cbRetirements.length} retired`);
         }
         _objectRealityDebug.retirement_updates = _retirementResults;
+
+        // v1.85.8: Fission second pass — promote successor objects from successfully-retired parents.
+        // Atomicity gate: successors are only injected when parent retirement returned retired:true.
+        // No state can exist where the original object and its fragments are simultaneously active.
+        const _fissionQuarantine = [];
+        for (const { entry: _retEntry, result: _retResult } of _retirementPairs) {
+          if (!_retResult.retired) continue;
+          if (!Array.isArray(_retEntry.successors) || _retEntry.successors.length === 0) continue;
+          for (const _suc of _retEntry.successors) {
+            if (!_suc?.name || !_suc.container_type || !_suc.container_id) {
+              console.warn(`[FISSION] malformed successor entry for parent ${_retEntry.object_id} — skipped`);
+              continue;
+            }
+            _fissionQuarantine.push({
+              action:            'promote',
+              name:              _suc.name,
+              description:       _suc.description || '',
+              container_type:    _suc.container_type,
+              container_id:      _suc.container_id,
+              temp_ref:          `${_retEntry.object_id}_${_suc.temp_ref || 'frag'}`,
+              transfer_origin:   'fission_successor',
+              parent_object_id:  _retEntry.object_id,
+              reason:            `fission successor of ${_retEntry.object_id}`
+            });
+            _objectRealityDebug.fission_successors_injected++;
+          }
+          _objectRealityDebug.fission_retired++;
+        }
+        if (_fissionQuarantine.length > 0) {
+          const _fissionResult = await ObjectHelper.run(gameState, _fissionQuarantine, turnNumber);
+          console.log(`[NARRATE] FissionPass: promoted=${_fissionResult.promoted} errors=${_fissionResult.errors}`);
+          _objectRealityDebug.promoted    += _fissionResult.promoted;
+          _objectRealityDebug.transferred += _fissionResult.transferred;
+          _objectRealityDebug.errors      += _fissionResult.errors;
+          _objectRealityDebug.audit        = (_objectRealityDebug.audit || []).concat(_fissionResult.audit || []);
+          _objectRealityDebug.error_entries = (gameState.object_errors || []).filter(e => e.turn === turnNumber);
+        }
       } else {
         _objectRealityDebug.skip_reason = 'no_phaseB_result';
       }
@@ -3805,7 +3851,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     // ========================================================================
     // QA-017: Per-turn diagnostic generation (rule-based, lightweight)
     // ========================================================================
-    const diagnostics = [];
+    const _qaDiagnostics = [];
     
     // 1. Check: missing_parsed_intent (SKIP ON INITIALIZATION TURN)
     // Only flag if player action exists but parsed intent is genuinely missing/invalid
@@ -3815,7 +3861,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       
       // Flag ONLY if no valid parsed intent AND no valid fallback (turn truly unresolved)
       if (!hasValidParsedIntent && !hasValidFallback) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'missing_parsed_intent',
           severity: 'medium',
           detail: `player action exists but no usable intent extracted: "${action.substring(0, 50)}${action.length > 50 ? '...' : ''}"`
@@ -3823,7 +3869,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       }
       // Also flag if parser explicitly failed (not just fallback)
       else if (parsedIntent && parsedIntent.success === false) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'missing_parsed_intent',
           severity: 'medium',
           detail: `parser failed to classify: "${action.substring(0, 50)}${action.length > 50 ? '...' : ''}"`
@@ -3847,7 +3893,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
          finalPos.lx !== authoritative.lx || finalPos.ly !== authoritative.ly);
       
       if (positionMismatch) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'movement_inconsistency',
           severity: 'high',
           detail: `move succeeded but final position (${finalPos.mx},${finalPos.my})->(${finalPos.lx},${finalPos.ly}) does not match authoritative (${authoritative.mx},${authoritative.my})->(${authoritative.lx},${authoritative.ly})`
@@ -3863,7 +3909,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         const attemptSuccess = attemptLog.data?.success || false;
         const resolveSuccess = resolveLog.data?.success || false;
         if (attemptSuccess !== resolveSuccess) {
-          diagnostics.push({
+          _qaDiagnostics.push({
             type: 'movement_inconsistency',
             severity: 'high',
             detail: `movement logs contradict: attempt=${attemptSuccess} vs resolve=${resolveSuccess}`
@@ -3882,19 +3928,19 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     if (isSiteCell) {
       // Site cell requires consistent site state
       if (!currentSite) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'site_presence_mismatch',
           severity: 'high',
           detail: `cell type is community-type but site not found in registry`
         });
       } else if (!currentSite.name || currentSite.name.trim() === '') {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'site_presence_mismatch',
           severity: 'medium',
           detail: `site exists but missing or empty name field`
         });
       } else if (!currentSite.id) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'site_presence_mismatch',
           severity: 'low',
           detail: `site exists but missing id field`
@@ -3922,7 +3968,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       movement: movement,
       nearby_cells: nearbyCellsSnapshot,
       narrative: narrative,
-      diagnostics: diagnostics,
+      diagnostics: _qaDiagnostics,
       narration_debug: {
         primary_bullet_override: _nbPrimaryBullet,
         movement_task_active: _nbMovementTask,
@@ -4291,7 +4337,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       turn_history: gameState.turn_history,  // QA-014: Include turn history for export
       engine_output: engineOutput, 
       scene, 
-      diagnostics,
+      diagnostics: _qaDiagnostics,
       visibility: visibilityPayload,
       worldgen_log: gameState.world?.worldgen_log || null,
       object_reality: _objectRealityDebug,

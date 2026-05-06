@@ -2071,8 +2071,9 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
 
       // ObjectHelper result
       if (!or.ran) {
-        const reason = or.skip_reason === 'no_phaseB_result'   ? 'CB did not produce output'
-                     : or.skip_reason === 'empty_quarantine'   ? 'CB found no candidates or transfers'
+        const reason = or.skip_reason === 'no_phaseB_result'        ? 'CB did not produce output'
+                     : or.skip_reason === 'empty_quarantine'        ? 'CB produced no candidates or transfers'
+                     : or.skip_reason === 'ap_dedup_all_transfers'  ? 'transfers handled by ActionProcessor (AP-dedup)'
                      : or.skip_reason || 'unknown reason';
         lines.push(`  ObjectHelper: skipped (${reason})`);
       } else {

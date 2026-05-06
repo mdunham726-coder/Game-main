@@ -303,6 +303,8 @@ async function run(gameState, quarantine, turnNumber) {
       events:                 []
     };
     gameState.objects[objectId] = record;
+    // v1.85.8: stamp fission lineage — parent_object_id links successor to the retired source object
+    if (entry.parent_object_id) record.parent_object_id = entry.parent_object_id;
     containerIds.push(objectId);
 
     // One-container enforcement

@@ -312,6 +312,8 @@ Do NOT emit a promote candidate for an object that already appears in TRACKED OB
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
+Fragment objects derived from a retiring tracked object must go in object_retirements[].successors[]
+— never in object_candidates[].
 
 For each object, emit one entry in the "object_candidates" array:
 {
@@ -456,7 +458,36 @@ EMIT for: object split into distinct sub-objects, object fully consumed/eaten, o
 DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
 Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
 
-{ "object_id": "<exact id from tracked objects list>", "reason": "<exact narration phrase — what happened to it>" }
+FISSION BAR: The original object must be GONE AS ITSELF. Splitting an apple into two halves = fission
+(the apple no longer exists as an apple). Denting a can = condition update (the can still exists).
+Cracking a phone screen = condition update. Bruising an apple = condition update. When in doubt,
+condition update wins — only retire when narration makes clear the original form is definitively gone.
+
+{
+  "object_id": "<exact id from tracked objects list>",
+  "reason": "<exact narration phrase — what happened to it>",
+  "successors": [
+    {
+      "temp_ref": "frag_0",
+      "name": "<fragment name, lowercase, specific>",
+      "description": "<brief physical description>",
+      "container_type": "<match retiring object's container_type, or override if narration is explicit>",
+      "container_id": "<match retiring object's container_id, or narration-specified override>"
+    }
+  ]
+}
+
+successors[] rules:
+- OPTIONAL. Omit the field entirely when nothing distinct survives (burned to ash, fully eaten,
+  dissolved, absorbed, crumbled to powder).
+- Emit successors ONLY for distinct, persistent, interactable physical remnants — objects a person
+  could pick up, use, or reference independently. DO NOT emit for: juice, pulp, crumbs, dust,
+  splinters, droplets, particles, or any incidental debris with no independent physical significance.
+- Successors inherit the retiring object's container_type and container_id by default.
+  Override ONLY when narration explicitly places a fragment somewhere else
+  (e.g. "one half tumbled to the ground while the other stayed in your grip").
+- temp_ref must be unique within this entry: use frag_0, frag_1, frag_2, etc.
+- DO NOT duplicate successors in object_candidates[].
 
 If none, emit: "object_retirements": []
 
