@@ -422,7 +422,7 @@ OBJECT CONDITION UPDATES (optional)
 Annotate tracked objects whose physical condition changed in this narration.
 Only use object_ids listed in "Tracked objects in scene" above — exact IDs only.
 
-ACCEPT: concrete, observable physical changes — split skin, bruised, cracked, soaked, half-buried, burned, bent, shattered, dented, torn, bleeding.
+ACCEPT: concrete, observable physical changes — split, bruised, cracked, soaked, half-buried, burned, bent, shattered, dented, torn, bleeding, sticky, smeared, coated, stained, fouled, covered in residue.
 REJECT: pristine or default states — unblemished, intact, undamaged, normal, clean, fine, whole.
 REJECT: inferences or implied states — "looks worse for wear", "seems damaged".
 
@@ -431,6 +431,7 @@ Rules:
 - If PLAYER ACTIONS THIS TURN names the affected object, use that object_id.
 - If two tracked objects share a name and the narration does not clearly distinguish them, and no player action context resolves it, emit a name_match entry instead — never omit a real condition.
 - One entry per affected object only.
+- When narration explicitly describes residue, debris, or material adhering to a tracked object that was used as an instrument, emit a condition update for that instrument. Implied contact alone does not qualify — the adhering material must be concretely described on the instrument in the narration.
 
 Preferred form (use when object_id is unambiguous):
 {
