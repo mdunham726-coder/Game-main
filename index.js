@@ -2719,6 +2719,10 @@ app.post('/narrate', async (req, res) => {
       // v1.85.6: take action forwarded to narrator for plausibility resolution (ORS had no prior record).
       // RC must not fire: the narrator already receives a targeted plausibility-judgment block.
       _rcSkippedReason = 'synthetic_env_gather';
+    } else if (_parsedAction === 'unknown') {
+      // v1.85.13: Parser could not classify input. RC must not fire — unclassified inputs cannot be trusted
+      // as valid action descriptions; passing them to RC risks validating embedded outcome assertions.
+      _rcSkippedReason = 'unknown_block_rc';
     } else {
       // Build query — SAY channel with matched NPC gets role context
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
