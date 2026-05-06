@@ -3227,12 +3227,13 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       };
       if (_phaseBResult) {
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
+        // v1.85.7: Turn 1 founding premise items are exempt — they are legitimate starting inventory
         if (Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
-            if (c.container_type === 'player' && c.transfer_origin === 'player_claimed') {
+            if (c.container_type === 'player' && c.transfer_origin === 'player_claimed' && turnNumber !== 1) {
               console.warn(`[ORIGIN-GATE] player_claimed item blocked: "${c.name}"`);
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
-              gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'player_claimed_item_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
+              gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'player_claimed_item_blocked', name: c.name, turn: turnNumber });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
               return false;
             }
