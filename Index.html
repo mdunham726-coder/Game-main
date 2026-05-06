@@ -1973,7 +1973,11 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const condLine = _conds.length > 0
           ? `<div style="color:#aaa; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
           : '';
-        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${condLine}${idLine}</div>`;
+        // v1.85.12: show object description below condition
+        const descLine = (rec.description && rec.description.trim())
+          ? `<div style="color:#888; font-size:10px;">${_escHtml(rec.description)}</div>`
+          : '';
+        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${condLine}${descLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }
@@ -2007,8 +2011,12 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const condLine = _conds.length > 0
           ? `<div style="color:#aaa; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
           : '';
+        // v1.85.12: show object description below condition
+        const descLine = (rec.description && rec.description.trim())
+          ? `<div style="color:#888; font-size:10px;">${_escHtml(rec.description)}</div>`
+          : '';
         const idLine = `<div style="color:#777; font-size:10px;">${_escHtml(rec.id || '')}</div>`;
-        return `<div style="margin-bottom:6px;"><span style="color:#e5e5e5;">${name}</span>${condLine}${idLine}</div>`;
+        return `<div style="margin-bottom:6px;"><span style="color:#e5e5e5;">${name}</span>${condLine}${descLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }
