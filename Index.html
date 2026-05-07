@@ -156,6 +156,10 @@
       <div class="status-pane-header">CONDITIONS</div>
       <div id="player-conditions-live" class="status-pane-body"><span style="color:#4a8a4a;">Healthy</span></div>
     </div>
+    <div class="status-pane" style="border-color:#9b59b6;">
+      <div class="status-pane-header" style="color:#9b59b6;">IDENTITY</div>
+      <div id="identity-strip-live" class="status-pane-body"><span style="color:#888;">&mdash;</span></div>
+    </div>
   </div>
 
 <!-- Continuity Panel (v1.59.0: moved before diagnostics) -->
@@ -262,6 +266,15 @@
     <button onclick="navigator.clipboard.writeText(_orLogBuffer.join('\n'))" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy OR Log</button>
   </div>
   <div id="object-reality-log" style="height: 380px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #e8a87c;"></div>
+</div>
+
+<!-- Identity Log Panel (v1.85.21) -->
+<div id="identityLogPanel" style="margin-top: 20px; padding: 15px; background: #0d0d0d; border: 2px solid #9b59b6; border-radius: 4px; max-height: 460px; overflow: hidden;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+    <h3 style="margin: 0; color: #9b59b6;">IDENTITY LOG</h3>
+    <button onclick="navigator.clipboard.writeText(_identityLogBuffer.join('\n'))" style="padding: 3px 8px; font-size: 11px; background: #222; color: #888; border: 1px solid #555; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Identity Log</button>
+  </div>
+  <div id="identity-log" style="height: 380px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #c39bd3;"></div>
 </div>
 
   </div>
@@ -634,7 +647,7 @@ updateInventoryBox(data);
 updateCellObjectsBox(data);
 updateConditionsBox(data);
 appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
-document.getElementById(inputId).value = '';
+  updateIdentityPanel(data, data.state?.turn_counter ?? '?');
 
 // Display diagnostics (rebind to authoritative turn_history state)
 const diagLog = document.getElementById('diagnostic-log');
@@ -1020,6 +1033,7 @@ diagLog.innerHTML = `
         updateCellObjectsBox(data);
         updateConditionsBox(data);
         appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
+        updateIdentityPanel(data, data.state?.turn_counter ?? '?');
         document.getElementById('sayInput').value = '';
         if (data.narrative) lastNarrative = data.narrative;
         lastTurnCounter = data.state?.turn_counter ?? 0;
@@ -2075,7 +2089,60 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       dom.innerHTML = lines.join('');
     }
 
-    function appendObjectRealityLog(data, turnNumber) {
+    // v1.85.21: Identity strip + per-turn identity log
+    let _identityLogBuffer = [];
+    function updateIdentityPanel(data, turnLabel) {
+      // --- compact strip ---
+      const stripDom = document.getElementById('identity-strip-live');
+      const pid = data?.player_identity;
+      if (stripDom) {
+        if (!pid || (!pid.canonical_name && !pid.title_or_role && !pid.current_form)) {
+          stripDom.innerHTML = '<span style="color:#888;">&mdash;</span>';
+        } else {
+          const parts = [];
+          if (pid.canonical_name) parts.push(_escHtml(pid.canonical_name));
+          if (pid.title_or_role)  parts.push(_escHtml(pid.title_or_role));
+          if (pid.current_form)   parts.push(_escHtml(pid.current_form));
+          stripDom.innerHTML = `<span style="color:#c39bd3;">${parts.join(' | ')}</span>`;
+        }
+      }
+      // --- log entry ---
+      const logDom = document.getElementById('identity-log');
+      if (!logDom) return;
+      const turn = turnLabel ?? '?';
+      const av   = data?.last_arbiter_verdict;
+      const truthLine = data?.last_identity_truth_line ?? null;
+      const logLines = [];
+      logLines.push(`[IDENTITY T-${turn}]`);
+      logLines.push(`canonical_name: ${pid?.canonical_name ?? '\u2014'}`);
+      logLines.push(`title_or_role:  ${pid?.title_or_role  ?? '\u2014'}`);
+      logLines.push(`current_form:   ${pid?.current_form   ?? '\u2014'}`);
+      const rawForm  = av?.raw?.player_form_change;
+      const applForm = av?.applied?.player_form_change;
+      if (rawForm?.new_form) {
+        const wb = applForm?.new_form ? 'applied' : 'NOT APPLIED';
+        logLines.push(`arbiter_form:   ${rawForm.prior_form ?? '?'} -> ${rawForm.new_form}  |  write_back: ${wb}`);
+      } else {
+        logLines.push(`arbiter_form:   none`);
+      }
+      logLines.push(`truth_injected: ${truthLine ?? 'none'}`);
+      const recChanges = Array.isArray(av?.applied?.player_recognition_changes)
+        ? av.applied.player_recognition_changes.filter(r => r.applied) : [];
+      if (recChanges.length === 0) {
+        logLines.push(`recognition:    none`);
+      } else {
+        for (const rc of recChanges) {
+          logLines.push(`recognition:    ${rc.npc_id} recognized player as "${rc.known_identity}" (${rc.event_type})`);
+          logLines.push(`npc_truth_next: | recognizes-player: ${rc.known_identity} (since T-${turn})`);
+        }
+      }
+      const entryHtml = logLines.map(l => `<div style="white-space:pre;">${_escHtml(l)}</div>`).join('') +
+        '<div style="color:#4a235a;margin:4px 0;">' + '\u2500'.repeat(44) + '</div>';
+      _identityLogBuffer.unshift(logLines.join('\n'));
+      if (_identityLogBuffer.length > 50) _identityLogBuffer.pop();
+      logDom.insertAdjacentHTML('afterbegin', entryHtml);
+      while (logDom.children.length > 100) logDom.removeChild(logDom.lastChild);
+    }
       const orDom = document.getElementById('object-reality-log');
       if (!orDom) return;
 

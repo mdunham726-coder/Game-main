@@ -4370,6 +4370,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           console.log(`[ARBITER] player form: ${_priorForm} -> ${_arbFormChange.new_form}`);
         }
         emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, player_recognition_changes: _arbRecApplied, player_form_change: _arbFormApplied, gameSessionId: resolvedSessionId });
+        gameState._lastArbiterVerdict = { turn: turnNumber, raw: _arbParsed, applied: { player_form_change: _arbFormApplied, player_recognition_changes: _arbRecApplied } }; // v1.85.21: forensic — raw=what Arbiter emitted, applied=what engine wrote
       } catch (e) {
         emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, error: e.message, gameSessionId: resolvedSessionId });
       }
@@ -4403,6 +4404,9 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       visibility: visibilityPayload,
       worldgen_log: gameState.world?.worldgen_log || null,
       object_reality: _objectRealityDebug,
+      player_identity: gameState.player.identity ?? null,          // v1.85.21
+      last_identity_truth_line: gameState._lastIdentityTruthLine ?? null, // v1.85.21: verbatim Player: line injected into narrator
+      last_arbiter_verdict: gameState._lastArbiterVerdict ?? null,  // v1.85.21: {turn, raw, applied}
       debug 
     });
   } catch (err) {

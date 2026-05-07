@@ -1102,6 +1102,7 @@ function assembleContinuityPacket(gameState, turnContext) {
   }
 
   // v1.85.19: Player identity line
+  gameState._lastIdentityTruthLine = null; // v1.85.21: reset each assembly — null when no identity fields present
   const _pid = gameState.player?.identity;
   if (_pid && (_pid.canonical_name || _pid.title_or_role || _pid.current_form)) {
     const _pidParts = [];
@@ -1109,6 +1110,7 @@ function assembleContinuityPacket(gameState, turnContext) {
     if (_pid.title_or_role)  _pidParts.push(`title: ${_pid.title_or_role}`);
     if (_pid.current_form)   _pidParts.push(`current form: ${_pid.current_form}`);
     lines.push(`Player: ${_pidParts.join(' | ')}`);
+    gameState._lastIdentityTruthLine = lines[lines.length - 1]; // v1.85.21: verbatim — exactly what narrator received
     truthLines++;
   }
 
