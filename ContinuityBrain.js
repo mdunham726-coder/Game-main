@@ -624,12 +624,15 @@ function _isConcreteDetail(str) {
 
 function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   const _dupCounts = {};
-  const promote = (bucket, items) => {
+  // skipFilter=true for object bucket: item names are concrete nouns, not atmospheric descriptions.
+  const promote = (bucket, items, skipFilter = false) => {
     for (const item of (items || [])) {
-      const _check = _isConcreteDetail(item);
-      if (!_check.ok) {
-        logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
-        continue;
+      if (!skipFilter) {
+        const _check = _isConcreteDetail(item);
+        if (!_check.ok) {
+          logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
+          continue;
+        }
       }
       const key = `${bucket}:${item}`;
       const existing = npc.attributes[key];
@@ -645,7 +648,7 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_or_worn_objects);
+  promote('object',   candidate.held_or_worn_objects, true);
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'npc', entity_id: npc.id, entity_name: npc.npc_name || npc.id, count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -679,12 +682,15 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
 function _promotePlayerAttributes(player, candidate, turn, logEntries) {
   if (!player.attributes) player.attributes = {}; // migration guard: old saves
   const _dupCounts = {};
-  const promote = (bucket, items) => {
+  // skipFilter=true for object bucket: item names are concrete nouns, not atmospheric descriptions.
+  const promote = (bucket, items, skipFilter = false) => {
     for (const item of (items || [])) {
-      const _check = _isConcreteDetail(item);
-      if (!_check.ok) {
-        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
-        continue;
+      if (!skipFilter) {
+        const _check = _isConcreteDetail(item);
+        if (!_check.ok) {
+          logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
+          continue;
+        }
       }
       const key = `${bucket}:${item}`;
       if (!player.attributes[key]) {
@@ -697,7 +703,7 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_or_worn_objects);
+  promote('object',   candidate.held_or_worn_objects, true);
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', count_by_bucket: _dupCounts, total: _dupTotal, turn });
