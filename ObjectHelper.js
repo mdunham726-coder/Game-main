@@ -46,15 +46,18 @@ function _generateObjectId(name, containerType, containerId, tempRef) {
 // ── Container resolution ──────────────────────────────────────────────────────
 // Returns the object_ids array for a given container, or null if unresolvable.
 // Mutates container in place to add object_ids[] if absent (player only).
-// NPC: world.npcs canonical array only. Grid: world.cells existing keys only.
+// NPC: world.npcs first, then active_site.npcs fallback for site-interior NPCs.
+// Grid: world.cells existing keys only.
 function _resolveContainerIds(gameState, containerType, containerId) {
   if (containerType === 'player') {
     if (!Array.isArray(gameState.player.object_ids)) gameState.player.object_ids = [];
     return gameState.player.object_ids;
   }
   if (containerType === 'npc') {
-    const npcs = (gameState.world && Array.isArray(gameState.world.npcs)) ? gameState.world.npcs : [];
-    const npc = npcs.find(n => n.id === containerId || n._id === containerId);
+    const _worldNpcs = (gameState.world && Array.isArray(gameState.world.npcs)) ? gameState.world.npcs : [];
+    const _siteNpcs  = (gameState.world?.active_site && Array.isArray(gameState.world.active_site.npcs)) ? gameState.world.active_site.npcs : [];
+    const npc = _worldNpcs.find(n => n.id === containerId || n._id === containerId)
+             || _siteNpcs.find(n => n.id === containerId || n._id === containerId);
     if (!npc) return null;
     if (!Array.isArray(npc.object_ids)) npc.object_ids = [];
     return npc.object_ids;
