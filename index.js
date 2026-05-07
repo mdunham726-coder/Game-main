@@ -2740,13 +2740,29 @@ app.post('/narrate', async (req, res) => {
       _realityQuery = _rcNpcRole
         ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}?${_rcValidationClause} ${_rcSuffix}`
         : `${_rcTruthFragment}What happens when I ${_rawInput}?${_rcValidationClause} ${_rcSuffix}`;
+      // v1.85.17: RC system message — inject world tone and player declared truths so RC evaluates
+      // within the correct reality frame instead of defaulting to modern real-world assumptions.
+      const _rcDeclaredAttrs = Object.values(gameState?.player?.attributes || {})
+        .filter(a => a.bucket === 'declared')
+        .map(a => a.value)
+        .slice(0, 8);
+      const _rcWorldTone = gameState?.world?.world_tone || null;
+      const _rcSystemParts = [];
+      if (_rcWorldTone) _rcSystemParts.push(`World context: ${_rcWorldTone}`);
+      if (_rcDeclaredAttrs.length > 0) _rcSystemParts.push(`Established player truths: ${_rcDeclaredAttrs.join(' | ')}`);
+      const _rcSystemMsg = _rcSystemParts.length > 0
+        ? `You are evaluating an action taken within an established game world. Evaluate the immediate consequences within the established world's genre and physical rules — do not substitute modern real-world assumptions unless the world is explicitly set in the modern era. ${_rcSystemParts.join('. ')}.`
+        : null;
       try {
         _rcStart = Date.now();
         const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.3,
           max_tokens: 300,
-          messages: [{ role: 'user', content: _realityQuery }]
+          messages: [
+            ...(_rcSystemMsg ? [{ role: 'system', content: _rcSystemMsg }] : []),
+            { role: 'user', content: _realityQuery }
+          ]
         }, {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
           httpsAgent: _sharedHttpsAgent,
@@ -3072,6 +3088,7 @@ ${nearbyStr}
 
 INVENTORY: ${invStr}
 POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
+DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
 The player has already moved. They are now in the location described above.
 
