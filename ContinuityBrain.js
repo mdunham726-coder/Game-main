@@ -458,13 +458,15 @@ OBJECT RETIREMENTS (optional)
 When narration explicitly describes a tracked object physically ceasing to exist as itself — split into named sub-objects, fully consumed/eaten, destroyed with no remaining form — emit a retirement entry for the original.
 
 EMIT for: object split into distinct sub-objects, object fully consumed/eaten, object burned to nothing.
-DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
+DO NOT EMIT for: damage or condition change, movement, picking up, dropping, any interaction that leaves the object intact, or instrument use (cutting, striking, stabbing, smashing, throwing — the weapon or tool used to destroy something else is never retired by the act of use; only the target may be retired).
 Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
 
 FISSION BAR: The original object must be GONE AS ITSELF. Splitting an apple into two halves = fission
 (the apple no longer exists as an apple). Denting a can = condition update (the can still exists).
 Cracking a phone screen = condition update. Bruising an apple = condition update. When in doubt,
 condition update wins — only retire when narration makes clear the original form is definitively gone.
+
+INSTRUMENT RULE: An object that causes destruction is not itself destroyed. Only the object that physically ceases to exist as itself is retired. The tool, weapon, or instrument used in the action remains active — retire the target, never the instrument.
 
 {
   "object_id": "<exact id from tracked objects list>",
