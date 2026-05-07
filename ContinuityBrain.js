@@ -127,7 +127,9 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
     "possessions": [],
     "capabilities": [],
     "status_claims": [],
-    "scenario_notes": []
+    "scenario_notes": [],
+    "canonical_name": null,
+    "title_or_role": null
   }` : ''}
 }
 
@@ -300,6 +302,8 @@ Fields:
   capabilities     — abilities, powers, or things the player can do, as explicitly stated in primary source (e.g. "ability to transform", "power to fly", "magic to heal others"). Do NOT include physical items — those belong in possessions. Empty array if none stated.
   status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
   scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
+  canonical_name   — the player's personal name if explicitly stated. A word or phrase the player uses to refer to themselves as a specific individual, distinct from a title, role, or job descriptor. Only extract what is explicitly stated — do not infer. null if not stated.
+  title_or_role    — a formal title, rank, or positional designation if explicitly claimed. A social or authoritative label, not a personal name. Only extract what is explicitly stated — do not infer. null if not stated.
 
 ` : ''}
 
@@ -866,6 +870,19 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
     gameState.player.birth_record.scenario_notes   = Array.isArray(fp.scenario_notes)? fp.scenario_notes: [];
     console.log('[CB] birth_record populated on Turn 1:', JSON.stringify(gameState.player.birth_record).slice(0, 200));
 
+    // v1.85.19: Populate player.identity from founding premise
+    if (!gameState.player.identity) {
+      gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, aliases: [], public_identity_known: false };
+    }
+    gameState.player.identity.canonical_name       = fp.canonical_name || null;
+    gameState.player.identity.title_or_role        = fp.title_or_role  || null;
+    gameState.player.identity.current_form         = fp.form           || null;
+    gameState.player.identity.public_identity_known = !!(fp.canonical_name || fp.title_or_role);
+    // Also store in birth_record for audit
+    gameState.player.birth_record.canonical_name   = fp.canonical_name || null;
+    gameState.player.birth_record.title_or_role    = fp.title_or_role  || null;
+    console.log('[CB] player.identity populated on Turn 1:', JSON.stringify(gameState.player.identity));
+
     // v1.84.68: Promote status_claims → player.attributes[declared:] — idempotent, Turn 1 only
     // Bridges the gap between birth_record ingestion and narrator TRUTH block.
     // declared: bucket is permanent (not subject to STATE_ATTR_WINDOW aging).
@@ -1084,6 +1101,17 @@ function assembleContinuityPacket(gameState, turnContext) {
     }
   }
 
+  // v1.85.19: Player identity line
+  const _pid = gameState.player?.identity;
+  if (_pid && (_pid.canonical_name || _pid.title_or_role || _pid.current_form)) {
+    const _pidParts = [];
+    if (_pid.canonical_name) _pidParts.push(`canonical name: ${_pid.canonical_name}`);
+    if (_pid.title_or_role)  _pidParts.push(`title: ${_pid.title_or_role}`);
+    if (_pid.current_form)   _pidParts.push(`current form: ${_pid.current_form}`);
+    lines.push(`Player: ${_pidParts.join(' | ')}`);
+    truthLines++;
+  }
+
   // Entity attributes
   for (const npc of visible) {
     if (!npc.attributes || !Object.keys(npc.attributes).length) continue;
@@ -1092,7 +1120,12 @@ function assembleContinuityPacket(gameState, turnContext) {
     const attrs = Object.values(npc.attributes)
       .map(a => a.value)
       .join(' | ');
-    lines.push(`${label}: ${attrs}`);
+    // v1.85.19: append recognition suffix if NPC has recognized the player
+    const _npcRec = npc.player_recognition;
+    const _recSuffix = (_npcRec?.recognizes_player && _npcRec.known_identity)
+      ? ` | recognizes-player: ${_npcRec.known_identity} (since T-${_npcRec.learned_turn})`
+      : '';
+    lines.push(`${label}: ${attrs}${_recSuffix}`);
     truthLines++;
   }
   if (visible.length === 0) {

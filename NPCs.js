@@ -214,6 +214,7 @@ function generateNPC(seed, site_id){
     reputation_player, traits,
     npc_name: null, gender: null, age: null, job_category: null,
     is_learned: false,
+    player_recognition: null,  // v1.85.19: {recognizes_player, known_identity, learned_turn, source} — set by Arbiter only
     position,
     attributes: {}  // ContinuityBrain: promoted facts (physical_attributes, observable_states, held_or_worn_objects)
   };

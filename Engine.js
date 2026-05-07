@@ -120,6 +120,14 @@ function initState(timestampUTC) {
         possessions: [],
         status_claims: [],
         scenario_notes: []
+      },
+      // v1.85.19: current_form = current externally visible embodiment (what NPCs perceive). NOT metaphysical identity. Tracks the visible surface layer — governs NPC perception.
+      identity: {
+        canonical_name: null,
+        title_or_role: null,
+        current_form: null,
+        aliases: [],
+        public_identity_known: false
       }
     },
     world: {
