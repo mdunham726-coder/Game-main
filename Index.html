@@ -2143,6 +2143,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       logDom.insertAdjacentHTML('afterbegin', entryHtml);
       while (logDom.children.length > 100) logDom.removeChild(logDom.lastChild);
     }
+
+    function appendObjectRealityLog(data, turnNumber) {
       const orDom = document.getElementById('object-reality-log');
       if (!orDom) return;
 
