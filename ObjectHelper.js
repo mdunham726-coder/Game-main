@@ -93,6 +93,21 @@ function _resolveContainerIds(gameState, containerType, containerId) {
     if (!Array.isArray(_activeSite.floor_positions[_coordKey].object_ids)) _activeSite.floor_positions[_coordKey].object_ids = [];
     return _activeSite.floor_positions[_coordKey].object_ids;
   }
+  // v1.85.22: player worn items container
+  if (containerType === 'player_worn') {
+    if (!Array.isArray(gameState.player.worn_object_ids)) gameState.player.worn_object_ids = [];
+    return gameState.player.worn_object_ids;
+  }
+  // v1.85.22: npc worn items container — same NPC lookup as 'npc' branch
+  if (containerType === 'npc_worn') {
+    const _worldNpcsW = (gameState.world && Array.isArray(gameState.world.npcs)) ? gameState.world.npcs : [];
+    const _siteNpcsW  = (gameState.world?.active_site && Array.isArray(gameState.world.active_site.npcs)) ? gameState.world.active_site.npcs : [];
+    const _npcW = _worldNpcsW.find(n => n.id === containerId || n._id === containerId)
+               || _siteNpcsW.find(n => n.id === containerId || n._id === containerId);
+    if (!_npcW) return null;
+    if (!Array.isArray(_npcW.worn_object_ids)) _npcW.worn_object_ids = [];
+    return _npcW.worn_object_ids;
+  }
   return null;
 }
 
@@ -103,6 +118,10 @@ function _findAllContainers(gameState, objectId) {
   const found = [];
   if (Array.isArray(gameState.player?.object_ids) && gameState.player.object_ids.includes(objectId)) {
     found.push({ containerType: 'player', containerId: 'player' });
+  }
+  // v1.85.22: scan player worn items
+  if (Array.isArray(gameState.player?.worn_object_ids) && gameState.player.worn_object_ids.includes(objectId)) {
+    found.push({ containerType: 'player_worn', containerId: 'player_worn' });
   }
   const npcs = (gameState.world && Array.isArray(gameState.world.npcs)) ? gameState.world.npcs : [];
   for (const npc of npcs) {
@@ -130,6 +149,16 @@ function _findAllContainers(gameState, objectId) {
     if (Array.isArray(_fp.object_ids) && _fp.object_ids.includes(objectId)) {
       const _siteId = gameState.world.active_site.site_id || gameState.world.active_site.id?.replace(/\/l2$/, '');
       found.push({ containerType: 'site', containerId: `${_siteId}:${_fpKey}` });
+    }
+  }
+  // v1.85.22: scan NPC worn items
+  const _allNpcsW = [
+    ...((gameState.world && Array.isArray(gameState.world.npcs)) ? gameState.world.npcs : []),
+    ...((gameState.world?.active_site && Array.isArray(gameState.world.active_site.npcs)) ? gameState.world.active_site.npcs : [])
+  ];
+  for (const _npcW of _allNpcsW) {
+    if (Array.isArray(_npcW.worn_object_ids) && _npcW.worn_object_ids.includes(objectId)) {
+      found.push({ containerType: 'npc_worn', containerId: _npcW.id || _npcW._id });
     }
   }
   return found;
@@ -183,7 +212,7 @@ async function run(gameState, quarantine, turnNumber) {
   const _w   = gameState.world || {};
   const _pos = _w.position;
   const _loc = _w.active_local_space || _w.active_site;
-  const _sceneContainerIds = new Set(['player']);
+  const _sceneContainerIds = new Set(['player', 'player_worn']); // v1.85.22: player_worn always scene-valid
   if (_pos) _sceneContainerIds.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
   // v1.84.86: include active localspace container so v1.84.83 dedup can see floor objects
   if (_w.active_local_space?.local_space_id) _sceneContainerIds.add(_w.active_local_space.local_space_id);

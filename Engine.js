@@ -102,6 +102,7 @@ function initState(timestampUTC) {
       aliases: ['you', 'yourself', 'player'],
       stats: { stamina: 100, clarity: 100 },
       inventory: [],
+      worn_object_ids: [],
       attributes: {},
       position: {
         mx: 0, my: 0,

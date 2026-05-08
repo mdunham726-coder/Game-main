@@ -144,6 +144,10 @@
     @media (max-width:600px) { #statusRow { flex-direction:column; } .status-pane { min-width:0; } }
   </style>
   <div id="statusRow">
+    <div class="status-pane" style="border-color:#5dade2;">
+      <div class="status-pane-header" style="color:#5dade2;">WORN</div>
+      <div id="worn-live" class="status-pane-body"><span style="color:#888;">Nothing worn.</span></div>
+    </div>
     <div class="status-pane">
       <div class="status-pane-header">INVENTORY</div>
       <div id="inventory-live" class="status-pane-body"><span style="color:#888;">Nothing in inventory.</span></div>
@@ -356,6 +360,7 @@
                 : '<p style="margin:0 0 0.9em 0; color:#888;">[Session restored. Continue your adventure.]</p>';
               // Restore panels using the same functions normal turns use
               const _fakeData = { state: _persistedState };
+              updateWornBox(_fakeData);
               updateInventoryBox(_fakeData);
               updateCellObjectsBox(_fakeData);
               updateConditionsBox(_fakeData);
@@ -643,6 +648,7 @@ if (engineMsg) {
 } else {
   document.getElementById('narrative').innerHTML = renderNarrative(narrative);
 }
+updateWornBox(data);
 updateInventoryBox(data);
 updateCellObjectsBox(data);
 updateConditionsBox(data);
@@ -1030,6 +1036,7 @@ diagLog.innerHTML = `
         } else {
           document.getElementById('narrative').innerHTML = renderNarrative(narrative);
         }
+        updateWornBox(data);
         updateInventoryBox(data);
         updateCellObjectsBox(data);
         updateConditionsBox(data);
@@ -1996,6 +2003,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
 
     let _orLogBuffer  = [];   // rolling text entries, capped at 50
     let _invLastTurn  = -1;   // stale-response guard: ignore updates older than last accepted turn
+    let _wornLastTurn = -1;   // v1.85.22: stale-response guard for worn pane
 
     function updateInventoryBox(data) {
       if (!data || !data.state) return;
@@ -2034,6 +2042,47 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           ? `<div style="color:#888; font-size:10px;">${_escHtml(rec.description)}</div>`
           : '';
         return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${condLine}${descLine}${idLine}</div>`;
+      });
+      dom.innerHTML = lines.join('');
+    }
+
+    // v1.85.22: Worn box — reads from player.worn_object_ids
+    function updateWornBox(data) {
+      if (!data || !data.state) return;
+      const turnNum = data.state.turn_counter ?? 0;
+      if (turnNum <= _wornLastTurn) return;
+      _wornLastTurn = turnNum;
+
+      const wornIds = Array.isArray(data.state.player?.worn_object_ids) ? data.state.player.worn_object_ids : [];
+      const objects = (data.state.objects && typeof data.state.objects === 'object') ? data.state.objects : {};
+      const dom = document.getElementById('worn-live');
+      if (!dom) return;
+
+      if (wornIds.length === 0) {
+        dom.innerHTML = '<span style="color:#555;">Worn: (nothing)</span>';
+        return;
+      }
+
+      const lines = wornIds.map(id => {
+        const rec = objects[id];
+        if (!rec) {
+          return `<div style="margin-bottom:4px;"><span style="color:#e67e22;">[unresolved: ${_escHtml(id)}]</span></div>`;
+        }
+        const name     = _escHtml(rec.name || '(unnamed)');
+        const status   = rec.status || 'unknown';
+        const isActive = status === 'active';
+        const nameColor  = isActive ? '#e5e5e5' : '#888';
+        const statusTag  = isActive ? '' : ` <span style="color:#e67e22; font-size:10px;">[${_escHtml(status)}]</span>`;
+        const baselineTag = rec.source === 'birth_default' ? ` <span style="color:#555; font-size:10px;">(baseline)</span>` : '';
+        const idLine     = `<div style="color:#777; font-size:10px;">${_escHtml(id)}</div>`;
+        const _conds = Array.isArray(rec.conditions) ? rec.conditions : [];
+        const condLine = _conds.length > 0
+          ? `<div style="color:#aaa; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
+          : '';
+        const descLine = (rec.description && rec.description.trim())
+          ? `<div style="color:#888; font-size:10px;">${_escHtml(rec.description)}</div>`
+          : '';
+        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${baselineTag}${condLine}${descLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }

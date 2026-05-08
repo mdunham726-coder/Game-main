@@ -66,7 +66,7 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   // v1.84.65: build authoritative valid containers list for this turn's scope
   const _vcPos  = (gameState.world || {}).position;
   const _vcLoc  = (gameState.world || {}).active_local_space || (gameState.world || {}).active_site;
-  const _vcLines = ['- player  (player inventory)'];
+  const _vcLines = ['- player  (player inventory)', '- player_worn  (worn items)'];
   // v1.84.87: suppress cell key when inside a localspace — the interior floor is the correct container,
   // not the parent outdoor tile. Emitting both caused CB to pick the cell key (prior training bias).
   if (_vcPos && !(_vcLoc && _vcLoc.local_space_id)) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
@@ -326,7 +326,7 @@ For each object, emit one entry in the "object_candidates" array:
   "temp_ref": "<short stable handle — reuse the same ref if this object appears again in a later turn>",
   "name": "<object name, lowercase, specific>",
   "description": "<brief physical description>",
-  "container_type": "grid" | "npc" | "player" | "localspace" | "site",
+  "container_type": "grid" | "npc" | "player" | "localspace" | "site" | "player_worn" | "npc_worn",
   "container_id": "<exact value from valid containers list above — use the localspace ID when inside a localspace>",
   "reason": "<exact phrase from narration supporting this placement>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
@@ -412,9 +412,9 @@ For objects already listed in TRACKED OBJECTS, always use the exact object_id fi
 {
   "temp_ref": "<if the object was promoted this turn — must match an entry in object_candidates>",
   "object_id": "<if the object already exists from a prior turn>",
-  "from_container_type": "grid" | "npc" | "player" | "localspace" | "site",
+  "from_container_type": "grid" | "npc" | "player" | "localspace" | "site" | "player_worn" | "npc_worn",
   "from_container_id": "<exact value from valid containers list above>",
-  "to_container_type": "grid" | "npc" | "player" | "localspace" | "site",
+  "to_container_type": "grid" | "npc" | "player" | "localspace" | "site" | "player_worn" | "npc_worn",
   "to_container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this transfer>"
 }

@@ -2390,11 +2390,101 @@ app.post('/narrate', async (req, res) => {
       npcsStr = JSON.stringify(scene.npcs.slice(0, 3));
     }
 
+    // v1.85.22: baseline outfit init — fires on Turn 1 before narrator prompt assembly
+    // Uses _rawInput (action) directly because birth_record is not yet populated at this point in the pipeline.
+    if (turnNumber === 1 && !(gameState.player.worn_object_ids && gameState.player.worn_object_ids.length > 0)) {
+      try {
+        const _boFoundingText = (action || '').trim();
+        const _boSystemMsg = `You are a founding-state classifier for a text-based game engine. Your ONLY job is to determine if the player's founding form is humanoid-capable, and if so, return exactly 5 baseline worn items.
+
+RULES:
+- Humanoid-capable means: has a human-like body (human, elf, dwarf, cyborg, android, vampire, zombie, knight, wizard, etc.)
+- NOT humanoid-capable: animals, insects, plants, inanimate objects, food items, abstract concepts, pure energy, elemental forms, etc.
+- If humanoid-capable, return exactly 5 items covering: shirt, pants, underwear, socks, shoes
+- Adapt item names and descriptions to match the world tone and founding premise (e.g. a medieval knight gets "roughspun tunic" not "t-shirt")
+- If the player EXPLICITLY states they are wearing/dressed in something, substitute that slot as source "birth_custom" (e.g. "I wear plate armor" substitutes the shirt slot)
+- Do NOT infer worn items from role or title alone. "I am a knight" does NOT auto-generate armor. The player must explicitly state wearing it.
+- Do NOT add extra items, armor properties, weapons, valuables, magical effects, or containers beyond the 5 slots
+- If NOT humanoid-capable, return is_humanoid_capable: false and worn_items: []
+
+OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
+{"is_humanoid_capable": true|false, "worn_items": [{"slot": "shirt|pants|underwear|socks|shoes", "name": "...", "description": "...", "source": "birth_default|birth_custom"}]}`;
+        const _boResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: _boSystemMsg },
+            { role: 'user', content: `Founding premise: "${_boFoundingText}"` }
+          ],
+          temperature: 0.2,
+          max_tokens: 400
+        }, {
+          headers: {
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          httpsAgent: _sharedHttpsAgent,
+          timeout: 15000
+        });
+        let _boRaw = _boResp?.data?.choices?.[0]?.message?.content || '';
+        let _boParsed = null;
+        try { _boParsed = JSON.parse(_boRaw); } catch (_) {
+          const _boMatch = _boRaw.match(/\{[\s\S]*\}/);
+          if (_boMatch) { try { _boParsed = JSON.parse(_boMatch[0]); } catch (_) {} }
+        }
+        if (_boParsed && _boParsed.is_humanoid_capable === true && Array.isArray(_boParsed.worn_items)) {
+          if (!gameState.objects || typeof gameState.objects !== 'object') gameState.objects = {};
+          if (!Array.isArray(gameState.player.worn_object_ids)) gameState.player.worn_object_ids = [];
+          const _validSlots = new Set(['shirt', 'pants', 'underwear', 'socks', 'shoes']);
+          for (const _boItem of _boParsed.worn_items) {
+            if (!_boItem || !_boItem.slot || !_validSlots.has(_boItem.slot)) continue;
+            const _boName = String(_boItem.name || _boItem.slot).trim();
+            const _boDesc = String(_boItem.description || '').trim();
+            const _boSrc  = _boItem.source === 'birth_custom' ? 'birth_custom' : 'birth_default';
+            const _boIdInput = [_boName.toLowerCase(), 'player_worn', 'player_worn', `born_${_boItem.slot}`].join('|');
+            const _boId = 'obj_' + require('crypto').createHash('sha256').update(_boIdInput, 'utf8').digest('hex').slice(0, 12);
+            if (!gameState.objects[_boId]) {
+              gameState.objects[_boId] = {
+                id: _boId,
+                name: _boName,
+                description: _boDesc,
+                created_turn: 1,
+                current_container_type: 'player_worn',
+                current_container_id: 'player_worn',
+                owner_id: 'player',
+                source: _boSrc,
+                status: 'active',
+                conditions: [],
+                events: []
+              };
+            }
+            if (!gameState.player.worn_object_ids.includes(_boId)) {
+              gameState.player.worn_object_ids.push(_boId);
+            }
+          }
+          console.log(`[BORN-OUTFIT] Turn 1 baseline outfit created: ${gameState.player.worn_object_ids.length} items (humanoid)`);
+        } else if (_boParsed && _boParsed.is_humanoid_capable === false) {
+          console.log('[BORN-OUTFIT] Turn 1: non-humanoid form — no baseline outfit created');
+        } else {
+          console.warn('[BORN-OUTFIT] Turn 1: DS parse failed or unexpected response — skipping outfit init');
+        }
+      } catch (_boErr) {
+        console.warn('[BORN-OUTFIT] Turn 1 outfit init error (non-fatal):', _boErr.message);
+      }
+    }
+
     // v1.84.78: build invStr from ORS (player.object_ids → gameState.objects) — legacy scene.inventory is always []
     const _orsIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : [];
     const _orsObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {};
     const _invNames = _orsIds.map(id => _orsObjs[id]?.status === 'active' ? _orsObjs[id].name : null).filter(Boolean);
     let invStr = JSON.stringify(_invNames);
+    // v1.85.22: build wornStr from ORS (player.worn_object_ids → gameState.objects)
+    const _wornIds = Array.isArray(gameState.player?.worn_object_ids) ? gameState.player.worn_object_ids : [];
+    const _wornNames = _wornIds.map(id => {
+      const _wr = _orsObjs[id];
+      if (!_wr || _wr.status !== 'active') return null;
+      return _wr.source === 'birth_default' ? `${_wr.name} (baseline)` : _wr.name;
+    }).filter(Boolean);
+    let wornStr = JSON.stringify(_wornNames);
 
     // Phase 5B: Build site context block from current cell's sites (filled only — unfilled slots are engine-internal placeholders, never narrator-visible)
     let _siteContextBlock = '';
@@ -3089,6 +3179,8 @@ ${_narSceneDesc}
 ${nearbyStr}
 
 INVENTORY: ${invStr}
+WORN: ${wornStr}
+WORN RULE: Items listed in WORN are the player's worn clothing and equipment. WORN is the authoritative physical containment record — if an item appears in both WORN and in a birth possession attribute string, the WORN entry governs; do not treat it as separately carried or duplicate the object. Items marked (baseline) are standard everyday clothing present since game start; do not describe them unless they become damaged, removed, explicitly interacted with, or otherwise relevant to the current scene.
 POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
 DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
@@ -4852,6 +4944,17 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         return rec ? `"${rec.name}" [${id}]` : `[unresolved: ${id}]`;
       });
       context += `Player: ${_orInvLines.join(', ')}\n`;
+    }
+    // v1.85.22: show player worn items
+    const _orWornIds = Array.isArray(gameState.player?.worn_object_ids) ? gameState.player.worn_object_ids : [];
+    if (_orWornIds.length === 0) {
+      context += `Player (worn): (none)\n`;
+    } else {
+      const _orWornLines = _orWornIds.map(id => {
+        const rec = _orObjects[id];
+        return rec ? `"${rec.name}" [${id}]${rec.source === 'birth_default' ? ' (baseline)' : ''}` : `[unresolved: ${id}]`;
+      });
+      context += `Player (worn): ${_orWornLines.join(', ')}\n`;
     }
     // v1.84.86: show localspace floor objects when player is at L2 depth
     const _orActiveLs = gameState.world?.active_local_space;
