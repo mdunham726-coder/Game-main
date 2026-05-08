@@ -648,6 +648,7 @@ updateCellObjectsBox(data);
 updateConditionsBox(data);
 appendObjectRealityLog(data, data.state?.turn_counter ?? '?');
   updateIdentityPanel(data, data.state?.turn_counter ?? '?');
+  document.getElementById(inputId).value = '';
 
 // Display diagnostics (rebind to authoritative turn_history state)
 const diagLog = document.getElementById('diagnostic-log');
