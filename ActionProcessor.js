@@ -99,6 +99,25 @@ function resolveItemByName(state, query){
   return null;
 }
 
+// v1.85.23: resolveWornItemByName — scans player.worn_object_ids for a matching active ObjectRecord.
+// Used by the `remove` action handler. Score threshold >= 6 (same as resolveCellItemByName).
+function resolveWornItemByName(state, query) {
+  const wornIds = Array.isArray(state?.player?.worn_object_ids) ? state.player.worn_object_ids : [];
+  const orReg = (state?.objects && typeof state.objects === 'object') ? state.objects : {};
+  const cands = [];
+  for (const id of wornIds) {
+    const rec = orReg[id];
+    if (!rec || rec.status !== 'active') continue;
+    const sc = aliasScore(query, rec.name || '', [], 2);
+    cands.push([sc, rec]);
+  }
+  if (!cands.length) return null;
+  cands.sort((a, b) => b[0] - a[0]);
+  const best = cands[0];
+  if (best[0] >= 6) return best[1];
+  return null;
+}
+
 // ============================================================================
 // INTENT PARSING — DEPRECATED (LEGACY FALLBACK)
 // ============================================================================
@@ -418,6 +437,31 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     }
     if (logger) {
       logger.action_resolved('drop', dropSucceeded, dropSucceeded ? `dropped ${target}` : `could not drop ${target}`);
+    }
+    return;
+  }
+  // v1.85.23: remove — transfer worn item from player_worn → player (inventory)
+  if (act === 'remove'){
+    const target = actions?.target||'';
+    const rec = resolveWornItemByName(state, target);
+    let removeSucceeded = false;
+    if (rec) {
+      const turnNum = actions?._turn || 0;
+      const result = transferObjectDirect(state, rec.id, 'player', 'player', turnNum, 'player_remove');
+      if (result.success) {
+        deltas.push({ op:'set', path:'/player/worn_object_ids', value: state.player.worn_object_ids });
+        deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
+        flags.inventory_rev = true;
+        removeSucceeded = true;
+        // v1.84.57-pattern: proof of AP-executed transfer — index.js uses this to suppress CB duplicate
+        if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+        state._apExecutedTransfers.push(rec.id);
+      } else {
+        console.warn(`[ACTIONS] remove OR object failed: ${result.error} (${rec.id})`);
+      }
+    }
+    if (logger) {
+      logger.action_resolved('remove', removeSucceeded, removeSucceeded ? `removed ${target} from worn` : `could not remove ${target}`);
     }
     return;
   }
@@ -1068,6 +1112,15 @@ function validateAndQueueIntent(state, normalizedIntent){
       const inInv = hasInventoryItem(state, target);
       sv.targetInInventory = inInv;
       if (!inInv) return { valid:false, queue:[], reason:"TARGET_NOT_IN_INVENTORY", stateValidation:sv };
+      continue;
+    }
+
+    // v1.85.23: remove — transfer worn item from player_worn → player (inventory)
+    if (action === 'remove'){
+      const target = act?.target||'';
+      const worn = resolveWornItemByName(state, target);
+      sv.targetWorn = !!worn;
+      if (!worn) return { valid:false, queue:[], reason:"TARGET_NOT_WORN", stateValidation:sv };
       continue;
     }
 

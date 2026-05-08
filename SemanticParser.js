@@ -70,7 +70,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
   const _doInstructions = [
     // === PHASE 3C: Quest actions added to valid actions list ===
     // NOTE: 'help' removed — Help channel bypasses parser entirely (Phase 1/5a)
-    "Valid actions: move, take, drop, throw, smash, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, state_claim",
+    "Valid actions: move, take, drop, throw, smash, examine, talk, enter, exit, accept_quest, complete_quest, ask_about_quest, sit, stand, look, cast, sneak, attack, listen, wait, inventory, state_claim, remove",
     "state_claim: State claims are declarative assertions of already-true possession, identity, condition, or world fact. Imperative action attempts must not be classified as state claims merely because success would change possession or world state. The parser classifies intent — the engine determines whether the object or condition exists. Use state_claim only when the input's primary structure is a declarative assertion (e.g. 'I have X', 'I am X', 'there is X here') with no imperative acquisition or interaction verb driving it. Physical acquisition verbs (grab, snatch, take, get, pick up, lift, collect, pluck, retrieve, etc.) must be classified as action='take' — never state_claim. A state_claim must never create, modify, or confirm any fact by itself; it only routes the input toward bounded narration that acknowledges the claim, checks it against engine truth, and refuses to promote unsupported reality. When input combines an action verb with a discovery result in the same clause, apply this test: does the input leave the outcome open for the engine to determine, or does it assert the outcome as already true? An attempt leaves the outcome open — the player is trying, not declaring. A declaration asserts the result as fact. Classify as state_claim when the player's input declares a found object or condition as an existing fact, regardless of whether an action verb precedes it.",
     "",
     "Directions: north, south, east, west, up, down",
@@ -81,6 +81,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
     "Use action='throw' for phrases like: 'throw [item]', 'toss [item]', 'hurl [item]', 'fling [item]', 'chuck [item]', 'lob [item]', 'pitch [item]', or any phrase where the player propels, launches, or forcefully releases an item away from themselves through the air. Target should be the item name. Do NOT use throw for smash/slam/bash/crush/pound/ram patterns.",
     "Use action='smash' for phrases like: 'smash [item] on/against [target]', 'slam [item] against [target]', 'bash [item] on [target]', 'crush [item] against [target]', 'pound [item] on/against [target]', 'ram [item] into [target]', or any phrase where the player drives, strikes, or impacts an object against a surface or target with destructive/impact intent. Also captures the reverse frame: 'smash the apple with a rock' where the named target is the object being acted upon and the instrument is specified. Key distinction: throw = item leaves hand and travels through the air; smash = item or target is struck with impact intent, item does not necessarily leave the player's hand. Target should be the primary object being smashed or struck.",
     "Use action='exit' for phrases like: 'out of', 'go out', 'leave', 'exit', 'get out'. exit is an action, not a direction value. Never use dir='exit'.",
+    "Use action='remove' for phrases like: 'take off [item]', 'remove [item]', 'unequip [item]', 'strip off [item]'. Applies when the player is removing clothing or equipment from their own body. Target should be the worn item name.",
     "If the player's input is expressive, theatrical, or physical-performance language with no clear mechanical intent (e.g., dancing, spinning, performing, celebrating), set action to 'wait' and confidence to 0.3.",
     "",
     // === PHASE 3C: Quest-specific parsing context ===
@@ -229,6 +230,23 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
       const _bareEntryKey = hashKey(`${channel}|${raw}|fast_path`);
       setToCache(_bareEntryKey, _bareEntryResult);
       return _bareEntryResult;
+    }
+    // v1.85.23: remove fast-path — "take off X", "remove X", "unequip X", "strip off X"
+    // Always means: remove a worn item from player body. Target required after article-strip.
+    const _removeFastMatch = _rawLower.match(/^(?:take\s+off|remove|unequip|strip\s+off)\s+(.+)$/);
+    if (_removeFastMatch) {
+      const _removeTargetRaw = _removeFastMatch[1].replace(/^(a|an|the|my)\s+/i, '').trim();
+      if (_removeTargetRaw.length > 0) {
+        log('fast_path', `remove verb -> action=remove target="${_removeTargetRaw}"`);
+        const _removeResult = {
+          success: true,
+          intent: { primaryAction: { action: 'remove', target: _removeTargetRaw, dir: null }, secondaryActions: [], compound: false },
+          confidence: 0.97
+        };
+        const _removeKey = hashKey(`${channel}|${raw}|fast_path`);
+        setToCache(_removeKey, _removeResult);
+        return _removeResult;
+      }
     }
   }
 
