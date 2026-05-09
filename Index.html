@@ -977,22 +977,6 @@ diagLog.innerHTML = `
   ${_sitesHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">PHASE 5 CAPTURE (last turn)</div>
   ${_captureHtml}
-  <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">PHASE 5F NPC CAPTURE (last turn)</div>
-  ${(() => {
-    const _lnc = data.state?.world?._lastNpcCapture || null;
-    if (!_lnc || !_lnc.detected) return '<div style="margin-left:8px;color:#666">npc_updates detected : no</div>';
-    const _ncParseColor = _lnc.parseSuccess ? '#0f0' : '#f00';
-    const _ncUpdatesHtml = (_lnc.updates || []).map(u => {
-      const _ncName = u.npc_name_set != null ? ` npc_name=<span style="color:#9f9">"${u.npc_name_set}"</span>` : '';
-      const _ncLearned = u.is_learned_set ? ' is_learned=<span style="color:#0f0">true</span>' : '';
-      return `<div style="margin-left:16px;color:#aaa">${u.id}${_ncName}${_ncLearned}</div>`;
-    }).join('');
-    const _ncSkipped = (_lnc.skipped_name || []).length > 0 ? `<div style="margin-left:8px;color:#666">skipped (name frozen) : ${_lnc.skipped_name.join(', ')}</div>` : '';
-    const _ncErrors = (_lnc.errors || []).length > 0 ? `<div style="margin-left:8px;color:#f44">id not found : ${_lnc.errors.join(', ')}</div>` : '';
-    return `<div style="margin-left:8px">npc_updates detected : yes</div>
-    <div style="margin-left:8px">parse result : <span style="color:${_ncParseColor}">${_lnc.parseSuccess ? 'success' : 'FAILED'}</span></div>
-    ${_ncUpdatesHtml}${_ncSkipped}${_ncErrors}`;
-  })()}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">SITE INTERIOR LINK STATUS (world.sites vs cell.sites)</div>
   ${_mirrorHtml}
   <div style="margin-top:6px; border-top:1px solid #333; padding-top:4px; color:#888;">ENTRY RESOLVER (last turn)</div>
@@ -1770,23 +1754,6 @@ Context       : era=${_qWbn(_qWc,'era')} | world_tone=${lastGameResponse?.state?
         stateSection += '\n--- CURRENT CELL SITES (L0 / authoritative) ---\n  Site Count : ' + _sCellSites.length + '\n' + _sSitesTxt
           + '\n--- PHASE 5 CAPTURE (last turn) ---\n' + _sCaptureTxt
           + '\n--- SITE INTERIOR LINK STATUS (world.sites vs cell.sites) ---\n' + _sMirrorTxt;
-        // Phase 5F NPC capture
-        const _sNlc = _vis?.last_npc_capture || null;
-        let _sNpcCaptureTxt = '';
-        if (!_sNlc || !_sNlc.detected) {
-          _sNpcCaptureTxt = '  npc_updates detected : no';
-        } else {
-          const _sNcParse = _sNlc.parseSuccess ? 'success' : 'FAILED';
-          const _sNcUpdates = (_sNlc.updates || []).map(u => {
-            const _sNcName = u.npc_name_set != null ? ` npc_name="${u.npc_name_set}"` : '';
-            const _sNcLearned = u.is_learned_set ? ' is_learned=true' : '';
-            return `    ${u.id}${_sNcName}${_sNcLearned}`;
-          }).join('\n');
-          const _sNcSkipped = (_sNlc.skipped_name || []).length > 0 ? '\n  skipped (name frozen) : ' + _sNlc.skipped_name.join(', ') : '';
-          const _sNcErrors = (_sNlc.errors || []).length > 0 ? '\n  id not found : ' + _sNlc.errors.join(', ') : '';
-          _sNpcCaptureTxt = `  detected : yes | parse : ${_sNcParse}${_sNcUpdates ? '\n' + _sNcUpdates : ''}${_sNcSkipped}${_sNcErrors}`;
-        }
-        stateSection += '\n--- PHASE 5F NPC CAPTURE (last turn) ---\n' + _sNpcCaptureTxt;
       }
 
       // -- Site block (running only) — labeled as Parent Site when at L2 --
@@ -2122,7 +2089,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const isActive = status === 'active';
         const nameColor  = isActive ? '#e5e5e5' : '#888';
         const statusTag  = isActive ? '' : ` <span style="color:#e67e22; font-size:10px;">[${_escHtml(status)}]</span>`;
-        const baselineTag = rec.source === 'birth_default' ? ` <span style="color:#555; font-size:10px;">(baseline)</span>` : '';
+        const baselineTag = (rec.source === 'birth_default' || rec.source === 'birth_custom') ? ` <span style="color:#555; font-size:10px;">(baseline)</span>` : '';
         const idLine     = `<div style="color:#777; font-size:10px;">${_escHtml(id)}</div>`;
         const _conds = Array.isArray(rec.conditions) ? rec.conditions : [];
         const condLine = _conds.length > 0
@@ -2273,11 +2240,18 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       // CB summary
       lines.push(`  CB: ${cands.length} candidate(s), ${xfers.length} transfer(s)`);
       for (const c of cands) {
-        const name     = c.name        || '?';
-        const ctype    = c.container_type  || '?';
-        const cid      = c.container_id    || '?';
-        const ref      = c.temp_ref        || '?';
-        lines.push(`    + candidate  "${name}"  ${ctype}:${cid}  temp_ref:${ref}`);
+        const name = c.name || '?';
+        if (c.transfer_origin === 'npc_introduction') {
+          const _niCtype  = c.container_type || 'npc';
+          const _niCid    = c.container_id   || '?';
+          const _niPhrase = c._source_phrase ? `  phrase:"${c._source_phrase}"` : '';
+          lines.push(`    [synthetic: npc-intro]  "${name}"  ${_niCtype}:${_niCid}${_niPhrase}`);
+        } else {
+          const ctype = c.container_type || '?';
+          const cid   = c.container_id   || '?';
+          const ref   = c.temp_ref       || '?';
+          lines.push(`    + candidate  "${name}"  ${ctype}:${cid}  temp_ref:${ref}`);
+        }
       }
       for (const t of xfers) {
         const ref    = t.temp_ref    || t.object_id || '?';
@@ -2296,8 +2270,15 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
                      : or.skip_reason || 'unknown reason';
         const fissionSuffix = (or.fission_retired > 0) ? ' | fission pass ran separately' : '';
         lines.push(`  ObjectHelper: skipped (${reason})${fissionSuffix}`);
+        if ((or.visible_objects_count || 0) > 0) {
+          lines.push(`  visible_objects: ${or.visible_objects_count} extracted (barrier-inaccessible, not in ORS)`);
+        }
       } else {
-        lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}  pre_rejected:${or.pre_rejected || 0}`);
+        const _orSuffix = [
+          (or.npc_intro_materialized > 0) ? `  npc_intro:${or.npc_intro_materialized}` : '',
+          (or.visible_objects_count  > 0) ? `  visible:${or.visible_objects_count}`     : ''
+        ].join('');
+        lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}  pre_rejected:${or.pre_rejected || 0}${_orSuffix}`);
         // Normal (non-fission) audit rows only — fission rows rendered below
         for (const a of audit.filter(a => !a.parent_object_id)) {
           if (a.action === 'promoted') {
