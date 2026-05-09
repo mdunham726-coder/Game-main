@@ -3042,7 +3042,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       !_npcTalkBlock &&
       (_rawNpcTarget || _npcTalkResult?.outcome === 'matched')
     )
-      ? `\nNARRATOR MODE [MANDATORY]: This is a dialogue turn. The player is addressing ${_npcRef}.\n${_rawPreSpeech ? 'PLAYER APPROACH: "' + _rawPreSpeech + '"\nDo not summarize or omit anything in PLAYER APPROACH. Preserve every beat concretely — physical movement, gesture, expression, and setup all belong in narration before the speech act.\n' : ''}PLAYER SAYS: "${_rawInput}"\n- Text in asterisks (*like this*) represents player gesture or body language — weave it into the NPC's reaction; do not skip or summarize it\n- If the player's words or gesture (*like this*) imply holding, showing, or possessing an item not listed in INVENTORY above, the NPC does not perceive that item — it does not exist in the scene. Do not have the NPC reference, react to, engage with, or inquire about any item the player implied but that is not in confirmed engine state.\n- Do NOT re-describe the surrounding environment or scene unless it directly affects this exchange\n- Anchor entirely to the NPC's reaction: their words, expression, posture, and immediate response to the player\n- The player's words are the event. The NPC's response is the scene.\n- Social and conversational detail takes absolute priority over environmental description on dialogue turns\n`
+      ? `\nNARRATOR MODE [MANDATORY]: This is a dialogue turn. The player is addressing ${_npcRef}.\n${_rawPreSpeech ? 'PLAYER APPROACH: "' + _rawPreSpeech + '"\nDo not summarize or omit anything in PLAYER APPROACH. Preserve every beat concretely — physical movement, gesture, expression, and setup all belong in narration before the speech act.\n' : ''}PLAYER SAYS: "${_rawInput}"\n- Text in asterisks (*like this*) represents player gesture or body language — weave it into the NPC's reaction; do not skip or summarize it\n- If the player's speech implies possession or use of an object not in authoritative state, that possession is not real and the action cannot physically complete. Do not have the NPC treat the implied object as real.\n- Do NOT re-describe the surrounding environment or scene unless it directly affects this exchange\n- Anchor entirely to the NPC's reaction: their words, expression, posture, and immediate response to the player\n- The player's words are the event. The NPC's response is the scene.\n- Social and conversational detail takes absolute priority over environmental description on dialogue turns\n`
       : '';
 
     // Phase 3: Do-channel PLAYER INTENT — non-authoritative flavor injection.
@@ -3064,6 +3064,18 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // v1.51.0: Removed creative-license phrase "render as physical expression" — replaced with explicit anti-substitution wording.
     const _emoteBlock = /\*[^*]+\*/.test(_rawInput)
       ? `\nEMOTE DETECTED: The player's input contains asterisk-wrapped gesture or body language (*like this*). The player's authored emote is the action. Use their exact word(s) as written in the narration — do not reinterpret, replace, or substitute it with a different gesture. Integrate it naturally but do not invent an alternative.\n`
+      : '';
+
+    // v1.85.35: Emote object authority block — fires on say-channel turns with asterisk-wrapped emotes.
+    // Guards: resolvedChannel==='say' AND emote present. Covers both NPC-addressed and soliloquy.
+    // Enforces three-tier object authority model: player-controlled | NPC-controlled (contested) | nonexistent.
+    const _emoteObjectAuthorityBlock = (
+      resolvedChannel === 'say' && /\*[^*]+\*/.test(_rawInput)
+    )
+      ? (() => {
+          console.log('[EMOTE-AUTHORITY] fired turn:', turnNumber);
+          return `\nEMOTE OBJECT AUTHORITY [MANDATORY]:\nThis input contains an asterisk-wrapped emote. If the emote clearly describes a physical action involving a concrete object, determine the object's authority status before narrating:\n- Object appears in INVENTORY or WORN above — player controls it. Proceed normally.\n- Object appears in NPCs PRESENT carries or wears — the object is real in this scene, but it belongs to the NPC. The attempt is valid; the outcome is not automatic. Narrate as the simulation demands given the NPC's character and the nature of the interaction. Do NOT complete the transfer or access as if it were guaranteed.\n- Object is not found in the authority sources available to this prompt — do not complete the action. The attempt physically cannot succeed. Do not treat the implied object as real.\n`;
+        })()
       : '';
 
     // v1.51.0: Soliloquy block — fires on Say channel when no NPC is successfully bound.
@@ -3247,7 +3259,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
+${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 

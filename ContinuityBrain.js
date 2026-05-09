@@ -170,6 +170,12 @@ observable_states
   ACCEPT: arm in sling | hood pulled low | lamp is unlit | hunched over counter
   REJECT: hiding something | grieving | planning
 
+  CONTESTED EMOTE RULE: If the raw player input contains an asterisk-wrapped emote
+  implying a physical object interaction, and the narration described that interaction
+  as incomplete, failed, or contested, do not extract NPC state changes predicated on
+  that interaction having succeeded. Extract only what the narration actually describes
+  as the outcome.
+
 held_objects
   Items physically carried, held in hand, tucked under arm, gripped, or transported by this entity (not strapped or worn on the body).
   Test: "Is this object actively held, gripped, or carried in their hands or arms — not fastened to the body?"
