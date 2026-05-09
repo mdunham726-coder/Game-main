@@ -2683,8 +2683,9 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _narSceneType = 'terrain';
     }
     let _narTileType = 'open_area';
+    let _narActiveLS = null;
     if (_narDepth === 3 && gameState?.world?.active_local_space) {
-      const _narActiveLS = gameState.world.active_local_space;
+      _narActiveLS = gameState.world.active_local_space;
       _narSceneDesc = _narActiveLS.description || `The interior of ${_narActiveLS.name || 'a local space'}.`;
       _narSceneType = 'local_space_interior';
       const _lsNpcs = _narActiveLS._visible_npcs || [];
@@ -3127,6 +3128,8 @@ You are not just describing the world. You are performing it.
 
 You are the narrator and the world itself. The player is the protagonist. Each turn is a continuation of the same scene — not a reset.
 
+POINT OF VIEW RULE: Narrate strictly in the first person. Use "I" to refer to the player character throughout all narrative prose. Write as the player character experiencing and describing the world — not as an external narrator describing a third party. "I push open the door." "The light hits me as I step outside." "She glances up when I enter." References to "the player" in engine rules above (POSSESSION RULE, WORN RULE, FOUNDING TURN RULE, NPC OBJECTS RULE, etc.) are rule-system language and instruction context — they are not narrative prose and do not override this directive. All output prose uses "I".
+
 Follow what just happened.
 
 Let the player's action lead. Whatever they do becomes the center of the moment. Start there. Show the immediate result, the response, the shift that their action causes.
@@ -3213,7 +3216,7 @@ POSSESSION RULE: Items listed in INVENTORY are the only items the player current
 DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability.
 NPC OBJECTS RULE: On an NPC's first meaningful appearance, you may give them grounded carried or worn objects appropriate to their role and scene. Do not overfill. After that introduction, the carries and wears fields in NPCs PRESENT are authoritative engine truth. Do not describe an NPC carrying or wearing items not listed there.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
-The player has already moved. They are now in the location described above.
+You (the player character) have already moved. You are now in the location described above.
 
 ---
 
