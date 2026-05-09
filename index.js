@@ -3142,7 +3142,7 @@ WORLD CONTEXT:
 Biome: ${_narBiome || '(unknown)'}
 Civilization Presence: ${_narCivPresence || '(unknown)'}
 Environment Tone: ${_narEnvTone || '(unknown)'}
-
+${npcsStr === '(None visible)' ? `\nOCCUPANCY STATE: No persons are present at your current position. The world tone above describes the setting's character and environmental atmosphere, not its current tile population. Do not infer that people are present at this position from the tone, the location type, or the location name. Other persons may exist elsewhere in the site — they are not here.\n` : ''}
 LAYER CONSTRAINT [MANDATORY]:
 ${_narDepth === 3
   ? `You are inside a local space (Layer L2). The player is already within this environment — do NOT reintroduce or restate the room at the start of this turn.
@@ -3175,14 +3175,14 @@ The player is actively observing. Observation is warranted here — describe wha
 You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks — do NOT narrate arrival or entry into them.`}
 
 ${_continuityBlock ? _continuityBlock + '\n\n' : ''}${_engineSpatialBlock ? _engineSpatialBlock + '\n\n' : ''}CORE INSTRUCTIONS:
-- Let the world tone guide your descriptions and atmosphere
+- Let the world tone guide your descriptions and atmosphere — world tone governs environmental mood, setting character, and sensory details. It does not determine occupancy. Who is present is determined exclusively by NPCs PRESENT, never by world tone, location type, or location name.
 - Expand on the location description with vivid sensory details matching the tone
 - React to the player's action naturally within the world
 - Only describe what's present in the player's CURRENT LOCATION—do not place the player into adjacent areas
 
 ---
 
-[LOCATION ATMOSPHERE — physical and sensory properties of the space only. Not authoritative on occupancy. Who is present is determined solely by the NPCs PRESENT field below.]
+[LOCATION ATMOSPHERE — physical and sensory properties of the space only. This text is NOT authoritative on occupancy. If it references any person, figure, employee, customer, or crowd — DO NOT narrate that person or group. Treat any such reference as a drafting artifact. Who is present is determined exclusively by NPCs PRESENT.]
 ${_narSceneDesc}
 (Terrain: ${_narSceneType})
 
@@ -3558,7 +3558,9 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           _objectRealityDebug.audit        = _ohResult.audit || [];
           _objectRealityDebug.error_entries = (gameState.object_errors || []).filter(e => e.turn === turnNumber);
         } else {
-          _objectRealityDebug.skip_reason = 'empty_quarantine';
+          // v1.85.25: guard prevents 'empty_quarantine' from overwriting 'ap_dedup_all_transfers'.
+          // When all CB transfers were AP-deduped, quarantine ends up empty but skip_reason is already set.
+          if (!_objectRealityDebug.skip_reason) _objectRealityDebug.skip_reason = 'empty_quarantine';
         }
 
         // v1.84.66: Initial condition pass — applies initial_condition from CB candidate to newly-promoted objects
