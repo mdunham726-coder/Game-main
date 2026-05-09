@@ -3383,7 +3383,14 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         // held_objects → container_type:'npc', worn_objects → container_type:'npc_worn'.
         // object_capture_turn set ONLY when ≥1 object is materialized (zero-object intros remain eligible for future capture).
         if (!Array.isArray(_phaseBResult.object_candidates)) _phaseBResult.object_candidates = [];
-        const _visibleNpcsForCapture = (_narActiveLS?._visible_npcs) || (_narActiveSite?._visible_npcs) || [];
+        // v1.85.31: Fix A — replace OR chain with concat+dedup. At L2 depth _narActiveLS._visible_npcs is []
+        // (local spaces have no grid[][], computeVisibleNpcs returns empty). [] is truthy in JS so the old OR
+        // chain short-circuited before consulting _narActiveSite._visible_npcs — site-level NPCs were invisible
+        // to the intro capture loop. Concat+dedup merges both pools correctly.
+        const _visibleNpcsForCapture = [
+          ...(_narActiveLS?._visible_npcs || []),
+          ...(_narActiveSite?._visible_npcs || [])
+        ].filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
         let _npcIntroCaptureCount = 0;
         if (Array.isArray(_phaseBResult.entity_candidates)) {
           for (const _intrNpc of _visibleNpcsForCapture) {
@@ -3393,9 +3400,24 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
             let _capturedForNpc = 0;
             for (const _hItem of (_intrCand.held_objects || [])) {
               if (!_hItem || typeof _hItem !== 'string' || !_hItem.trim()) continue;
+              // v1.85.31: Fix B — exact-match duplicate guard. If an active ObjectRecord already exists
+              // for this item (container_type:npc, same container_id, exact normalized name, status:active),
+              // skip the push but still count it so object_capture_turn gets finalized. No fuzzy/token matching.
+              const _hNameNorm = _hItem.trim().toLowerCase();
+              const _hAlreadyExists = Object.values(gameState.objects || {}).some(r =>
+                r.status === 'active' &&
+                r.current_container_type === 'npc' &&
+                r.current_container_id === _intrNpc.id &&
+                String(r.name).toLowerCase().trim() === _hNameNorm
+              );
+              if (_hAlreadyExists) {
+                console.log(`[NPC-INTRO-CAPTURE] "${_hItem.trim()}" already materialized → skipping push, counting (T-${turnNumber})`);
+                _capturedForNpc++;
+                continue;
+              }
               _phaseBResult.object_candidates.push({
                 temp_ref: `npc_intro_${_intrNpc.id}_h${_capturedForNpc}`,
-                name: _hItem.trim().toLowerCase(),
+                name: _hNameNorm,
                 description: '',
                 container_type: 'npc',
                 container_id: _intrNpc.id,
@@ -3410,9 +3432,22 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
             }
             for (const _wItem of (_intrCand.worn_objects || [])) {
               if (!_wItem || typeof _wItem !== 'string' || !_wItem.trim()) continue;
+              // v1.85.31: Fix B — same exact-match guard for worn items (container_type:npc_worn).
+              const _wNameNorm = _wItem.trim().toLowerCase();
+              const _wAlreadyExists = Object.values(gameState.objects || {}).some(r =>
+                r.status === 'active' &&
+                r.current_container_type === 'npc_worn' &&
+                r.current_container_id === _intrNpc.id &&
+                String(r.name).toLowerCase().trim() === _wNameNorm
+              );
+              if (_wAlreadyExists) {
+                console.log(`[NPC-INTRO-CAPTURE] "${_wItem.trim()}" already materialized (worn) → skipping push, counting (T-${turnNumber})`);
+                _capturedForNpc++;
+                continue;
+              }
               _phaseBResult.object_candidates.push({
                 temp_ref: `npc_intro_${_intrNpc.id}_w${_capturedForNpc}`,
-                name: _wItem.trim().toLowerCase(),
+                name: _wNameNorm,
                 description: '',
                 container_type: 'npc_worn',
                 container_id: _intrNpc.id,
