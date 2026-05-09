@@ -181,6 +181,7 @@ worn_objects
   Test: "Is this object worn on or secured to the body rather than held in the hands?"
   ACCEPT: leather coat | iron ring | worn boots | belt | holstered blade fastened to hip
   REJECT: items actively held or gripped in hands (use held_objects) | "burdens" (metaphor)
+  REJECT: phrases describing absence or lack — "missing X", "no shirt", "bare feet", "without shoes", "not wearing X" — these are state facts, not worn objects
 
 rejected_interpretations (per-entity)
   REQUIRED. Items you considered but rejected. Format: "phrase → reason"

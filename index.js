@@ -2390,6 +2390,15 @@ app.post('/narrate', async (req, res) => {
       npcsStr = JSON.stringify(scene.npcs.slice(0, 3));
     }
 
+    // v1.85.32: shared absence-phrase guard — used by birth outfit write-back and NPC intro capture loops.
+    // Prefix patterns use trailing space to avoid false hits (e.g. "no-name brand" starts with "no-" not "no ").
+    // Exact matches for "none"/"nothing" are whole-string only — "Nothing Knife" does not match.
+    function _isAbsencePhrase(name) {
+      const n = String(name).toLowerCase().trim();
+      if (n === 'none' || n === 'nothing') return true;
+      return ['missing ', 'no ', 'bare ', 'without ', 'not wearing '].some(p => n.startsWith(p));
+    }
+
     // v1.85.22: baseline outfit init — fires on Turn 1 before narrator prompt assembly
     // Uses _rawInput (action) directly because birth_record is not yet populated at this point in the pipeline.
     if (turnNumber === 1 && !(gameState.player.worn_object_ids && gameState.player.worn_object_ids.length > 0)) {
@@ -2400,11 +2409,12 @@ app.post('/narrate', async (req, res) => {
 RULES:
 - Humanoid-capable means: has a human-like body (human, elf, dwarf, cyborg, android, vampire, zombie, knight, wizard, etc.)
 - NOT humanoid-capable: animals, insects, plants, inanimate objects, food items, abstract concepts, pure energy, elemental forms, etc.
-- If humanoid-capable, return exactly 5 items covering: shirt, pants, underwear, socks, shoes
+- If humanoid-capable, return up to 5 items covering: shirt, pants, underwear, socks, shoes
 - Adapt item names and descriptions to match the world tone and founding premise (e.g. a medieval knight gets "roughspun tunic" not "t-shirt")
 - If the player EXPLICITLY states they are wearing/dressed in something, substitute that slot as source "birth_custom" (e.g. "I wear plate armor" substitutes the shirt slot)
 - Do NOT infer worn items from role or title alone. "I am a knight" does NOT auto-generate armor. The player must explicitly state wearing it.
 - Do NOT add extra items, armor properties, weapons, valuables, magical effects, or containers beyond the 5 slots
+- If a slot has no real item to return (the player is explicitly not wearing anything there, or it genuinely does not apply), OMIT that slot entirely from worn_items. Do NOT return absence descriptions such as "missing pants", "no shirt", "bare feet", "nothing", etc. as item names.
 - If NOT humanoid-capable, return is_humanoid_capable: false and worn_items: []
 
 OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
@@ -2438,6 +2448,11 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           for (const _boItem of _boParsed.worn_items) {
             if (!_boItem || !_boItem.slot || !_validSlots.has(_boItem.slot)) continue;
             const _boName = String(_boItem.name || _boItem.slot).trim();
+            // v1.85.32: Fix 2 — absence filter. DS may return absence slot-fillers despite the prompt rule.
+            if (_isAbsencePhrase(_boName)) {
+              console.log(`[BORN-OUTFIT] skipped absence-phrase slot: "${_boName}" (${_boItem.slot})`);
+              continue;
+            }
             const _boDesc = String(_boItem.description || '').trim();
             const _boSrc  = _boItem.source === 'birth_custom' ? 'birth_custom' : 'birth_default';
             const _boIdInput = [_boName.toLowerCase(), 'player_worn', 'player_worn', `born_${_boItem.slot}`].join('|');
@@ -3404,6 +3419,11 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
               // for this item (container_type:npc, same container_id, exact normalized name, status:active),
               // skip the push but still count it so object_capture_turn gets finalized. No fuzzy/token matching.
               const _hNameNorm = _hItem.trim().toLowerCase();
+              // v1.85.32: Fix 3 — absence filter. Does NOT count toward _capturedForNpc (absence ≠ object).
+              if (_isAbsencePhrase(_hNameNorm)) {
+                console.log(`[NPC-INTRO-CAPTURE] skipped absence-phrase held: "${_hItem.trim()}" (T-${turnNumber})`);
+                continue;
+              }
               const _hAlreadyExists = Object.values(gameState.objects || {}).some(r =>
                 r.status === 'active' &&
                 r.current_container_type === 'npc' &&
@@ -3434,6 +3454,11 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
               if (!_wItem || typeof _wItem !== 'string' || !_wItem.trim()) continue;
               // v1.85.31: Fix B — same exact-match guard for worn items (container_type:npc_worn).
               const _wNameNorm = _wItem.trim().toLowerCase();
+              // v1.85.32: Fix 4 — absence filter for worn items. Does NOT count toward _capturedForNpc.
+              if (_isAbsencePhrase(_wNameNorm)) {
+                console.log(`[NPC-INTRO-CAPTURE] skipped absence-phrase worn: "${_wItem.trim()}" (T-${turnNumber})`);
+                continue;
+              }
               const _wAlreadyExists = Object.values(gameState.objects || {}).some(r =>
                 r.status === 'active' &&
                 r.current_container_type === 'npc_worn' &&
