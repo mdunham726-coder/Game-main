@@ -215,8 +215,9 @@ function generateNPC(seed, site_id){
     npc_name: null, gender: null, age: null, job_category: null,
     is_learned: false,
     player_recognition: null,  // v1.85.19: {recognizes_player, known_identity, learned_turn, source} — set by Arbiter only
+    object_capture_turn: null, // v1.85.28: turn on which NPC's held/worn objects were first materialized as ObjectRecords; null = never captured (eligible for capture on first visible turn with extracted objects)
     position,
-    attributes: {}  // ContinuityBrain: promoted facts (physical_attributes, observable_states, held_or_worn_objects)
+    attributes: {}  // ContinuityBrain: promoted facts (physical_attributes, observable_states, held_objects, worn_objects)
   };
 }
 

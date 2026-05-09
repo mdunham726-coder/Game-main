@@ -337,6 +337,12 @@ async function run(gameState, quarantine, turnNumber) {
     gameState.objects[objectId] = record;
     // v1.85.8: stamp fission lineage — parent_object_id links successor to the retired source object
     if (entry.parent_object_id) record.parent_object_id = entry.parent_object_id;
+    // v1.85.28: NPC intro provenance — diagnostic fields only, not read by any promotion/transfer/gate logic
+    if (entry._source_npc_id) {
+      record.source = 'npc_introduction';
+      record.source_npc_id = entry._source_npc_id;
+      record.source_phrase = entry._source_phrase || '';
+    }
     containerIds.push(objectId);
 
     // One-container enforcement

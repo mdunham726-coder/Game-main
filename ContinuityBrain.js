@@ -153,7 +153,8 @@ For each named or identifiable entity in the narration, produce one entry:
   "entity_ref": "<npc_id from engine state, or descriptive label ONLY if no match>",
   "physical_attributes": [],
   "observable_states": [],
-  "held_or_worn_objects": [],
+  "held_objects": [],
+  "worn_objects": [],
   "rejected_interpretations": []
 }
 
@@ -169,11 +170,17 @@ observable_states
   ACCEPT: arm in sling | hood pulled low | lamp is unlit | hunched over counter
   REJECT: hiding something | grieving | planning
 
-held_or_worn_objects
-  Items visibly on or in the hands/body of THIS entity specifically.
-  Test: "Is this object attached to or held by this entity right now?"
-  ACCEPT: black umbrella | worn leather coat | sealed letter | iron ring
-  REJECT: "weapons" (too vague) | "burdens" (metaphor)
+held_objects
+  Items physically carried, held in hand, tucked under arm, gripped, or transported by this entity (not strapped or worn on the body).
+  Test: "Is this object actively held, gripped, or carried in their hands or arms — not fastened to the body?"
+  ACCEPT: iron dagger in hand | sealed letter | satchel over shoulder | bundle tucked under arm
+  REJECT: clothing strapped or fastened to body (use worn_objects) | "weapons" (too vague) | "burdens" (metaphor)
+
+worn_objects
+  Clothing, armor, jewelry, or equipment strapped, buckled, tied, or fastened directly to the body.
+  Test: "Is this object worn on or secured to the body rather than held in the hands?"
+  ACCEPT: leather coat | iron ring | worn boots | belt | holstered blade fastened to hip
+  REJECT: items actively held or gripped in hands (use held_objects) | "burdens" (metaphor)
 
 rejected_interpretations (per-entity)
   REQUIRED. Items you considered but rejected. Format: "phrase → reason"
@@ -687,7 +694,8 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_or_worn_objects, true);
+  promote('object',   candidate.held_objects, true);   // v1.85.28: split from held_or_worn_objects
+  promote('object',   candidate.worn_objects, true);    // v1.85.28: worn_objects → same attribute bucket for narrator display
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'npc', entity_id: npc.id, entity_name: npc.npc_name || npc.id, count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -742,7 +750,8 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_or_worn_objects, true);
+  promote('object',   candidate.held_objects, true);   // v1.85.28: split from held_or_worn_objects
+  promote('object',   candidate.worn_objects, true);    // v1.85.28: worn_objects → same attribute bucket for narrator display
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', count_by_bucket: _dupCounts, total: _dupTotal, turn });

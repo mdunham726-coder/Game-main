@@ -2692,6 +2692,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       if (_lsNpcs.length > 0) {
         npcsStr = JSON.stringify(_lsNpcs.map(n => {
           const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
+          if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
+            const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_carries.length) _ne.carries = _carries;
+          }
+          if (Array.isArray(n.worn_object_ids) && n.worn_object_ids.length > 0) {
+            const _wears = n.worn_object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_wears.length) _ne.wears = _wears;
+          }
           if (n.narrative_state) Object.assign(_ne, n.narrative_state);
           return _ne;
         }));
@@ -2716,6 +2724,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       if (_siteNpcs.length > 0) {
         npcsStr = JSON.stringify(_siteNpcs.map(n => {
           const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
+          if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
+            const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_carries.length) _ne.carries = _carries;
+          }
+          if (Array.isArray(n.worn_object_ids) && n.worn_object_ids.length > 0) {
+            const _wears = n.worn_object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_wears.length) _ne.wears = _wears;
+          }
           if (n.narrative_state) Object.assign(_ne, n.narrative_state);
           return _ne;
         }));
@@ -3353,13 +3369,68 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         condition_updates: [],
         retirement_updates: [],
         fission_retired: 0,
-        fission_successors_injected: 0
+        fission_successors_injected: 0,
+        npc_intro_materialized: 0
       };
       if (_phaseBResult) {
+        // v1.85.28: NPC intro capture — materialize held/worn objects from entity_candidates as real ObjectRecords.
+        // _promoteEntityAttributes runs synchronously inside CB before _phaseBResult is returned, so
+        // entity_candidates.held_objects / worn_objects are already populated when this step runs.
+        // held_objects → container_type:'npc', worn_objects → container_type:'npc_worn'.
+        // object_capture_turn set ONLY when ≥1 object is materialized (zero-object intros remain eligible for future capture).
+        if (!Array.isArray(_phaseBResult.object_candidates)) _phaseBResult.object_candidates = [];
+        const _visibleNpcsForCapture = (_narActiveLS?._visible_npcs) || (_narActiveSite?._visible_npcs) || [];
+        let _npcIntroCaptureCount = 0;
+        if (Array.isArray(_phaseBResult.entity_candidates)) {
+          for (const _intrNpc of _visibleNpcsForCapture) {
+            if (_intrNpc.object_capture_turn !== null && _intrNpc.object_capture_turn !== undefined) continue;
+            const _intrCand = _phaseBResult.entity_candidates.find(ec => ec.entity_ref === _intrNpc.id);
+            if (!_intrCand) continue;
+            let _capturedForNpc = 0;
+            for (const _hItem of (_intrCand.held_objects || [])) {
+              if (!_hItem || typeof _hItem !== 'string' || !_hItem.trim()) continue;
+              _phaseBResult.object_candidates.push({
+                temp_ref: `npc_intro_${_intrNpc.id}_h${_capturedForNpc}`,
+                name: _hItem.trim().toLowerCase(),
+                description: '',
+                container_type: 'npc',
+                container_id: _intrNpc.id,
+                transfer_origin: 'npc_introduction',
+                _source_npc_id: _intrNpc.id,
+                _source_phrase: _hItem.trim(),
+                _created_turn: turnNumber
+              });
+              console.log(`[NPC-INTRO-CAPTURE] "${_hItem.trim()}" → npc/${_intrNpc.id} (T-${turnNumber})`);
+              _capturedForNpc++;
+              _npcIntroCaptureCount++;
+            }
+            for (const _wItem of (_intrCand.worn_objects || [])) {
+              if (!_wItem || typeof _wItem !== 'string' || !_wItem.trim()) continue;
+              _phaseBResult.object_candidates.push({
+                temp_ref: `npc_intro_${_intrNpc.id}_w${_capturedForNpc}`,
+                name: _wItem.trim().toLowerCase(),
+                description: '',
+                container_type: 'npc_worn',
+                container_id: _intrNpc.id,
+                transfer_origin: 'npc_introduction',
+                _source_npc_id: _intrNpc.id,
+                _source_phrase: _wItem.trim(),
+                _created_turn: turnNumber
+              });
+              console.log(`[NPC-INTRO-CAPTURE] "${_wItem.trim()}" → npc_worn/${_intrNpc.id} (T-${turnNumber})`);
+              _capturedForNpc++;
+              _npcIntroCaptureCount++;
+            }
+            if (_capturedForNpc > 0) _intrNpc.object_capture_turn = turnNumber;
+          }
+        }
+        _objectRealityDebug.npc_intro_materialized = _npcIntroCaptureCount;
+
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
         // v1.85.7: Turn 1 founding premise items are exempt — they are legitimate starting inventory
         if (Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+            if (c.transfer_origin === 'npc_introduction') return true; // v1.85.28: NPC intro capture — always pass through
             if (c.container_type === 'player' && c.transfer_origin === 'player_claimed' && turnNumber !== 1) {
               console.warn(`[ORIGIN-GATE] player_claimed item blocked: "${c.name}"`);
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
@@ -3698,7 +3769,8 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         facts: [
           ...(_peFound.physical_attributes || []),
           ...(_peFound.observable_states   || []),
-          ...(_peFound.held_or_worn_objects || [])
+          ...(_peFound.held_objects        || []),
+          ...(_peFound.worn_objects        || [])
         ]
       };
     })();
@@ -5134,12 +5206,13 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       const _cbEnvCount   = _cbEnv.reduce((s, b) => s + (b.features || []).length, 0);
       context += `candidates:${_cbCandidates.length}  env_features:${_cbEnvCount}  spatial:${_cbSpatial.length}  top_rejected:${_cbTopReject.length}\n`;
       for (const _cand of _cbCandidates) {
-        const _ref = _cand.entity_ref || '?';
-        const _pa  = (_cand.physical_attributes || []).join(', ') || '—';
-        const _os  = (_cand.observable_states   || []).join(', ') || '—';
-        const _obj = (_cand.held_or_worn_objects || []).join(', ') || '—';
+        const _ref  = _cand.entity_ref || '?';
+        const _pa   = (_cand.physical_attributes || []).join(', ') || '—';
+        const _os   = (_cand.observable_states   || []).join(', ') || '—';
+        const _held = (_cand.held_objects        || []).join(', ') || '—';
+        const _worn = (_cand.worn_objects        || []).join(', ') || '—';
         const _rejList = (_cand.rejected_interpretations || []).slice(0, 3);
-        context += `  ${_ref}: phys[${_pa}] state[${_os}] obj[${_obj}]\n`;
+        context += `  ${_ref}: phys[${_pa}] state[${_os}] held[${_held}] worn[${_worn}]\n`;
         if (_rejList.length > 0) {
           context += `    rejected: ${_rejList.join(' | ')}\n`;
         }

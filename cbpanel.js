@@ -152,17 +152,20 @@ function renderTurnView(push) {
     push('');
 
     for (const cand of candidates) {
-      const ref = cand.entity_ref              || '?';
-      const pa  = cand.physical_attributes     || [];
-      const os  = cand.observable_states       || [];
-      const obj = cand.held_or_worn_objects    || [];
-      const rej = cand.rejected_interpretations || [];
+      const ref  = cand.entity_ref              || '?';
+      const pa   = cand.physical_attributes     || [];
+      const os   = cand.observable_states       || [];
+      const held = cand.held_objects            || [];
+      const worn = cand.worn_objects            || [];
+      const rej  = cand.rejected_interpretations || [];
 
       push(`  ${bold(cyn(ref))}`);
-      if (pa.length  > 0) push(`    ${dim('physical:')}   ${pa.join('  │  ')}`);
-      if (os.length  > 0) push(`    ${dim('states:')}     ${os.join('  │  ')}`);
-      if (obj.length > 0) push(`    ${dim('objects:')}    ${obj.join('  │  ')}`);
-      if (rej.length > 0) push(`    ${dim('rejected:')}   ${amb(rej.join('  │  '))}`);
+      if (pa.length   > 0) push(`    ${dim('physical:')}   ${pa.join('  │  ')}`);
+      if (os.length   > 0) push(`    ${dim('states:')}     ${os.join('  │  ')}`);
+      if (held.length > 0) push(`    ${dim('held:')}       ${held.join('  │  ')}`);
+      if (worn.length > 0) push(`    ${dim('worn:')}       ${worn.join('  │  ')}`);
+      if (rej.length  > 0) push(`    ${dim('rejected:')}   ${amb(rej.join('  │  '))}`);
+
       push('');
     }
 
@@ -422,7 +425,8 @@ async function runExplainThis() {
       ctx += `  Entity: ${cand.entity_ref || '?'}\n`;
       if ((cand.physical_attributes     || []).length > 0) ctx += `    physical_attributes: ${cand.physical_attributes.join(', ')}\n`;
       if ((cand.observable_states       || []).length > 0) ctx += `    observable_states: ${cand.observable_states.join(', ')}\n`;
-      if ((cand.held_or_worn_objects    || []).length > 0) ctx += `    held_or_worn_objects: ${cand.held_or_worn_objects.join(', ')}\n`;
+      if ((cand.held_objects            || []).length > 0) ctx += `    held_objects: ${cand.held_objects.join(', ')}\n`;
+      if ((cand.worn_objects            || []).length > 0) ctx += `    worn_objects: ${cand.worn_objects.join(', ')}\n`;
       if ((cand.rejected_interpretations|| []).length > 0) ctx += `    rejected_interpretations: ${cand.rejected_interpretations.join(' | ')}\n`;
     }
     const topRej = extraction.rejected_interpretations || [];
