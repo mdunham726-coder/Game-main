@@ -222,6 +222,10 @@
     <button onclick="consultDeepSeek()" style="width: 74%; padding: 10px; font-size: 14px; background: #9b59b6; color: white; border: none; cursor: pointer; border-radius: 3px; margin-right: 2%;">Consult</button>
     <button onclick="clearConsultSession()" style="width: 24%; padding: 10px; font-size: 14px; background: #555; color: #ccc; border: none; cursor: pointer; border-radius: 3px;">Clear Session</button>
   </div>
+  <div style="margin-bottom: 10px;">
+    <button onclick="copyConsultAll()" style="width: 49%; padding: 8px; font-size: 13px; background: #2c2c2c; color: #9b59b6; border: 1px solid #9b59b6; cursor: pointer; border-radius: 3px; margin-right: 2%;">Copy Conversation</button>
+    <button onclick="copyConsultLast()" style="width: 49%; padding: 8px; font-size: 13px; background: #2c2c2c; color: #9b59b6; border: 1px solid #9b59b6; cursor: pointer; border-radius: 3px;">Copy Last Exchange</button>
+  </div>
   <div id="consultLoading" style="display: none; color: #9b59b6; margin-top: 10px; font-size: 12px;">Consulting...</div>
   <div id="consultThread" style="margin-top: 10px; padding: 10px; background: #1a1a1a; border: 1px solid #9b59b6; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.5; max-height: 700px; overflow-y: auto; display: none;"></div>
   <div id="consultFooter" style="margin-top: 4px; font-size: 11px; color: #666; display: none;"></div>
@@ -1200,6 +1204,8 @@ diagLog.innerHTML = `
       const _label  = _isUser ? 'You' : 'DeepSeek';
       const _div = document.createElement('div');
       _div.style.cssText = `margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #2a2a2a;`;
+      _div.dataset.role = role;
+      _div.dataset.text = text;
       _div.innerHTML = `<div style="font-size: 11px; color: ${_color}; font-weight: bold; margin-bottom: 4px;">${_label}:</div>` +
         `<div style="white-space: pre-wrap; word-wrap: break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')}</div>` +
         (meta ? `<div style="font-size: 10px; color: #555; margin-top: 4px;">${meta}</div>` : '');
@@ -1272,6 +1278,49 @@ diagLog.innerHTML = `
       el.style.display = 'none';
       _consultFooterEl().style.display = 'none';
       _consultFooterEl().textContent = '';
+    }
+
+    function _consultRawEntries() {
+      // Returns array of {role, text} from the live DOM thread
+      const el = _consultThreadEl();
+      const entries = [];
+      el.querySelectorAll('div[data-role]').forEach(div => {
+        entries.push({ role: div.dataset.role, text: div.dataset.text || '' });
+      });
+      return entries;
+    }
+
+    async function copyConsultAll() {
+      const entries = _consultRawEntries();
+      if (!entries.length) { alert('No conversation to copy.'); return; }
+      const lines = entries.map(e => `${e.role === 'user' ? 'You' : 'DeepSeek'}: ${e.text}`).join('\n\n');
+      try {
+        await navigator.clipboard.writeText(lines);
+      } catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = lines; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+    }
+
+    async function copyConsultLast() {
+      const entries = _consultRawEntries();
+      if (entries.length < 2) { alert('No complete exchange to copy yet.'); return; }
+      // Walk backwards: find last assistant entry, then the user entry before it
+      let aiIdx = -1;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        if (entries[i].role === 'assistant') { aiIdx = i; break; }
+      }
+      if (aiIdx < 1) { alert('No complete exchange to copy yet.'); return; }
+      const pair = entries.slice(aiIdx - 1, aiIdx + 1);
+      const lines = pair.map(e => `${e.role === 'user' ? 'You' : 'DeepSeek'}: ${e.text}`).join('\n\n');
+      try {
+        await navigator.clipboard.writeText(lines);
+      } catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = lines; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
     }
 
     document.getElementById('consultQuestion').addEventListener('keypress', (e) => {

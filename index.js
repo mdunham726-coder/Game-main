@@ -5749,7 +5749,7 @@ app.post('/consult-deepseek', async (req, res) => {
     try {
       _resp = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
-        { model: 'deepseek-chat', messages: _messages, temperature: 0.7, max_tokens: 2000 },
+        { model: 'deepseek-chat', messages: _messages, temperature: 0.7 },
         {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
           timeout: 120000,
@@ -5760,7 +5760,7 @@ app.post('/consult-deepseek', async (req, res) => {
       if (_firstErr?.code === 'ECONNRESET') {
         _resp = await axios.post(
           'https://api.deepseek.com/v1/chat/completions',
-          { model: 'deepseek-chat', messages: _messages, temperature: 0.7, max_tokens: 2000 },
+          { model: 'deepseek-chat', messages: _messages, temperature: 0.7 },
           {
             headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
             timeout: 120000
