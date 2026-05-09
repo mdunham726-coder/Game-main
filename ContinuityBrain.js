@@ -1097,6 +1097,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
     watch_message,          // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
     raw,                    // v1.84.21: raw LLM response string (for payload archive)
     prompt,                 // v1.84.21: extraction prompt string (for payload archive)
+    entity_candidates:         Array.isArray(extracted.entity_candidates)         ? extracted.entity_candidates         : [],
     object_candidates:        Array.isArray(extracted.object_candidates)        ? extracted.object_candidates        : [],
     object_transfers:         Array.isArray(extracted.object_transfers)         ? extracted.object_transfers         : [],
     object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],

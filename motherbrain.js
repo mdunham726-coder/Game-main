@@ -780,7 +780,7 @@ async function askMotherBrain(question) {
           DEEPSEEK_URL,
           { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
             tools: MB_TOOLS, tool_choice: 'auto' },
-          { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000, httpsAgent: _deepseekHttpsAgent }
+          { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 0, httpsAgent: _deepseekHttpsAgent }
         );
       } catch (firstErr) {
         if (firstErr?.code === 'ECONNRESET') {
@@ -788,7 +788,7 @@ async function askMotherBrain(question) {
             DEEPSEEK_URL,
             { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
               tools: MB_TOOLS, tool_choice: 'auto' },
-            { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 120000, httpsAgent: _deepseekHttpsAgent }
+            { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 0, httpsAgent: _deepseekHttpsAgent }
           );
         } else { throw firstErr; }
       }
