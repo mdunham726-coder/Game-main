@@ -118,6 +118,7 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "mood_snapshot": { ... },
   "condition_events": [...],
   "object_candidates": [],
+  "visible_objects": [],
   "object_transfers": [],
   "object_condition_updates": [],
   "object_retirements": []${isFoundingTurn ? `,
@@ -193,6 +194,7 @@ Format: { "location_ref": "<location name>", "features": [...] }
 
 ACCEPT: chipped wooden counter | overturned stool | water stain on east wall | guttered candle near door
 REJECT: oppressive silence (mood) | sacred atmosphere (interpretation) | dimly lit (ambiguous — only include if explicitly stated)
+Note: named, specific objects visible through a window, display case, or barrier but not directly reachable are NOT environmental features. Place them in visible_objects[] instead.
 
 ---
 
@@ -314,6 +316,7 @@ OBJECT CANDIDATES (optional)
 Identify concrete, discrete, portable physical objects explicitly mentioned in the narration.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
+Do NOT emit an object_candidate for an object that is visible but spatially separated from the player by a barrier (display window, glass pane, counter, locked case, enclosed shelf, or any other physical boundary). Even if concrete and named, if the player cannot directly touch or take it without crossing a barrier or triggering an additional action, place it in visible_objects[] instead.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
@@ -397,6 +400,34 @@ framed as held, shown, or gathered — that is player_claimed with no exceptions
 The narrator's prose does not change this classification.
 
 If no qualifying objects are present, emit: "object_candidates": []
+
+---
+
+VISIBLE OBJECTS (optional)
+
+Identify concrete, specific, named objects explicitly described in the narration that are NOT directly accessible from the player's current position due to a spatial boundary.
+
+Use this category when ALL THREE conditions are true:
+  (1) The object is concretely named or specifically described — not a generic reference.
+  (2) The object is not in the player's inventory or worn items.
+  (3) The object is separated from the player by a physical boundary of any kind.
+
+Boundary test: "Can the player physically touch or take this object right now, without crossing a barrier, without asking an NPC, and without triggering a new action?"
+  YES → use object_candidates[] instead.
+  NO  → use visible_objects[] here.
+
+Use object_candidates[] instead when the object is on open floor, directly within reach, or has been handed to the player.
+Use environmental_features[] instead when the reference is generic or collective rather than a specific named object.
+
+For each qualifying object, emit one entry:
+{
+  "name": "<object name, lowercase, specific>",
+  "description": "<brief physical description>",
+  "reason": "<exact phrase from narration supporting this placement>",
+  "spatial_context": "<freeform short phrase describing the barrier or spatial separation — describe plainly what separates the player from the object>"
+}
+
+If no qualifying objects are present, emit: "visible_objects": []
 
 ---
 

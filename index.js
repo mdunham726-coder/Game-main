@@ -3340,6 +3340,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         skip_reason: null,
         cb_candidates: [],
         cb_transfers: [],
+        visible_objects_count: Array.isArray(_phaseBResult && _phaseBResult.visible_objects) ? _phaseBResult.visible_objects.length : 0,
         quarantine_size: 0,
         pre_rejected: 0,
         origin_blocked: 0,
