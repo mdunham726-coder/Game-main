@@ -81,7 +81,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
     "Use action='throw' for phrases like: 'throw [item]', 'toss [item]', 'hurl [item]', 'fling [item]', 'chuck [item]', 'lob [item]', 'pitch [item]', or any phrase where the player propels, launches, or forcefully releases an item away from themselves through the air. Target should be the item name. Do NOT use throw for smash/slam/bash/crush/pound/ram patterns.",
     "Use action='smash' for phrases like: 'smash [item] on/against [target]', 'slam [item] against [target]', 'bash [item] on [target]', 'crush [item] against [target]', 'pound [item] on/against [target]', 'ram [item] into [target]', or any phrase where the player drives, strikes, or impacts an object against a surface or target with destructive/impact intent. Also captures the reverse frame: 'smash the apple with a rock' where the named target is the object being acted upon and the instrument is specified. Key distinction: throw = item leaves hand and travels through the air; smash = item or target is struck with impact intent, item does not necessarily leave the player's hand. Target should be the primary object being smashed or struck.",
     "Use action='exit' for phrases like: 'out of', 'go out', 'leave', 'exit', 'get out'. exit is an action, not a direction value. Never use dir='exit'.",
-    "Use action='remove' for phrases like: 'take off [item]', 'remove [item]', 'unequip [item]', 'strip off [item]'. Applies when the player is removing clothing or equipment from their own body. Target should be the worn item name.",
+    "Use action='remove' for phrases like: 'take off [item]', 'remove [item]', 'unequip [item]', 'strip off [item]'. Applies when the player is removing clothing or equipment from their own body. Target should be the worn item name. For aggregate phrases that mean removing ALL worn items at once ('take off everything', 'take off all my clothes', 'undress', 'strip naked', 'strip down', 'get undressed', 'get naked'), set target to '__all_worn__' (the literal string).",
     "If the player's input is expressive, theatrical, or physical-performance language with no clear mechanical intent (e.g., dancing, spinning, performing, celebrating), set action to 'wait' and confidence to 0.3.",
     "",
     // === PHASE 3C: Quest-specific parsing context ===
@@ -230,6 +230,21 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
       const _bareEntryKey = hashKey(`${channel}|${raw}|fast_path`);
       setToCache(_bareEntryKey, _bareEntryResult);
       return _bareEntryResult;
+    }
+    // v1.85.24: aggregate remove fast-path — must come BEFORE single-item path.
+    // Phrases: "take off all", "take off everything", "undress", "strip naked", "strip down",
+    // "get undressed", "get naked", "remove everything", "unequip everything", etc.
+    // Bare "strip" intentionally excluded (too ambiguous — routes to LLM).
+    if (/^(?:take\s+off|remove|unequip|strip\s+off)\s+(?:all|everything)(?:\s.*)?$|^(?:undress|strip(?:\s+naked)?|strip\s+down|get\s+(?:undressed|naked))$/i.test(raw)) {
+      log('fast_path', `aggregate remove -> action=remove target=__all_worn__`);
+      const _aggRemoveResult = {
+        success: true,
+        intent: { primaryAction: { action: 'remove', target: '__all_worn__', dir: null }, secondaryActions: [], compound: false },
+        confidence: 0.97
+      };
+      const _aggRemoveKey = hashKey(`${channel}|${raw}|fast_path`);
+      setToCache(_aggRemoveKey, _aggRemoveResult);
+      return _aggRemoveResult;
     }
     // v1.85.23: remove fast-path — "take off X", "remove X", "unequip X", "strip off X"
     // Always means: remove a worn item from player body. Target required after article-strip.

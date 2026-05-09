@@ -440,13 +440,44 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     }
     return;
   }
-  // v1.85.23: remove — transfer worn item from player_worn → player (inventory)
+  // v1.85.23/24: remove — transfer worn item(s) from player_worn → player (inventory)
   if (act === 'remove'){
     const target = actions?.target||'';
+    const turnNum = actions?._turn || 0;
+    // v1.85.24: aggregate remove — transfer ALL worn items at once
+    if (target === '__all_worn__') {
+      const wornSnapshot = Array.isArray(state?.player?.worn_object_ids) ? [...state.player.worn_object_ids] : [];
+      const orReg = (state?.objects && typeof state.objects === 'object') ? state.objects : {};
+      let removeCount = 0;
+      const removedNames = [];
+      for (const wornId of wornSnapshot) {
+        const result = transferObjectDirect(state, wornId, 'player', 'player', turnNum, 'player_remove');
+        if (result.success) {
+          removeCount++;
+          if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+          state._apExecutedTransfers.push(wornId);
+          const itemName = orReg[wornId]?.name;
+          if (itemName) removedNames.push(itemName.toLowerCase().trim());
+        } else {
+          console.warn(`[ACTIONS] remove-all OR object failed: ${result.error} (${wornId})`);
+        }
+      }
+      if (removeCount > 0) {
+        deltas.push({ op:'set', path:'/player/worn_object_ids', value: state.player.worn_object_ids });
+        deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
+        flags.inventory_rev = true;
+        // v1.85.24: stamp removed worn names for worn-remove gate in index.js
+        state._apRemovedWornNames = removedNames;
+      }
+      if (logger) {
+        logger.action_resolved('remove', removeCount > 0, removeCount > 0 ? `removed all ${removeCount} worn item(s)` : 'could not remove any worn items');
+      }
+      return;
+    }
+    // Single-item remove
     const rec = resolveWornItemByName(state, target);
     let removeSucceeded = false;
     if (rec) {
-      const turnNum = actions?._turn || 0;
       const result = transferObjectDirect(state, rec.id, 'player', 'player', turnNum, 'player_remove');
       if (result.success) {
         deltas.push({ op:'set', path:'/player/worn_object_ids', value: state.player.worn_object_ids });
@@ -456,6 +487,8 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         // v1.84.57-pattern: proof of AP-executed transfer — index.js uses this to suppress CB duplicate
         if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
         state._apExecutedTransfers.push(rec.id);
+        // v1.85.24: stamp removed worn name for worn-remove gate in index.js
+        state._apRemovedWornNames = [rec.name.toLowerCase().trim()];
       } else {
         console.warn(`[ACTIONS] remove OR object failed: ${result.error} (${rec.id})`);
       }
@@ -1115,9 +1148,15 @@ function validateAndQueueIntent(state, normalizedIntent){
       continue;
     }
 
-    // v1.85.23: remove — transfer worn item from player_worn → player (inventory)
+    // v1.85.23/24: remove — transfer worn item(s) from player_worn → player (inventory)
     if (action === 'remove'){
       const target = act?.target||'';
+      // v1.85.24: aggregate remove — __all_worn__ is valid if player is wearing at least one item
+      if (target === '__all_worn__') {
+        const wornCount = Array.isArray(state?.player?.worn_object_ids) ? state.player.worn_object_ids.length : 0;
+        if (wornCount === 0) return { valid:false, queue:[], reason:"TARGET_NOT_WORN", stateValidation:sv };
+        continue;
+      }
       const worn = resolveWornItemByName(state, target);
       sv.targetWorn = !!worn;
       if (!worn) return { valid:false, queue:[], reason:"TARGET_NOT_WORN", stateValidation:sv };

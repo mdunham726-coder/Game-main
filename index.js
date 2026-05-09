@@ -2912,8 +2912,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
                 : (_parsedAction === 'attack'
                   ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making a genuine physical attack. This is a real action with real consequences — do not treat it as mechanically inert and do not state that it has no mechanical effect. Follow the Reality Check advisory above for the outcome. Narrate the physical result as it would actually occur given the player's current embodiment, equipped items, and the target's actual capabilities. Success, partial success, and failure are all valid outcomes — the Reality Check has already assessed the likely consequence; honor it. Do not invent resistance or blocking mechanisms that contradict the RC outcome. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state.)\n`
                   : (_parsedAction === 'remove'
-                    ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed a worn item from their body. The item is now in their inventory — it was not dropped, placed on the ground, or discarded. Do not describe it falling to the floor or ending up anywhere other than the player's possession.)\n`
-                    : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`)))))))
+                    ? (inputObj?.player_intent?.target === '__all_worn__'
+                      ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed ALL of their worn clothing and gear. Every item is now in their inventory. None of it landed on the ground, was dropped, or was discarded anywhere. Do not describe any item falling to the floor or being set down. Do not name items using shortened or informal versions of their names.)\n`
+                      : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed a worn item from their body. The item is now in their inventory — it was not dropped, placed on the ground, or discarded. Do not describe it falling to the floor or ending up anywhere other than the player's possession.)\n`)
+                    : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`))))))))
       : '';
     // v1.84.79: environmental gather block — fires when AP resolved a take against a CB-promoted env: feature.
     // v1.85.6: also fires for synthetic=true (ORS had no prior record — narrator resolves plausibility).
@@ -3401,6 +3403,35 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'env_gather_not_acquired', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
               return false;
+            }
+            return true;
+          });
+        }
+        // v1.85.24: worn-remove gate — defense-in-depth against CB emitting a fresh promote
+        // for a just-removed worn item with a shortened/variant name (name-mismatch failure mode).
+        // _apDoneIds (below) suppresses CB transfers by exact ID; this gate suppresses CB promotes
+        // by token-matching candidate name against AP-stamped removed item names.
+        // Gate is INERT unless: _parsedAction === 'remove' AND AP stamped _apRemovedWornNames.
+        // Only blocks candidates targeting world containers (grid/localspace/site).
+        const _apRemovedWornNames = Array.isArray(gameState._apRemovedWornNames) ? gameState._apRemovedWornNames : [];
+        gameState._apRemovedWornNames = []; // consume and clear for next turn
+        if (_parsedAction === 'remove' && _apRemovedWornNames.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
+          const _wornRemoveTokenize = str => String(str || '').toLowerCase().split(/[\s\-_\/]+/).map(t => t.replace(/[^a-z0-9]/g, '')).filter(t => t.length > 0);
+          // Pre-build token sets for each removed worn item name
+          const _removedTokenSets = _apRemovedWornNames.map(n => ({ name: n, tokens: new Set(_wornRemoveTokenize(n)) }));
+          _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+            const _wct = c.container_type;
+            if (_wct !== 'grid' && _wct !== 'localspace' && _wct !== 'site') return true; // only world containers
+            const _cToks = _wornRemoveTokenize(c.name);
+            if (_cToks.length === 0) return true;
+            for (const { name: _rName, tokens: _rSet } of _removedTokenSets) {
+              if (_cToks.every(tok => _rSet.has(tok))) {
+                console.warn(`[WORN-REMOVE-GATE] blocked promote candidate: "${c.name}" matched removed worn item "${_rName}" (container_type: ${_wct})`);
+                if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
+                gameState.object_errors.push({ stage: 'worn_remove_gate', reason: 'promote_blocked_name_match', name: c.name, matched: _rName, turn: (gameState.turn_history?.length || 0) + 1 });
+                if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+                return false;
+              }
             }
             return true;
           });
