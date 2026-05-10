@@ -3137,8 +3137,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     )
       ? (() => {
           console.log('[EMOTE-AUTHORITY] fired turn:', turnNumber);
-          return `\nEMOTE OBJECT AUTHORITY [MANDATORY]:\nThis input contains an asterisk-wrapped emote. If the emote clearly describes a physical action involving a concrete object, determine the object's authority status before narrating:\n- Object appears in INVENTORY or WORN above — player controls it. Proceed normally.\n- Object appears in NPCs PRESENT carries or wears — the object is real in this scene, but it belongs to the NPC. The attempt is valid; the outcome is not automatic. Narrate as the simulation demands given the NPC's character and the nature of the interaction. Do NOT complete the transfer or access as if it were guaranteed.\n- Object is not found in the authority sources available to this prompt — do not complete the action. The attempt physically cannot succeed. Do not treat the implied object as real.\n`;
+          return `\nEMOTE OBJECT AUTHORITY [MANDATORY]:\nThis input contains an asterisk-wrapped emote. If the emote clearly describes a physical action involving a concrete object, determine the object's authority status before narrating:\n- Object appears in INVENTORY or WORN above — player controls it. Proceed normally.\n- Object appears in NPCs PRESENT carries or wears — the object is real in this scene, but it belongs to the NPC. The attempt is valid; the outcome is not automatic. Narrate as the simulation demands given the NPC's character and the nature of the interaction. Do NOT complete the transfer or access as if it were guaranteed.\n- Object is not found in the authority sources available to this prompt — the object does not exist. You MUST narrate the player reaching or miming the gesture with empty hands. Do not describe the object as physically present. Do not describe its weight, texture, or appearance. No NPC may react to it as if it were real or present. The action fails visibly — the gesture produces nothing.\n`;
         })()
+      : '';
+
+    // v1.85.41: Emote inventory fail block — fires when emote_no_inventory_match skipped RC.
+    // Injected first in the tail sequence to dominate model attention.
+    const _emoteInventoryFailBlock = (_rcSkippedReason === 'emote_no_inventory_match')
+      ? `\n[MANDATORY — OBJECT NOT IN INVENTORY: The emote references an object not found in the player's possession. That object is not established in authoritative state and must not be treated as physically present. Narrate the player miming or reaching with empty hands. Do not instantiate the object in any form.]\n`
       : '';
 
     // v1.51.0: Soliloquy block — fires on Say channel when no NPC is successfully bound.
@@ -3322,7 +3328,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
+${_emoteInventoryFailBlock}${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
