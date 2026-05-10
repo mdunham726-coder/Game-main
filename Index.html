@@ -11,6 +11,65 @@
     input { width: 80%; padding: 10px; font-size: 16px; background: #333; color: #e0e0e0; border: 1px solid #666; }
     button { padding: 10px; font-size: 16px; background: #d4af37; color: #1a1a1a; border: none; cursor: pointer; }
     #loading { display: none; color: #d4af37; }
+    /* ── Between-turn progress panel (v1.85.39) ── */
+    #progressPanel {
+      display: none;
+      background: #0d0d0d;
+      border: 1px solid #3a3020;
+      margin: 8px 0 4px 0;
+      padding: 10px 14px 8px 14px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    #progressBarTrack {
+      height: 4px;
+      background: #222;
+      border-radius: 2px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    #progressBarFill {
+      height: 100%;
+      width: 0%;
+      background: #d4af37;
+      border-radius: 2px;
+      transition: width 0.25s ease;
+    }
+    #stageList {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .stage-row {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .stage-icon {
+      color: #555;
+      min-width: 26px;
+      flex-shrink: 0;
+    }
+    .stage-icon.s-active  { color: #d4af37; }
+    .stage-icon.s-done    { color: #2ecc71; }
+    .stage-icon.s-skip    { color: #444; }
+    .stage-icon.s-fail    { color: #e74c3c; }
+    .stage-label {
+      color: #888;
+    }
+    .stage-label.s-active { color: #d4af37; }
+    .stage-label.s-done   { color: #777; }
+    .stage-label.s-skip   { color: #444; }
+    .stage-label.s-fail   { color: #e74c3c; }
+    #arbiterSep {
+      border: none;
+      border-top: 1px solid #252515;
+      margin: 7px 0 5px 0;
+    }
+    #arbiterIndicator {
+      color: #555;
+      font-size: 11px;
+    }
     /* ── Worldgen overlay ── */
     #worldgen-overlay {
       display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -286,6 +345,13 @@
 </div>
 
   </div>
+  <!-- Between-turn progress panel (v1.85.39) -->
+  <div id="progressPanel">
+    <div id="progressBarTrack"><div id="progressBarFill"></div></div>
+    <div id="stageList"></div>
+    <hr id="arbiterSep">
+    <div id="arbiterIndicator">(post-turn) arbiter: waiting...</div>
+  </div>
   <div id="loading">Loading narrative...</div>
 
   <!-- Pending-Say Modal Overlay (shown on talk interception) -->
@@ -504,12 +570,182 @@
     let _stepDisplayIdx = -1;
     let _stepTickInterval = null;
 
+    // ── v1.85.39: Between-turn progress panel ──────────────────────────────────
+    // Stage definition: key, player-readable label, bar weight (raw).
+    // Weights are redistributed at runtime when stages are skipped.
+    const _STAGES = [
+      { key: 'parsing',      label: 'Interpreting your action', weight: 12 },
+      { key: 'fill',         label: 'Generating location',      weight:  8 },
+      { key: 'reality_check',label: 'Checking consequences',    weight: 15 },
+      { key: 'narration',    label: 'Writing the scene',        weight: 40 },
+      { key: 'world_update', label: 'Updating world memory',    weight: 15 },
+      { key: 'complete',     label: 'Turn ready',               weight: 10 }
+    ];
+    // Status for each key: 'pending' | 'active' | 'done' | 'skip' | 'fail'
+    let _stageStatus = {};
+    let _stageEventSource = null;      // EventSource — opened once, reused across turns
+    let _inProgressTurn   = false;     // Gate: ignore SSE events when no turn is active
+    let _activeTurnNumber = null;      // Expected turn number for the current in-flight turn
+    let _activeProgressSession = null; // Session ID filter
+    let _arbiterTurnNumber = null;     // Turn number we're waiting for arbiter on
+
+    function _buildStageListDOM() {
+      const container = document.getElementById('stageList');
+      container.innerHTML = '';
+      for (const s of _STAGES) {
+        const row = document.createElement('div');
+        row.className = 'stage-row';
+        row.id = 'stage-row-' + s.key;
+        row.innerHTML = `<span class="stage-icon" id="stage-icon-${s.key}">[ ]</span>` +
+                        `<span class="stage-label" id="stage-lbl-${s.key}">${s.label}</span>`;
+        container.appendChild(row);
+      }
+    }
+
+    function _markStage(key, status) {
+      const icon  = document.getElementById('stage-icon-' + key);
+      const label = document.getElementById('stage-lbl-' + key);
+      if (!icon || !label) return;
+      const iconText = { pending:'[ ]', active:'[>]', done:'[✓]', skip:'[-]', fail:'[!]' };
+      icon.textContent  = iconText[status] || '[ ]';
+      icon.className  = 'stage-icon'  + (status !== 'pending' ? ' s-' + status : '');
+      label.className = 'stage-label' + (status !== 'pending' ? ' s-' + status : '');
+    }
+
+    function _calcProgress() {
+      let totalWeight = 0, doneWeight = 0;
+      for (const s of _STAGES) {
+        if (_stageStatus[s.key] === 'skip') continue; // excluded from denominator
+        totalWeight += s.weight;
+        if (_stageStatus[s.key] === 'done' || _stageStatus[s.key] === 'fail') doneWeight += s.weight;
+      }
+      return totalWeight > 0 ? Math.round((doneWeight / totalWeight) * 100) : 0;
+    }
+
+    function _setProgress(pct) {
+      const fill = document.getElementById('progressBarFill');
+      if (fill) fill.style.width = Math.min(100, pct) + '%';
+    }
+
+    function _initProgressPanel() {
+      _stageStatus = {};
+      for (const s of _STAGES) _stageStatus[s.key] = 'pending';
+      _buildStageListDOM();
+      _setProgress(0);
+      const arb = document.getElementById('arbiterIndicator');
+      if (arb) { arb.textContent = '(post-turn) arbiter: waiting...'; arb.style.color = '#555'; }
+      document.getElementById('progressPanel').style.display = 'block';
+    }
+
+    function _hideProgressPanel() {
+      document.getElementById('progressPanel').style.display = 'none';
+    }
+
+    function _setInputsDisabled(disabled) {
+      ['actionInput','sayInput'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+      });
+      // Disable Do / Say buttons: they are inline onclick buttons without IDs,
+      // so locate them by their onclick attribute text via querySelectorAll
+      document.querySelectorAll('button').forEach(btn => {
+        const oc = btn.getAttribute('onclick') || '';
+        if (oc.includes("submitAction('do')") || oc.includes("submitAction('say')")) {
+          btn.disabled = disabled;
+          btn.style.opacity = disabled ? '0.5' : '1';
+        }
+      });
+    }
+
+    function _handleProgressEvent(raw) {
+      // Gate: only process events during an active turn
+      if (!_inProgressTurn) return;
+      let evt;
+      try { evt = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_) { return; }
+
+      // Session + turn filtering — discard stale/cross-session events
+      if (_activeProgressSession && evt.gameSessionId && evt.gameSessionId !== _activeProgressSession) return;
+      if (_activeTurnNumber !== null && evt.turn != null && evt.turn !== _activeTurnNumber) return;
+
+      const type = evt.type;
+
+      if (type === 'turn_stage') {
+        const key = evt.stage;
+        const status = evt.status; // 'start' | 'complete' | 'skip'
+        if (status === 'start') {
+          _stageStatus[key] = 'active';
+          _markStage(key, 'active');
+        } else if (status === 'complete') {
+          _stageStatus[key] = 'done';
+          _markStage(key, 'done');
+          _setProgress(_calcProgress());
+        } else if (status === 'skip') {
+          _stageStatus[key] = 'skip';
+          _markStage(key, 'skip');
+          // No progress change — skipped weight is excluded from denominator
+        }
+      } else if (type === 'reality_check') {
+        // Reuse existing reality_check event: fired:true → done, skipped_reason present → skip
+        if (evt.skipped_reason) {
+          _stageStatus['reality_check'] = 'skip';
+          _markStage('reality_check', 'skip');
+        } else if (evt.fired) {
+          _stageStatus['reality_check'] = 'done';
+          _markStage('reality_check', 'done');
+          _setProgress(_calcProgress());
+        }
+      } else if (type === 'narrator_error') {
+        _stageStatus['narration'] = 'fail';
+        _markStage('narration', 'fail');
+      }
+    }
+
+    function _handleArbiterEvent(raw) {
+      let evt;
+      try { evt = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_) { return; }
+      if (evt.type !== 'arbiter_verdict') return;
+      // Match by turn number (arbiter fires after res.json so _inProgressTurn may already be false)
+      if (_arbiterTurnNumber !== null && evt.turn != null && evt.turn !== _arbiterTurnNumber) return;
+      const arb = document.getElementById('arbiterIndicator');
+      if (!arb) return;
+      if (evt.error) {
+        arb.textContent = '(post-turn) arbiter: failed — ' + String(evt.error).slice(0, 60);
+        arb.style.color = '#e74c3c';
+      } else {
+        arb.textContent = '(post-turn) arbiter: done';
+        arb.style.color = '#2ecc71';
+      }
+    }
+
+    function _connectProgressStream() {
+      if (_stageEventSource) return; // already connected
+      const es = new EventSource('/diagnostics/stream');
+      es.onmessage = (e) => {
+        _handleProgressEvent(e.data);
+        _handleArbiterEvent(e.data);
+      };
+      es.onerror = () => {
+        // SSE reconnect is handled automatically by the browser; no action needed
+      };
+      _stageEventSource = es;
+    }
+    // ── end progress panel ──────────────────────────────────────────────────────
+
     async function submitAction(channel) {
       const inputId = channel === 'say' ? 'sayInput' : 'actionInput';
       const action = document.getElementById(inputId).value;
       if (!action) return;
       if (_pendingSayActive) return;
-      
+
+      // v1.85.39: progress panel setup
+      _connectProgressStream();
+      // Derive expected turn number BEFORE fetch so we can filter SSE events precisely
+      _activeTurnNumber = (lastGameResponse?.state?.turn_counter ?? 0) + 1;
+      _activeProgressSession = currentSessionId || null;
+      _inProgressTurn = true;
+      _initProgressPanel();
+      _setInputsDisabled(true);
+
       document.getElementById('loading').style.display = 'block';
       const _wgIsFirstTurn = lastGameResponse === null;
       if (_wgIsFirstTurn) {
@@ -575,6 +811,14 @@
         });
         
         const data = await response.json();
+        // v1.85.39: POST response received — mark complete stage, re-enable inputs, schedule panel hide
+        _stageStatus['complete'] = 'done';
+        _markStage('complete', 'done');
+        _setProgress(100);
+        _arbiterTurnNumber = _activeTurnNumber;
+        setTimeout(_hideProgressPanel, 1500);
+        _inProgressTurn = false;
+        _setInputsDisabled(false);
         // Clear progress poll as soon as the game response arrives
         if (_progPollInterval) { clearInterval(_progPollInterval); _progPollInterval = null; }
         
@@ -988,8 +1232,13 @@ diagLog.innerHTML = `
         if (_progPollInterval) { clearInterval(_progPollInterval); _progPollInterval = null; }
         if (_wgIsFirstTurn) errorWgOverlay(err.message || 'Unknown error');
         document.getElementById('narrative').innerHTML = `<p>Error: ${err.message}</p>`;
+        // v1.85.39: hide panel immediately on error (success path uses delayed hide)
+        _hideProgressPanel();
       } finally {
         document.getElementById('loading').style.display = 'none';
+        // v1.85.39: always clean up turn gate + re-enable inputs
+        _inProgressTurn = false;
+        _setInputsDisabled(false);
       }
     }
 

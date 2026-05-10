@@ -927,6 +927,8 @@ app.post('/narrate', async (req, res) => {
     error_entries: []
   };
 
+  // v1.85.39: turn_stage SSE — parsing start
+  emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
   let parseResult = null;
   try {
     parseResult = await normalizeUserIntent(userInput, gameContext, resolvedChannel);
@@ -935,6 +937,8 @@ app.post('/narrate', async (req, res) => {
     console.warn('[PARSER] exception in semantic parser:', e?.message);
   }
   const _parserUsage = parseResult?.parser_usage || null;
+  // v1.85.39: turn_stage SSE — parsing complete
+  emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
   let debug = {
     parser: "none",
     input: userInput,
@@ -2109,10 +2113,15 @@ app.post('/narrate', async (req, res) => {
     // [SITE-FILL] Pre-narration site fill — independent DS call, fires before narrator.
     // Condition: depth 1, any site in current cell has name===null or description===null.
     const _sfDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
+    // v1.85.39: track whether any fill block fires so we can emit the skip event if none do
+    let _fillStageEmitted = false;
     if (_sfDepth === 1 && _narCell?.sites) {
       const _sfSites = Object.values(_narCell.sites);
       const _sfUnfilled = _sfSites.filter(s => s.name === null || s.description === null);
       if (_sfUnfilled.length > 0) {
+        // v1.85.39: fill stage start
+        _fillStageEmitted = true;
+        emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
         const _sfFoundingClause = gameState.world.founding_prompt
           ? `World description: "${gameState.world.founding_prompt}". `
           : '';
@@ -2166,6 +2175,8 @@ app.post('/narrate', async (req, res) => {
               }
             }
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            // v1.85.39: fill complete (SITE-FILL)
+            emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
           } else {
             console.warn('[SITE-FILL] Failed to parse fill response — blocking narration');
             if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -2590,6 +2601,11 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           for (const npc of _fillNeeded) npc._fill_error = `api_failed:${_fillErr.message}`;
         }
       }
+    }
+
+    // v1.85.39: if no fill block fired, emit the explicit skip so frontend can mark [-]
+    if (!_fillStageEmitted) {
+      emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
     }
 
     // [NARRATION-GATE] Block narration if active site slot is incomplete.
@@ -3340,6 +3356,8 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     let _narratorEnd = null;
     _lastNarratorPayload = { model: 'deepseek-chat', temperature: 0.7, messages: [{ role: 'user', content: narrationContent }] };
     try {
+      // v1.85.39: narration stage start
+      emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
       _narratorStart = Date.now();
       response = await _makeNarCall();
       _narratorEnd = Date.now();
@@ -3388,6 +3406,10 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         }
       }
     }
+
+    // v1.85.39: narration complete, world_update starting
+    emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
+    emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
 
     // v1.70.0: ContinuityBrain Phase B — forensic extraction + promotion; replaces NC extraction+freeze
     let _continuityExtractionSuccess = false;
@@ -3878,6 +3900,9 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         _objectRealityDebug.skip_reason = 'no_phaseB_result';
       }
     }
+
+    // v1.85.39: ORS complete — world_update done
+    emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
 
     // Extract player entity candidate for Mother Brain visibility
     const _playerExtraction = (() => {
