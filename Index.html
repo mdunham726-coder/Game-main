@@ -11,21 +11,29 @@
     input { width: 80%; padding: 10px; font-size: 16px; background: #333; color: #e0e0e0; border: 1px solid #666; }
     button { padding: 10px; font-size: 16px; background: #d4af37; color: #1a1a1a; border: none; cursor: pointer; }
     #loading { display: none; color: #d4af37; }
-    /* ── Between-turn progress panel (v1.85.39) ── */
+    /* ── Between-turn progress panel (v1.85.39 — fixed overlay) ── */
     #progressPanel {
       display: none;
-      background: #0d0d0d;
-      border: 1px solid #3a3020;
-      margin: 8px 0 4px 0;
-      padding: 10px 14px 8px 14px;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      z-index: 150;
+      background: rgba(0,0,0,0.88);
+      align-items: center;
+      justify-content: center;
       font-family: monospace;
-      font-size: 12px;
+    }
+    #progressBox {
+      background: #0d0d0d;
+      border: 1px solid #d4af37;
+      width: 420px;
+      padding: 18px 20px 14px 20px;
+      box-sizing: border-box;
     }
     #progressBarTrack {
       height: 4px;
       background: #222;
       border-radius: 2px;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
       overflow: hidden;
     }
     #progressBarFill {
@@ -345,12 +353,14 @@
 </div>
 
   </div>
-  <!-- Between-turn progress panel (v1.85.39) -->
+  <!-- Between-turn progress panel (v1.85.39 — fixed overlay) -->
   <div id="progressPanel">
-    <div id="progressBarTrack"><div id="progressBarFill"></div></div>
-    <div id="stageList"></div>
-    <hr id="arbiterSep">
-    <div id="arbiterIndicator">(post-turn) arbiter: waiting...</div>
+    <div id="progressBox">
+      <div id="progressBarTrack"><div id="progressBarFill"></div></div>
+      <div id="stageList"></div>
+      <hr id="arbiterSep">
+      <div id="arbiterIndicator">(post-turn) arbiter: waiting...</div>
+    </div>
   </div>
   <div id="loading">Loading narrative...</div>
 
@@ -636,7 +646,7 @@
       _setProgress(0);
       const arb = document.getElementById('arbiterIndicator');
       if (arb) { arb.textContent = '(post-turn) arbiter: waiting...'; arb.style.color = '#555'; }
-      document.getElementById('progressPanel').style.display = 'block';
+      document.getElementById('progressPanel').style.display = 'flex';
     }
 
     function _hideProgressPanel() {
