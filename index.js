@@ -2906,11 +2906,21 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         const _emotePlayerIds = [...new Set([...(gameState?.player?.object_ids || []), ...(gameState?.player?.worn_object_ids || [])])];
         let _emoteBestScore = 0;
         let _emoteBestRec = null;
-        const _emoteRawStripped = _rawInput.replace(/\*/g, ''); // v1.85.43: strip emote delimiters before aliasScore — asterisks tokenize as "*take" / "jeans*" causing all scores to return 0
+        const _emoteRawStripped = _rawInput.replace(/\*/g, '');
+        // v1.85.44: Extract noun phrase before aliasScore. Strips action-language scaffolding
+        // (remove-verb phrases, grammatical function words) so the query is noun/object terms only.
+        // "off" not stripped globally — may appear in item names; handled as part of verb phrases only.
+        // "your" stripped — safe: this scan targets player containers only.
+        // Corrects argument order: query=nounPhrase (needle), name=itemName (haystack).
+        const _emoteNounPhrase = _emoteRawStripped
+          .replace(/\b(?:strip\s+off|take\s+off|unequip|undress|remove)\b/gi, '')
+          .replace(/\b(?:my|the|a|an|these|those|some|its|your)\b/gi, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
         for (const _epid of _emotePlayerIds) {
           const _eprec = gameState?.objects?.[_epid];
           if (!_eprec || _eprec.status !== 'active') continue;
-          const _esc = Actions.aliasScore(_eprec.name || '', _emoteRawStripped, _eprec.aliases || []);
+          const _esc = Actions.aliasScore(_emoteNounPhrase || _emoteRawStripped, _eprec.name || '', _eprec.aliases || []);
           if (_esc > _emoteBestScore) { _emoteBestScore = _esc; _emoteBestRec = _eprec; }
         }
         _rcPossessionDebug.best_score = _emoteBestScore;

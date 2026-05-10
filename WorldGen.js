@@ -571,6 +571,24 @@ async function detectStartContextWithDeepSeek(desc) {
   }
 }
 
+// --- Localspace interior size — independent per-localspace roll ---
+// v1.85.46: each localspace descriptor receives its own independently rolled size.
+// Uses the caller's seeded LCG rng — no Math.random().
+// Integer breakpoints over rng.nextInt(10000) (yields 0–9999).
+function rollGlobalLocalspaceSize(rng) {
+  const roll = rng.nextInt(10000);
+  if (roll < 2400) return 1;
+  if (roll < 4400) return 2;
+  if (roll < 6000) return 3;
+  if (roll < 7200) return 4;
+  if (roll < 8100) return 5;
+  if (roll < 8800) return 6;
+  if (roll < 9300) return 7;
+  if (roll < 9650) return 8;
+  if (roll < 9850) return 9;
+  return 10;
+}
+
 // --- Site grid dimensions from engine-assigned size (1–10) ---
 // v1.85.40: compressed grid ladder — reduces traversal footprint, fill pressure,
 // context bloat, and startup latency while preserving meaningful scale progression.
@@ -2228,7 +2246,8 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
       description: null,
       x: bx,
       y: by,
-      npc_ids: []
+      npc_ids: [],
+      localspace_size: rollGlobalLocalspaceSize(rng)
     };
     if (start_local_space_id === null) start_local_space_id = local_space_id;
   }
@@ -2296,7 +2315,7 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
 
 // --- L2: local space interior ---
 function generateLocalSpace(local_space_id, localSpaceData, siteSize = 1) {
-  // Interior dimensions scale with parent site_size via siteGridFromSize.
+  // Interior dimensions scale with localspace_size via siteGridFromSize.
   // localSpaceData.width/height is the L1 tile footprint (1×1), not the interior size.
   const { width: w, height: h } = siteGridFromSize(siteSize);
   const grid = [];

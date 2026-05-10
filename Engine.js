@@ -1068,7 +1068,7 @@ function enterLocalSpace(state, local_space_id_short) {
       console.warn(`[ENGINE] enterLocalSpace: site.id missing, using site.site_id fallback for ${site.site_id}`);
     }
     const full_id = `${_lsSiteId}_${local_space_id_short}`;
-    bld._generated_interior = WorldGen.generateLocalSpace(full_id, bld, site.site_size || 1);
+    bld._generated_interior = WorldGen.generateLocalSpace(full_id, bld, bld.localspace_size || 1);
     console.log(`[ENGINE] [L2-ENTER] Generated interior: ${full_id}`);
   }
   // Store the exact L1 tile position for restoration when the player exits.
