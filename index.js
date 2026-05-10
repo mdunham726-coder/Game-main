@@ -6684,15 +6684,20 @@ app.get('/diagnostics/sites', (req, res) => {
     const lsEntries = Object.entries(as.local_spaces || {}).map(([key, s]) => {
       const gen = s._generated_interior || null;
       return {
-        local_space_id: key,
-        parent_site_id: s.parent_site_id ?? as.site_id ?? null,
-        name:           s.name ?? null,
-        description:    s.description ?? null,
-        is_filled:      s.is_filled ?? false,
-        enterable:      s.enterable !== false,
-        width:          gen?.width  ?? null,
-        height:         gen?.height ?? null,
-        npc_count:      Array.isArray(s.npc_ids) ? s.npc_ids.length : 0
+        local_space_id:          key,
+        parent_site_id:          s.parent_site_id ?? as.site_id ?? null,
+        name:                    s.name ?? null,
+        description:             s.description ?? null,
+        is_filled:               s.is_filled ?? false,
+        enterable:               s.enterable !== false,
+        localspace_size:         s.localspace_size ?? null,
+        x:                       s.x ?? null,
+        y:                       s.y ?? null,
+        width:                   s.width ?? gen?.width  ?? null,
+        height:                  s.height ?? gen?.height ?? null,
+        npc_ids:                 Array.isArray(s.npc_ids) ? [...s.npc_ids] : [],
+        npc_count:               Array.isArray(s.npc_ids) ? s.npc_ids.length : 0,
+        has_generated_interior:  Array.isArray(s._generated_interior?.grid)
       };
     });
     activeSite = {
