@@ -1044,10 +1044,15 @@ function isNPCPresent(state, nameOrRole){
   const depth = state?.world?.current_depth ?? 1;
   if (depth >= 2) {
     // L1/L2: match against visible set for the active container
-    const visible = depth === 3
-      ? (state?.world?.active_local_space?._visible_npcs || [])
-      : (state?.world?.active_site?._visible_npcs || []);
-    if (visible.length > 0) {
+    const _visibleNpcsRaw = depth === 3
+      ? state?.world?.active_local_space?._visible_npcs
+      : state?.world?.active_site?._visible_npcs;
+    // v1.85.38: Distinguish computed-empty (Array with length 0) from not-yet-computed (undefined/null).
+    // If _visible_npcs is an Array, it has been computed — use it authoritatively.
+    // If it is undefined/null, fall through to the container fallback below.
+    if (Array.isArray(_visibleNpcsRaw)) {
+      const visible = _visibleNpcsRaw;
+      if (visible.length === 0) return false; // computed, none at tile — do not fall back to container
       const q = String(nameOrRole || '').trim().toLowerCase();
       const hasDirectMatch = visible.some(n =>
         String(n?.job_category || '').toLowerCase() === q ||

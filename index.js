@@ -2922,35 +2922,41 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       const _rcSystemMsg = _rcSystemParts.length > 0
         ? `You are evaluating an action taken within an established game world. Evaluate the immediate consequences within the established world's genre and physical rules — do not substitute modern real-world assumptions unless the world is explicitly set in the modern era. ${_rcSystemParts.join('. ')}.`
         : null;
-      try {
-        _rcStart = Date.now();
-        const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-          model: 'deepseek-chat',
-          temperature: 0.3,
-          max_tokens: 300,
-          messages: [
-            ...(_rcSystemMsg ? [{ role: 'system', content: _rcSystemMsg }] : []),
-            { role: 'user', content: _realityQuery }
-          ]
-        }, {
-          headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-          httpsAgent: _sharedHttpsAgent,
-          timeout: 15000
-        });
-        _rcEnd = Date.now();
-        _rcRawResponse = _rcResp?.data?.choices?.[0]?.message?.content || null;
-        _realityAnchor = _rcRawResponse?.trim() || null;
-        const _rcFinishReason = _rcResp?.data?.choices?.[0]?.finish_reason || null;
-        const _rcTruncated = _rcFinishReason === 'length';
-        if (_rcTruncated) console.warn(`[REALITY-CHECK] response truncated (finish_reason=length) — turn ${turnNumber}, increase max_tokens if this persists`);
-        _rcPayloadSnapshot = { prompt: _realityQuery, response: _rcRawResponse }; // v1.84.21
-        if (!_realityAnchor) throw new Error('empty_response');
-        emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, truncated: _rcTruncated || false, gameSessionId: resolvedSessionId });
-        console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}${_rcTruncated ? ' [TRUNCATED]' : ''}`);
-      } catch (_rcErr) {
-        console.error('[REALITY-CHECK] HARD FAILURE:', _rcErr.message, '— turn halted, narrator not called');
-        emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: null, error: _rcErr.message, gameSessionId: resolvedSessionId });
-        return res.json({ sessionId: resolvedSessionId, error: 'REALITY_CHECK_FAILED', narrative: 'The world could not adjudicate that action. Please try again.' });
+      // v1.85.38: RC API call gated on _rcSkippedReason — if the emote inventory scan (or any
+      // other skip condition set inside this else block) determined RC should not fire, do not
+      // call the API. Previously _rcSkippedReason was set but the try/catch fired unconditionally,
+      // causing the RC anchor to override _emoteObjectAuthorityBlock with contradictory imagery.
+      if (!_rcSkippedReason) {
+        try {
+          _rcStart = Date.now();
+          const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            temperature: 0.3,
+            max_tokens: 300,
+            messages: [
+              ...(_rcSystemMsg ? [{ role: 'system', content: _rcSystemMsg }] : []),
+              { role: 'user', content: _realityQuery }
+            ]
+          }, {
+            headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+            httpsAgent: _sharedHttpsAgent,
+            timeout: 15000
+          });
+          _rcEnd = Date.now();
+          _rcRawResponse = _rcResp?.data?.choices?.[0]?.message?.content || null;
+          _realityAnchor = _rcRawResponse?.trim() || null;
+          const _rcFinishReason = _rcResp?.data?.choices?.[0]?.finish_reason || null;
+          const _rcTruncated = _rcFinishReason === 'length';
+          if (_rcTruncated) console.warn(`[REALITY-CHECK] response truncated (finish_reason=length) — turn ${turnNumber}, increase max_tokens if this persists`);
+          _rcPayloadSnapshot = { prompt: _realityQuery, response: _rcRawResponse }; // v1.84.21
+          if (!_realityAnchor) throw new Error('empty_response');
+          emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, truncated: _rcTruncated || false, gameSessionId: resolvedSessionId });
+          console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}${_rcTruncated ? ' [TRUNCATED]' : ''}`);
+        } catch (_rcErr) {
+          console.error('[REALITY-CHECK] HARD FAILURE:', _rcErr.message, '— turn halted, narrator not called');
+          emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: null, error: _rcErr.message, gameSessionId: resolvedSessionId });
+          return res.json({ sessionId: resolvedSessionId, error: 'REALITY_CHECK_FAILED', narrative: 'The world could not adjudicate that action. Please try again.' });
+        }
       }
     }
     if (_rcSkippedReason) {
@@ -4338,7 +4344,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       },
       logs: turnLogs,
       reality_check: {
-        fired: !_rcSkippedReason && _realityAnchor !== null,
+        fired: _realityAnchor !== null,
         skipped_reason: _rcSkippedReason || null,
         query: _realityQuery || null,
         result: _realityAnchor || null,
