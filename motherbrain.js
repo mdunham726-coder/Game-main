@@ -594,8 +594,8 @@ function formatTurnBuffer() {
 
     let mvStr = '';
     if (mv) {
-      mvStr = mv.valid
-        ? ` | move:✓→"${String(mv.destination_name || mv.destination || '?').slice(0, 20)}"`
+      mvStr = mv.success
+        ? ` | move:✓(${String(mv.direction || '?')})`
         : ` | move:✗(${String(mv.block_reason || '?').slice(0, 20)})`;
     }
 
