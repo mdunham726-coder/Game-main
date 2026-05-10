@@ -755,11 +755,11 @@
       _activeTurnNumber = (lastGameResponse?.state?.turn_counter ?? 0) + 1;
       _activeProgressSession = currentSessionId || null;
       _inProgressTurn = true;
-      _initProgressPanel();
+      const _wgIsFirstTurn = lastGameResponse === null;
+      if (!_wgIsFirstTurn) _initProgressPanel();
       _setInputsDisabled(true);
 
       document.getElementById('loading').style.display = 'block';
-      const _wgIsFirstTurn = lastGameResponse === null;
       if (_wgIsFirstTurn) {
         showWgOverlay();
         // Pre-flight: obtain a progress token from the server, then start polling
