@@ -613,11 +613,13 @@
     }
 
     function _calcProgress() {
+      // Skipped stages count as earned progress — denominator is always full weight sum.
+      // This ensures a skip event produces a real bar jump rather than ~1% noise.
       let totalWeight = 0, doneWeight = 0;
       for (const s of _STAGES) {
-        if (_stageStatus[s.key] === 'skip') continue; // excluded from denominator
         totalWeight += s.weight;
-        if (_stageStatus[s.key] === 'done' || _stageStatus[s.key] === 'fail') doneWeight += s.weight;
+        const st = _stageStatus[s.key];
+        if (st === 'done' || st === 'fail' || st === 'skip') doneWeight += s.weight;
       }
       return totalWeight > 0 ? Math.round((doneWeight / totalWeight) * 100) : 0;
     }

@@ -572,13 +572,16 @@ async function detectStartContextWithDeepSeek(desc) {
 }
 
 // --- Site grid dimensions from engine-assigned size (1–10) ---
+// v1.85.40: compressed grid ladder — reduces traversal footprint, fill pressure,
+// context bloat, and startup latency while preserving meaningful scale progression.
+// NPC count scaling is intentionally unchanged (see getNPCCountFromSize).
 function siteGridFromSize(site_size) {
   const s = Math.max(1, Math.min(10, site_size ?? 3));
-  if (s === 1)  return { width:  5, height:  5, local_space_count:  2 };
-  if (s <= 3)   return { width:  7, height:  7, local_space_count:  4 };
-  if (s <= 7)   return { width: 11, height: 11, local_space_count: 10 };
-  if (s <= 9)   return { width: 15, height: 15, local_space_count: 20 };
-  /* s === 10 */ return { width: 21, height: 21, local_space_count: 40 };
+  if (s === 1)  return { width:  5, height:  5, local_space_count:  4 };
+  if (s <= 4)   return { width:  7, height:  7, local_space_count:  6 };
+  if (s <= 7)   return { width:  9, height:  9, local_space_count:  9 };
+  if (s <= 9)   return { width: 11, height: 11, local_space_count: 12 };
+  /* s === 10 */ return { width: 13, height: 13, local_space_count: 16 };
 }
 
 // ─── World Bias Extraction ────────────────────────────────────────────────────
