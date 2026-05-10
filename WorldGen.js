@@ -2237,17 +2237,26 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     } while (grid[by][bx]);
     const local_space_id = `ls_${i}`;
     grid[by][bx] = { type: "local_space", local_space_id: local_space_id, npc_ids: [] };
+    // v1.85.47: roll size, compute dimensions, derive enterable via deterministic hash (zero RNG consumption)
+    const _lsSize = rollGlobalLocalspaceSize(rng);
+    const { width: _lsW, height: _lsH } = siteGridFromSize(_lsSize);
+    let _lsHash = 0;
+    const _lsHashStr = `${siteId}|${local_space_id}`;
+    for (let _ci = 0; _ci < _lsHashStr.length; _ci++) { _lsHash = Math.imul(31, _lsHash) + _lsHashStr.charCodeAt(_ci) | 0; }
+    const _lsEnterable = ((_lsHash >>> 0) % 100) >= 15;
     local_spaces[local_space_id] = {
       local_space_id,
       parent_site_id: siteId,
-      enterable: true,
+      enterable: _lsEnterable,
       is_filled: false,
       name: null,
       description: null,
       x: bx,
       y: by,
       npc_ids: [],
-      localspace_size: rollGlobalLocalspaceSize(rng)
+      localspace_size: _lsSize,
+      width: _lsW,
+      height: _lsH
     };
     if (start_local_space_id === null) start_local_space_id = local_space_id;
   }
@@ -2281,8 +2290,8 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     streetAssigned++;
   }
   
-  // remaining to local spaces round-robin
-  const lsKeys = Object.keys(local_spaces);
+  // remaining to local spaces round-robin — v1.85.47: only enterable spaces receive NPCs
+  const lsKeys = Object.keys(local_spaces).filter(k => local_spaces[k].enterable !== false);
   if (lsKeys.length > 0) {
     for (let i = streetAssigned; i < npcs.length; i++) {
       const npc = npcs[i];
