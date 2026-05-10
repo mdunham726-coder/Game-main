@@ -181,12 +181,14 @@ held_objects
   Test: "Is this object actively held, gripped, or carried in their hands or arms — not fastened to the body?"
   ACCEPT: iron dagger in hand | sealed letter | satchel over shoulder | bundle tucked under arm
   REJECT: clothing strapped or fastened to body (use worn_objects) | "weapons" (too vague) | "burdens" (metaphor)
+  FORMAT: flat strings only — do NOT emit objects with name/description/reason fields. Each entry must be a plain noun phrase string.
 
 worn_objects
   Clothing, armor, jewelry, or equipment strapped, buckled, tied, or fastened directly to the body.
   Test: "Is this object worn on or secured to the body rather than held in the hands?"
   ACCEPT: leather coat | iron ring | worn boots | belt | holstered blade fastened to hip
   REJECT: items actively held or gripped in hands (use held_objects) | "burdens" (metaphor)
+  FORMAT: flat strings only — do NOT emit objects with name/description/reason fields. Each entry must be a plain noun phrase string.
   REJECT: phrases describing absence or lack — "missing X", "no shirt", "bare feet", "without shoes", "not wearing X" — these are state facts, not worn objects
 
 rejected_interpretations (per-entity)
@@ -680,6 +682,11 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   // skipFilter=true for object bucket: item names are concrete nouns, not atmospheric descriptions.
   const promote = (bucket, items, skipFilter = false) => {
     for (const item of (items || [])) {
+      if (typeof item !== 'string') {
+        let _safeVal; try { _safeVal = JSON.stringify(item); } catch { _safeVal = String(item); }
+        logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: _safeVal, turn, reason: 'type_error:expected_string' });
+        continue;
+      }
       if (!skipFilter) {
         const _check = _isConcreteDetail(item);
         if (!_check.ok) {
@@ -713,6 +720,11 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
   if (!locationRecord.attributes) locationRecord.attributes = {}; // backward-compat: old saves lack attributes field
   let _dupCount = 0;
   for (const feat of (features || [])) {
+    if (typeof feat !== 'string') {
+      let _safeVal; try { _safeVal = JSON.stringify(feat); } catch { _safeVal = String(feat); }
+      logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: _safeVal, turn, reason: 'type_error:expected_string' });
+      continue;
+    }
     const _check = _isConcreteDetail(feat);
     if (!_check.ok) {
       logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: feat, turn, reason: 'banned_pattern:' + _check.pattern });
@@ -739,6 +751,11 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries, options =
   // skipFilter=true for object bucket: item names are concrete nouns, not atmospheric descriptions.
   const promote = (bucket, items, skipFilter = false) => {
     for (const item of (items || [])) {
+      if (typeof item !== 'string') {
+        let _safeVal; try { _safeVal = JSON.stringify(item); } catch { _safeVal = String(item); }
+        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: _safeVal, turn, reason: 'type_error:expected_string' });
+        continue;
+      }
       if (!skipFilter) {
         const _check = _isConcreteDetail(item);
         if (!_check.ok) {
