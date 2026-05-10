@@ -4022,7 +4022,7 @@ ${_emoteInventoryFailBlock}${_conditionBlock}${_freeformBlock}${_environmentGath
         ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.job_category || n.id)
         : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
       visible_npcs_snapshot: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || [])
-        .map(n => ({ id: n.id, job_category: n.job_category ?? null, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false, x: n.x ?? null, y: n.y ?? null })),
+        .map(n => ({ id: n.id, job_category: n.job_category ?? null, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false, x: n.site_position?.x ?? null, y: n.site_position?.y ?? null })),
       npc_record_count: gameState.world.active_local_space
         ? (gameState.world.active_site?.npcs?.length ?? 0)
         : (gameState.world.active_site?.npcs || []).length,
@@ -4365,6 +4365,7 @@ ${_emoteInventoryFailBlock}${_conditionBlock}${_freeformBlock}${_environmentGath
         continuity_evicted: _continuityEvicted,
         continuity_block_chars: _continuityBlock.length,
         continuity_snapshot: _continuityBlockSnapshot,
+        continuity_block_text: _continuityBlock || null,  // v1.85.41: faithful record of what narrator received regardless of eviction state
         continuity_diagnostics: CB.getLastRunDiagnostics(), // v1.70.0
         engine_spatial_notes: _engineSpatialBlock || null,
         extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
