@@ -733,7 +733,7 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
 
 // ── Player attribute promotion ──────────────────────────────────────────────────
 // Parallel to _promoteEntityAttributes — targets gameState.player.attributes.
-function _promotePlayerAttributes(player, candidate, turn, logEntries) {
+function _promotePlayerAttributes(player, candidate, turn, logEntries, options = {}) {
   if (!player.attributes) player.attributes = {}; // migration guard: old saves
   const _dupCounts = {};
   // skipFilter=true for object bucket: item names are concrete nouns, not atmospheric descriptions.
@@ -757,8 +757,10 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_objects, true);   // v1.85.28: split from held_or_worn_objects
-  promote('object',   candidate.worn_objects, true);    // v1.85.28: worn_objects → same attribute bucket for narrator display
+  if (!options.suppressPlayerObjectAttributes) {
+    promote('object', candidate.held_objects, true);   // v1.85.28: split from held_or_worn_objects
+    promote('object', candidate.worn_objects, true);   // v1.85.28: worn_objects → same attribute bucket for narrator display
+  }
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -823,7 +825,7 @@ function _promoteConditions(conditionEvents, gameState, turn) {
   }
 }
 
-async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
+async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length + 1;
 
@@ -1000,7 +1002,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
     // Player self-ref — always route to player container regardless of layer
     const refLower = ref.toLowerCase();
     if (refLower === 'player' || refLower === 'you') {
-      if (player) _promotePlayerAttributes(player, candidate, turn, logEntries);
+      if (player) _promotePlayerAttributes(player, candidate, turn, logEntries, options);
       continue;
     }
 

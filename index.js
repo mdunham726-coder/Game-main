@@ -3430,7 +3430,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         top_violation:              null,
         channel:                    resolvedChannel || null,
       };
-      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput);
+      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, { suppressPlayerObjectAttributes: _rcSkippedReason === 'emote_no_inventory_match' });
       _continuityExtractionSuccess = _phaseBResult !== null;
       // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
       if (!_continuityExtractionSuccess && turnNumber === 1 && gameState.player?.birth_record) {
