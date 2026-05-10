@@ -2831,6 +2831,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     let _rcRawResponse = null;
     let _rcStart = null;
     let _rcEnd = null;
+    let _emoteRemoveExecuted = false; // v1.85.42: set inside RC else-block, consumed by narrator assembly
+    let _emoteRemovedItemName = null;
     const _rcSuffix = 'Focus on immediate physical, social, and legal consequences. Respond in plain prose, 2-3 sentences maximum. No headers, no bullet points. Be direct and specific.';
     if (turnNumber === 1) {
       _rcSkippedReason = 'turn_1';
@@ -2904,16 +2906,40 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         const _emotePlayerIds = [...new Set([...(gameState?.player?.object_ids || []), ...(gameState?.player?.worn_object_ids || [])])];
         let _emoteBestScore = 0;
         let _emoteBestRec = null;
+        const _emoteRawStripped = _rawInput.replace(/\*/g, ''); // v1.85.43: strip emote delimiters before aliasScore — asterisks tokenize as "*take" / "jeans*" causing all scores to return 0
         for (const _epid of _emotePlayerIds) {
           const _eprec = gameState?.objects?.[_epid];
           if (!_eprec || _eprec.status !== 'active') continue;
-          const _esc = Actions.aliasScore(_eprec.name || '', _rawInput, _eprec.aliases || []);
+          const _esc = Actions.aliasScore(_eprec.name || '', _emoteRawStripped, _eprec.aliases || []);
           if (_esc > _emoteBestScore) { _emoteBestScore = _esc; _emoteBestRec = _eprec; }
         }
         _rcPossessionDebug.best_score = _emoteBestScore;
         if (_emoteBestScore >= 6) {
           _rcPossessionDebug.inventory_match = true;
           _rcPossessionDebug.matched_item_name = _emoteBestRec.name;
+          // v1.85.42: Emote worn-item removal execution — if the emote describes removing a worn item,
+          // execute the transfer authoritatively before narrator/CB runs. Stamps _apExecutedTransfers
+          // (suppresses duplicate CB transfer) and _apRemovedWornNames (worn-remove gate blocks CB
+          // promotes for name variants like "wool trousers" vs "sturdy wool trousers").
+          const _EMOTE_REMOVE_RE = /\btake[\s_]off|remove|strip[\s_]off|unequip|undress\b/i;
+          const _emoteIsWorn = Array.isArray(gameState?.player?.worn_object_ids) &&
+            gameState.player.worn_object_ids.includes(_emoteBestRec.id);
+          if (_emoteIsWorn && _EMOTE_REMOVE_RE.test(_rawInput)) {
+            const _erResult = ObjectHelper.transferObjectDirect(
+              gameState, _emoteBestRec.id, 'player', 'player', turnNumber, 'emote_remove'
+            );
+            if (_erResult.success) {
+              if (!gameState._apExecutedTransfers) gameState._apExecutedTransfers = [];
+              gameState._apExecutedTransfers.push(_emoteBestRec.id);
+              if (!gameState._apRemovedWornNames) gameState._apRemovedWornNames = [];
+              gameState._apRemovedWornNames.push(_emoteBestRec.name.toLowerCase().trim());
+              _emoteRemoveExecuted = true;
+              _emoteRemovedItemName = _emoteBestRec.name;
+              console.log(`[EMOTE-REMOVE] executed remove "${_emoteBestRec.name}" (${_emoteBestRec.id})`);
+            } else {
+              console.warn(`[EMOTE-REMOVE] transferObjectDirect failed: ${_erResult.error}`);
+            }
+          }
         } else {
           _rcPossessionDebug.skip_reason = 'emote_no_inventory_match';
           _rcSkippedReason = 'emote_no_inventory_match';
@@ -3147,6 +3173,12 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       ? `\n[MANDATORY — OBJECT NOT IN INVENTORY: The emote references an object not found in the player's possession. That object is not established in authoritative state and must not be treated as physically present. Narrate the player miming or reaching with empty hands. Do not instantiate the object in any form.]\n`
       : '';
 
+    // v1.85.42: Emote remove block — fires when a worn item was authoritatively transferred via emote.
+    // Instructs narrator that item is in inventory, not on the ground.
+    const _emoteRemoveBlock = _emoteRemoveExecuted
+      ? `\n[MANDATORY — WORN ITEM REMOVED: The player has successfully removed "${_emoteRemovedItemName}" from their body. It is now in their inventory. It was not dropped, placed on the ground, or discarded anywhere. Do not describe it falling, being set down, or ending up anywhere other than the player's possession.]\n`
+      : '';
+
     // v1.51.0: Soliloquy block — fires on Say channel when no NPC is successfully bound.
     // Covers: NPC_NOT_PRESENT degrade, target:null, not_found, not_in_site outcomes.
     // Mutually exclusive with _narratorModeBlock (which requires matched NPC).
@@ -3328,7 +3360,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_emoteInventoryFailBlock}${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
+${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -3638,7 +3670,7 @@ ${_emoteInventoryFailBlock}${_conditionBlock}${_freeformBlock}${_environmentGath
         // Only blocks candidates targeting world containers (grid/localspace/site).
         const _apRemovedWornNames = Array.isArray(gameState._apRemovedWornNames) ? gameState._apRemovedWornNames : [];
         gameState._apRemovedWornNames = []; // consume and clear for next turn
-        if (_parsedAction === 'remove' && _apRemovedWornNames.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
+        if ((_parsedAction === 'remove' || _emoteRemoveExecuted) && _apRemovedWornNames.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
           const _wornRemoveTokenize = str => String(str || '').toLowerCase().split(/[\s\-_\/]+/).map(t => t.replace(/[^a-z0-9]/g, '')).filter(t => t.length > 0);
           // Pre-build token sets for each removed worn item name
           const _removedTokenSets = _apRemovedWornNames.map(n => ({ name: n, tokens: new Set(_wornRemoveTokenize(n)) }));
