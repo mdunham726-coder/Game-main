@@ -2851,6 +2851,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // v1.85.13: Parser could not classify input. RC must not fire — unclassified inputs cannot be trusted
       // as valid action descriptions; passing them to RC risks validating embedded outcome assertions.
       _rcSkippedReason = 'unknown_block_rc';
+    } else if (debug?.degraded_from === 'TARGET_NOT_IN_INVENTORY') {
+      // v1.85.36: throw/drop degraded because AP validated the item is not in player inventory.
+      // AP is authoritative on inventory state for these actions — RC must not fire.
+      _rcSkippedReason = 'target_not_in_inventory';
     } else {
       // Build query — SAY channel with matched NPC gets role context
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
@@ -2868,6 +2872,39 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _realityQuery = _rcNpcRole
         ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}?${_rcValidationClause} ${_rcSuffix}`
         : `${_rcTruthFragment}What happens when I ${_rawInput}?${_rcValidationClause} ${_rcSuffix}`;
+      // v1.85.37: Emote inventory scan — say-channel emote authority gate.
+      // On say-channel turns with asterisk-wrapped emotes, scan active player containers
+      // (inventory + worn) against the raw input using aliasScore. No verb lists, no noun
+      // lists, no trigger taxonomy — the player's own containers are the authority source.
+      // Confirmed match (score >= 6): RC fires with compact inventory confirmation.
+      // No match (including empty inventory): RC skipped — _emoteObjectAuthorityBlock
+      // handles the narrator uncontested and cannot be overridden by a hallucinated anchor.
+      // Non-say/non-emote turns: block does not run, RC behavior unchanged.
+      const _rcPossessionDebug = { fired: false, is_emote_turn: false, best_score: 0, inventory_match: false, matched_item_name: null, skip_reason: null };
+      const _isEmoteTurn = (resolvedChannel === 'say' && /\*[^*]+\*/.test(_rawInput));
+      if (_isEmoteTurn) {
+        _rcPossessionDebug.fired = true;
+        _rcPossessionDebug.is_emote_turn = true;
+        const _emotePlayerIds = [...new Set([...(gameState?.player?.object_ids || []), ...(gameState?.player?.worn_object_ids || [])])];
+        let _emoteBestScore = 0;
+        let _emoteBestRec = null;
+        for (const _epid of _emotePlayerIds) {
+          const _eprec = gameState?.objects?.[_epid];
+          if (!_eprec || _eprec.status !== 'active') continue;
+          const _esc = Actions.aliasScore(_eprec.name || '', _rawInput, _eprec.aliases || []);
+          if (_esc > _emoteBestScore) { _emoteBestScore = _esc; _emoteBestRec = _eprec; }
+        }
+        _rcPossessionDebug.best_score = _emoteBestScore;
+        if (_emoteBestScore >= 6) {
+          _rcPossessionDebug.inventory_match = true;
+          _rcPossessionDebug.matched_item_name = _emoteBestRec.name;
+        } else {
+          _rcPossessionDebug.skip_reason = 'emote_no_inventory_match';
+          _rcSkippedReason = 'emote_no_inventory_match';
+        }
+      }
+      debug.rc_possession = _rcPossessionDebug;
+      console.log(`[RC-POSSESSION] turn:${turnNumber} is_emote:${_rcPossessionDebug.is_emote_turn} score:${_rcPossessionDebug.best_score} match:${_rcPossessionDebug.inventory_match} item:"${_rcPossessionDebug.matched_item_name || ''}"`);
       // v1.85.17: RC system message — inject world tone and player declared truths so RC evaluates
       // within the correct reality frame instead of defaulting to modern real-world assumptions.
       const _rcDeclaredAttrs = Object.values(gameState?.player?.attributes || {})
@@ -2878,6 +2915,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       const _rcSystemParts = [];
       if (_rcWorldTone) _rcSystemParts.push(`World context: ${_rcWorldTone}`);
       if (_rcDeclaredAttrs.length > 0) _rcSystemParts.push(`Established player truths: ${_rcDeclaredAttrs.join(' | ')}`);
+      // v1.85.37: Inject compact inventory confirmation when emote turn has a confirmed match.
+      if (_rcPossessionDebug.inventory_match) {
+        _rcSystemParts.push(`Player inventory confirmed: ${_rcPossessionDebug.matched_item_name} (engine state).`);
+      }
       const _rcSystemMsg = _rcSystemParts.length > 0
         ? `You are evaluating an action taken within an established game world. Evaluate the immediate consequences within the established world's genre and physical rules — do not substitute modern real-world assumptions unless the world is explicitly set in the modern era. ${_rcSystemParts.join('. ')}.`
         : null;
