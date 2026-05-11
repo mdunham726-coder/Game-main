@@ -135,15 +135,20 @@ function resolveTarget(rule, response) {
 // ─── Assertion engine ─────────────────────────────────────────────────────────
 function assertResponse(response, rules) {
   const failures = [];
+  const evidence = [];
   for (const rule of rules) {
     try {
       const result = evalRule(rule, response);
-      if (!result.passed) failures.push({ rule, ...result });
+      if (!result.passed) {
+        failures.push({ rule, ...result });
+      } else {
+        evidence.push({ rule, evidence: result.evidence || null });
+      }
     } catch (err) {
       failures.push({ rule, passed: false, error: err.message });
     }
   }
-  return { passed: failures.length === 0, failures };
+  return { passed: failures.length === 0, failures, evidence };
 }
 
 function evalRule(rule, response) {
@@ -154,72 +159,84 @@ function evalRule(rule, response) {
     case 'no_error': {
       const err    = response.error;
       const passed = err === undefined || err === null || err === false;
-      return { passed, expected: 'no error', actual: err ?? null };
+      return { passed, expected: 'no error', actual: err ?? null, evidence: 'no error' };
     }
 
     case 'present': {
       const val    = resolvePath(response, rule.path);
       const passed = val !== undefined && val !== null;
-      return { passed, expected: 'present', actual: val };
+      let ev = 'present';
+      if (passed) {
+        if (Array.isArray(val))                           ev = `array length=${val.length}`;
+        else if (val !== null && typeof val === 'object') ev = `object, ${Object.keys(val).length} keys`;
+        else                                              ev = `= ${String(val).slice(0, 60)}`;
+      }
+      return { passed, expected: 'present', actual: val, evidence: ev };
     }
 
     case 'absent': {
       const val    = resolvePath(response, rule.path);
       const passed = val === undefined || val === null;
-      return { passed, expected: 'absent', actual: val };
+      return { passed, expected: 'absent', actual: val, evidence: 'absent' };
     }
 
     case 'eq': {
       const val    = resolvePath(response, rule.path);
       const target = resolveTarget(rule, response);
-      return { passed: val === target, expected: target, actual: val };
+      return { passed: val === target, expected: target, actual: val,
+        evidence: `= ${String(val).slice(0, 60)}` };
     }
 
     case 'neq': {
       const val    = resolvePath(response, rule.path);
       const target = resolveTarget(rule, response);
-      return { passed: val !== target, expected: `!= ${target}`, actual: val };
+      return { passed: val !== target, expected: `!= ${target}`, actual: val,
+        evidence: `!= ${target} (= ${String(val).slice(0, 60)})` };
     }
 
     case 'gt': {
       const val    = resolvePath(response, rule.path);
       const target = resolveTarget(rule, response);
-      return { passed: typeof val === 'number' && val > target, expected: `> ${target}`, actual: val };
+      return { passed: typeof val === 'number' && val > target, expected: `> ${target}`, actual: val,
+        evidence: `${val} > ${target}` };
     }
 
     case 'gte': {
       const val    = resolvePath(response, rule.path);
       const target = resolveTarget(rule, response);
-      return { passed: typeof val === 'number' && val >= target, expected: `>= ${target}`, actual: val };
+      return { passed: typeof val === 'number' && val >= target, expected: `>= ${target}`, actual: val,
+        evidence: `${val} >= ${target}` };
     }
 
     case 'lt': {
       const val    = resolvePath(response, rule.path);
       const target = resolveTarget(rule, response);
-      return { passed: typeof val === 'number' && val < target, expected: `< ${target}`, actual: val };
+      return { passed: typeof val === 'number' && val < target, expected: `< ${target}`, actual: val,
+        evidence: `${val} < ${target}` };
     }
 
     case 'lte': {
       const val    = resolvePath(response, rule.path);
       const target = resolveTarget(rule, response);
-      return { passed: typeof val === 'number' && val <= target, expected: `<= ${target}`, actual: val };
+      return { passed: typeof val === 'number' && val <= target, expected: `<= ${target}`, actual: val,
+        evidence: `${val} <= ${target}` };
     }
 
     case 'matches': {
       const val    = resolvePath(response, rule.path);
       const regex  = new RegExp(rule.pattern);
-      return { passed: typeof val === 'string' && regex.test(val), expected: `matches /${rule.pattern}/`, actual: val };
+      return { passed: typeof val === 'string' && regex.test(val), expected: `matches /${rule.pattern}/`, actual: val,
+        evidence: `matches /${rule.pattern}/` };
     }
 
     case 'sum_eq': {
-      // path resolves to an object of numbers; sum its values
       const obj = resolvePath(response, rule.path);
       if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
         return { passed: false, expected: 'object of numbers at path', actual: obj };
       }
       const sum    = Object.values(obj).reduce((acc, v) => acc + (Number(v) || 0), 0);
       const target = resolveTarget(rule, response);
-      return { passed: sum === target, expected: `sum == ${target}`, actual: sum };
+      return { passed: sum === target, expected: `sum == ${target}`, actual: sum, evidence: `sum=${sum}` };
     }
 
     case 'array_len_eq': {
@@ -228,17 +245,19 @@ function evalRule(rule, response) {
         return { passed: false, expected: 'array at path', actual: arr };
       }
       const target = resolveTarget(rule, response);
-      return { passed: arr.length === target, expected: `length == ${target}`, actual: arr.length };
+      return { passed: arr.length === target, expected: `length == ${target}`, actual: arr.length,
+        evidence: `length=${arr.length}` };
     }
 
     case 'sum_paths': {
-      // rule.paths is an array of dot-paths; sum their resolved numeric values
       if (!Array.isArray(rule.paths) || rule.paths.length === 0) {
         return { passed: false, error: 'sum_paths requires non-empty paths array' };
       }
-      const sum    = rule.paths.reduce((acc, p) => acc + (Number(resolvePath(response, p)) || 0), 0);
+      const parts  = rule.paths.map(p => Number(resolvePath(response, p)) || 0);
+      const sum    = parts.reduce((acc, v) => acc + v, 0);
       const target = resolveTarget(rule, response);
-      return { passed: sum === target, expected: `sum(${rule.paths.join(' + ')}) == ${target}`, actual: sum };
+      return { passed: sum === target, expected: `sum(${rule.paths.join(' + ')}) == ${target}`, actual: sum,
+        evidence: `${parts.join('+')}=${sum}` };
     }
 
     case 'no_adjacent_large_sites': {
@@ -270,6 +289,7 @@ function evalRule(rule, response) {
         passed: violations.length === 0,
         expected: 'no 8-directionally adjacent large sites (size>=8) within same macro cell',
         actual:   violations.length === 0 ? `none (${large.length} large sites)` : violations,
+        evidence: `checked ${sites.length} sites, ${large.length} large (size>=8), 0 adjacent pairs`,
       };
     }
 
@@ -330,8 +350,15 @@ const C = {
 // ─── Reporter ─────────────────────────────────────────────────────────────────
 function pad(str, len) { return String(str).padEnd(len); }
 
-function printPass(idx, label, ms) {
+function printPass(idx, label, ms, evidence) {
   process.stdout.write(`\r  ${C.green}[T${idx}] PASS${C.reset} | ${pad(label, 30)} | ${C.dim}${ms}ms${C.reset}\n`);
+  if (Array.isArray(evidence)) {
+    for (const e of evidence) {
+      const loc = e.rule.path || (e.rule.paths ? e.rule.paths.join('+') : null) || e.rule.op;
+      const ev  = e.evidence || '';
+      console.log(`    ${C.green}[ok]${C.reset} ${C.dim}${loc}${C.reset} -- ${ev}`);
+    }
+  }
 }
 
 function printFail(idx, label, ms, action, sessionId, failures, response) {
@@ -440,10 +467,10 @@ async function runScenario(scenario) {
     }
 
     const rules              = turn.assert || [];
-    const { passed: ok, failures } = assertResponse(response, rules);
+    const { passed: ok, failures, evidence: ok_evidence } = assertResponse(response, rules);
 
     if (ok) {
-      printPass(idx, label, ms);
+      printPass(idx, label, ms, ok_evidence);
       passed++;
     } else {
       printFail(idx, label, ms, turn.action, client.sessionId, failures, response);
