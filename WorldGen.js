@@ -589,6 +589,37 @@ function rollGlobalLocalspaceSize(rng) {
   return 10;
 }
 
+// Site size weighted distribution — same table as rollGlobalLocalspaceSize.
+// Applied to non-community sites only. Community sites retain the civPresence-clamped range.
+function rollSiteSize(rng) {
+  const roll = rng.nextInt(10000);
+  if (roll < 2400) return 1;
+  if (roll < 4400) return 2;
+  if (roll < 6000) return 3;
+  if (roll < 7200) return 4;
+  if (roll < 8100) return 5;
+  if (roll < 8800) return 6;
+  if (roll < 9300) return 7;
+  if (roll < 9650) return 8;
+  if (roll < 9850) return 9;
+  return 10;
+}
+
+// Large-site spacing check.
+// Returns true if candidate (size 8–10) is 8-directionally adjacent (same mx/my) to any
+// already-placed large site. Used by the placement post-pass in index.js.
+function largeSiteSpacingViolation(placedSites, candidate) {
+  if (candidate.site_size < 8) return false; // only large sites are constrained
+  for (const placed of placedSites) {
+    if (placed.site_size < 8) continue;
+    if (placed.l0_ref.mx !== candidate.l0_ref.mx || placed.l0_ref.my !== candidate.l0_ref.my) continue;
+    const dx = Math.abs(placed.l0_ref.lx - candidate.l0_ref.lx);
+    const dy = Math.abs(placed.l0_ref.ly - candidate.l0_ref.ly);
+    if (dx <= 1 && dy <= 1) return true; // 8-directional adjacency within same macro cell
+  }
+  return false;
+}
+
 // --- Site grid dimensions from engine-assigned size (1–10) ---
 // v1.85.40: compressed grid ladder — reduces traversal footprint, fill pressure,
 // context bloat, and startup latency while preserving meaningful scale progression.
@@ -793,8 +824,8 @@ function evaluateCellForSites(cellKey, terrainType, worldBias, worldSeed, option
       const szRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|site_size`))();
       site_size = Math.max(szMin, Math.min(szMax, szMin + Math.floor(szRoll * (szMax - szMin + 1))));
     } else {
-      const szRoll = mulberry32(h32(`${worldSeed}|${cellKey}|${i}|site_size`))();
-      site_size = Math.max(1, Math.min(3, 1 + Math.floor(szRoll * 3)));
+      // Non-community: use the same weighted distribution as localspace sizes.
+      site_size = rollSiteSize(makeLCG(h32(`${worldSeed}|${cellKey}|${i}|site_size`)));
     }
 
     sites.push({
@@ -2379,6 +2410,8 @@ module.exports = {
   extractWorldBiasWithDeepSeek,
   // Phase 2
   evaluateCellForSites,
+  rollSiteSize,
+  largeSiteSpacingViolation,
   // Phase 3
   h32,
   selectStartAnchor,

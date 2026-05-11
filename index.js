@@ -1000,7 +1000,8 @@ app.post('/narrate', async (req, res) => {
     const _progToken = req.headers['x-progress-token'] || null;
     const _reportProgress = (step, pct, detail = {}) => _pushProgress(_progToken, step, pct, detail);
 
-    let startAnchor = null; // hoisted — referenced by worldgen summary block outside if(worldData)
+    let startAnchor = null;        // hoisted — referenced by worldgen summary block outside if(worldData)
+    let _sitePlacementLog = null;  // hoisted — frozen to gameState after patch+spacing pass
     try {
       // Handle async world generation with DeepSeek biome detection
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
@@ -1054,6 +1055,68 @@ app.post('/narrate', async (req, res) => {
             _totalPatchSites += patchSites.length;
           }
           _wLog('sites', 'patch_sites_seeded', { total_sites: _totalPatchSites });
+
+          // Site placement post-pass: enforce large-site (size 8-10) spacing within each macro cell.
+          // Iterates all placed slots globally; removes any large site that is 8-directionally adjacent
+          // to another large site in the same macro cell. Removed slots are discarded from cell.sites.
+          let _spacingRejections = 0;
+          const _allPlacedSites = [];
+          for (const [_ck, _cc] of Object.entries(gameState.world.cells || {})) {
+            for (const _sl of Object.values(_cc.sites || {})) {
+              _allPlacedSites.push(_sl);
+            }
+          }
+          // Build accepted set using greedy first-wins ordering
+          const _accepted = [];
+          for (const _cand of _allPlacedSites) {
+            if (WorldGen.largeSiteSpacingViolation(_accepted, _cand)) {
+              // Remove from parent cell
+              const _parentCell = gameState.world.cells[_cand.parent_cell];
+              if (_parentCell && _parentCell.sites) {
+                delete _parentCell.sites[_cand.site_id];
+              }
+              _spacingRejections++;
+            } else {
+              _accepted.push(_cand);
+            }
+          }
+
+          // Build site placement summary log
+          const _sizeCounts = {};
+          for (let _sz = 1; _sz <= 10; _sz++) _sizeCounts[_sz] = 0;
+          let _totalEnterable = 0;
+          let _totalNonEnterable = 0;
+          const _placedSitesList = [];
+          for (const _sl of _accepted) {
+            _sizeCounts[_sl.site_size] = (_sizeCounts[_sl.site_size] || 0) + 1;
+            if (_sl.enterable) _totalEnterable++; else _totalNonEnterable++;
+            _placedSitesList.push({
+              site_id:      _sl.site_id,
+              parent_cell:  _sl.parent_cell,
+              site_size:    _sl.site_size,
+              enterable:    _sl.enterable,
+              is_community: _sl.is_community,
+            });
+          }
+          const _totalAccepted = _accepted.length;
+          const _sizePercentages = {};
+          for (let _sz = 1; _sz <= 10; _sz++) {
+            _sizePercentages[_sz] = _totalAccepted > 0
+              ? Math.round((_sizeCounts[_sz] / _totalAccepted) * 1000) / 10
+              : 0;
+          }
+          _sitePlacementLog = {
+            total_cells_evaluated: Object.keys(patchCells).length,
+            total_sites_placed:    _totalAccepted,
+            total_enterable:       _totalEnterable,
+            total_non_enterable:   _totalNonEnterable,
+            size_counts:           _sizeCounts,
+            size_percentages:      _sizePercentages,
+            target_size_weights:   { 1: 24, 2: 20, 3: 16, 4: 12, 5: 9, 6: 7, 7: 5, 8: 3.5, 9: 2, 10: 1.5 },
+            spacing_rejections:    _spacingRejections,
+            placed_sites:          _placedSitesList,
+          };
+          _wLog('sites', 'placement_pass_complete', { accepted: _totalAccepted, spacing_rejections: _spacingRejections });
           
           if (logger) {
             logger.biomeDetected(worldData.biome);
@@ -1595,6 +1658,7 @@ app.post('/narrate', async (req, res) => {
 
         // Freeze worldgen log on gameState — no further writes
         gameState.world.worldgen_log = _worldgenLog;
+        gameState.world.site_placement_log = _sitePlacementLog;
 
         // TTL: remove progress tracking entry after 60 s (response already sent by then)
         if (_progToken) setTimeout(() => _initProgress.delete(_progToken), 60000);
@@ -4819,6 +4883,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
       diagnostics: _qaDiagnostics,
       visibility: visibilityPayload,
       worldgen_log: gameState.world?.worldgen_log || null,
+      site_placement_log: gameState.world?.site_placement_log || null,
       object_reality: _objectRealityDebug,
       player_identity: gameState.player.identity ?? null,          // v1.85.21
       last_identity_truth_line: gameState._lastIdentityTruthLine ?? null, // v1.85.21: verbatim Player: line injected into narrator
@@ -5111,6 +5176,19 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `Starting Loc Type   : ${gameState.world.starting_location_type || "not detected"}\n`;
     context += `World Seed          : ${gameState.world.phase3_seed ?? "(not set)"}\n`;
     context += `Turn Counter        : ${gameState.turn_counter ?? 0}\n`;
+
+    const _spl = gameState.world.site_placement_log;
+    if (_spl) {
+      context += `\n=== SITE PLACEMENT ===\n`;
+      context += `Cells Evaluated     : ${_spl.total_cells_evaluated}\n`;
+      context += `Sites Placed        : ${_spl.total_sites_placed}\n`;
+      context += `Enterable           : ${_spl.total_enterable} / Non-Enterable: ${_spl.total_non_enterable}\n`;
+      context += `Spacing Rejections  : ${_spl.spacing_rejections}\n`;
+      const _szLine = Object.entries(_spl.size_counts)
+        .map(([sz, ct]) => `${sz}:${ct}(${_spl.size_percentages[sz]}%)`)
+        .join('  ');
+      context += `Size Counts         : ${_szLine}\n`;
+    }
 
     context += `\n=== CURRENT CELL SITES (authoritative) ===\n`;
     const _dbgSites = currentCell?.sites ? Object.values(currentCell.sites) : [];
@@ -6700,10 +6778,12 @@ app.get('/diagnostics/sites', (req, res) => {
         has_generated_interior:  Array.isArray(s._generated_interior?.grid)
       };
     });
+    const activeSiteCleanId = (as.site_id || '').replace(/\/l2$/, '');
+    const activeCellSlot = cellSites.find(cs => cs.site_id === activeSiteCleanId);
     activeSite = {
       site_id:      as.site_id ?? null,
       name:         as.name ?? null,
-      description:  as.description ?? null,
+      description:  as.description ?? activeCellSlot?.description ?? null,
       is_filled:    as.is_filled ?? false,
       enterable:    as.enterable !== false,
       site_size:    as.site_size ?? null,
@@ -6829,6 +6909,13 @@ const _findSiteRecord = (gs, site_id) => {
 
 // Single site record — GET /diagnostics/site?site_id=...
 // Returns full stored runtime record for any site in loaded/generated world state.
+app.get('/diagnostics/site-placement', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const log = _lastGameState.world?.site_placement_log || null;
+  if (!log) return res.status(404).json({ error: 'no_placement_log', message: 'No site placement log on current world state.' });
+  return res.json(log);
+});
+
 app.get('/diagnostics/site', (req, res) => {
   if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
   const { site_id } = req.query;

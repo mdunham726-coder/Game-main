@@ -392,6 +392,7 @@
         <span id="worldgen-box-title">WORLDGEN</span>
         <div style="display:flex; gap:8px;">
           <button id="worldgen-copy-btn" onclick="copyWgLogOverlay()" style="display:none; background:#283593; border:1px solid #3949ab; color:#e0e0e0; font-family:monospace; font-size:11px; padding:2px 10px; cursor:pointer;">Copy Log JSON</button>
+          <button id="worldgen-sites-btn" onclick="copySitePlacementLogOverlay()" style="display:none; background:#1b5e20; border:1px solid #2e7d32; color:#e0e0e0; font-family:monospace; font-size:11px; padding:2px 10px; cursor:pointer;">Copy Sites JSON</button>
           <button onclick="dismissWgOverlay()" style="background:#333; border:1px solid #555; color:#aaa; font-family:monospace; font-size:11px; padding:2px 10px; cursor:pointer;">✕ Dismiss</button>
         </div>
       </div>
@@ -499,6 +500,7 @@
       document.getElementById('worldgen-box-title').style.color = '#d4af37';
       document.getElementById('worldgen-steps').innerHTML = '<div style="color:#888; padding:8px 0;">Generating world — please wait...</div>';
       document.getElementById('worldgen-copy-btn').style.display = 'none';
+      document.getElementById('worldgen-sites-btn').style.display = 'none';
       document.getElementById('worldgen-overlay').classList.add('visible');
     }
     function populateWgOverlay(wgLog) {
@@ -507,6 +509,7 @@
       document.getElementById('worldgen-box-title').style.color = _hasLog ? '#2ecc71' : '#f39c12';
       if (_hasLog) {
         document.getElementById('worldgen-copy-btn').style.display = '';
+        document.getElementById('worldgen-sites-btn').style.display = window.lastGameResponse?.site_placement_log ? '' : 'none';
         document.getElementById('worldgen-steps').innerHTML = wgLog.map(e => {
           const dataStr = e.data != null ? JSON.stringify(e.data) : '';
           return `<div class="wg-step">
@@ -525,6 +528,7 @@
       document.getElementById('worldgen-box-title').style.color = '#e74c3c';
       document.getElementById('worldgen-steps').innerHTML = `<div style="color:#e74c3c; padding:8px 0;">${_escHtml(msg)}</div>`;
       document.getElementById('worldgen-copy-btn').style.display = 'none';
+      document.getElementById('worldgen-sites-btn').style.display = 'none';
       document.getElementById('worldgen-overlay').classList.add('visible');
     }
     function dismissWgOverlay() {
@@ -535,6 +539,12 @@
     function copyWgLogOverlay() {
       const log = window.lastGameResponse?.worldgen_log || null;
       if (!log) { alert('No worldgen log available.'); return; }
+      navigator.clipboard.writeText(JSON.stringify(log, null, 2))
+        .catch(() => alert('Clipboard write failed.'));
+    }
+    function copySitePlacementLogOverlay() {
+      const log = window.lastGameResponse?.site_placement_log || null;
+      if (!log) { alert('No site placement log available.'); return; }
       navigator.clipboard.writeText(JSON.stringify(log, null, 2))
         .catch(() => alert('Clipboard write failed.'));
     }
