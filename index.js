@@ -778,7 +778,7 @@ app.post('/narrate', async (req, res) => {
   let gameState = sessionGameState;
   let isFirstTurn = sessionIsFirstTurn;
   
-  const { action, intent_channel: _rawChannel, npc_target: _rawNpcTarget } = req.body;
+  const { action, intent_channel: _rawChannel, npc_target: _rawNpcTarget, WORLD_SEED: _rawWorldSeed, WORLD_PROMPT: _rawWorldPrompt } = req.body;
   const resolvedChannel = ['do', 'say'].includes(_rawChannel) ? _rawChannel : 'do';
   if (!action) {
     return res.status(400).json({ 
@@ -996,6 +996,12 @@ app.post('/narrate', async (req, res) => {
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
     inputObj = mapActionToInput(action, "WORLD_PROMPT");
     inputObj.player_intent.channel = 'do';
+    if (_rawWorldSeed != null && Number.isFinite(Number(_rawWorldSeed))) inputObj.WORLD_SEED = Number(_rawWorldSeed);
+    // Use explicit WORLD_PROMPT from request body when present (e.g. harness sends founding premise
+    // separately from the T1 action). Browser path: no body WORLD_PROMPT → action is the founding
+    // premise, mapActionToInput already set it correctly. Harness path: action = "look around",
+    // body WORLD_PROMPT = "I am standing inside a tavern" → override so worldgen sees the real premise.
+    if (_rawWorldPrompt != null) inputObj.WORLD_PROMPT = String(_rawWorldPrompt);
     
     if (logger) logger.worldPromptReceived(inputObj.WORLD_PROMPT);
     
@@ -1015,7 +1021,7 @@ app.post('/narrate', async (req, res) => {
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
         _reportProgress('analyzing', 2, { prompt: (inputObj.WORLD_PROMPT || '').slice(0, 40) });
         _wLog('init', 'world_description_analysis', { prompt: (inputObj.WORLD_PROMPT || '').slice(0, 80) });
-        const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, gameState.rng_seed || 0);
+        const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, inputObj.WORLD_SEED ?? gameState.rng_seed ?? 0);
         if (worldData) {
           gameState.world.macro_biome = worldData.biome;
           gameState.world.world_tone = worldData.worldTone;  // NEW: Store semantic tone

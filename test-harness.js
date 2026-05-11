@@ -122,8 +122,9 @@ class GameClient {
     if (this.sessionId) headers['x-session-id'] = this.sessionId;
 
     const body = { action, intent_channel: opts.intent_channel || 'do' };
-    if (opts.WORLD_PROMPT) body.WORLD_PROMPT = opts.WORLD_PROMPT;
-    if (opts.npc_target)   body.npc_target   = opts.npc_target;
+    if (opts.WORLD_PROMPT)       body.WORLD_PROMPT = opts.WORLD_PROMPT;
+    if (opts.WORLD_SEED != null) body.WORLD_SEED  = opts.WORLD_SEED;
+    if (opts.npc_target)         body.npc_target   = opts.npc_target;
 
     const result   = await httpRequest('POST', `${this.baseUrl}/narrate`, body, headers);
     const response = result.body;
@@ -517,7 +518,8 @@ async function runScenario(scenario) {
         response       = result.body;
       } else {
         const opts = { intent_channel: turn.intent_channel || 'do' };
-        if (firstTurn && scenario.world_prompt) opts.WORLD_PROMPT = scenario.world_prompt;
+        if (firstTurn && scenario.world_prompt)       opts.WORLD_PROMPT = scenario.world_prompt;
+        if (firstTurn && scenario.world_seed != null) opts.WORLD_SEED  = scenario.world_seed;
         if (turn.npc_target) opts.npc_target = turn.npc_target;
         response  = await client.narrate(turn.action, opts);
         firstTurn = false;
@@ -692,6 +694,7 @@ const BUILTIN_SCENARIOS = [
     stability:    'stable',
     description:  'Starting inside a site triggers site fill pipeline; active_site populated in diagnostics',
     world_prompt: 'I am standing inside a tavern',
+    world_seed:   2063580769,
     turns: [
       {
         label:          'founding',
@@ -1254,6 +1257,7 @@ async function main() {
         turns:       Array.isArray(s.turns) ? s.turns.length : 0,
         isolated:    isIsolated,
         sweep,
+        ...(s.world_seed != null ? { world_seed: s.world_seed } : {}),
         ...(s._source === 'file' ? { file: path.join(SCENARIOS_DIR, s.name + '.json') } : {}),
       };
     });
