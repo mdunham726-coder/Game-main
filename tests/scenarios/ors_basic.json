@@ -1,0 +1,25 @@
+{
+  "name": "ors_basic",
+  "stability": "probe",
+  "description": "[PROBE] Object Reality System -- probabilistic on narrator describing a portable object near player",
+  "world_prompt": "I am standing in a cluttered workshop full of tools and objects",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "pick_up_object",
+      "action": "I pick up the nearest object I can find",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "object_reality.ran", "op": "present" }
+      ]
+    }
+  ]
+}

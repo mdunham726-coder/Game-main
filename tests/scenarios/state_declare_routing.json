@@ -1,0 +1,25 @@
+{
+  "name": "state_declare_routing",
+  "stability": "stable",
+  "description": "Post-founding possession claim is handled gracefully; engine does not crash and narrative is returned",
+  "world_prompt": "I am a simple farmer in a quiet village",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "bare_claim",
+      "action": "I have a magic sword",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "narrative", "op": "present" }
+      ]
+    }
+  ]
+}

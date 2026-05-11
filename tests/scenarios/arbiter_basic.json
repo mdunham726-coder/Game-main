@@ -1,0 +1,25 @@
+{
+  "name": "arbiter_basic",
+  "stability": "stable",
+  "description": "Interaction with environment on T2 produces an arbiter verdict in the response",
+  "world_prompt": "I am an adventurer in a dense forest",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "action_requiring_arbiter",
+      "action": "I try to climb the tallest tree I can see",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "last_arbiter_verdict", "op": "present" }
+      ]
+    }
+  ]
+}

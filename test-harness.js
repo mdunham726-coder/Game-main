@@ -292,6 +292,16 @@ function evalRule(rule, response) {
         evidence: `length=${arr.length}` };
     }
 
+    case 'array_len_gt': {
+      const arr = resolvePath(response, rule.path);
+      if (!Array.isArray(arr)) {
+        return { passed: false, expected: 'array at path', actual: arr };
+      }
+      const target = resolveTarget(rule, response);
+      return { passed: arr.length > target, expected: `length > ${target}`, actual: arr.length,
+        evidence: `length=${arr.length}` };
+    }
+
     case 'sum_paths': {
       if (!Array.isArray(rule.paths) || rule.paths.length === 0) {
         return { passed: false, error: 'sum_paths requires non-empty paths array' };
@@ -482,7 +492,16 @@ async function runScenario(scenario) {
     process.stdout.write(`  T${idx} ${pad(label, 30)} ... `);
 
     try {
-      if (String(turn.action).startsWith('__GET ')) {
+      if (String(turn.action).startsWith('__GET_SESSION ')) {
+        // Session-scoped diagnostic endpoint — appends sessionId, forwards diagnostics key
+        const endpoint = turn.action.slice(14).trim();
+        const diagKey  = process.env.DIAGNOSTICS_KEY || '';
+        const sep      = endpoint.includes('?') ? '&' : '?';
+        const sessUrl  = `${BASE_URL}${endpoint}${client.sessionId ? sep + 'sessionId=' + encodeURIComponent(client.sessionId) : ''}`;
+        const diagHdrs = diagKey ? { 'x-diagnostics-key': diagKey } : {};
+        const result   = await httpRequest('GET', sessUrl, null, diagHdrs);
+        response       = result.body;
+      } else if (String(turn.action).startsWith('__GET ')) {
         // Global diagnostic endpoint — caller must ensure session isolation
         const endpoint = turn.action.slice(6).trim();
         const result   = await httpRequest('GET', `${BASE_URL}${endpoint}`, null);
@@ -655,7 +674,96 @@ const BUILTIN_SCENARIOS = [
       },
     ],
   },
+
+  // --- 5. site_entry_basic ---
+  // Uses __GET_SESSION to inspect session-scoped site state after entering a site.
+  // Sequential-safe: runAll() is serial so _lastGameState is always from this session's last turn.
+  {
+    name:         'site_entry_basic',
+    stability:    'stable',
+    description:  'Starting inside a site triggers site fill pipeline; active_site populated in diagnostics',
+    world_prompt: 'I am standing inside a tavern',
+    turns: [
+      {
+        label:          'founding',
+        action:         'look around',
+        intent_channel: 'do',
+        assert: [
+          { op: 'no_error' },
+        ],
+      },
+      {
+        label:  'check_site_state',
+        action: '__GET_SESSION /diagnostics/sites',
+        assert: [
+          { path: 'active_site', op: 'present' },
+          { path: 'depth',       op: 'gte',     value: 2 },
+        ],
+      },
+    ],
+  },
+
+  // --- 6. npc_fill_basic ---
+  // PROBE ONLY — NPC spawn is probabilistic; narrator must describe people for NPCs to appear.
+  {
+    name:         'npc_fill_basic',
+    stability:    'probe',
+    description:  '[PROBE] NPC fill pipeline — probabilistic: NPCs must spawn and receive frozen identity',
+    world_prompt: 'A crowded inn full of travelers and merchants',
+    turns: [
+      {
+        label:          'founding',
+        action:         'look around',
+        intent_channel: 'do',
+        assert: [
+          { op: 'no_error' },
+        ],
+      },
+      {
+        label:          'interact',
+        action:         'look at the people around me',
+        intent_channel: 'do',
+        assert: [
+          { op: 'no_error' },
+          { path: 'narrative', op: 'present' },
+        ],
+      },
+      {
+        label:  'check_npc_state',
+        action: '__GET_SESSION /diagnostics/npc',
+        assert: [
+          { path: 'npcs', op: 'present' },
+        ],
+      },
+    ],
+  },
 ];
+
+// ── Unified scenario registry: builtins + auto-loaded JSON files ──────────────
+const SCENARIO_REGISTRY = (() => {
+  const registry = BUILTIN_SCENARIOS.map(s => ({ ...s, _source: 'builtin' }));
+  try {
+    const jsonFiles = fs.readdirSync(SCENARIOS_DIR)
+      .filter(f => f.toLowerCase().endsWith('.json') && fs.statSync(path.join(SCENARIOS_DIR, f)).isFile())
+      .sort();
+    for (const f of jsonFiles) {
+      try {
+        const raw  = fs.readFileSync(path.join(SCENARIOS_DIR, f), 'utf8');
+        const data = JSON.parse(raw);
+        const list = Array.isArray(data) ? data : [data];
+        for (const s of list) {
+          if (!s || !s.name || !Array.isArray(s.turns)) continue;
+          if (registry.some(r => r.name === s.name)) {
+            process.stderr.write(`[harness] WARNING: scenario "${s.name}" in ${f} conflicts with a builtin — skipped.\n`);
+            continue;
+          }
+          registry.push({ ...s, _source: 'file' });
+        }
+      } catch (_) { /* skip unreadable/invalid files */ }
+    }
+  } catch (_) { /* SCENARIOS_DIR unreadable — builtins only */ }
+  return registry;
+})();
 
 // ─── Cost estimation helpers ──────────────────────────────────────────────────
 function estimateRuns(scenarios, runCount) {
@@ -855,14 +963,20 @@ async function interactiveMenu() {
   }
 
   // Build run-all helper (mirrors headless multi-scenario path)
-  async function runAll() {
+  async function runAll(includeProbes = false) {
     const results = [];
-    for (const scenario of BUILTIN_SCENARIOS) {
+    for (const scenario of SCENARIO_REGISTRY) {
       const isIsolated = scenario.isolated_only === true;
       const hasGlobal  = scenario.turns.some(t => String(t.action).startsWith('__GET '));
+      const isProbe    = (scenario.stability || 'stable') === 'probe';
       console.log(`\n${C.cyan}[${scenario.name}]${C.reset} ${scenario.description || ''}`);
       if (isIsolated || hasGlobal) {
-        console.log(`  ${C.yellow}[SKIP] isolated scenario — run it individually (type its number)${C.reset}`);
+        console.log(`  ${C.yellow}[SKIP] isolated — run it individually (type its number)${C.reset}`);
+        results.push({ name: scenario.name, skipped: true, passed: 0, failed: 0, total: 0 });
+        continue;
+      }
+      if (isProbe && !includeProbes) {
+        console.log(`  ${C.yellow}[PROBE] skipped in stable run — use P to include probes${C.reset}`);
         results.push({ name: scenario.name, skipped: true, passed: 0, failed: 0, total: 0 });
         continue;
       }
@@ -897,16 +1011,21 @@ async function interactiveMenu() {
     console.log(`Verbose: ${VERBOSE ? 'ON' : 'OFF'}\n`);
 
     console.log(`Scenarios:`);
-    BUILTIN_SCENARIOS.forEach((s, i) => {
-      const tag = s.isolated_only ? ` ${C.yellow}[ISOLATED]${C.reset}` : '';
-      console.log(`  [${i + 1}] ${s.name}${tag}`);
+    SCENARIO_REGISTRY.forEach((s, i) => {
+      const tags = [
+        s._source === 'file'                  ? `${C.dim}[JSON]${C.reset}`     : '',
+        s.isolated_only                       ? `${C.yellow}[ISOLATED]${C.reset}` : '',
+        (s.stability || 'stable') === 'probe' ? `${C.yellow}[PROBE]${C.reset}`    : '',
+      ].filter(Boolean).join('');
+      console.log(`  [${i + 1}] ${s.name}${tags ? ' ' + tags : ''}`);
       console.log(`      ${C.dim}${s.description || ''}${C.reset}`);
     });
 
     console.log(`\nOptions:`);
-    console.log(`  Type A then Enter     — run all non-isolated scenarios`);
-    console.log(`  Type 1-${BUILTIN_SCENARIOS.length} then Enter   — run a single scenario by number`);
-    console.log(`  Type F then Enter     — load a custom scenario from tests/scenarios/`);
+    console.log(`  Type A then Enter     — run all stable non-isolated scenarios`);
+    console.log(`  Type P then Enter     — run all non-isolated scenarios (includes probes)`);
+    console.log(`  Type 1-${SCENARIO_REGISTRY.length} then Enter   — run a single scenario by number`);
+    console.log(`  Type F then Enter     — load a one-off scenario from tests/scenarios/`);
     console.log(`  Type V then Enter     — toggle verbose (narrative text on/off)`);
     console.log(`  Type Q then Enter     — quit`);
     console.log('');
@@ -928,17 +1047,43 @@ async function interactiveMenu() {
 
     if (answer === 'A') {
       const runs = await askRunCount();
-      const _allScenarios = BUILTIN_SCENARIOS.filter(
-        s => !s.isolated_only && !s.turns.some(t => String(t.action).startsWith('__GET '))
+      const _allScenarios = SCENARIO_REGISTRY.filter(
+        s => !s.isolated_only && (s.stability || 'stable') !== 'probe' &&
+             !s.turns.some(t => String(t.action).startsWith('__GET '))
       );
       const est = estimateRuns(_allScenarios, runs);
-      if (!(await askProceed(ask, 'all non-isolated scenarios', runs, est))) continue;
+      if (!(await askProceed(ask, 'all stable non-isolated scenarios', runs, est))) continue;
       _sessionCost.estimatedUsd += est.totalCostUsd;
       let runsPassed = 0;
       for (let r = 1; r <= runs; r++) {
         if (runs > 1) console.log(`\n${C.cyan}--- Run ${r}/${runs} ---${C.reset}`);
-        await runAll();
-        runsPassed++; // individual run summary already shown by runAll
+        await runAll(false); // stable only
+        runsPassed++;
+      }
+      if (runs > 1) {
+        console.log(`\n${C.cyan}--- ${runs}-run summary ---${C.reset}`);
+        console.log(`Runs: ${runs}  (see individual summaries above for pass/fail detail)`);
+      }
+      _sessionCost.runs += runs;
+      _sessionCost.turns += est.totalTurns;
+      console.log(`\nPress Enter to return to the menu.`);
+      await ask('');
+      continue;
+    }
+
+    if (answer === 'P') {
+      const runs = await askRunCount();
+      const _allScenarios = SCENARIO_REGISTRY.filter(
+        s => !s.isolated_only && !s.turns.some(t => String(t.action).startsWith('__GET '))
+      );
+      const est = estimateRuns(_allScenarios, runs);
+      if (!(await askProceed(ask, 'all non-isolated scenarios (includes probes)', runs, est))) continue;
+      _sessionCost.estimatedUsd += est.totalCostUsd;
+      let runsPassed = 0;
+      for (let r = 1; r <= runs; r++) {
+        if (runs > 1) console.log(`\n${C.cyan}--- Run ${r}/${runs} ---${C.reset}`);
+        await runAll(true); // includeProbes = true
+        runsPassed++;
       }
       if (runs > 1) {
         console.log(`\n${C.cyan}--- ${runs}-run summary ---${C.reset}`);
@@ -1053,8 +1198,8 @@ async function interactiveMenu() {
     }
 
     const num = parseInt(answer, 10);
-    if (!isNaN(num) && num >= 1 && num <= BUILTIN_SCENARIOS.length) {
-      const scenario = BUILTIN_SCENARIOS[num - 1];
+    if (!isNaN(num) && num >= 1 && num <= SCENARIO_REGISTRY.length) {
+      const scenario = SCENARIO_REGISTRY[num - 1];
       const runs = await askRunCount();
       const est  = estimateRuns([scenario], runs);
       if (!(await askProceed(ask, scenario.name, runs, est))) continue;
@@ -1079,7 +1224,7 @@ async function interactiveMenu() {
       continue;
     }
 
-    console.log(`${C.yellow}Unrecognized input: "${answer}". Type A, F, 1-${BUILTIN_SCENARIOS.length}, V, or Q then Enter.${C.reset}`);
+    console.log(`${C.yellow}Unrecognized input: "${answer}". Type A, P, F, 1-${SCENARIO_REGISTRY.length}, V, or Q then Enter.${C.reset}`);
   }
 }
 
@@ -1088,14 +1233,16 @@ async function main() {
   ensureScenariosDir();
 
   if (ONLY_LIST) {
-    const builtin = BUILTIN_SCENARIOS.map(s => ({ name: s.name, source: 'builtin' }));
-    let external  = [];
-    try {
-      external = fs.readdirSync(SCENARIOS_DIR)
-        .filter(f => f.endsWith('.json'))
-        .map(f => ({ name: f.replace(/\.json$/, ''), source: 'file', file: path.join(SCENARIOS_DIR, f) }));
-    } catch (_) {}
-    process.stdout.write(JSON.stringify([...builtin, ...external], null, 2) + '\n');
+    const listOutput = SCENARIO_REGISTRY.map(s => ({
+      name:        s.name,
+      source:      s._source,
+      stability:   s.stability || 'stable',
+      description: s.description || '',
+      turns:       Array.isArray(s.turns) ? s.turns.length : 0,
+      isolated:    s.isolated_only === true,
+      ...(s._source === 'file' ? { file: path.join(SCENARIOS_DIR, s.name + '.json') } : {}),
+    }));
+    process.stdout.write(JSON.stringify(listOutput, null, 2) + '\n');
     process.exit(0);
   }
 
@@ -1129,16 +1276,16 @@ async function main() {
     }
 
   } else if (ONLY_NAME) {
-    const found = BUILTIN_SCENARIOS.find(s => s.name === ONLY_NAME);
+    const found = SCENARIO_REGISTRY.find(s => s.name === ONLY_NAME);
     if (!found) {
-      console.error(`${C.red}No built-in scenario named "${ONLY_NAME}".${C.reset}`);
-      console.error(`Available: ${BUILTIN_SCENARIOS.map(s => s.name).join(', ')}`);
+      console.error(`${C.red}No scenario named "${ONLY_NAME}".${C.reset}`);
+      console.error(`Available: ${SCENARIO_REGISTRY.map(s => s.name).join(', ')}`);
       process.exit(1);
     }
     scenarios = [found];
 
   } else {
-    scenarios = BUILTIN_SCENARIOS;
+    scenarios = SCENARIO_REGISTRY;
   }
 
   const multiMode = scenarios.length > 1;

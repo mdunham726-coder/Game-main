@@ -1,0 +1,26 @@
+{
+  "name": "reality_check_basic",
+  "stability": "stable",
+  "description": "Non-trivial physical action on T2 triggers Reality Check; fired flag and result present",
+  "world_prompt": "I am a traveler standing in an open field",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "rc_trigger",
+      "action": "I punch the ground as hard as I can",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.reality_check.fired", "op": "present" },
+        { "path": "debug.reality_check.result", "op": "present" }
+      ]
+    }
+  ]
+}

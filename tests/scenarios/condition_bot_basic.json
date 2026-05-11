@@ -1,0 +1,25 @@
+{
+  "name": "condition_bot_basic",
+  "stability": "probe",
+  "description": "[PROBE] Condition Bot -- probabilistic: narrator and CB must both register injury from a severe fall",
+  "world_prompt": "I am standing on top of a high rocky cliff overlooking jagged boulders below",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "injury_trigger",
+      "action": "I jump off the cliff and fall hard onto the rocks below",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "state.player.conditions", "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}

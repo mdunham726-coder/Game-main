@@ -1,0 +1,40 @@
+{
+  "name": "edge_inputs",
+  "stability": "stable",
+  "description": "Engine handles degenerate inputs gracefully: empty string, long garbage, XSS attempt",
+  "world_prompt": "I am standing on a plain road",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "empty_string",
+      "action": "",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "long_garbage",
+      "action": "xkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjzxkqwjz",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "xss_attempt",
+      "action": "<script>alert(1)</script>",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    }
+  ]
+}
