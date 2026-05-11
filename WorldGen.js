@@ -533,6 +533,13 @@ async function detectStartContextWithDeepSeek(desc) {
       container = _fallbackContainer;
     }
 
+    // Keyword-wins clamp: if explicit interior keywords matched L2 fallback, AI cannot downgrade.
+    // "inside a tavern", "inside the forge", etc. are unambiguous — AI returning L0/L1 is wrong.
+    if (_fallbackContainer === 'L2' && container !== 'L2') {
+      console.log(`[START-CTX] AI returned "${container}" but L2_KEYWORDS matched — clamping to L2`);
+      container = 'L2';
+    }
+
     // Validate and clamp scale; force null for L0
     let scale = null;
     if (container !== 'L0') {
