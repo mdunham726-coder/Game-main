@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-11T06:53:42.278Z",
+  "timestamp": "2026-05-11T08:08:15.153Z",
   "scenariosPassed": 1,
   "scenariosFailed": 0,
   "scenariosSkipped": 0,
-  "turnsPassed": 1,
+  "turnsPassed": 2,
   "turnsFailed": 0,
   "results": [
     {
-      "name": "smoke_test_no_error",
+      "name": "state_declare_routing",
       "skipped": false,
-      "passed": 1,
+      "passed": 2,
       "failed": 0,
-      "total": 1,
-      "sessionId": "1778482397866-xnx54uolt"
+      "total": 2,
+      "sessionId": "1778486869132-trv8w6wyj"
     }
   ]
 }

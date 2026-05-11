@@ -1,8 +1,8 @@
 {
   "name": "arbiter_basic",
   "stability": "stable",
-  "description": "Interaction with environment on T2 produces an arbiter verdict in the response",
-  "world_prompt": "I am an adventurer in a dense forest",
+  "description": "Social interaction with a present NPC produces an arbiter verdict in the response",
+  "world_prompt": "I am a traveler who has just arrived at a busy roadside inn. The innkeeper is behind the bar.",
   "turns": [
     {
       "label": "founding",
@@ -13,8 +13,8 @@
       ]
     },
     {
-      "label": "action_requiring_arbiter",
-      "action": "I try to climb the tallest tree I can see",
+      "label": "npc_interaction",
+      "action": "I walk up to the innkeeper and ask about a room for the night",
       "intent_channel": "do",
       "assert": [
         { "op": "no_error" },

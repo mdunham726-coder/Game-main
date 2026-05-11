@@ -358,7 +358,7 @@ function validateScenario(scenario) {
   if (!Array.isArray(scenario.turns))
     throw new Error('scenario missing turns array');
   for (const turn of scenario.turns) {
-    if (typeof turn.action !== 'string' || !turn.action)
+    if (turn.action == null || typeof turn.action !== 'string')
       throw new Error(`turn missing action: ${JSON.stringify(turn)}`);
     for (const rule of (turn.assert || [])) {
       if (!rule.op)
