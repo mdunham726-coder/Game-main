@@ -6809,6 +6809,223 @@ app.get('/diagnostics/sites-query', (req, res) => {
   });
 });
 
+// =============================================================================
+// MB v3.0.4: RUNTIME SITE & LOCALSPACE INSPECTION ENDPOINTS
+// =============================================================================
+// Operate against the entire world.sites map — no proximity filter.
+// Only covers loaded/generated runtime state. No claim is made about
+// unloaded/unvisited world regions. All endpoints are read-only, no auth required.
+
+// Inline helper: find a site record in world.sites by site_id (bare or /l2 form).
+// Returns { site, interior_key } or null.
+const _findSiteRecord = (gs, site_id) => {
+  const clean = (site_id || '').replace(/\/l2$/, '');
+  for (const [interior_key, s] of Object.entries(gs.world.sites || {})) {
+    const sId = (s.site_id ?? s.id ?? '').replace(/\/l2$/, '');
+    if (sId === clean) return { site: s, interior_key };
+  }
+  return null;
+};
+
+// Single site record — GET /diagnostics/site?site_id=...
+// Returns full stored runtime record for any site in loaded/generated world state.
+app.get('/diagnostics/site', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const { site_id } = req.query;
+  if (!site_id) return res.status(400).json({ error: 'site_id required' });
+
+  const gs     = _lastGameState;
+  const found  = _findSiteRecord(gs, site_id);
+  if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
+    message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
+
+  const { site: s, interior_key } = found;
+  const cleanId = (site_id || '').replace(/\/l2$/, '');
+
+  // Look up the cell slot for enterable/is_filled/identity (registry-side metadata)
+  const cellKey  = s._source_cell_key || (s.mx != null ? `LOC:${s.mx},${s.my}:${s.lx},${s.ly}` : null);
+  const cellSlot = cellKey ? (gs.world.cells?.[cellKey]?.sites?.[cleanId] ?? null) : null;
+
+  // Collect floor object IDs from floor_positions
+  const floorObjIds = [];
+  for (const pos of Object.values(s.floor_positions || {})) {
+    if (Array.isArray(pos.object_ids)) floorObjIds.push(...pos.object_ids);
+  }
+
+  const localspaceIds = Object.keys(s.local_spaces || {});
+
+  res.json({
+    site_id:            cleanId,
+    interior_key,
+    name:               s.name      ?? null,
+    description:        s.description ?? cellSlot?.description ?? null,
+    identity:           cellSlot?.identity ?? null,
+    enterable:          cellSlot ? (cellSlot.enterable !== false) : true,
+    is_filled:          cellSlot?.is_filled ?? s.is_filled ?? false,
+    interior_state:     !s.is_stub ? 'GENERATED' : 'NOT_GENERATED',
+    site_size:          s.site_size  ?? null,
+    width:              s.width      ?? null,
+    height:             s.height     ?? null,
+    population:         s.population ?? null,
+    is_stub:            s.is_stub    ?? false,
+    created_at:         s.created_at ?? null,
+    coords: {
+      mx:       s.mx ?? null,
+      my:       s.my ?? null,
+      lx:       s.lx ?? null,
+      ly:       s.ly ?? null,
+      cell_key: cellKey
+    },
+    localspace_count:   localspaceIds.length,
+    localspace_ids:     localspaceIds,
+    ...(() => {
+      const allNpcIds      = (s.npcs || []).map(n => n.id).filter(Boolean);
+      const lsNpcIds       = new Set(Object.values(s.local_spaces || {}).flatMap(ls => ls.npc_ids || []));
+      const floorNpcIds    = allNpcIds.filter(id => !lsNpcIds.has(id));
+      const lsNpcIdArr     = [...lsNpcIds];
+      return {
+        npc_count:            allNpcIds.length,
+        npc_count_total:      allNpcIds.length,
+        npc_floor_count:      floorNpcIds.length,
+        npc_floor_ids:        floorNpcIds,
+        npc_localspace_count: lsNpcIds.size,
+        npc_localspace_ids:   lsNpcIdArr,
+      };
+    })(),
+    floor_object_count: floorObjIds.length,
+    floor_object_ids:   floorObjIds
+  });
+});
+
+// All localspaces for a site (compact table) — GET /diagnostics/localspaces?site_id=...
+// Returns compact summaries for every localspace in a loaded/generated site.
+app.get('/diagnostics/localspaces', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const { site_id } = req.query;
+  if (!site_id) return res.status(400).json({ error: 'site_id required' });
+
+  const gs    = _lastGameState;
+  const found = _findSiteRecord(gs, site_id);
+  if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
+    message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
+
+  const { site: s } = found;
+  const localspaces = Object.entries(s.local_spaces || {}).map(([lsKey, ls]) => {
+    const gen = ls._generated_interior ?? null;
+    return {
+      localspace_id:          lsKey,
+      parent_site_id:         ls.parent_site_id ?? null,
+      name:                   ls.name           ?? null,
+      description:            ls.description    ?? null,
+      enterable:              ls.enterable      ?? true,
+      is_filled:              ls.is_filled       ?? false,
+      localspace_size:        ls.localspace_size ?? null,
+      x:                      ls.x              ?? null,
+      y:                      ls.y              ?? null,
+      width:                  ls.width          ?? null,
+      height:                 ls.height         ?? null,
+      npc_count:              (ls.npc_ids || []).length,
+      npc_ids:                ls.npc_ids         ?? [],
+      object_count:           gen?.object_ids?.length ?? 0,
+      has_generated_interior: Array.isArray(gen?.grid)
+    };
+  });
+
+  // Sort by localspace_id
+  localspaces.sort((a, b) => a.localspace_id.localeCompare(b.localspace_id));
+
+  res.json({
+    site_id,
+    site_name:       s.name ?? null,
+    localspace_count: localspaces.length,
+    note: 'Localspaces whose interiors have not been generated return has_generated_interior: false and null/empty grid_summary.',
+    localspaces
+  });
+});
+
+// Single localspace record — GET /diagnostics/localspace?localspace_id=...&site_id=...
+// Returns full stored runtime record for one localspace. site_id is optional but faster.
+// Pass include_grid=true to receive the full 2D interior grid array (large — use sparingly).
+app.get('/diagnostics/localspace', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const { localspace_id, site_id, include_grid } = req.query;
+  if (!localspace_id) return res.status(400).json({ error: 'localspace_id required' });
+
+  const gs          = _lastGameState;
+  const includeGrid = include_grid === 'true';
+
+  let ls          = null;
+  let parentSiteId = null;
+
+  if (site_id) {
+    // Narrow search: look in the specific site only
+    const found = _findSiteRecord(gs, site_id);
+    if (found) {
+      ls = found.site.local_spaces?.[localspace_id] ?? null;
+      if (ls) parentSiteId = found.interior_key;
+    }
+  } else {
+    // Broad search: scan all loaded sites
+    for (const [interior_key, s] of Object.entries(gs.world.sites || {})) {
+      const candidate = s.local_spaces?.[localspace_id];
+      if (candidate) {
+        ls = candidate;
+        parentSiteId = interior_key;
+        break;
+      }
+    }
+  }
+
+  if (!ls) return res.status(404).json({ error: 'localspace_not_found', localspace_id,
+    message: 'Localspace not found in loaded/generated world state. May not exist or its parent site may be in an unloaded region.' });
+
+  const gen = ls._generated_interior ?? null;
+  const hasGrid = Array.isArray(gen?.grid);
+
+  // Build grid_summary if interior grid exists
+  let gridSummary = null;
+  if (hasGrid) {
+    let floorTiles = 0;
+    let npcTiles   = 0;
+    for (const row of gen.grid) {
+      for (const tile of (row || [])) {
+        if (tile && tile.type !== 'wall') floorTiles++;
+        if (tile && tile.npc_id)         npcTiles++;
+      }
+    }
+    gridSummary = {
+      rows:        gen.grid.length,
+      cols:        gen.grid[0]?.length ?? 0,
+      floor_tiles: floorTiles,
+      npc_tiles:   npcTiles
+    };
+  }
+
+  const record = {
+    localspace_id,
+    parent_site_id:         parentSiteId ?? ls.parent_site_id ?? null,
+    name:                   ls.name           ?? null,
+    description:            ls.description    ?? null,
+    enterable:              ls.enterable      ?? true,
+    is_filled:              ls.is_filled       ?? false,
+    localspace_size:        ls.localspace_size ?? null,
+    x:                      ls.x              ?? null,
+    y:                      ls.y              ?? null,
+    width:                  ls.width          ?? null,
+    height:                 ls.height         ?? null,
+    npc_count:              (ls.npc_ids || []).length,
+    npc_ids:                ls.npc_ids         ?? [],
+    object_count:           gen?.object_ids?.length ?? 0,
+    object_ids:             gen?.object_ids     ?? [],
+    has_generated_interior: hasGrid,
+    grid_summary:           gridSummary
+  };
+
+  if (includeGrid && hasGrid) record.grid = gen.grid;
+
+  res.json(record);
+});
+
 // Source slice reader — GET /diagnostics/source
 // Used by Mother Brain get_source_slice tool for targeted implementation verification.
 // Auth: requires x-diagnostics-key header matching DIAGNOSTICS_KEY env var.

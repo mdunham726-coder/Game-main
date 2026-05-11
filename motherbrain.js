@@ -26,9 +26,11 @@ const _toolHttpAgent = new http.Agent({ keepAlive: false });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '3.0.3';
+const MB_VERSION = '3.0.5';
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
+// MB v3.0.4 (May 10, 2026): Runtime site & localspace inspection tooling. Added GET /diagnostics/site, GET /diagnostics/localspaces, GET /diagnostics/localspace, _findSiteRecord() helper. Added get_site, get_localspaces, get_localspace MB_TOOLS + executeToolCall branches. SYSTEM_PROMPT items 14/15/16 + TOOL ROUTING block. KNOWLEDGE TIERS updated. MB_VERSION 3.0.3 -> 3.0.4.
+// MB v3.0.5 (May 10, 2026): Runtime inspection fixes (post-QA). Fix 1: get_localspace parent_site_id now uses interior_key directly (with /l2 suffix) — eliminates ontology inconsistency vs get_localspaces and inspect_active_site. Fix 2: get_site description falls back to cellSlot?.description when world.sites record has null — covers pre-fill-pipeline state. Fix 3: get_site NPC reporting overhaul — corrected n.npc_id (always undefined) to n.id; added floor/localspace NPC split (npc_count_total, npc_floor_count, npc_floor_ids, npc_localspace_count, npc_localspace_ids); retained npc_count as legacy alias; removed broken npc_ids field. SYSTEM_PROMPT item 14 NPC field list updated. MB_VERSION 3.0.4 -> 3.0.5.
 /*
   { version: '2.8.44', date: 'April 29, 2026', note: 'CONTEXT block stale-on-move suppression (v1.84.34): assembleContinuityPacket now compares _lastPhaseBLoc.locationRef against current w.position cell string before emitting CONTEXT — RECENT LOCATION. If they differ (player moved to a new cell), the block is suppressed entirely — prior-cell biome facts are misleading when the player is in a different cell and cost ~400 tokens. _lastPhaseBLoc = null moved outside the if block to clear the snapshot regardless of suppression (prevents next-turn bleed). Stationary turns unaffected — block fires normally when locationRef matches current cell. L1/L2 unaffected — _lastPhaseBLoc only populated at L0. CONTINUITY PACKET bullet updated. Package v1.84.34.' },
   { version: '2.8.43', date: 'April 29, 2026', note: 'birth_record canonicalization (v1.84.33): Turn 1 founding premise extraction pipeline fully implemented. (1) index.js: verbatim player input captured to birth_record.raw_input immediately after String(action) (pre-normalization, original casing), gated on turnNumber===1 && !raw_input already set. (2) ContinuityBrain _buildExtractionPrompt: on Turn 1 (turn_history.length===0) injects PRIMARY SOURCE (raw_input) and CONTEXT ONLY (narration) distinction, adds founding_premise block to JSON schema, adds FOUNDING PREMISE extraction section with source precedence rules (raw_input primary, narration fallback, anti-drift rule). (3) ContinuityBrain runPhaseB: write-back gate after REQUIRED_KEYS check — if turn===1 and extracted.founding_premise exists, writes form/location_premise/possessions/status_claims/scenario_notes to birth_record; console.log confirms population. founding_premise NOT in REQUIRED_KEYS (Turn 1 extension only — adding it would break Phase B on all other turns). Pre-v1.84.33 saves: birth_record fields remain null as expected.' },
@@ -180,6 +182,65 @@ const MB_TOOLS = [
         type: 'object',
         properties: {},
         required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_site',
+      description: 'Fetch the full stored runtime record for a specific site by site_id from loaded/generated world state. Operates against the entire world.sites map — no proximity filter; works even if the player is hundreds of cells away. Returns: site_id, interior_key, name, description, identity, enterable, is_filled, interior_state (GENERATED|NOT_GENERATED), site_size, width, height, population, is_stub, created_at, coords (mx/my/lx/ly/cell_key), localspace_count, localspace_ids (short keys), npc_count, npc_ids, floor_object_count, floor_object_ids. No claim is made about unloaded or unvisited world regions — 404 means the site is not in loaded state. For the currently active site, inspect_active_site is faster. For world registry slot metadata only (no localspace detail), use get_sites.',
+      parameters: {
+        type: 'object',
+        properties: {
+          site_id: {
+            type: 'string',
+            description: 'The site_id to look up (e.g. M0x1:site_start). Bare form or /l2 suffix both accepted.'
+          }
+        },
+        required: ['site_id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_localspaces',
+      description: 'List all localspaces for a site with compact summaries. Operates against the full world.sites map — player does not need to be at or near the site. Returns: site_id, site_name, localspace_count, and per-space: localspace_id, parent_site_id, name, description, enterable, is_filled, localspace_size, x, y, width, height, npc_count, npc_ids, object_count, has_generated_interior. Localspaces whose interiors have not been generated return has_generated_interior: false and null/empty grid and grid_summary. No claim is made about unloaded world regions. Use this to survey all localspaces at once — verify independent size rolls, dimension variety, fill status, NPC placement, and enterable distribution. For the active site, inspect_active_site also works but get_localspaces works for any loaded site.',
+      parameters: {
+        type: 'object',
+        properties: {
+          site_id: {
+            type: 'string',
+            description: 'The site_id to retrieve localspaces for.'
+          }
+        },
+        required: ['site_id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_localspace',
+      description: 'Fetch the full stored runtime record for a specific localspace by its short ID (e.g. ls_0). Operates against all loaded sites — player need not be inside or near the space. Returns: localspace_id, parent_site_id, name, description, enterable, is_filled, localspace_size, x, y, width, height, npc_count, npc_ids, object_count, object_ids, has_generated_interior, grid_summary (rows/cols/floor_tiles/npc_tiles — null if interior not yet generated). Localspaces whose interiors have not been generated return has_generated_interior: false and null grid_summary. Pass include_grid=true to also receive the full 2D tile grid array (large — use sparingly). Providing site_id narrows the search and is faster. Without site_id, all loaded sites are scanned. No claim is made about unloaded world regions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          localspace_id: {
+            type: 'string',
+            description: 'The short localspace ID to look up (e.g. ls_0, ls_3).'
+          },
+          site_id: {
+            type: 'string',
+            description: 'Optional: parent site_id to narrow the search. Faster when provided.'
+          },
+          include_grid: {
+            type: 'boolean',
+            description: 'If true, includes the full 2D interior grid array in the response. Default false. Use sparingly — grid can be large.'
+          }
+        },
+        required: ['localspace_id']
       }
     }
   },
@@ -456,10 +517,23 @@ REALITY CHECK (Arbiter Phase 0): Before each narration turn (except Turn 1 and s
 
 13. ACTIVE SITE LOCALSPACE INSPECTOR (live descriptor truth): GET /diagnostics/sites — live active site and full localspace descriptor table read directly from game state (not the world registry). Returns depth, active_site.local_spaces (each entry: local_space_id, parent_site_id, name, description, is_filled, enterable, localspace_size, x, y, width, height, npc_ids, npc_count, has_generated_interior), active_local_space, fill_log. Use the inspect_active_site tool to call this. Do NOT use get_sites for this purpose — get_sites hits /diagnostics/sites-query (world registry, loaded cells only); inspect_active_site hits /diagnostics/sites (live state, active site only). has_generated_interior is true only when the interior grid[] array exists — i.e. the player has entered and traversed this space. width/height are populated from the descriptor even for unvisited spaces. Tier 1 — runtime state.
 
+14. SITE RECORD INSPECTOR: GET /diagnostics/site?site_id=... — full stored runtime record for any site in loaded/generated world state. No proximity filter — works even if the player is hundreds of cells away. Returns: site_id, interior_key, name, description (prefers world.sites record; falls back to cell slot), identity, enterable, is_filled, interior_state (GENERATED|NOT_GENERATED), site_size, width, height, population, is_stub, created_at, coords (mx/my/lx/ly/cell_key), localspace_count, localspace_ids, npc_count (legacy alias = npc_count_total), npc_count_total, npc_floor_count, npc_floor_ids (site-floor NPCs not assigned to any localspace), npc_localspace_count, npc_localspace_ids (NPCs assigned to a localspace), floor_object_count, floor_object_ids. Unloaded/unvisited regions may not yet exist in world.sites — 404 means not in loaded state, no claim about those regions. Use the get_site tool. Tier 1 — runtime state.
+
+15. SITE LOCALSPACE LIST: GET /diagnostics/localspaces?site_id=... — compact summary of every localspace in a site, from loaded/generated world state. Player need not be at or near the site. Returns: site_id, site_name, localspace_count, and per-space: localspace_id, parent_site_id, name, description, enterable, is_filled, localspace_size, x, y, width, height, npc_count, npc_ids, object_count, has_generated_interior. Localspaces whose interiors have not been generated return has_generated_interior: false and null/empty grid and grid_summary. No claim about unloaded regions. Use the get_localspaces tool. Tier 1 — runtime state.
+
+16. LOCALSPACE RECORD INSPECTOR: GET /diagnostics/localspace?localspace_id=...&site_id=... — full stored runtime record for one specific localspace, from loaded/generated world state. Player need not be present. Returns: localspace_id, parent_site_id, name, description, enterable, is_filled, localspace_size, x, y, width, height, npc_count, npc_ids, object_count, object_ids, has_generated_interior, grid_summary (rows/cols/floor_tiles/npc_tiles — null if interior not yet generated). Localspaces whose interiors have not been generated return has_generated_interior: false and null grid_summary. Append include_grid=true for the full 2D tile array (large — use sparingly). Providing site_id narrows the search. Without site_id, all loaded sites are scanned. No claim about unloaded regions. Use the get_localspace tool. Tier 1 — runtime state.
+
+TOOL ROUTING — SITES & LOCALSPACES (all tools operate on loaded/generated world state only — no claim about unloaded regions):
+  get_sites           → world registry (cell slots, slot metadata only, no localspace detail; omit radius to cover all loaded cells)
+  get_site            → full runtime record for a specific site (any site in loaded state, no proximity limit)
+  inspect_active_site → active site + all localspace descriptors (active site only, fastest)
+  get_localspaces     → compact table of all localspaces for any loaded site (player need not be present)
+  get_localspace      → single localspace full record + grid_summary (any loaded space, player need not be present)
+
 KNOWLEDGE TIERS: Every answer you give draws from one of three tiers:
   Tier 1 — Current state (authoritative): current game state snapshot, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn RC/extraction. Fully reliable for present-moment questions.
   Tier 2 — Summary data (partial coverage): Flight Recorder rows (one-line summaries only, not evidence), WORLD SITES SUMMARY (loaded cells only). Useful for quick answers but limited in scope — absence in Tier 2 does not prove absence in the world.
-  Tier 3 — Tool results (most complete available): get_turn_data, get_payload, get_sites, inspect_active_site, get_source_slice, search_source, query_objects, inspect_entity, trace_object. Best truth available for the data that exists. get_source_slice and search_source are static implementation truth (source code) — authoritative for how the engine works, but not runtime state. search_source discovers where code lives; get_source_slice reads it. query_objects, inspect_entity, trace_object, and inspect_active_site are Tier 1 runtime state accessed via tool call.
+  Tier 3 — Tool results (most complete available): get_turn_data, get_payload, get_sites, inspect_active_site, get_site, get_localspaces, get_localspace, get_source_slice, search_source, query_objects, inspect_entity, trace_object. Best truth available for the data that exists. get_source_slice and search_source are static implementation truth (source code) — authoritative for how the engine works, but not runtime state. search_source discovers where code lives; get_source_slice reads it. query_objects, inspect_entity, trace_object, inspect_active_site, get_site, get_localspaces, and get_localspace are Tier 1 runtime state accessed via tool call.
 When the distinction matters, be explicit about which tier your answer comes from.
 
 EVIDENCE REQUIREMENT
@@ -668,6 +742,15 @@ async function executeToolCall(name, args) {
       url = `http://${HOST}:${PORT}/diagnostics/sites-query${qs.length ? '?' + qs.join('&') : ''}`;
     } else if (name === 'inspect_active_site') {
       url = `http://${HOST}:${PORT}/diagnostics/sites`;
+    } else if (name === 'get_site') {
+      url = `http://${HOST}:${PORT}/diagnostics/site?site_id=${encodeURIComponent(args.site_id)}`;
+    } else if (name === 'get_localspaces') {
+      url = `http://${HOST}:${PORT}/diagnostics/localspaces?site_id=${encodeURIComponent(args.site_id)}`;
+    } else if (name === 'get_localspace') {
+      const qs = [`localspace_id=${encodeURIComponent(args.localspace_id)}`];
+      if (args.site_id)      qs.push(`site_id=${encodeURIComponent(args.site_id)}`);
+      if (args.include_grid) qs.push(`include_grid=true`);
+      url = `http://${HOST}:${PORT}/diagnostics/localspace?${qs.join('&')}`;
     } else if (name === 'get_source_slice') {
       const qs = [`file=${encodeURIComponent(args.file)}`];
       if (args.from !== undefined) qs.push(`from=${encodeURIComponent(args.from)}`);
