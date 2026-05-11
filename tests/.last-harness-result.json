@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-11T09:03:32.131Z",
-  "scenariosPassed": 1,
-  "scenariosFailed": 0,
+  "timestamp": "2026-05-11T14:59:00.062Z",
+  "scenariosPassed": 0,
+  "scenariosFailed": 1,
   "scenariosSkipped": 0,
-  "turnsPassed": 2,
-  "turnsFailed": 0,
+  "turnsPassed": 1,
+  "turnsFailed": 1,
   "results": [
     {
-      "name": "state_declare_routing",
+      "name": "site_entry_basic",
       "skipped": false,
-      "passed": 2,
-      "failed": 0,
+      "passed": 1,
+      "failed": 1,
       "total": 2,
-      "sessionId": "1778490167095-h9oay67vs"
+      "sessionId": "1778511513971-d23mhug9h"
     }
   ]
 }

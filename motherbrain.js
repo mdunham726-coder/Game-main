@@ -31,8 +31,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.0.7';
-// MB v4.0.7 (May 11, 2026): Patch — scenario file source access. index.js: added _isSourceAllowed() helper — checks _SOURCE_ALLOWLIST Set OR matches tests/scenarios/<name>.json pattern; both /diagnostics/source and /diagnostics/source-search validators updated to use _isSourceAllowed (replacing _SOURCE_ALLOWLIST.has), allow forward-slash paths (block backslash/absolute/.. only), /diagnostics/source adds path containment guard. SYSTEM_PROMPT SOURCE FILE GUIDE: added tests/scenarios/<name>.json entry with get_source_slice usage note. MB_VERSION 4.0.6 -> 4.0.7.
+const MB_VERSION = '4.0.9';
+// MB v4.0.9 (May 11, 2026): Patch — remove max_tokens cap entirely. Both DeepSeek API call sites in askMotherBrain() (primary + ECONNRESET retry) now omit max_tokens, letting the model use its full 8192-token output cap. MB_VERSION 4.0.8 -> 4.0.9.
 
 // MB v4.0.6 (May 11, 2026): Patch — sweep field added to harness_list_scenarios response. test-harness.js --list output gains sweep ("A"|"P"|"manual") computed from stability + isolated_only; removes inference gap where isolated scenarios were mistaken as P-eligible. harness_list_scenarios tool description updated: sweep field added to field list, authoritative sentence added, isolated description no longer implies sweep. SCENARIO CATEGORIES SYSTEM_PROMPT updated: sweep is primary signal, do-not-infer rule added, all three values documented verbatim. MB_VERSION 4.0.5 -> 4.0.6.
 // MB v4.0.5 (May 11, 2026): Patch — live registry enrichment + lean SYSTEM_PROMPT. test-harness.js --list output enriched with description, turns, isolated fields. harness_list_scenarios tool description updated to document all five fields. HARNESS CONTROL WORKFLOW replaced with SCENARIO CATEGORIES (stable/probe/isolated semantics) + SCENARIO TRUTH rule (call live tool, do not guess) + updated workflow (reads descriptions from list, probe failure guidance). MB_VERSION 4.0.4 -> 4.0.5.
@@ -1025,7 +1025,7 @@ async function askMotherBrain(question) {
       try {
         resp = await axios.post(
           DEEPSEEK_URL,
-          { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
+          { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7,
             tools: MB_TOOLS, tool_choice: 'auto' },
           { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 0, httpsAgent: _deepseekHttpsAgent }
         );
@@ -1033,7 +1033,7 @@ async function askMotherBrain(question) {
         if (firstErr?.code === 'ECONNRESET') {
           resp = await axios.post(
             DEEPSEEK_URL,
-            { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7, max_tokens: 2000,
+            { model: 'deepseek-chat', messages: _loopMsgs, temperature: 0.7,
               tools: MB_TOOLS, tool_choice: 'auto' },
             { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 0, httpsAgent: _deepseekHttpsAgent }
           );
