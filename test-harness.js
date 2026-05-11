@@ -429,11 +429,18 @@ function printFail(idx, label, ms, action, sessionId, failures, response) {
     }
   }
   console.log(`    ${C.cyan}--- Response Snapshot ---${C.reset}`);
-  if (response.error)              console.log(`    error       : ${response.error}`);
-  if (response.scene)              console.log(`    scene       : ${String(response.scene).slice(0, 300)}`);
-  if (response.diagnostics)        console.log(`    diagnostics : ${safeStr(response.diagnostics)}`);
-  if (response.engine_output)      console.log(`    engine_out  : ${safeStr(response.engine_output)}`);
-  if (response.site_placement_log) console.log(`    site_log    : ${safeStr(response.site_placement_log)}`);
+  if (response.error)                        console.log(`    error           : ${response.error}`);
+  if (response.scene)                        console.log(`    scene           : ${String(response.scene).slice(0, 300)}`);
+  if (response.diagnostics)                  console.log(`    diagnostics     : ${safeStr(response.diagnostics)}`);
+  if (response.engine_output)                console.log(`    engine_out      : ${safeStr(response.engine_output)}`);
+  if (response.site_placement_log)           console.log(`    site_log        : ${safeStr(response.site_placement_log)}`);
+  if (response.worldgen_log)                 console.log(`    worldgen_log    : ${safeStr(response.worldgen_log, 300)}`);
+  if (response.last_arbiter_verdict != null) console.log(`    arbiter_verdict : ${safeStr(response.last_arbiter_verdict)}`);
+  if (response.debug?.reality_check != null) console.log(`    reality_check   : ${safeStr(response.debug.reality_check)}`);
+  // Fallback for __GET_SESSION turns (e.g. /diagnostics/sites) — none of the above fields exist
+  const _knownFields = ['error','scene','diagnostics','engine_output','site_placement_log','worldgen_log','last_arbiter_verdict','debug','narrative','sessionId'];
+  const _hasKnown = _knownFields.some(k => response[k] !== undefined);
+  if (!_hasKnown) console.log(`    raw             : ${safeStr(response, 600)}`);
 }
 
 function writeFail(dir, scenarioName, label, action, sessionId, failures, response) {
@@ -445,14 +452,16 @@ function writeFail(dir, scenarioName, label, action, sessionId, failures, respon
     const filePath = path.join(dir, `fail_${safeName}_${ts}.json`);
     // Build a lean diagnostic dump — include only fields useful for debugging
     const responseForDump = {
-      sessionId:          response.sessionId,
-      error:              response.error,
-      narrative:          response.narrative,
-      diagnostics:        response.diagnostics,
-      worldgen_log:       response.worldgen_log,
-      site_placement_log: response.site_placement_log,
-      visibility:         response.visibility,
-      player_identity:    response.player_identity,
+      sessionId:             response.sessionId,
+      error:                 response.error,
+      narrative:             response.narrative,
+      diagnostics:           response.diagnostics,
+      worldgen_log:          response.worldgen_log,
+      site_placement_log:    response.site_placement_log,
+      visibility:            response.visibility,
+      player_identity:       response.player_identity,
+      last_arbiter_verdict:  response.last_arbiter_verdict,
+      debug:                 response.debug,
       // engine_output: include block count + truncated first block only
       engine_output: response.engine_output ? {
         block_count: Array.isArray(response.engine_output.blocks) ? response.engine_output.blocks.length : 0,

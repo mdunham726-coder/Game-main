@@ -31,7 +31,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.0.6';
+const MB_VERSION = '4.0.7';
+// MB v4.0.7 (May 11, 2026): Patch — scenario file source access. index.js: added _isSourceAllowed() helper — checks _SOURCE_ALLOWLIST Set OR matches tests/scenarios/<name>.json pattern; both /diagnostics/source and /diagnostics/source-search validators updated to use _isSourceAllowed (replacing _SOURCE_ALLOWLIST.has), allow forward-slash paths (block backslash/absolute/.. only), /diagnostics/source adds path containment guard. SYSTEM_PROMPT SOURCE FILE GUIDE: added tests/scenarios/<name>.json entry with get_source_slice usage note. MB_VERSION 4.0.6 -> 4.0.7.
 
 // MB v4.0.6 (May 11, 2026): Patch — sweep field added to harness_list_scenarios response. test-harness.js --list output gains sweep ("A"|"P"|"manual") computed from stability + isolated_only; removes inference gap where isolated scenarios were mistaken as P-eligible. harness_list_scenarios tool description updated: sweep field added to field list, authoritative sentence added, isolated description no longer implies sweep. SCENARIO CATEGORIES SYSTEM_PROMPT updated: sweep is primary signal, do-not-infer rule added, all three values documented verbatim. MB_VERSION 4.0.5 -> 4.0.6.
 // MB v4.0.5 (May 11, 2026): Patch — live registry enrichment + lean SYSTEM_PROMPT. test-harness.js --list output enriched with description, turns, isolated fields. harness_list_scenarios tool description updated to document all five fields. HARNESS CONTROL WORKFLOW replaced with SCENARIO CATEGORIES (stable/probe/isolated semantics) + SCENARIO TRUTH rule (call live tool, do not guess) + updated workflow (reads descriptions from list, probe failure guidance). MB_VERSION 4.0.4 -> 4.0.5.
@@ -671,6 +672,7 @@ SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it
   Index.html — main game client: SSE connection, turn handler, all UI panels (narrative, inventory, ground, conditions, cell objects, continuity), world-prompt modal, pending-say flow | read when a UI bug is reported or a client-side system behaves incorrectly
   Map.html — world map viewer: macro-grid visualization, zoom/pan, site markers, player position | read when the map renders incorrectly or map navigation is broken
   test-harness.js — QA harness: BUILTIN_SCENARIOS definitions, runScenario() runner, GameClient (narrate/getSitePlacementLog/getContext), evalRule() assertion operators, SCENARIO_REGISTRY build (builtins + auto-loaded JSON); read when investigating scenario definitions, assertion operators, harness behavior, or the unified registry
+  tests/scenarios/<name>.json — individual external scenario files (e.g. tests/scenarios/arbiter_basic.json); use get_source_slice with the relative path as the file param; read when you need to inspect a specific scenario's world_prompt, turns, assertions, or stability classification
 
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
 

@@ -7276,6 +7276,13 @@ const _SOURCE_ALLOWLIST = new Set([
   'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
   'test-harness.js'                                                            // v1.85.53
 ]);
+// Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
+// Pattern: single path segment under tests/scenarios/, alphanumeric/underscore/hyphen name, .json only.
+function _isSourceAllowed(file) {
+  if (_SOURCE_ALLOWLIST.has(file)) return true;
+  if (/^tests\/scenarios\/[a-z0-9_-]+\.json$/i.test(file)) return true;
+  return false;
+}
 app.get('/diagnostics/source', (req, res) => {
   const diagKey = process.env.DIAGNOSTICS_KEY;
   if (!diagKey) {
@@ -7285,10 +7292,10 @@ app.get('/diagnostics/source', (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
   const file = req.query.file;
-  if (!file || /[\\/]|\.\./.test(file)) {
-    return res.status(400).json({ error: 'invalid_file', message: 'file param must be a plain filename with no path separators or ..' });
+  if (!file || path.isAbsolute(file) || file.includes('\\') || file.includes('..')) {
+    return res.status(400).json({ error: 'invalid_file', message: 'file param must be a relative path with no backslashes, drive letters, or ..' });
   }
-  if (!_SOURCE_ALLOWLIST.has(file)) {
+  if (!_isSourceAllowed(file)) {
     return res.status(403).json({ error: 'not_allowed', message: `${file} is not in the source allowlist.` });
   }
   const fromLine = Math.max(1, parseInt(req.query.from, 10) || 1);
@@ -7296,6 +7303,9 @@ app.get('/diagnostics/source', (req, res) => {
   const toLine   = Math.min(maxTo, Math.max(fromLine, parseInt(req.query.to, 10) || (fromLine + 199)));
   try {
     const filePath  = path.join(__dirname, file);
+    if (!filePath.startsWith(path.resolve(__dirname) + path.sep)) {
+      return res.status(403).json({ error: 'path_escape', message: 'Resolved path is outside the project directory.' });
+    }
     const allLines  = fs.readFileSync(filePath, 'utf8').split('\n');
     const total     = allLines.length;
     const sliceFrom = Math.min(fromLine, total);
@@ -7326,10 +7336,10 @@ app.get('/diagnostics/source-search', (req, res) => {
   }
   const fileParam = req.query.file;
   if (fileParam) {
-    if (/[\\/]|\.\./.test(fileParam)) {
-      return res.status(400).json({ error: 'invalid_file', message: 'file param must be a plain filename with no path separators or ..' });
+    if (!fileParam || path.isAbsolute(fileParam) || fileParam.includes('\\') || fileParam.includes('..')) {
+      return res.status(400).json({ error: 'invalid_file', message: 'file param must be a relative path with no backslashes, drive letters, or ..' });
     }
-    if (!_SOURCE_ALLOWLIST.has(fileParam)) {
+    if (!_isSourceAllowed(fileParam)) {
       return res.status(403).json({ error: 'not_allowed', message: `${fileParam} is not in the source allowlist.` });
     }
   }
@@ -7503,7 +7513,7 @@ app.post('/harness/run', async (req, res) => {
         let stderr = '';
         child.stdout.on('data', d => { stdout += d; });
         child.stderr.on('data', d => { stderr += d; });
-        child.on('close',  code => resolve({ run: i + 1, exitCode: code, stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000) }));
+        child.on('close',  code => resolve({ run: i + 1, exitCode: code, stdout: stdout.slice(0, 32000), stderr: stderr.slice(0, 4000) }));
         child.on('error', err  => resolve({ run: i + 1, exitCode: -1, error: err.message }));
       });
       runDetails.push(result);
