@@ -31,8 +31,9 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.0.5';
+const MB_VERSION = '4.0.6';
 
+// MB v4.0.6 (May 11, 2026): Patch — sweep field added to harness_list_scenarios response. test-harness.js --list output gains sweep ("A"|"P"|"manual") computed from stability + isolated_only; removes inference gap where isolated scenarios were mistaken as P-eligible. harness_list_scenarios tool description updated: sweep field added to field list, authoritative sentence added, isolated description no longer implies sweep. SCENARIO CATEGORIES SYSTEM_PROMPT updated: sweep is primary signal, do-not-infer rule added, all three values documented verbatim. MB_VERSION 4.0.5 -> 4.0.6.
 // MB v4.0.5 (May 11, 2026): Patch — live registry enrichment + lean SYSTEM_PROMPT. test-harness.js --list output enriched with description, turns, isolated fields. harness_list_scenarios tool description updated to document all five fields. HARNESS CONTROL WORKFLOW replaced with SCENARIO CATEGORIES (stable/probe/isolated semantics) + SCENARIO TRUTH rule (call live tool, do not guess) + updated workflow (reads descriptions from list, probe failure guidance). MB_VERSION 4.0.4 -> 4.0.5.
 // MB v4.0.4 (May 11, 2026): Patch — diagnostics source allowlist + SYSTEM_PROMPT update. Added test-harness.js to _SOURCE_ALLOWLIST in index.js (v1.85.53), enabling Mother Brain to read BUILTIN_SCENARIOS, evalRule(), runScenario(), GameClient, and SCENARIO_REGISTRY definitions directly via search_source/get_source_slice. Added test-harness.js entry to SYSTEM_PROMPT SOURCE FILE GUIDE. MB_VERSION 4.0.3 -> 4.0.4.
 
@@ -395,7 +396,7 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'harness_list_scenarios',
-      description: 'List all available QA scenarios (builtins + JSON files in tests/scenarios/). Returns a JSON array where each entry has: name (use this exact string for harness_run_scenario), source ("builtin"|"file"), stability ("stable"|"probe"), description (what the scenario tests), turns (turn count), isolated (true = must run alone, not in sweeps). Call this to know exactly what is available and what each scenario covers before recommending or running anything.',
+      description: 'List all available QA scenarios (builtins + JSON files in tests/scenarios/). Returns a JSON array where each entry has: name (use this exact string for harness_run_scenario), source ("builtin"|"file"), stability ("stable"|"probe"), description (what the scenario tests), turns (turn count), isolated (true = session must be isolated), sweep (authoritative execution-membership field). The sweep field is authoritative: "A" means included in stable sweep, "P" means included only in probe/full sweep, "manual" means excluded from both A and P and must be run individually. Call this to know exactly what is available and what each scenario covers before recommending or running anything.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
   },
@@ -710,7 +711,7 @@ DISCONNECTING: If the developer says "disconnect harness" or equivalent, call ha
 
 SECRETS RULE: Never echo, print, or reference the value of DIAGNOSTICS_KEY, DEEPSEEK_API_KEY, or any other environment variable. Acknowledge only whether they are set or not.
 
-SCENARIO CATEGORIES: The registry uses three stability values. stable — deterministic assertions; included in A sweeps; any failure is a real regression signal, investigate immediately. probe — probabilistic; the narrator and a downstream subsystem must both cooperate for assertions to pass; a single failure is inconclusive — note it but do not treat it as a confirmed bug without a pattern across runs. isolated — requires its own clean session; excluded from all A/P sweeps by design; run individually via harness_run_scenario; the scenario name will have isolated:true in the list response.
+SCENARIO CATEGORIES: Each registry entry carries a sweep field that directly encodes which run mode includes it. Use sweep as your primary signal — do not infer sweep behaviour from stability + isolated separately. sweep:"A" — included in stable sweep (A option); deterministic assertions; any failure is a real regression signal, investigate immediately. sweep:"P" — included in probe sweep (P option) but excluded from stable sweep; probabilistic; a single failure is inconclusive — note it and recommend a repeat run before escalating. sweep:"manual" — excluded from both A and P sweep modes; must be run individually via harness_run_scenario; isolated:true will always accompany sweep:"manual". When describing a scenario's sweep membership to a developer, use the sweep field value verbatim (A / P / manual) rather than deriving it.
 
 SCENARIO TRUTH: Do not guess what scenarios exist or what they test. Call harness_list_scenarios to get the current live registry with name, description, turns, stability, and isolated for every entry. That is the authoritative source.
 

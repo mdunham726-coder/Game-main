@@ -1233,15 +1233,21 @@ async function main() {
   ensureScenariosDir();
 
   if (ONLY_LIST) {
-    const listOutput = SCENARIO_REGISTRY.map(s => ({
-      name:        s.name,
-      source:      s._source,
-      stability:   s.stability || 'stable',
-      description: s.description || '',
-      turns:       Array.isArray(s.turns) ? s.turns.length : 0,
-      isolated:    s.isolated_only === true,
-      ...(s._source === 'file' ? { file: path.join(SCENARIOS_DIR, s.name + '.json') } : {}),
-    }));
+    const listOutput = SCENARIO_REGISTRY.map(s => {
+      const isIsolated = s.isolated_only === true;
+      const isProbe    = (s.stability || 'stable') === 'probe';
+      const sweep      = isIsolated ? 'manual' : isProbe ? 'P' : 'A';
+      return {
+        name:        s.name,
+        source:      s._source,
+        stability:   s.stability || 'stable',
+        description: s.description || '',
+        turns:       Array.isArray(s.turns) ? s.turns.length : 0,
+        isolated:    isIsolated,
+        sweep,
+        ...(s._source === 'file' ? { file: path.join(SCENARIOS_DIR, s.name + '.json') } : {}),
+      };
+    });
     process.stdout.write(JSON.stringify(listOutput, null, 2) + '\n');
     process.exit(0);
   }
