@@ -13,6 +13,7 @@
 //   node test-harness.js --verbose               — print scene/narrative text
 //   node test-harness.js --json                  — print full response JSON
 //   node test-harness.js --out <dir>             — write fail dumps to directory
+//   node test-harness.js --yes                   — confirm paid headless runs (bypasses Y/N; does not bypass HARNESS_MAX_COST_USD)
 // =============================================================================
 
 const http  = require('http');
@@ -37,6 +38,32 @@ const ONLY_NAME       = getFlag('--scenario') || null;
 const FILE_PATH       = getFlag('--file')     || null;
 let   OUT_DIR         = getFlag('--out')      || null;
 const INTERACTIVE_MODE = _args.length === 0;
+const HAS_YES          = hasFlag('--yes');
+
+// ─── Cost estimation & safety config ─────────────────────────────────────────
+// DeepSeek V4 Flash pricing. Source: api-docs.deepseek.com (May 10 2026).
+// Update manually — do NOT rely on live fetch during runs.
+const COST_ESTIMATES = {
+  model:               'DeepSeek V4 Flash',
+  inputPerMillionUsd:  0.14,   // cache-miss rate; actual likely lower due to prompt caching
+  outputPerMillionUsd: 0.28,
+};
+// Hard guardrail. Interactive: require exact-cost string to override. Headless: always refuse.
+const HARNESS_MAX_COST_USD = 1.00;
+
+// ─── Per-scenario token estimates ─────────────────────────────────────────────
+// Conservative estimates per scenario. Long-term should account for context size
+// growth, continuity packet size, and Mother Brain injections.
+const SCENARIO_TOKEN_ESTIMATES = {
+  worldgen_basic:          { turns: 1, inputTokens: 22000, outputTokens: 4000 },
+  founding_premise:        { turns: 1, inputTokens: 22000, outputTokens: 4000 },
+  multi_turn_session:      { turns: 3, inputTokens: 60000, outputTokens: 9000 },
+  site_placement_endpoint: { turns: 0, inputTokens: 0,     outputTokens: 0    },
+};
+const UNKNOWN_SCENARIO_ESTIMATE = { turns: 3, inputTokens: 30000, outputTokens: 5000 };
+
+// ─── Session cost accumulator ─────────────────────────────────────────────────
+let _sessionCost = { estimatedUsd: 0, actualUsd: 0, actualAvailable: false, runs: 0, turns: 0 };
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
 function httpRequest(method, url, body, headers = {}) {
@@ -450,6 +477,13 @@ async function runScenario(scenario) {
         if (turn.npc_target) opts.npc_target = turn.npc_target;
         response  = await client.narrate(turn.action, opts);
         firstTurn = false;
+        // Capture actual token usage if server surfaces it in the response body
+        const _turnUsage = _extractUsageFromResponse(response);
+        if (_turnUsage) {
+          _sessionCost.actualUsd += (_turnUsage.inputTokens  / 1_000_000) * COST_ESTIMATES.inputPerMillionUsd
+                                  + (_turnUsage.outputTokens / 1_000_000) * COST_ESTIMATES.outputPerMillionUsd;
+          _sessionCost.actualAvailable = true;
+        }
       }
     } catch (err) {
       process.stdout.write(`\r  ${C.red}[T${idx}] ERROR${C.reset} | ${pad(label, 30)} | ${err.message}\n`);
@@ -607,6 +641,109 @@ const BUILTIN_SCENARIOS = [
   },
 ];
 
+// ─── Cost estimation helpers ──────────────────────────────────────────────────
+function estimateRuns(scenarios, runCount) {
+  let totalTurns  = 0;
+  let totalInput  = 0;
+  let totalOutput = 0;
+  let hasUnknown  = false;
+  const breakdown = [];
+  for (const sc of scenarios) {
+    let perRun = SCENARIO_TOKEN_ESTIMATES[sc.name];
+    if (!perRun) { hasUnknown = true; perRun = UNKNOWN_SCENARIO_ESTIMATE; }
+    const scTurns  = perRun.turns        * runCount;
+    const scInput  = perRun.inputTokens  * runCount;
+    const scOutput = perRun.outputTokens * runCount;
+    totalTurns  += scTurns;
+    totalInput  += scInput;
+    totalOutput += scOutput;
+    breakdown.push({ name: sc.name, perRun, turns: scTurns, input: scInput, output: scOutput });
+  }
+  const totalCostUsd = (totalInput  / 1_000_000) * COST_ESTIMATES.inputPerMillionUsd
+                     + (totalOutput / 1_000_000) * COST_ESTIMATES.outputPerMillionUsd;
+  return { totalTurns, totalInput, totalOutput, totalCostUsd, hasUnknown,
+           modelCalls: totalTurns > 0, breakdown };
+}
+
+function printCostEstimate(label, runs, est) {
+  const fmt    = (n) => Number(n).toLocaleString();
+  const fmtUsd = (n) => `$${Number(n).toFixed(4)}`;
+  console.log(`\n${C.cyan}  --- Estimated run cost ---${C.reset}`);
+  console.log(`  Scenario     : ${label}`);
+  console.log(`  Runs         : ${runs}`);
+  if (!est.modelCalls) {
+    console.log(`  Model calls  : NO`);
+    console.log(`  Cost (est.)  : $0.00`);
+  } else {
+    console.log(`  Model calls  : YES (${COST_ESTIMATES.model})`);
+    if (est.breakdown.length === 1) {
+      const b = est.breakdown[0];
+      console.log(`  Turns        : ${fmt(est.totalTurns)}  (${b.perRun.turns} turn${b.perRun.turns !== 1 ? 's' : ''} x ${runs} run${runs !== 1 ? 's' : ''})`);
+      console.log(`  Input tokens : ~${fmt(est.totalInput)}  (${fmt(b.perRun.inputTokens)} x ${runs} run${runs !== 1 ? 's' : ''})`);
+      console.log(`  Output tokens: ~${fmt(est.totalOutput)}  (${fmt(b.perRun.outputTokens)} x ${runs} run${runs !== 1 ? 's' : ''})`);
+    } else {
+      for (const b of est.breakdown) {
+        if (b.perRun.turns === 0) continue;
+        console.log(`    ${b.name}: ${b.perRun.turns} turn${b.perRun.turns !== 1 ? 's' : ''}  in ~${fmt(b.perRun.inputTokens)}  out ~${fmt(b.perRun.outputTokens)}  x ${runs} run${runs !== 1 ? 's' : ''}`);
+      }
+      console.log(`  Turns (total): ${fmt(est.totalTurns)}`);
+      console.log(`  Input (total): ~${fmt(est.totalInput)} tokens`);
+      console.log(`  Output(total): ~${fmt(est.totalOutput)} tokens`);
+    }
+    console.log(`  Cost (est.)  : ~${fmtUsd(est.totalCostUsd)} USD  [cache-miss rate; actual likely lower]`);
+    console.log(`  Pricing ref  : see COST_ESTIMATES in test-harness.js`);
+  }
+  if (est.hasUnknown) {
+    console.log(`\n  ${C.yellow}WARNING:${C.reset}`);
+    console.log(`  One or more scenarios do not have explicit token estimates.`);
+    console.log(`  Using conservative fallback estimates.`);
+    console.log(`  Actual costs may differ substantially.`);
+  }
+}
+
+// Interactive-only: print estimate then gate execution. Returns true = proceed.
+async function askProceed(ask, label, runs, est) {
+  printCostEstimate(label, runs, est);
+  if (!est.modelCalls) return true;          // $0.00 — no model calls, no prompt needed
+  if (est.totalCostUsd > HARNESS_MAX_COST_USD) {
+    const formatted = est.totalCostUsd.toFixed(4);
+    console.log(`\n  ${C.red}WARNING:${C.reset}`);
+    console.log(`  Estimated cost $${formatted} USD exceeds HARNESS_MAX_COST_USD ($${HARNESS_MAX_COST_USD.toFixed(2)}).`);
+    console.log(`  To proceed, type the exact estimated cost (e.g. "${formatted}"):`);
+    const answer = (await ask('  > ')).trim();
+    if (answer === formatted) return true;
+    console.log(`  Aborted.`);
+    return false;
+  }
+  const answer = (await ask('\n  Proceed? [Y/N]: ')).trim();
+  if (answer === 'Y' || answer === 'y') return true;
+  console.log(`  Aborted.`);
+  return false;
+}
+
+function printSessionTotals() {
+  if (_sessionCost.runs === 0) return;
+  console.log(`\n${C.cyan}  Session totals:${C.reset}`);
+  console.log(`    Runs      : ${_sessionCost.runs}`);
+  console.log(`    Estimated : ~$${_sessionCost.estimatedUsd.toFixed(4)} USD`);
+  if (_sessionCost.actualAvailable) {
+    console.log(`    Actual    : ~$${_sessionCost.actualUsd.toFixed(4)} USD`);
+  } else {
+    console.log(`    Actual    : unavailable (usage fields not found in response)`);
+  }
+}
+
+// Search known response locations for token usage. Returns null if not found.
+function _extractUsageFromResponse(response) {
+  const candidates = [response?.usage, response?.token_usage, response?._usage];
+  for (const u of candidates) {
+    if (u && typeof u.prompt_tokens === 'number' && typeof u.completion_tokens === 'number') {
+      return { inputTokens: u.prompt_tokens, outputTokens: u.completion_tokens };
+    }
+  }
+  return null;
+}
+
 // ─── Server health check ──────────────────────────────────────────────────────
 // Returns { status: 'ONLINE'|'OFFLINE'|'UNREACHABLE', label: string }
 // ONLINE      = server reachable and responded
@@ -683,6 +820,18 @@ async function interactiveMenu() {
   // Wait for server before showing the menu
   await waitForServer(10000);
 
+  // Prompt for run count; blank = 1, invalid = 1 with notice
+  async function askRunCount() {
+    const raw = (await ask('How many runs? [1]: ')).trim();
+    if (raw === '') return 1;
+    const n = parseInt(raw, 10);
+    if (isNaN(n) || n <= 0) {
+      console.log('Invalid run count; defaulting to 1.');
+      return 1;
+    }
+    return n;
+  }
+
   // Build run-all helper (mirrors headless multi-scenario path)
   async function runAll() {
     const results = [];
@@ -742,6 +891,7 @@ async function interactiveMenu() {
     const answer = (await ask('> ')).trim().toUpperCase();
 
     if (answer === 'Q') {
+      printSessionTotals();
       console.log('Goodbye.');
       rl.close();
       return;
@@ -754,7 +904,25 @@ async function interactiveMenu() {
     }
 
     if (answer === 'A') {
-      await runAll();
+      const runs = await askRunCount();
+      const _allScenarios = BUILTIN_SCENARIOS.filter(
+        s => !s.isolated_only && !s.turns.some(t => String(t.action).startsWith('__GET '))
+      );
+      const est = estimateRuns(_allScenarios, runs);
+      if (!(await askProceed(ask, 'all non-isolated scenarios', runs, est))) continue;
+      _sessionCost.estimatedUsd += est.totalCostUsd;
+      let runsPassed = 0;
+      for (let r = 1; r <= runs; r++) {
+        if (runs > 1) console.log(`\n${C.cyan}--- Run ${r}/${runs} ---${C.reset}`);
+        await runAll();
+        runsPassed++; // individual run summary already shown by runAll
+      }
+      if (runs > 1) {
+        console.log(`\n${C.cyan}--- ${runs}-run summary ---${C.reset}`);
+        console.log(`Runs: ${runs}  (see individual summaries above for pass/fail detail)`);
+      }
+      _sessionCost.runs += runs;
+      _sessionCost.turns += est.totalTurns;
       console.log(`\nPress Enter to return to the menu.`);
       await ask('');
       continue;
@@ -763,8 +931,25 @@ async function interactiveMenu() {
     const num = parseInt(answer, 10);
     if (!isNaN(num) && num >= 1 && num <= BUILTIN_SCENARIOS.length) {
       const scenario = BUILTIN_SCENARIOS[num - 1];
-      console.log(`\n${C.cyan}[${scenario.name}]${C.reset} ${scenario.description || ''}`);
-      await runScenario(scenario);
+      const runs = await askRunCount();
+      const est  = estimateRuns([scenario], runs);
+      if (!(await askProceed(ask, scenario.name, runs, est))) continue;
+      _sessionCost.estimatedUsd += est.totalCostUsd;
+      let scenPassed = 0;
+      let scenFailed = 0;
+      for (let r = 1; r <= runs; r++) {
+        if (runs > 1) console.log(`\n${C.cyan}--- Run ${r}/${runs} ---${C.reset}`);
+        console.log(`${C.cyan}[${scenario.name}]${C.reset} ${scenario.description || ''}`);
+        const result = await runScenario(scenario);
+        if (result.failed === 0) scenPassed++; else scenFailed++;
+      }
+      if (runs > 1) {
+        const fc = scenFailed > 0 ? `${C.red}${scenFailed}${C.reset}` : String(scenFailed);
+        console.log(`\n${C.cyan}--- ${runs}-run summary ---${C.reset}`);
+        console.log(`Runs: ${runs}  |  ${C.green}${scenPassed} passed${C.reset}  |  ${fc} failed`);
+      }
+      _sessionCost.runs += runs;
+      _sessionCost.turns += est.totalTurns;
       console.log(`\nPress Enter to return to the menu.`);
       await ask('');
       continue;
@@ -826,6 +1011,28 @@ async function main() {
 
   const multiMode = scenarios.length > 1;
   const results   = [];
+
+  // ─── Headless cost gate ────────────────────────────────────────────────────
+  {
+    const _runnableForCost = scenarios.filter(sc => {
+      const isIsolated = sc.isolated_only === true;
+      const hasGlobal  = sc.turns.some(t => String(t.action).startsWith('__GET '));
+      return !(isIsolated || hasGlobal) || !multiMode;
+    });
+    const _hEst = estimateRuns(_runnableForCost, 1);
+    if (_hEst.totalCostUsd > HARNESS_MAX_COST_USD) {
+      // Hard guardrail — no override path in headless mode
+      printCostEstimate(ONLY_NAME || 'selected scenarios', 1, _hEst);
+      console.log(`\n  ${C.red}ERROR:${C.reset} Estimated cost $${_hEst.totalCostUsd.toFixed(4)} USD exceeds HARNESS_MAX_COST_USD ($${HARNESS_MAX_COST_USD.toFixed(2)}).`);
+      console.log(`  Headless mode has no guardrail override. Reduce scope or raise HARNESS_MAX_COST_USD.`);
+      process.exit(1);
+    }
+    if (_hEst.modelCalls && !HAS_YES) {
+      printCostEstimate(ONLY_NAME || 'selected scenarios', 1, _hEst);
+      console.log(`\n  Add --yes to confirm and run paid scenarios.`);
+      process.exit(1);
+    }
+  }
 
   for (const scenario of scenarios) {
     const isIsolatedOnly = scenario.isolated_only === true;
