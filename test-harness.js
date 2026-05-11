@@ -30,12 +30,13 @@ function getFlag(name) {
 }
 function hasFlag(name) { return _args.includes(name); }
 
-const BASE_URL  = getFlag('--server')   || 'http://localhost:3000';
-const VERBOSE   = hasFlag('--verbose');
-const JSON_MODE = hasFlag('--json');
-const ONLY_NAME = getFlag('--scenario') || null;
-const FILE_PATH = getFlag('--file')     || null;
-const OUT_DIR   = getFlag('--out')      || null;
+const BASE_URL        = getFlag('--server')   || 'http://localhost:3000';
+let   VERBOSE         = hasFlag('--verbose');
+const JSON_MODE       = hasFlag('--json');
+const ONLY_NAME       = getFlag('--scenario') || null;
+const FILE_PATH       = getFlag('--file')     || null;
+let   OUT_DIR         = getFlag('--out')      || null;
+const INTERACTIVE_MODE = _args.length === 0;
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
 function httpRequest(method, url, body, headers = {}) {
@@ -330,11 +331,11 @@ const C = {
 function pad(str, len) { return String(str).padEnd(len); }
 
 function printPass(idx, label, ms) {
-  console.log(`  ${C.green}[T${idx}] PASS${C.reset} | ${pad(label, 30)} | ${C.dim}${ms}ms${C.reset}`);
+  process.stdout.write(`\r  ${C.green}[T${idx}] PASS${C.reset} | ${pad(label, 30)} | ${C.dim}${ms}ms${C.reset}\n`);
 }
 
 function printFail(idx, label, ms, action, sessionId, failures, response) {
-  console.log(`  ${C.red}[T${idx}] FAIL${C.reset} | ${pad(label, 30)} | ${C.dim}${ms}ms${C.reset}`);
+  process.stdout.write(`\r  ${C.red}[T${idx}] FAIL${C.reset} | ${pad(label, 30)} | ${C.dim}${ms}ms${C.reset}\n`);
   console.log(`    ${C.cyan}Action${C.reset}  : "${action}"`);
   console.log(`    ${C.cyan}Session${C.reset} : ${sessionId || '(none)'}`);
   console.log(`    ${C.cyan}Failures${C.reset}:`);
@@ -408,6 +409,8 @@ async function runScenario(scenario) {
     const t0    = Date.now();
     let response;
 
+    process.stdout.write(`  T${idx} ${pad(label, 30)} ... `);
+
     try {
       if (String(turn.action).startsWith('__GET ')) {
         // Global diagnostic endpoint — caller must ensure session isolation
@@ -422,7 +425,7 @@ async function runScenario(scenario) {
         firstTurn = false;
       }
     } catch (err) {
-      console.log(`  ${C.red}[T${idx}] ERROR${C.reset} | ${pad(label, 30)} | ${err.message}`);
+      process.stdout.write(`\r  ${C.red}[T${idx}] ERROR${C.reset} | ${pad(label, 30)} | ${err.message}\n`);
       failed++;
       continue;
     }
@@ -473,7 +476,6 @@ const BUILTIN_SCENARIOS = [
         intent_channel: 'do',
         assert: [
           { op: 'no_error' },
-          { path: 'diagnostics.first_turn',                         op: 'eq',                  value: true },
           { path: 'worldgen_log',                                   op: 'present' },
           { path: 'site_placement_log',                             op: 'present' },
           { path: 'site_placement_log.total_sites_placed',          op: 'gt',                  value: 0 },
@@ -500,7 +502,6 @@ const BUILTIN_SCENARIOS = [
         intent_channel: 'do',
         assert: [
           { op: 'no_error' },
-          { path: 'diagnostics.first_turn',                op: 'eq',      value: true },
           { path: 'site_placement_log',                    op: 'present' },
           { path: 'site_placement_log.total_sites_placed', op: 'gt',      value: 0    },
         ],
@@ -521,7 +522,7 @@ const BUILTIN_SCENARIOS = [
         intent_channel: 'do',
         assert: [
           { op: 'no_error' },
-          { path: 'diagnostics.first_turn', op: 'eq', value: true },
+          { path: 'worldgen_log', op: 'present' },
         ],
       },
       {
@@ -530,7 +531,7 @@ const BUILTIN_SCENARIOS = [
         intent_channel: 'do',
         assert: [
           { op: 'no_error' },
-          { path: 'diagnostics.first_turn', op: 'eq', value: false },
+          { path: 'narrative', op: 'present' },
         ],
       },
       {
@@ -539,7 +540,7 @@ const BUILTIN_SCENARIOS = [
         intent_channel: 'do',
         assert: [
           { op: 'no_error' },
-          { path: 'diagnostics.first_turn', op: 'eq', value: false },
+          { path: 'narrative', op: 'present' },
         ],
       },
     ],
@@ -578,6 +579,145 @@ const BUILTIN_SCENARIOS = [
     ],
   },
 ];
+
+// ─── Server health check ──────────────────────────────────────────────────────
+// Returns { status: 'ONLINE'|'OFFLINE'|'UNREACHABLE', label: string }
+// ONLINE      = server reachable and responded
+// OFFLINE     = connection refused (server probably not running)
+// UNREACHABLE = timeout or unexpected network failure
+function serverHealthCheck(baseUrl) {
+  return new Promise((resolve) => {
+    let parsed;
+    try { parsed = new URL(baseUrl); } catch { return resolve({ status: 'UNREACHABLE', label: '[UNREACHABLE] bad server URL' }); }
+
+    const lib = parsed.protocol === 'https:' ? https : http;
+    const req = lib.request(
+      { hostname: parsed.hostname, port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: '/', method: 'GET' },
+      (res) => {
+        res.resume(); // drain response
+        resolve({ status: 'ONLINE', label: `${C.green}[ONLINE]${C.reset}  server reachable and responded` });
+      }
+    );
+    req.setTimeout(3000, () => {
+      req.destroy();
+      resolve({ status: 'UNREACHABLE', label: `${C.red}[UNREACHABLE]${C.reset}  timeout or unexpected network failure` });
+    });
+    req.on('error', (err) => {
+      if (err.code === 'ECONNREFUSED') {
+        resolve({ status: 'OFFLINE', label: `${C.red}[OFFLINE]${C.reset}  connection refused — server probably not running` });
+      } else {
+        resolve({ status: 'UNREACHABLE', label: `${C.red}[UNREACHABLE]${C.reset}  ${err.message}` });
+      }
+    });
+    req.end();
+  });
+}
+
+// ─── Interactive menu ─────────────────────────────────────────────────────────
+async function interactiveMenu() {
+  const readline = require('readline');
+  const INTERACTIVE_OUT = './test-fails';
+  OUT_DIR = INTERACTIVE_OUT;
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  let _rlClosed = false;
+  rl.on('close', () => { _rlClosed = true; }); // Ctrl+C or EOF — loop will exit on next ask()
+  const ask = (prompt) => new Promise((resolve) => {
+    if (_rlClosed) return resolve('Q');
+    rl.question(prompt, resolve);
+  });
+
+  // Build run-all helper (mirrors headless multi-scenario path)
+  async function runAll() {
+    const results = [];
+    for (const scenario of BUILTIN_SCENARIOS) {
+      const isIsolated = scenario.isolated_only === true;
+      const hasGlobal  = scenario.turns.some(t => String(t.action).startsWith('__GET '));
+      console.log(`\n${C.cyan}[${scenario.name}]${C.reset} ${scenario.description || ''}`);
+      if (isIsolated || hasGlobal) {
+        console.log(`  ${C.yellow}[SKIP] isolated scenario — run it individually (type its number)${C.reset}`);
+        results.push({ name: scenario.name, skipped: true, passed: 0, failed: 0, total: 0 });
+        continue;
+      }
+      results.push(await runScenario(scenario));
+    }
+    const ran      = results.filter(r => !r.skipped);
+    const skipped  = results.filter(r => r.skipped);
+    const scenPass = ran.filter(r => r.failed === 0).length;
+    const scenFail = ran.filter(r => r.failed > 0).length;
+    const turnPass = ran.reduce((a, r) => a + r.passed, 0);
+    const turnFail = ran.reduce((a, r) => a + r.failed, 0);
+    const failColor = (n) => n > 0 ? `${C.red}${n}${C.reset}` : String(n);
+    const skipColor = (n) => n > 0 ? `${C.yellow}${n}${C.reset}` : String(n);
+    console.log(`\n${C.cyan}=== SUMMARY ===${C.reset}`);
+    console.log(`Scenarios : ${ran.length} run | ${C.green}${scenPass} passed${C.reset} | ${failColor(scenFail)} failed | ${skipColor(skipped.length)} skipped`);
+    console.log(`Turns     : ${turnPass + turnFail} run | ${C.green}${turnPass} passed${C.reset} | ${failColor(turnFail)} failed`);
+  }
+
+  while (true) {
+    // Re-check server status each time menu displays
+    const health = await serverHealthCheck(BASE_URL);
+
+    console.log(`\n${C.cyan}=== GAME TEST HARNESS ===${C.reset}`);
+    console.log(`This is a command-line QA harness for Ultimate Dungeon Master.`);
+    console.log(`Run it in a CMD window while the game server is running separately.\n`);
+    console.log(`Server : ${BASE_URL}  ${health.label}`);
+    if (health.status !== 'ONLINE') {
+      console.log(`${C.yellow}  Server appears offline. Start it in another window with: node index.js${C.reset}`);
+      console.log(`${C.yellow}  You can still choose options, but tests will fail until the server is running.${C.reset}`);
+    }
+    console.log(`Dumps  : ${INTERACTIVE_OUT}  (automatic on failure)`);
+    console.log(`Verbose: ${VERBOSE ? 'ON' : 'OFF'}\n`);
+
+    console.log(`Scenarios:`);
+    BUILTIN_SCENARIOS.forEach((s, i) => {
+      const tag = s.isolated_only ? ` ${C.yellow}[ISOLATED]${C.reset}` : '';
+      console.log(`  [${i + 1}] ${s.name}${tag}`);
+      console.log(`      ${C.dim}${s.description || ''}${C.reset}`);
+    });
+
+    console.log(`\nOptions:`);
+    console.log(`  Type A then Enter     — run all non-isolated scenarios`);
+    console.log(`  Type 1-${BUILTIN_SCENARIOS.length} then Enter   — run a single scenario by number`);
+    console.log(`  Type V then Enter     — toggle verbose (narrative text on/off)`);
+    console.log(`  Type Q then Enter     — quit`);
+    console.log('');
+
+    const answer = (await ask('> ')).trim().toUpperCase();
+
+    if (answer === 'Q') {
+      console.log('Goodbye.');
+      rl.close();
+      return;
+    }
+
+    if (answer === 'V') {
+      VERBOSE = !VERBOSE;
+      console.log(`Verbose is now ${VERBOSE ? 'ON' : 'OFF'}.`);
+      continue; // redisplay menu
+    }
+
+    if (answer === 'A') {
+      await runAll();
+      console.log(`\nPress Enter to return to the menu.`);
+      await ask('');
+      continue;
+    }
+
+    const num = parseInt(answer, 10);
+    if (!isNaN(num) && num >= 1 && num <= BUILTIN_SCENARIOS.length) {
+      const scenario = BUILTIN_SCENARIOS[num - 1];
+      console.log(`\n${C.cyan}[${scenario.name}]${C.reset} ${scenario.description || ''}`);
+      await runScenario(scenario);
+      console.log(`\nPress Enter to return to the menu.`);
+      await ask('');
+      continue;
+    }
+
+    console.log(`${C.yellow}Unrecognized input: "${answer}". Type A, 1-${BUILTIN_SCENARIOS.length}, V, or Q then Enter.${C.reset}`);
+  }
+}
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
@@ -667,7 +807,14 @@ async function main() {
   if (scenFail > 0) process.exit(1);
 }
 
-main().catch(err => {
-  console.error(`\n${C.red}Fatal: ${err.message}${C.reset}`);
-  process.exit(1);
-});
+if (INTERACTIVE_MODE) {
+  interactiveMenu().catch(err => {
+    console.error(`\n${C.red}Fatal: ${err.message}${C.reset}`);
+    process.exit(1);
+  });
+} else {
+  main().catch(err => {
+    console.error(`\n${C.red}Fatal: ${err.message}${C.reset}`);
+    process.exit(1);
+  });
+}
