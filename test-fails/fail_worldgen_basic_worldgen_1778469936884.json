@@ -1,0 +1,119 @@
+{
+  "scenario": "worldgen_basic",
+  "label": "worldgen",
+  "action": "look around",
+  "sessionId": "1778469935934-vdlzbduoh",
+  "timestamp": "2026-05-11T03:25:36.884Z",
+  "failures": [
+    {
+      "rule": {
+        "op": "no_error"
+      },
+      "passed": false,
+      "expected": "no error",
+      "actual": "DEEPSEEK_API_KEY not set"
+    },
+    {
+      "rule": {
+        "path": "worldgen_log",
+        "op": "present"
+      },
+      "passed": false,
+      "expected": "present"
+    },
+    {
+      "rule": {
+        "path": "site_placement_log",
+        "op": "present"
+      },
+      "passed": false,
+      "expected": "present"
+    },
+    {
+      "rule": {
+        "path": "site_placement_log.total_sites_placed",
+        "op": "gt",
+        "value": 0
+      },
+      "passed": false,
+      "expected": "> 0"
+    },
+    {
+      "rule": {
+        "path": "site_placement_log.size_counts",
+        "op": "sum_eq",
+        "eq_path": "site_placement_log.total_sites_placed"
+      },
+      "passed": false,
+      "expected": "object of numbers at path"
+    },
+    {
+      "rule": {
+        "path": "site_placement_log.placed_sites",
+        "op": "array_len_eq",
+        "eq_path": "site_placement_log.total_sites_placed"
+      },
+      "passed": false,
+      "expected": "array at path"
+    },
+    {
+      "rule": {
+        "op": "sum_paths",
+        "paths": [
+          "site_placement_log.total_enterable",
+          "site_placement_log.total_non_enterable"
+        ],
+        "eq_path": "site_placement_log.total_sites_placed"
+      },
+      "passed": false,
+      "expected": "sum(site_placement_log.total_enterable + site_placement_log.total_non_enterable) == undefined",
+      "actual": 0
+    },
+    {
+      "rule": {
+        "path": "site_placement_log.placed_sites",
+        "op": "no_adjacent_large_sites"
+      },
+      "passed": false,
+      "expected": "placed_sites array at path"
+    },
+    {
+      "rule": {
+        "path": "site_placement_log.spacing_rejections",
+        "op": "gte",
+        "value": 0
+      },
+      "passed": false,
+      "expected": ">= 0"
+    }
+  ],
+  "response": {
+    "sessionId": "1778469935934-vdlzbduoh",
+    "error": "DEEPSEEK_API_KEY not set",
+    "narrative": "The engine processes your action.",
+    "diagnostics": {
+      "macro_biome": "rural",
+      "has_world_prompt": true,
+      "world_prompt_value": "Detected: rural",
+      "cells_generated": 16448,
+      "sample_cell_types": [
+        "plains_grassland",
+        "rocky_terrain",
+        "plains_wildflower",
+        "meadow",
+        "forest_deciduous"
+      ],
+      "first_turn": false,
+      "position_macro": "(4,3)",
+      "position_local": "(4,2)",
+      "cell_type": "plains_wildflower",
+      "cell_subtype": "unknown",
+      "starting_location_hint": "village",
+      "turn_counter": 1
+    },
+    "engine_output": {
+      "block_count": 2,
+      "first_block": "[STATE-DELTA 1/2]\n{\n  \"turn_id\": \"t1778469936490_7748_0_340246969\",\n  \"labels\": [\n    \"PLAYER\",\n    \"INVENTORY\",\n    \"QUESTS\",\n    \"WORLD\",\n    \"CELLS\",\n    \"SITES\",\n    \"MERCHANTS\",\n    \"FACTIONS\",\n    \"COUNTERS\"\n  ],\n  \"changes\": [\n    {\n      \"op\": \"set\",\n      \"path\": \"/world/time_utc\",\n      \"v"
+    }
+  }
+}

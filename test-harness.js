@@ -615,6 +615,31 @@ function serverHealthCheck(baseUrl) {
 }
 
 // ─── Interactive menu ─────────────────────────────────────────────────────────
+// ─── Server readiness wait loop ───────────────────────────────────────────────
+// Polls serverHealthCheck() every 1s for up to maxMs milliseconds.
+// Prints a single "Waiting for server" line that updates in place.
+// Returns the final health result (ONLINE, OFFLINE, or UNREACHABLE).
+async function waitForServer(maxMs = 10000) {
+  const interval = 1000;
+  const start    = Date.now();
+  let dots       = '';
+  process.stdout.write(`Waiting for server`);
+  while (Date.now() - start < maxMs) {
+    const health = await serverHealthCheck(BASE_URL);
+    if (health.status === 'ONLINE') {
+      process.stdout.write(`\r${C.green}Server is ONLINE${C.reset}                    \n`);
+      return health;
+    }
+    dots += '.';
+    process.stdout.write(`\rWaiting for server${dots}`);
+    await new Promise(r => setTimeout(r, interval));
+  }
+  // Timed out — do one final check and return whatever we get
+  const final = await serverHealthCheck(BASE_URL);
+  process.stdout.write(`\rWaiting for server — timed out.               \n`);
+  return final;
+}
+
 async function interactiveMenu() {
   const readline = require('readline');
   const INTERACTIVE_OUT = './test-fails';
@@ -627,6 +652,9 @@ async function interactiveMenu() {
     if (_rlClosed) return resolve('Q');
     rl.question(prompt, resolve);
   });
+
+  // Wait for server before showing the menu
+  await waitForServer(10000);
 
   // Build run-all helper (mirrors headless multi-scenario path)
   async function runAll() {
