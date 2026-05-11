@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const axios = require('axios');
 const https = require('https');
+const { spawn } = require('child_process');
 // v1.84.88: shared agent for all DeepSeek calls — keepAlive:false prevents listener accumulation on global https.globalAgent
 const _sharedHttpsAgent = new https.Agent({ keepAlive: false });
 const Engine = require('./Engine.js');
@@ -29,6 +30,13 @@ const sessionStates = new Map();
 
 // Mother Brain — unique session identifier (changes on every Node restart)
 const _mbSessionId = Date.now();
+
+// ── Harness control state ────────────────────────────────────────────────────
+let _harnessRunning       = false;     // blocks concurrent POST /harness/run
+let _lastHarnessResult    = null;      // last result from POST /harness/run
+const MAX_MOTHER_RUNS     = 5;         // Mother Brain run cap per call
+const HARNESS_RESULT_PATH = path.join(__dirname, 'tests', '.last-harness-result.json');
+const HARNESS_SCENARIOS_DIR = path.join(__dirname, 'tests', 'scenarios');
 
 // Consult DeepSeek — rolling conversation history per session
 // Stored as exchange objects so future trimming/summarization touches only exchanges[]
@@ -7420,6 +7428,101 @@ app.get('/diagnostics/npc', (req, res) => {
   });
 
   res.json({ location: locationLabel, npcs: npcData, site_npc_count: siteNpcCount });
+});
+
+// =============================================================================
+// HARNESS CONTROL ENDPOINTS — /harness/*
+// All endpoints gated by x-diagnostics-key. Used by Mother Brain to drive QA.
+// =============================================================================
+
+// GET /harness/status — availability check (does not require server state)
+app.get('/harness/status', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  let externalCount = 0;
+  try { externalCount = fs.readdirSync(HARNESS_SCENARIOS_DIR).filter(f => f.endsWith('.json')).length; } catch (_) {}
+  const HARNESS_BUILTIN_COUNT = 4; // worldgen_basic, founding_premise, multi_turn_session, site_placement_endpoint
+  res.json({ available: true, running: _harnessRunning, scenarios: HARNESS_BUILTIN_COUNT + externalCount });
+});
+
+// GET /harness/scenarios — enumerate all available scenarios (spawns --list)
+app.get('/harness/scenarios', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  const child = spawn(process.execPath, [path.join(__dirname, 'test-harness.js'), '--list'], {
+    cwd: __dirname,
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', d => { out += d; });
+  child.on('close', () => {
+    try { res.json(JSON.parse(out)); }
+    catch (_) { res.status(500).json({ error: 'list_parse_failed', raw: out.slice(0, 500) }); }
+  });
+  child.on('error', err => res.status(500).json({ error: err.message }));
+});
+
+// POST /harness/run — blocking scenario run; body: { scenario: string, runs?: number }
+// Scenario name must be alphanumeric with underscores/hyphens only (no path traversal).
+// Server-side cap: MAX_MOTHER_RUNS per call. Lock: only one run at a time.
+app.post('/harness/run', async (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  if (_harnessRunning) return res.status(409).json({ error: 'harness_busy', message: 'A harness run is already in progress.' });
+
+  const scenarioName = typeof req.body?.scenario === 'string' ? req.body.scenario.trim() : null;
+  if (!scenarioName) return res.status(400).json({ error: 'scenario_required', message: 'Body must include { scenario: string }.' });
+  // Allowlist: alphanumeric, underscores, hyphens only — prevents path traversal and shell injection
+  if (!/^[a-zA-Z0-9_-]+$/.test(scenarioName)) {
+    return res.status(400).json({ error: 'invalid_scenario_name', message: 'Scenario name must be alphanumeric with underscores/hyphens only.' });
+  }
+
+  const runs      = Math.min(Math.max(1, parseInt(req.body?.runs, 10) || 1), MAX_MOTHER_RUNS);
+  const filePath  = path.join(HARNESS_SCENARIOS_DIR, scenarioName + '.json');
+  const useFile   = fs.existsSync(filePath);
+
+  _harnessRunning = true;
+  try {
+    const runDetails = [];
+    for (let i = 0; i < runs; i++) {
+      const result = await new Promise(resolve => {
+        const args = useFile
+          ? [path.join(__dirname, 'test-harness.js'), '--file', filePath, '--yes', '--result-file', HARNESS_RESULT_PATH]
+          : [path.join(__dirname, 'test-harness.js'), '--scenario', scenarioName, '--yes', '--result-file', HARNESS_RESULT_PATH];
+        const child = spawn(process.execPath, args, {
+          cwd: __dirname,
+          env: { ...process.env },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', d => { stdout += d; });
+        child.stderr.on('data', d => { stderr += d; });
+        child.on('close',  code => resolve({ run: i + 1, exitCode: code, stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000) }));
+        child.on('error', err  => resolve({ run: i + 1, exitCode: -1, error: err.message }));
+      });
+      runDetails.push(result);
+    }
+    let summary = null;
+    try { summary = JSON.parse(fs.readFileSync(HARNESS_RESULT_PATH, 'utf8')); } catch (_) {}
+    _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, summary };
+    res.json(_lastHarnessResult);
+  } finally {
+    _harnessRunning = false;
+  }
+});
+
+// GET /harness/result/last — retrieve the last completed harness run result
+app.get('/harness/result/last', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  if (!_lastHarnessResult) return res.status(404).json({ error: 'no_result', message: 'No harness run completed yet in this server session.' });
+  res.json(_lastHarnessResult);
 });
 
 function emitDiagnostics(payload) {

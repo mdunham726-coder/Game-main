@@ -26,7 +26,9 @@ const _toolHttpAgent = new http.Agent({ keepAlive: false });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '3.0.6';
+const MB_VERSION = '4.0.0';
+
+// MB v4.0.0 (May 11, 2026): Major — Mother Brain Harness Integration (Milestone 1). QA harness now a first-class capability: Mother Brain can enumerate, run, and read QA scenarios through the game server. Added _harnessStatus module-level var (null|'connected'|'offline'). Added _updateHarnessStatus() async helper (calls GET /harness/status with DIAGNOSTICS_KEY auth). Called on startup and after each SSE turn event. prompt() now dynamically shows [Harness: Connected] (green) or [Harness: Offline] (amber) based on _harnessStatus. Added 4 new MB_TOOLS: harness_status, harness_list_scenarios, harness_run_scenario, harness_read_result. Added 4 executeToolCall branches (early-return pattern, bypass no_session_active guard for harness tools). Added HARNESS CONTROL paragraph to SYSTEM_PROMPT: permission gate (must ask "Proceed?" before run), secrets rule, workflow (status -> list -> ask -> run -> read_result -> summarize). index.js: added child_process.spawn require, _harnessRunning lock, _lastHarnessResult cache, MAX_MOTHER_RUNS=5, HARNESS_RESULT_PATH, HARNESS_SCENARIOS_DIR. Added GET /harness/status, GET /harness/scenarios, POST /harness/run (blocking spawn, lock, scenario name allowlist), GET /harness/result/last endpoints (all DIAGNOSTICS_KEY-gated). test-harness.js: added --list flag, --result-file flag, sessionId in runScenario() return. MB_VERSION 3.1.0 -> 4.0.0.
 
 // Version history removed (v1.84.35) — not used by AI, no AI cost value. Refer to CHANGELOG.md.
 // MB v3.0.4 (May 10, 2026): Runtime site & localspace inspection tooling. Added GET /diagnostics/site, GET /diagnostics/localspaces, GET /diagnostics/localspace, _findSiteRecord() helper. Added get_site, get_localspaces, get_localspace MB_TOOLS + executeToolCall branches. SYSTEM_PROMPT items 14/15/16 + TOOL ROUTING block. KNOWLEDGE TIERS updated. MB_VERSION 3.0.3 -> 3.0.4.
@@ -358,6 +360,51 @@ const MB_TOOLS = [
         required: ['object_id']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'harness_status',
+      description: 'Check whether the QA harness is available and how many scenarios are registered. Returns: available (always true when this endpoint responds), running (true if a run is already in progress), scenarios (total count). Call this before proposing a harness run to verify the harness is ready.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'harness_list_scenarios',
+      description: 'List all available QA scenarios (both built-in and external JSON files in tests/scenarios/). Returns a JSON array of { name, source } objects where source is "builtin" or "file". Use this to find the exact scenario name before calling harness_run_scenario.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'harness_run_scenario',
+      description: 'Run a QA scenario through the test harness. PERMISSION GATE: you MUST ask the developer "Proceed with running [scenario]?" and receive explicit confirmation before calling this tool. Never run autonomously. Scenario name must exactly match a name from harness_list_scenarios. Runs default to 1; max is 5. The call blocks until the run completes. Returns exitCode, stdout (truncated to 8000 chars), and a structured summary from the result file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          scenario: {
+            type: 'string',
+            description: 'Exact scenario name from harness_list_scenarios (e.g. smoke_test_no_error). Alphanumeric, underscores, hyphens only.'
+          },
+          runs: {
+            type: 'integer',
+            description: 'Number of sequential runs. Defaults to 1. Maximum 5.'
+          }
+        },
+        required: ['scenario']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'harness_read_result',
+      description: 'Read the structured result from the most recently completed harness run. Returns: scenario name, runs count, completedAt timestamp, per-run details (exitCode, stdout, stderr), and the summary JSON written by the harness (scenariosPassed, scenariosFailed, turnsPassed, turnsFailed, per-scenario results with sessionId). Call this after harness_run_scenario to get the full result.',
+      parameters: { type: 'object', properties: {}, required: [] }
+    }
   }
 ];
 
@@ -393,6 +440,7 @@ function r(s)  { return `${RED}${s}${R}`; }
 // ── State ──────────────────────────────────────────────────────────────────────
 let _turnBuffer      = [];   // last TURN_BUFFER SSE turn payloads
 let _activeSessionId = null; // game session ID from latest turn event
+let _harnessStatus   = null; // null | 'connected' | 'offline'
 let _history         = [];   // [{role,content}] — persistent for full CMD session
 let _cachedContext   = null; // pre-warmed game state context (updated after each successful fetch)
 let _lastExchange    = null; // { question, answer } — most recent completed exchange for /copy
@@ -617,14 +665,27 @@ CAPABILITIES: You are well-suited to detect:
 - Causal chains: events from earlier turns that explain current state
 - System drift: NPC behavior vs. their defined role; generation tone vs. world tone
 - Object Reality faults: container mismatches, promotion errors, objects described in narration but missing from registry; use query_objects, inspect_entity, and trace_object to investigate
-When you spot any of these, say so clearly and point to the specific data.`;
+When you spot any of these, say so clearly and point to the specific data.
+
+HARNESS CONTROL: You have four tools for running QA scenarios: harness_status, harness_list_scenarios, harness_run_scenario, and harness_read_result. These tools call the game server (/harness/* endpoints) which in turn spawns the test harness as a child process.
+
+PERMISSION GATE (HARD RULE): You MUST ask the developer "Proceed with running [scenario name]?" and receive an explicit "yes" or equivalent confirmation before calling harness_run_scenario. Never call harness_run_scenario autonomously or infer permission from context.
+
+SECRETS RULE: Never echo, print, or reference the value of DEEPSEEK_API_KEY, DIAGNOSTICS_KEY, or any other environment variable. Do not describe them as "currently set to X". Acknowledge only whether they are set or not.
+
+WORKFLOW: (1) Call harness_status to confirm the harness is available and not already running. (2) Call harness_list_scenarios to find the exact scenario name. (3) Ask the developer "Proceed with running [scenario]?" (4) On explicit confirmation, call harness_run_scenario (runs=1 by default). (5) Always call harness_read_result after a run to read the structured result. (6) Summarize: scenario name, PASS/FAIL, turns passed/failed, any session ID surfaced.
+
+The [Harness: Connected] / [Harness: Offline] indicator in the prompt shows harness availability. If offline, the /harness/* endpoints are unreachable — inform the developer rather than attempting runs.`;
+
 
 // ── Readline interface ─────────────────────────────────────────────────────────
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-const PROMPT = '> ';
 
 function prompt() {
-  rl.setPrompt(PROMPT);
+  const hLabel = _harnessStatus === 'connected' ? `${GRN}[Harness: Connected]${R} > `
+               : _harnessStatus === 'offline'   ? `${AMB}[Harness: Offline]${R} > `
+               : '> ';
+  rl.setPrompt(hLabel);
   rl.prompt();
 }
 
@@ -721,7 +782,8 @@ function formatTurnBuffer() {
 
 // ── Tool executor — called by Mother Brain during function-calling loop ────────
 async function executeToolCall(name, args) {
-  if (!_activeSessionId) {
+  const HARNESS_TOOLS = ['harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
+  if (!_activeSessionId && !HARNESS_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
   try {
@@ -791,6 +853,28 @@ async function executeToolCall(name, args) {
     } else if (name === 'trace_object') {
       // v1.84.54: Object lifecycle trace
       url = `http://${HOST}:${PORT}/diagnostics/objects/trace?sessionId=${encodeURIComponent(_activeSessionId)}&object_id=${encodeURIComponent(args.object_id)}`;
+    } else if (name === 'harness_status') {
+      const diagKey = process.env.DIAGNOSTICS_KEY || '';
+      const resp = await axios.get(`http://${HOST}:${PORT}/harness/status`, { timeout: 8000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
+      return JSON.stringify(resp.data);
+    } else if (name === 'harness_list_scenarios') {
+      const diagKey = process.env.DIAGNOSTICS_KEY || '';
+      const resp = await axios.get(`http://${HOST}:${PORT}/harness/scenarios`, { timeout: 15000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
+      return JSON.stringify(resp.data);
+    } else if (name === 'harness_run_scenario') {
+      const diagKey = process.env.DIAGNOSTICS_KEY || '';
+      const body    = { scenario: args.scenario };
+      if (args.runs !== undefined) body.runs = args.runs;
+      const resp = await axios.post(`http://${HOST}:${PORT}/harness/run`, body, { timeout: 600000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey, 'content-type': 'application/json' } });
+      const raw = JSON.stringify(resp.data);
+      if (raw.length > 32000) return raw.slice(0, 32000) + '\n[TRUNCATED]';
+      return raw;
+    } else if (name === 'harness_read_result') {
+      const diagKey = process.env.DIAGNOSTICS_KEY || '';
+      const resp = await axios.get(`http://${HOST}:${PORT}/harness/result/last`, { timeout: 8000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
+      const raw = JSON.stringify(resp.data);
+      if (raw.length > 32000) return raw.slice(0, 32000) + '\n[TRUNCATED]';
+      return raw;
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }
@@ -1045,6 +1129,25 @@ function printTurnStatus(t) {
 }
 
 // ── Session bootstrap: pre-fetch session ID and warm context cache ───────────────
+
+// Update harness connection status — called on startup and after each SSE turn
+async function _updateHarnessStatus() {
+  const diagKey = process.env.DIAGNOSTICS_KEY || '';
+  try {
+    await axios.get(`http://${HOST}:${PORT}/harness/status`, {
+      timeout: 4000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey }
+    });
+    if (_harnessStatus !== 'connected') {
+      _harnessStatus = 'connected';
+      prompt(); // redraw prompt with new label
+    }
+  } catch (_) {
+    if (_harnessStatus !== 'offline') {
+      _harnessStatus = 'offline';
+      prompt();
+    }
+  }
+}
 async function bootstrapSession() {
   try {
     const resp = await axios.get(
@@ -1154,6 +1257,7 @@ function connectSSE() {
                 const _histDepT = Math.floor(_history.length / 2);
                 printLine(d(`  [MB] ${_mbSession.calls} calls  ${_mbSession.total_tokens.toLocaleString()} tok  ~$${_mbSession.est_cost_usd.toFixed(4)}  |  history: ${_histDepT} ex (~${_histTokT.toLocaleString()} tok)`));
               }
+              _updateHarnessStatus().catch(() => {});
               continue;
             }
 
@@ -1299,6 +1403,7 @@ function banner() {
 process.stdout.write(`\x1b]0;MOTHER BRAIN v${MB_VERSION}\x07`);
 banner();
 connectSSE();
+_updateHarnessStatus().catch(() => {});
 prompt();
 
 // Attempt to bootstrap session + pre-warm context immediately on startup.

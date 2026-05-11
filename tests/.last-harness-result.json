@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-05-11T05:40:21.314Z",
+  "scenariosPassed": 0,
+  "scenariosFailed": 1,
+  "scenariosSkipped": 0,
+  "turnsPassed": 0,
+  "turnsFailed": 1,
+  "results": [
+    {
+      "name": "smoke_test_no_error",
+      "skipped": false,
+      "passed": 0,
+      "failed": 1,
+      "total": 1,
+      "sessionId": "1778478020333-ht5zwe5jj"
+    }
+  ]
+}

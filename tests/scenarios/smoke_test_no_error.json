@@ -1,0 +1,13 @@
+{
+  "name": "smoke_test_no_error",
+  "description": "Minimal smoke test: single turn confirms server responds without an error field.",
+  "turns": [
+    {
+      "label": "turn_1_smoke",
+      "action": "look around",
+      "assert": [
+        { "path": "error", "op": "absent" }
+      ]
+    }
+  ]
+}

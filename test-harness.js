@@ -14,6 +14,8 @@
 //   node test-harness.js --json                  — print full response JSON
 //   node test-harness.js --out <dir>             — write fail dumps to directory
 //   node test-harness.js --yes                   — confirm paid headless runs (bypasses Y/N; does not bypass HARNESS_MAX_COST_USD)
+//   node test-harness.js --list                  — print JSON array of all available scenarios and exit
+//   node test-harness.js --result-file <path>    — write JSON result summary to file after run
 // =============================================================================
 
 const http  = require('http');
@@ -39,6 +41,8 @@ const FILE_PATH       = getFlag('--file')     || null;
 let   OUT_DIR         = getFlag('--out')      || null;
 const INTERACTIVE_MODE = _args.length === 0;
 const HAS_YES          = hasFlag('--yes');
+const RESULT_FILE      = getFlag('--result-file') || null;
+const ONLY_LIST        = hasFlag('--list');
 
 // ─── Cost estimation & safety config ─────────────────────────────────────────
 // DeepSeek V4 Flash pricing. Source: api-docs.deepseek.com (May 10 2026).
@@ -50,6 +54,9 @@ const COST_ESTIMATES = {
 };
 // Hard guardrail. Interactive: require exact-cost string to override. Headless: always refuse.
 const HARNESS_MAX_COST_USD = 1.00;
+// Wall-clock estimate per model turn. Calibrated from worldgen_basic observations (~21-24s).
+// Name anticipates future no-model, cached, local-DeepSeek, and multi-model run types.
+const AVG_SECS_PER_MODEL_TURN = 22;
 
 // ─── Per-scenario token estimates ─────────────────────────────────────────────
 // Conservative estimates per scenario. Long-term should account for context size
@@ -64,6 +71,15 @@ const UNKNOWN_SCENARIO_ESTIMATE = { turns: 3, inputTokens: 30000, outputTokens: 
 
 // ─── Session cost accumulator ─────────────────────────────────────────────────
 let _sessionCost = { estimatedUsd: 0, actualUsd: 0, actualAvailable: false, runs: 0, turns: 0 };
+
+// ─── Scenarios directory ──────────────────────────────────────────────────────
+// Shared by interactiveMenu() and main(). Single source of truth.
+const SCENARIOS_DIR = path.join(process.cwd(), 'tests', 'scenarios');
+function ensureScenariosDir() {
+  if (!fs.existsSync(SCENARIOS_DIR)) {
+    fs.mkdirSync(SCENARIOS_DIR, { recursive: true });
+  }
+}
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
 function httpRequest(method, url, body, headers = {}) {
@@ -519,7 +535,7 @@ async function runScenario(scenario) {
   } else {
     console.log(`  ${C.red}SCENARIO FAIL (${passed}/${total} passed)${C.reset}\n`);
   }
-  return { name: scenario.name, skipped: false, passed, failed, total };
+  return { name: scenario.name, skipped: false, passed, failed, total, sessionId: client.sessionId };
 }
 
 // ─── Built-in scenarios ───────────────────────────────────────────────────────
@@ -659,9 +675,10 @@ function estimateRuns(scenarios, runCount) {
     totalOutput += scOutput;
     breakdown.push({ name: sc.name, perRun, turns: scTurns, input: scInput, output: scOutput });
   }
-  const totalCostUsd = (totalInput  / 1_000_000) * COST_ESTIMATES.inputPerMillionUsd
-                     + (totalOutput / 1_000_000) * COST_ESTIMATES.outputPerMillionUsd;
-  return { totalTurns, totalInput, totalOutput, totalCostUsd, hasUnknown,
+  const totalCostUsd  = (totalInput  / 1_000_000) * COST_ESTIMATES.inputPerMillionUsd
+                      + (totalOutput / 1_000_000) * COST_ESTIMATES.outputPerMillionUsd;
+  const estimatedSecs = totalTurns * AVG_SECS_PER_MODEL_TURN;
+  return { totalTurns, totalInput, totalOutput, totalCostUsd, estimatedSecs, hasUnknown,
            modelCalls: totalTurns > 0, breakdown };
 }
 
@@ -691,6 +708,10 @@ function printCostEstimate(label, runs, est) {
       console.log(`  Output(total): ~${fmt(est.totalOutput)} tokens`);
     }
     console.log(`  Cost (est.)  : ~${fmtUsd(est.totalCostUsd)} USD  [cache-miss rate; actual likely lower]`);
+    const _mins = Math.floor(est.estimatedSecs / 60);
+    const _secs = est.estimatedSecs % 60;
+    const _timeStr = _mins > 0 ? `${_mins}m ${_secs}s` : `${_secs}s`;
+    console.log(`  Time (est.)  : ~${_timeStr}  [~${AVG_SECS_PER_MODEL_TURN}s/model turn]`);
     console.log(`  Pricing ref  : see COST_ESTIMATES in test-harness.js`);
   }
   if (est.hasUnknown) {
@@ -805,6 +826,7 @@ async function waitForServer(maxMs = 10000) {
 }
 
 async function interactiveMenu() {
+  ensureScenariosDir();
   const readline = require('readline');
   const INTERACTIVE_OUT = './test-fails';
   OUT_DIR = INTERACTIVE_OUT;
@@ -884,6 +906,7 @@ async function interactiveMenu() {
     console.log(`\nOptions:`);
     console.log(`  Type A then Enter     — run all non-isolated scenarios`);
     console.log(`  Type 1-${BUILTIN_SCENARIOS.length} then Enter   — run a single scenario by number`);
+    console.log(`  Type F then Enter     — load a custom scenario from tests/scenarios/`);
     console.log(`  Type V then Enter     — toggle verbose (narrative text on/off)`);
     console.log(`  Type Q then Enter     — quit`);
     console.log('');
@@ -928,6 +951,107 @@ async function interactiveMenu() {
       continue;
     }
 
+    if (answer === 'F') {
+      // Enumerate .json files from the scenarios directory (flat, alphabetical)
+      let _jsonFiles;
+      try {
+        _jsonFiles = fs.readdirSync(SCENARIOS_DIR)
+          .filter(f => f.toLowerCase().endsWith('.json') && fs.statSync(path.join(SCENARIOS_DIR, f)).isFile())
+          .sort();
+      } catch (err) {
+        console.log(`\n  ${C.red}Could not read scenarios directory: ${err.message}${C.reset}`);
+        continue;
+      }
+      if (_jsonFiles.length === 0) {
+        console.log(`\n  No .json files found in tests/scenarios/`);
+        console.log(`  Save a scenario JSON file there and try again.`);
+        continue;
+      }
+      console.log(`\n  Custom scenarios in tests/scenarios/:`);
+      _jsonFiles.forEach((f, i) => console.log(`    [${i + 1}] ${f}`));
+      const _fRaw = (await ask('\n  Select a file [Q to cancel]: ')).trim();
+      if (_fRaw.toUpperCase() === 'Q' || _fRaw === '') continue;
+      const _fNum = parseInt(_fRaw, 10);
+      if (isNaN(_fNum) || _fNum < 1 || _fNum > _jsonFiles.length) {
+        console.log(`  ${C.yellow}Invalid selection.${C.reset}`);
+        continue;
+      }
+      const _fName    = _jsonFiles[_fNum - 1];
+      const _fPath    = path.join(SCENARIOS_DIR, _fName);
+      let _fRawText;
+      try   { _fRawText = fs.readFileSync(_fPath, 'utf8'); }
+      catch (err) {
+        console.log(`  ${C.red}Cannot read file: ${err.message}${C.reset}`);
+        continue;
+      }
+      let _fLoaded;
+      try   { _fLoaded = JSON.parse(_fRawText); }
+      catch (err) {
+        console.log(`  ${C.red}Invalid JSON in ${_fName}: ${err.message}${C.reset}`);
+        continue;
+      }
+      const _fList = Array.isArray(_fLoaded) ? _fLoaded : [_fLoaded];
+      const _fScenarios = [];
+      let _fValid = true;
+      for (const _fs of _fList) {
+        try   { validateScenario(_fs); _fScenarios.push(_fs); }
+        catch (err) {
+          console.log(`  ${C.red}Invalid scenario "${_fs.name || '?'}": ${err.message}${C.reset}`);
+          _fValid = false; break;
+        }
+      }
+      if (!_fValid) continue;
+
+      // Execute through the standard pipeline — identical to built-in paths
+      const runs = await askRunCount();
+      const _fLabel = _fScenarios.length === 1 ? _fName : `${_fScenarios.length} scenarios from ${_fName}`;
+      const est  = estimateRuns(_fScenarios, runs);
+      if (!(await askProceed(ask, _fLabel, runs, est))) continue;
+      _sessionCost.estimatedUsd += est.totalCostUsd;
+
+      if (_fScenarios.length === 1) {
+        // Single scenario — mirrors num branch
+        const _fSc = _fScenarios[0];
+        let scenPassed = 0, scenFailed = 0;
+        for (let r = 1; r <= runs; r++) {
+          if (runs > 1) console.log(`\n${C.cyan}--- Run ${r}/${runs} ---${C.reset}`);
+          console.log(`${C.cyan}[${_fSc.name}]${C.reset} ${_fSc.description || ''}`);
+          const result = await runScenario(_fSc);
+          if (result.failed === 0) scenPassed++; else scenFailed++;
+        }
+        if (runs > 1) {
+          const fc = scenFailed > 0 ? `${C.red}${scenFailed}${C.reset}` : String(scenFailed);
+          console.log(`\n${C.cyan}--- ${runs}-run summary ---${C.reset}`);
+          console.log(`Runs: ${runs}  |  ${C.green}${scenPassed} passed${C.reset}  |  ${fc} failed`);
+        }
+      } else {
+        // Multi-scenario file — iterate all scenarios per run
+        for (let r = 1; r <= runs; r++) {
+          if (runs > 1) console.log(`\n${C.cyan}--- Run ${r}/${runs} ---${C.reset}`);
+          const _fResults = [];
+          for (const _fSc of _fScenarios) {
+            console.log(`\n${C.cyan}[${_fSc.name}]${C.reset} ${_fSc.description || ''}`);
+            _fResults.push(await runScenario(_fSc));
+          }
+          const _fRan  = _fResults.filter(r2 => !r2.skipped);
+          const _fPass = _fRan.filter(r2 => r2.failed === 0).length;
+          const _fFail = _fRan.filter(r2 => r2.failed > 0).length;
+          const _fTPass = _fRan.reduce((a, r2) => a + r2.passed, 0);
+          const _fTFail = _fRan.reduce((a, r2) => a + r2.failed, 0);
+          const failColor = (n) => n > 0 ? `${C.red}${n}${C.reset}` : String(n);
+          console.log(`\n${C.cyan}=== FILE SUMMARY (run ${r}) ===${C.reset}`);
+          console.log(`Scenarios : ${_fRan.length} run | ${C.green}${_fPass} passed${C.reset} | ${failColor(_fFail)} failed`);
+          console.log(`Turns     : ${_fTPass + _fTFail} run | ${C.green}${_fTPass} passed${C.reset} | ${failColor(_fTFail)} failed`);
+        }
+      }
+
+      _sessionCost.runs  += runs;
+      _sessionCost.turns += est.totalTurns;
+      console.log(`\nPress Enter to return to the menu.`);
+      await ask('');
+      continue;
+    }
+
     const num = parseInt(answer, 10);
     if (!isNaN(num) && num >= 1 && num <= BUILTIN_SCENARIOS.length) {
       const scenario = BUILTIN_SCENARIOS[num - 1];
@@ -955,16 +1079,24 @@ async function interactiveMenu() {
       continue;
     }
 
-    console.log(`${C.yellow}Unrecognized input: "${answer}". Type A, 1-${BUILTIN_SCENARIOS.length}, V, or Q then Enter.${C.reset}`);
+    console.log(`${C.yellow}Unrecognized input: "${answer}". Type A, F, 1-${BUILTIN_SCENARIOS.length}, V, or Q then Enter.${C.reset}`);
   }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 async function main() {
-  // Auto-create tests/scenarios/ directory for JSON scenario files
-  const SCENARIOS_DIR = path.join(process.cwd(), 'tests', 'scenarios');
-  if (!fs.existsSync(SCENARIOS_DIR)) {
-    fs.mkdirSync(SCENARIOS_DIR, { recursive: true });
+  ensureScenariosDir();
+
+  if (ONLY_LIST) {
+    const builtin = BUILTIN_SCENARIOS.map(s => ({ name: s.name, source: 'builtin' }));
+    let external  = [];
+    try {
+      external = fs.readdirSync(SCENARIOS_DIR)
+        .filter(f => f.endsWith('.json'))
+        .map(f => ({ name: f.replace(/\.json$/, ''), source: 'file', file: path.join(SCENARIOS_DIR, f) }));
+    } catch (_) {}
+    process.stdout.write(JSON.stringify([...builtin, ...external], null, 2) + '\n');
+    process.exit(0);
   }
 
   console.log(`\n${C.cyan}=== GAME TEST HARNESS ===${C.reset}`);
@@ -1065,6 +1197,23 @@ async function main() {
   console.log(`${C.cyan}=== SUMMARY ===${C.reset}`);
   console.log(`Scenarios : ${ran.length} run | ${C.green}${scenPass} passed${C.reset} | ${failColor(scenFail)} failed | ${skipColor(skipped.length)} skipped`);
   console.log(`Turns     : ${turnPass + turnFail} run | ${C.green}${turnPass} passed${C.reset} | ${failColor(turnFail)} failed`);
+
+  if (RESULT_FILE) {
+    try {
+      fs.mkdirSync(path.dirname(path.resolve(RESULT_FILE)), { recursive: true });
+      fs.writeFileSync(RESULT_FILE, JSON.stringify({
+        timestamp:        new Date().toISOString(),
+        scenariosPassed:  scenPass,
+        scenariosFailed:  scenFail,
+        scenariosSkipped: skipped.length,
+        turnsPassed:      turnPass,
+        turnsFailed:      turnFail,
+        results,
+      }, null, 2));
+    } catch (err) {
+      console.log(`${C.yellow}[WARN] Could not write result file: ${err.message}${C.reset}`);
+    }
+  }
 
   if (scenFail > 0) process.exit(1);
 }
