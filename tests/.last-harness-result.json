@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-12T02:41:35.634Z",
-  "scenariosPassed": 1,
-  "scenariosFailed": 0,
+  "timestamp": "2026-05-12T03:02:51.625Z",
+  "scenariosPassed": 0,
+  "scenariosFailed": 1,
   "scenariosSkipped": 0,
-  "turnsPassed": 2,
-  "turnsFailed": 0,
+  "turnsPassed": 1,
+  "turnsFailed": 1,
   "results": [
     {
-      "name": "site_entry_basic",
+      "name": "arbiter_basic",
       "skipped": false,
-      "passed": 2,
-      "failed": 0,
+      "passed": 1,
+      "failed": 1,
       "total": 2,
-      "sessionId": "1778553670763-ffehihg8r"
+      "sessionId": "1778554941155-dzfm6yzrt"
     }
   ]
 }

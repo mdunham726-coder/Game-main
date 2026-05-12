@@ -7229,8 +7229,9 @@ app.post('/diagnostics/inject-npc', (req, res) => {
   if (!npc_name)     return res.status(400).json({ error: 'npc_name required' });
   if (!job_category) return res.status(400).json({ error: 'job_category required' });
 
-  const gs = sessionStates.get(sessionId);
-  if (!gs) return res.status(404).json({ error: 'session_not_found' });
+  const session = sessionStates.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'session_not_found' });
+  const gs = session.gameState;
 
   const site = gs.world?.active_local_space || gs.world?.active_site;
   if (!site) return res.status(400).json({ error: 'no_active_site', message: 'No active site or localspace in this session.' });
@@ -7262,6 +7263,14 @@ app.post('/diagnostics/inject-npc', (req, res) => {
   if (!Array.isArray(site.npcs)) site.npcs = [];
   site.npcs.push(npc);
 
+  // computeVisibleNpcs for localspaces resolves npc ids against active_site.npcs, not active_local_space.npcs.
+  // When injecting at depth 3 (site === active_local_space), also register in active_site so the resolver finds the id.
+  const _injectActiveSite = gs.world?.active_site;
+  if (_injectActiveSite && _injectActiveSite !== site) {
+    if (!Array.isArray(_injectActiveSite.npcs)) _injectActiveSite.npcs = [];
+    _injectActiveSite.npcs.push(npc);
+  }
+
   // Add NPC id to player's exact tile so computeVisibleNpcs picks it up
   const grid = site.grid;
   if (Array.isArray(grid) && grid[pos.y] && grid[pos.y][pos.x]) {
@@ -7271,6 +7280,15 @@ app.post('/diagnostics/inject-npc', (req, res) => {
   } else {
     // Grid missing or tile uninitialized — still added to registry; visibility depends on grid structure
     console.warn(`[INJECT-NPC] grid tile at (${pos.x},${pos.y}) not found — NPC added to registry only`);
+  }
+
+  // Recompute _visible_npcs so the Arbiter sees the injected NPC without requiring player movement.
+  // _visible_npcs is normally only computed on entry or movement; injection bypasses both.
+  const _injectLS = gs.world?.active_local_space;
+  if (_injectLS && _injectLS.grid) {
+    _injectLS._visible_npcs = Actions.computeVisibleNpcs(_injectLS, pos, gs.world.active_site?.npcs || []);
+  } else if (gs.world?.active_site?.grid) {
+    gs.world.active_site._visible_npcs = Actions.computeVisibleNpcs(gs.world.active_site, pos);
   }
 
   return res.json({ injected: true, npc_id, npc_name, job_category, tile: { x: pos.x, y: pos.y } });

@@ -2,7 +2,7 @@
   "name": "arbiter_basic",
   "stability": "stable",
   "description": "Social interaction with a fixture NPC produces a real Arbiter verdict. Uses inject_npc before T2 to guarantee a visible Innkeeper (Thea) at the player's tile regardless of worldgen placement.",
-  "world_prompt": "I am a traveler who has just arrived at a roadside inn.",
+  "world_prompt": "I am standing inside a roadside inn.",
   "turns": [
     {
       "label": "founding",
