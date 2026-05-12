@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-05-11T15:27:44.442Z",
+  "timestamp": "2026-05-12T01:10:21.167Z",
   "scenariosPassed": 0,
   "scenariosFailed": 1,
   "scenariosSkipped": 0,
@@ -7,12 +7,12 @@
   "turnsFailed": 1,
   "results": [
     {
-      "name": "site_entry_basic",
+      "name": "arbiter_basic",
       "skipped": false,
       "passed": 1,
       "failed": 1,
       "total": 2,
-      "sessionId": "1778513236283-ygmhy1pnc"
+      "sessionId": "1778548194934-hq7bucrda"
     }
   ]
 }

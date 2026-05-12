@@ -1,0 +1,46 @@
+{
+  "scenario": "arbiter_basic",
+  "label": "npc_interaction",
+  "action": "I walk up to the innkeeper and ask about a room for the night",
+  "sessionId": "1778548007516-n60s3zzn3",
+  "timestamp": "2026-05-12T01:07:14.168Z",
+  "failures": [
+    {
+      "rule": {
+        "path": "last_arbiter_verdict",
+        "op": "present"
+      },
+      "passed": false,
+      "expected": "present",
+      "evidence": "present"
+    }
+  ],
+  "response": {
+    "sessionId": "1778548007516-n60s3zzn3",
+    "narrative": "Action invalid: NPC_NOT_PRESENT",
+    "debug": {
+      "parser": "semantic",
+      "input": "I walk up to the innkeeper and ask about a room for the night",
+      "channel": "do",
+      "intent": {
+        "primaryAction": {
+          "action": "talk",
+          "target": "innkeeper",
+          "dir": null
+        },
+        "secondaryActions": [],
+        "compound": false,
+        "rawInput": "I walk up to the innkeeper and ask about a room for the night"
+      },
+      "confidence": 0.95,
+      "clarification": null,
+      "error": "INVALID_ACTION",
+      "reason": "NPC_NOT_PRESENT",
+      "validation": {
+        "hasPlayer": true,
+        "notes": [],
+        "targetIsNPC": false
+      }
+    }
+  }
+}
