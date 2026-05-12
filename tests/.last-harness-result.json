@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-12T03:47:40.451Z",
-  "scenariosPassed": 0,
-  "scenariosFailed": 1,
+  "timestamp": "2026-05-12T05:11:01.220Z",
+  "scenariosPassed": 1,
+  "scenariosFailed": 0,
   "scenariosSkipped": 0,
-  "turnsPassed": 0,
-  "turnsFailed": 1,
+  "turnsPassed": 2,
+  "turnsFailed": 0,
   "results": [
     {
-      "name": "founding_premise_correctness",
+      "name": "hello_world_minimal",
       "skipped": false,
-      "passed": 0,
-      "failed": 1,
-      "total": 1,
-      "sessionId": "1778557638328-uydv6zn2v"
+      "passed": 2,
+      "failed": 0,
+      "total": 2,
+      "sessionId": "1778562612554-4jed4mocr"
     }
   ]
 }

@@ -31,8 +31,10 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.0.16';
-// MB v4.0.16 (May 12, 2026): Minor — Phase B: create_scenario_file tool. MB can now write new QA scenario JSON files to tests/scenarios/. Probe-first stability enforcement with explicit audit trail (requested_stability/written_stability/stability_forced). Signal-quality validation: duplicate assertion detection, low_signal warning for all-no_error scenarios. Name conflict hard block (scans existing files). Epistemic category field with enum validation (deterministic_reproduction/exploratory/ontology_stress/parser_fuzz/narrative_continuity/authority_test). No overwrite path. Added to MB_TOOLS, SESSION_FREE_TOOLS, executeToolCall branch, SCENARIO AUTHORING section in SYSTEM_PROMPT. MB_VERSION 4.0.15 -> 4.0.16.
+const MB_VERSION = '4.1.1';
+// MB v4.1.1 (May 12, 2026): Patch — call timing in stats footer. Added elapsed wall-clock time and round count to the bottom stats line. Captures Date.now() before the DeepSeek loop; stores elapsed_ms and rounds in _mbCallStats; displays as '14.3s' (or '1m 4.3s') appended to the 'this call:' line. Round count shown only when >1 (multi-tool-call exchanges). MB_VERSION 4.1.0 -> 4.1.1.
+// MB v4.1.0 (May 12, 2026): Minor — Phase B: create_scenario_file tool. MB can now write new QA scenario JSON files to tests/scenarios/. Probe-first stability enforcement with explicit audit trail (requested_stability/written_stability/stability_forced). Signal-quality validation: duplicate assertion detection, low_signal warning for all-no_error scenarios. Name conflict hard block (scans existing files). Epistemic category field with enum validation (deterministic_reproduction/exploratory/ontology_stress/parser_fuzz/narrative_continuity/authority_test). No overwrite path. Added to MB_TOOLS, SESSION_FREE_TOOLS, executeToolCall branch, SCENARIO AUTHORING section in SYSTEM_PROMPT. MB_VERSION 4.0.16 -> 4.1.0. (New capability area: write authority — MB transitions from read-only analyst to regression-builder.)
+// MB v4.0.16 (May 12, 2026): [superseded by 4.1.0 — same change set, minor bump applied retroactively]
 // MB v4.0.15 (May 12, 2026): Patch — DEP0190 fix. Changed spawn call to pass full command string directly instead of split args array with shell:true. Eliminates Node.js DEP0190 deprecation warning (no shell injection surface since _taskMap is hardcoded). MB_VERSION 4.0.14 -> 4.0.15.
 // MB v4.0.14 (May 12, 2026): Patch — run_validation streams output in real time. Replaced execSync with spawn wrapped in a Promise; stdout/stderr lines printed via printLine() as they arrive so every scenario result is visible immediately in the MB window. Timeout handled via setTimeout + child.kill('SIGKILL'). No more frozen window during long harness runs. MB_VERSION 4.0.13 -> 4.0.14.
 // MB v4.0.13 (May 12, 2026): Patch — per-task timeout map in run_validation. syntax checks (node_check_*) timeout 15s; solo scenario runs timeout 90s; harness_sweep_a timeout 300s. Previously all tasks shared a flat 120s execSync timeout — sweep_a timed out after the 4th builtin scenario (~90s), JSON file scenarios never ran. MB_VERSION 4.0.12 -> 4.0.13.
@@ -1240,6 +1242,7 @@ async function askMotherBrain(question) {
   const _loopMsgs   = [...messages]; // mutable local copy for tool rounds
   const _totUsage   = { pt: 0, ct: 0, tt: 0, ht: 0, mt: 0, ec: 0 };
   let   _round      = 0;
+  const _callStart  = Date.now();
 
   try {
     while (true) {
@@ -1335,7 +1338,8 @@ async function askMotherBrain(question) {
       completion_tokens: _totUsage.ct, cache_hit_tokens: _totUsage.ht, cache_miss_tokens: _totUsage.mt, est_cost_usd: _totUsage.ec });
     if (_mbCallHistory.length > 5) _mbCallHistory.shift();
     _mbCallStats = { prompt_tokens: _totUsage.pt, completion_tokens: _totUsage.ct, total_tokens: _totUsage.tt,
-      cache_hit_tokens: _totUsage.ht, cache_miss_tokens: _totUsage.mt, est_cost_usd: _totUsage.ec };
+      cache_hit_tokens: _totUsage.ht, cache_miss_tokens: _totUsage.mt, est_cost_usd: _totUsage.ec,
+      elapsed_ms: Date.now() - _callStart, rounds: _round };
 
   } catch (err) {
     printLine(r(`  Mother Brain: Error — ${err.message}`));
@@ -1375,11 +1379,14 @@ async function askMotherBrain(question) {
   // ── Call stats block (prints after every successful Q&A response) ─────────
   if (_mbCallStats) {
     const { prompt_tokens: _sp, completion_tokens: _sc, total_tokens: _st,
-            cache_hit_tokens: _sh, cache_miss_tokens: _sm, est_cost_usd: _se } = _mbCallStats;
+            cache_hit_tokens: _sh, cache_miss_tokens: _sm, est_cost_usd: _se,
+            elapsed_ms: _em, rounds: _rounds } = _mbCallStats;
     const _histDepthEx = Math.floor(_history.length / 2);
     const _histTokEst  = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
     const _hitPctStr   = _st > 0 && (_sh + _sm) > 0 ? `  ${Math.round((_sh / (_sh + _sm)) * 100)}% hit` : '';
-    const _callStr     = `${_st.toLocaleString()} tok${_hitPctStr}  (${_sh.toLocaleString()} hit / ${_sm.toLocaleString()} miss / ${_sc.toLocaleString()} out)  ~$${_se.toFixed(6)}`;
+    const _elapsed     = _em >= 60000 ? `${Math.floor(_em/60000)}m ${((_em%60000)/1000).toFixed(1)}s` : `${(_em/1000).toFixed(1)}s`;
+    const _roundsStr   = _rounds > 1 ? `  ${_rounds} rounds` : '';
+    const _callStr     = `${_st.toLocaleString()} tok${_hitPctStr}  (${_sh.toLocaleString()} hit / ${_sm.toLocaleString()} miss / ${_sc.toLocaleString()} out)  ~$${_se.toFixed(6)}  ${_elapsed}${_roundsStr}`;
     const _sesStr      = `${_mbSession.calls} calls  ${_mbSession.total_tokens.toLocaleString()} tok  ~$${_mbSession.est_cost_usd.toFixed(4)}`;
     const _histStr     = `${_histDepthEx} exchanges (~${_histTokEst.toLocaleString()} tok)`;
     process.stdout.write(d('  ' + '─'.repeat(Math.max(0, W() - 4))) + '\n');

@@ -1,0 +1,24 @@
+{
+  "name": "hello_world_minimal",
+  "description": "Tiniest possible probe: Turn 1 founding premise, Turn 2 look around, no assertions beyond no_error",
+  "turns": [
+    {
+      "action": "I am a solitary wanderer arriving at a new land.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    }
+  ],
+  "stability": "probe",
+  "category": "deterministic_reproduction"
+}
