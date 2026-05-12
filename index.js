@@ -2,6 +2,23 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
+
+// Inline .env loader — sets any KEY=VALUE lines that are not already in process.env.
+// Runs before anything else so all launch paths (bat, VS Code terminal, direct node) get the keys.
+try {
+  const _envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(_envPath)) {
+    for (const line of fs.readFileSync(_envPath, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq < 1) continue;
+      const k = trimmed.slice(0, eq).trim();
+      const v = trimmed.slice(eq + 1).trim();
+      if (k && !(k in process.env)) process.env[k] = v;
+    }
+  }
+} catch (_) { /* non-fatal — server starts without .env if file is missing or unreadable */ }
 const axios = require('axios');
 const https = require('https');
 const { spawn } = require('child_process');
@@ -6361,6 +6378,7 @@ app.get('/logs/download/:sessionId', (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`[ENV CHECK] DIAGNOSTICS_KEY present: ${!!process.env.DIAGNOSTICS_KEY}`);
   // Notify Mother Brain that Node is online. _lastDiagnosticPayload will replay
   // this to MB on its first connect even if MB starts after Node.
   emitDiagnostics({ type: 'lifecycle', event: 'online', ts: new Date().toISOString(), port: PORT, sessionId: _mbSessionId });

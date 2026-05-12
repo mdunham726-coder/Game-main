@@ -31,7 +31,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.0.10';
+const MB_VERSION = '4.0.11';
+// MB v4.0.11 (May 11, 2026): Patch — get_source_slice and search_source bypass no_session_active guard. executeToolCall early-return on !_activeSessionId was gating source tools behind a live session requirement even though /diagnostics/source and /diagnostics/source-search have no server-side session check. Added SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source'] — both tools now reachable without an active game session. Root cause: 29-byte {"error":"no_session_active"} was returned locally by MB before any HTTP call was made. MB_VERSION 4.0.10 -> 4.0.11.
 // MB v4.0.10 (May 11, 2026): Patch — scenario JSON files accessible via get_source_slice + search_source. Tool description for get_source_slice corrected: 'Filename only (no path)' was wrong for scenario files — tests/scenarios/<name>.json requires the full relative path. Added scenario JSON pattern to tool function.description allowed list, file param description, and SYSTEM_PROMPT section 8. Source FILE GUIDE entry at line ~675 was already correct. MB_VERSION 4.0.9 -> 4.0.10.
 // MB v4.0.9 (May 11, 2026): Patch — remove max_tokens cap entirely. Both DeepSeek API call sites in askMotherBrain() (primary + ECONNRESET retry) now omit max_tokens, letting the model use its full 8192-token output cap. MB_VERSION 4.0.8 -> 4.0.9.
 
@@ -825,7 +826,9 @@ function formatTurnBuffer() {
 // ── Tool executor — called by Mother Brain during function-calling loop ────────
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
-  if (!_activeSessionId && !HARNESS_TOOLS.includes(name)) {
+  // Source tools are session-independent (static file reads) — bypass the no_session_active guard
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source'];
+  if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
   try {
