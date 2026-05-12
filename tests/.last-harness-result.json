@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-12T03:02:51.625Z",
+  "timestamp": "2026-05-12T03:47:40.451Z",
   "scenariosPassed": 0,
   "scenariosFailed": 1,
   "scenariosSkipped": 0,
-  "turnsPassed": 1,
+  "turnsPassed": 0,
   "turnsFailed": 1,
   "results": [
     {
-      "name": "arbiter_basic",
+      "name": "founding_premise_correctness",
       "skipped": false,
-      "passed": 1,
+      "passed": 0,
       "failed": 1,
-      "total": 2,
-      "sessionId": "1778554941155-dzfm6yzrt"
+      "total": 1,
+      "sessionId": "1778557638328-uydv6zn2v"
     }
   ]
 }

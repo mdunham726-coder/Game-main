@@ -31,7 +31,9 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.0.11';
+const MB_VERSION = '4.0.13';
+// MB v4.0.13 (May 12, 2026): Patch — per-task timeout map in run_validation. syntax checks (node_check_*) timeout 15s; solo scenario runs timeout 90s; harness_sweep_a timeout 300s. Previously all tasks shared a flat 120s execSync timeout — sweep_a timed out after the 4th builtin scenario (~90s), JSON file scenarios never ran. MB_VERSION 4.0.12 -> 4.0.13.
+// MB v4.0.12 (May 11, 2026): Patch — run_validation tool + --sweep flag. Added run_validation to MB_TOOLS: enum allowlist of 8 tasks (node_check_index, node_check_harness, node_check_mother, harness_<4 scenarios>, harness_sweep_a) mapped to fixed commands; execSync with 120s timeout, cwd=Game-main, no freeform input. Added to SESSION_FREE_TOOLS (bypasses no_session_active guard). Added executeToolCall branch. Added VALIDATION TOOL paragraph to SYSTEM_PROMPT: syntax check workflow, CLI-fallback vs harness_run_scenario lane guidance. test-harness.js: added --sweep A|P headless flag (filters SCENARIO_REGISTRY by sweep category using same formula as --list); harness_sweep_a task uses --sweep A --yes. MB_VERSION 4.0.11 -> 4.0.12.
 // MB v4.0.11 (May 11, 2026): Patch — get_source_slice and search_source bypass no_session_active guard. executeToolCall early-return on !_activeSessionId was gating source tools behind a live session requirement even though /diagnostics/source and /diagnostics/source-search have no server-side session check. Added SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source'] — both tools now reachable without an active game session. Root cause: 29-byte {"error":"no_session_active"} was returned locally by MB before any HTTP call was made. MB_VERSION 4.0.10 -> 4.0.11.
 // MB v4.0.10 (May 11, 2026): Patch — scenario JSON files accessible via get_source_slice + search_source. Tool description for get_source_slice corrected: 'Filename only (no path)' was wrong for scenario files — tests/scenarios/<name>.json requires the full relative path. Added scenario JSON pattern to tool function.description allowed list, file param description, and SYSTEM_PROMPT section 8. Source FILE GUIDE entry at line ~675 was already correct. MB_VERSION 4.0.9 -> 4.0.10.
 // MB v4.0.9 (May 11, 2026): Patch — remove max_tokens cap entirely. Both DeepSeek API call sites in askMotherBrain() (primary + ECONNRESET retry) now omit max_tokens, letting the model use its full 8192-token output cap. MB_VERSION 4.0.8 -> 4.0.9.
@@ -439,6 +441,33 @@ const MB_TOOLS = [
       description: 'Revoke harness operational authority. Sets Mother Brain to Offline state. All harness tools become unavailable until reconnected.',
       parameters: { type: 'object', properties: {}, required: [] }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_validation',
+      description: 'Run a predefined validation task in the Game-main directory. Each task maps to a fixed command — no freeform input. Use for syntax checking files and running specific harness scenarios directly via CLI (no server endpoint required). Returns stdout, stderr, exit_code.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: {
+            type: 'string',
+            enum: [
+              'node_check_index',
+              'node_check_harness',
+              'node_check_mother',
+              'harness_reality_check_basic',
+              'harness_arbiter_basic',
+              'harness_founding_premise_correctness',
+              'harness_site_entry_basic',
+              'harness_sweep_a'
+            ],
+            description: 'node_check_index=syntax check index.js; node_check_harness=syntax check test-harness.js; node_check_mother=syntax check motherbrain.js; harness_<name>=run that scenario solo with --yes; harness_sweep_a=run all sweep:A scenarios via --sweep A --yes'
+          }
+        },
+        required: ['task']
+      }
+    }
   }
 ];
 
@@ -719,7 +748,17 @@ SCENARIO CATEGORIES: Each registry entry carries a sweep field that directly enc
 
 SCENARIO TRUTH: Do not guess what scenarios exist or what they test. Call harness_list_scenarios to get the current live registry with name, description, turns, stability, and isolated for every entry. That is the authoritative source.
 
-WORKFLOW (while Connected): (1) Call harness_list_scenarios to see the current registry with descriptions. (2) Call harness_run_scenario with the exact name. (3) Always call harness_read_result after a run. (4) Summarize: scenario name, PASS/FAIL, turns passed/failed, any session ID surfaced. For probe failures, note that a single failure may be probabilistic and recommend a repeat run before escalating.`;
+WORKFLOW (while Connected): (1) Call harness_list_scenarios to see the current registry with descriptions. (2) Call harness_run_scenario with the exact name. (3) Always call harness_read_result after a run. (4) Summarize: scenario name, PASS/FAIL, turns passed/failed, any session ID surfaced. For probe failures, note that a single failure may be probabilistic and recommend a repeat run before escalating.
+
+VALIDATION TOOL: run_validation gives you a narrow set of pre-approved validation tasks you can execute locally without server interaction.
+
+WHEN TO USE: (1) After a fix is applied, call node_check_<file> to verify syntax before instructing the developer to restart anything. (2) When the harness server endpoint is unavailable, or the developer specifically asks for CLI-level validation, use harness_<scenario_name> to drive test-harness.js directly. (3) Use harness_sweep_a to run the full Sweep A suite via CLI.
+
+NORMAL CONNECTED RUNS: For typical forensic investigation when [Harness: Connected], prefer harness_run_scenario — it goes through the server endpoint and returns structured tool output. Use run_validation for syntax checks, direct CLI verification, or when the harness endpoint is unreachable.
+
+WHAT IT IS NOT: run_validation is not a shell. It maps symbolic task names to fixed hardcoded commands. Unknown task names are rejected. You cannot pass arguments, pipes, redirections, or arbitrary commands.
+
+SYNTAX CHECK WORKFLOW: When you suspect a file has a syntax error, or after you recommend a code change, call the relevant node_check_* task. exit_code 0 = clean. exit_code != 0 = stderr contains the parse error location.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -827,7 +866,7 @@ function formatTurnBuffer() {
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
-  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source'];
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
@@ -940,6 +979,38 @@ async function executeToolCall(name, args) {
       const raw = JSON.stringify(resp.data);
       if (raw.length > 32000) return raw.slice(0, 32000) + '\n[TRUNCATED]';
       return raw;
+    } else if (name === 'run_validation') {
+      const _taskMap = {
+        node_check_index:                       'node --check index.js',
+        node_check_harness:                     'node --check test-harness.js',
+        node_check_mother:                      'node --check motherbrain.js',
+        harness_reality_check_basic:            'node test-harness.js --scenario reality_check_basic --yes',
+        harness_arbiter_basic:                  'node test-harness.js --scenario arbiter_basic --yes',
+        harness_founding_premise_correctness:   'node test-harness.js --scenario founding_premise_correctness --yes',
+        harness_site_entry_basic:               'node test-harness.js --scenario site_entry_basic --yes',
+        harness_sweep_a:                        'node test-harness.js --sweep A --yes',
+      };
+      const _timeoutMap = {
+        node_check_index:                       15000,
+        node_check_harness:                     15000,
+        node_check_mother:                      15000,
+        harness_reality_check_basic:            90000,
+        harness_arbiter_basic:                  90000,
+        harness_founding_premise_correctness:   90000,
+        harness_site_entry_basic:               90000,
+        harness_sweep_a:                        300000,
+      };
+      const _task = args.task || '';
+      if (!_taskMap[_task]) return JSON.stringify({ error: 'unknown_task', valid_tasks: Object.keys(_taskMap) });
+      const _cmd = _taskMap[_task];
+      const _timeout = _timeoutMap[_task] || 120000;
+      const { execSync } = require('child_process');
+      try {
+        const _out = execSync(_cmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', timeout: _timeout, encoding: 'utf8', shell: 'cmd.exe', env: { ...process.env } });
+        return JSON.stringify({ task: _task, command: _cmd, stdout: _out, stderr: '', exit_code: 0 });
+      } catch (_err) {
+        return JSON.stringify({ task: _task, command: _cmd, stdout: _err.stdout || '', stderr: _err.stderr || _err.message, exit_code: _err.status ?? 1 });
+      }
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }

@@ -16,6 +16,7 @@
 //   node test-harness.js --yes                   — confirm paid headless runs (bypasses Y/N; does not bypass HARNESS_MAX_COST_USD)
 //   node test-harness.js --list                  — print JSON array of all available scenarios and exit
 //   node test-harness.js --result-file <path>    — write JSON result summary to file after run
+//   node test-harness.js --sweep A|P             — run only scenarios matching sweep category (A=stable, P=probe)
 // =============================================================================
 
 const http  = require('http');
@@ -43,6 +44,7 @@ const INTERACTIVE_MODE = _args.length === 0;
 const HAS_YES          = hasFlag('--yes');
 const RESULT_FILE      = getFlag('--result-file') || null;
 const ONLY_LIST        = hasFlag('--list');
+const SWEEP_MODE       = getFlag('--sweep') || null;
 
 // ─── Cost estimation & safety config ─────────────────────────────────────────
 // DeepSeek V4 Flash pricing. Source: api-docs.deepseek.com (May 10 2026).
@@ -789,9 +791,9 @@ const SCENARIO_REGISTRY = (() => {
           }
           registry.push({ ...s, _source: 'file' });
         }
-      } catch (_) { /* skip unreadable/invalid files */ }
+      } catch (_loadErr) { console.warn('[SCENARIO-LOAD] Failed to load JSON scenario file:', _loadErr.message); }
     }
-  } catch (_) { /* SCENARIOS_DIR unreadable — builtins only */ }
+  } catch (_dirErr) { console.warn('[SCENARIO-LOAD] tests/scenarios/ unreadable — builtins only:', _dirErr.message); }
   return registry;
 })();
 
@@ -1320,6 +1322,19 @@ async function main() {
       process.exit(1);
     }
     scenarios = [found];
+
+  } else if (SWEEP_MODE) {
+    const _sweepKey = SWEEP_MODE.toUpperCase();
+    scenarios = SCENARIO_REGISTRY.filter(s => {
+      const isIsolated = s.isolated_only === true;
+      const isProbe    = (s.stability || 'stable') === 'probe';
+      const sweep      = isIsolated ? 'manual' : isProbe ? 'P' : 'A';
+      return sweep === _sweepKey;
+    });
+    if (scenarios.length === 0) {
+      console.error(`${C.red}No scenarios found for --sweep ${SWEEP_MODE}. Valid values: A, P${C.reset}`);
+      process.exit(1);
+    }
 
   } else {
     scenarios = SCENARIO_REGISTRY;

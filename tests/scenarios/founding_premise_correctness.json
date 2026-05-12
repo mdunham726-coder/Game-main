@@ -2,11 +2,10 @@
   "name": "founding_premise_correctness",
   "stability": "stable",
   "description": "Rich founding premise populates birth_record with form and possessions; attributes present",
-  "world_prompt": "I am a wizard named Aldric carrying a crystal orb and I can cast fire",
   "turns": [
     {
       "label": "founding",
-      "action": "look around",
+      "action": "I am a wizard named Aldric carrying a crystal orb and I can cast fire",
       "intent_channel": "do",
       "assert": [
         { "op": "no_error" },

@@ -18,7 +18,7 @@
         { "inject_npc": { "npc_name": "Thea", "job_category": "Innkeeper" } }
       ],
       "action": "I walk up to Thea and ask about a room for the night",
-      "intent_channel": "do",
+      "intent_channel": "say",
       "assert": [
         { "op": "no_error" },
         { "path": "last_arbiter_verdict", "op": "present" },
