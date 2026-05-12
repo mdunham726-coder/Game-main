@@ -4748,6 +4748,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
           .some(a => a.bucket === 'declared' && /transform|shapeshift|change.form|alter.form|become/i.test(a.value));
         if (_arbVisibleNpcs.length === 0 && !_hasTransformCapability) {
           emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, gameSessionId: resolvedSessionId });
+          // Invariant: every Arbiter pass leaves a verdict object. "Found nothing to do" is still a verdict.
+          gameState._lastArbiterVerdict = { turn: turnNumber, raw: null, applied: { reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null } };
           return;
         }
         const _arbNpcRegistry = _arbVisibleNpcs.map(n => ({
@@ -4867,6 +4869,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
         gameState._lastArbiterVerdict = { turn: turnNumber, raw: _arbParsed, applied: { player_form_change: _arbFormApplied, player_recognition_changes: _arbRecApplied } }; // v1.85.21: forensic — raw=what Arbiter emitted, applied=what engine wrote
       } catch (e) {
         emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, error: e.message, gameSessionId: resolvedSessionId });
+        gameState._lastArbiterVerdict = { turn: turnNumber, raw: null, error: String(e?.message || e), applied: { reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null } };
       }
     })();
 
