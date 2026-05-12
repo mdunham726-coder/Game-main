@@ -4756,8 +4756,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
     })();
 
     // v1.84.0: Arbiter — post-narration consequence engine (NPC reputation only, MVP)
-    // Fires async non-blocking after every turn. Emits arbiter_verdict SSE event always (including empty).
-    ;(async () => {
+    // v1.85.64: awaited — Arbiter is an authoritative state writer (reputation, recognition, name-learning, form).
+    // A turn is not complete until Arbiter has written its verdict. Fire-and-forget caused timing race where
+    // res.json() serialized _lastArbiterVerdict before the DeepSeek call returned. Now awaited inline.
+    await (async () => {
       try {
         const _arbVisibleNpcs = (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || []);
         // v1.85.19: Option B — skip early-return when player has a declared transformation capability (so form-change can write through on solo turns)
