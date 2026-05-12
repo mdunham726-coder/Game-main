@@ -797,7 +797,7 @@ app.post('/narrate', async (req, res) => {
   
   const { action, intent_channel: _rawChannel, npc_target: _rawNpcTarget, WORLD_SEED: _rawWorldSeed, WORLD_PROMPT: _rawWorldPrompt } = req.body;
   const resolvedChannel = ['do', 'say'].includes(_rawChannel) ? _rawChannel : 'do';
-  if (!action) {
+  if (action == null) {
     return res.status(400).json({ 
       sessionId: resolvedSessionId,
       error: 'action is required' 

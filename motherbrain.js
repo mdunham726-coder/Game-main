@@ -31,7 +31,10 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.0.13';
+const MB_VERSION = '4.0.16';
+// MB v4.0.16 (May 12, 2026): Minor — Phase B: create_scenario_file tool. MB can now write new QA scenario JSON files to tests/scenarios/. Probe-first stability enforcement with explicit audit trail (requested_stability/written_stability/stability_forced). Signal-quality validation: duplicate assertion detection, low_signal warning for all-no_error scenarios. Name conflict hard block (scans existing files). Epistemic category field with enum validation (deterministic_reproduction/exploratory/ontology_stress/parser_fuzz/narrative_continuity/authority_test). No overwrite path. Added to MB_TOOLS, SESSION_FREE_TOOLS, executeToolCall branch, SCENARIO AUTHORING section in SYSTEM_PROMPT. MB_VERSION 4.0.15 -> 4.0.16.
+// MB v4.0.15 (May 12, 2026): Patch — DEP0190 fix. Changed spawn call to pass full command string directly instead of split args array with shell:true. Eliminates Node.js DEP0190 deprecation warning (no shell injection surface since _taskMap is hardcoded). MB_VERSION 4.0.14 -> 4.0.15.
+// MB v4.0.14 (May 12, 2026): Patch — run_validation streams output in real time. Replaced execSync with spawn wrapped in a Promise; stdout/stderr lines printed via printLine() as they arrive so every scenario result is visible immediately in the MB window. Timeout handled via setTimeout + child.kill('SIGKILL'). No more frozen window during long harness runs. MB_VERSION 4.0.13 -> 4.0.14.
 // MB v4.0.13 (May 12, 2026): Patch — per-task timeout map in run_validation. syntax checks (node_check_*) timeout 15s; solo scenario runs timeout 90s; harness_sweep_a timeout 300s. Previously all tasks shared a flat 120s execSync timeout — sweep_a timed out after the 4th builtin scenario (~90s), JSON file scenarios never ran. MB_VERSION 4.0.12 -> 4.0.13.
 // MB v4.0.12 (May 11, 2026): Patch — run_validation tool + --sweep flag. Added run_validation to MB_TOOLS: enum allowlist of 8 tasks (node_check_index, node_check_harness, node_check_mother, harness_<4 scenarios>, harness_sweep_a) mapped to fixed commands; execSync with 120s timeout, cwd=Game-main, no freeform input. Added to SESSION_FREE_TOOLS (bypasses no_session_active guard). Added executeToolCall branch. Added VALIDATION TOOL paragraph to SYSTEM_PROMPT: syntax check workflow, CLI-fallback vs harness_run_scenario lane guidance. test-harness.js: added --sweep A|P headless flag (filters SCENARIO_REGISTRY by sweep category using same formula as --list); harness_sweep_a task uses --sweep A --yes. MB_VERSION 4.0.11 -> 4.0.12.
 // MB v4.0.11 (May 11, 2026): Patch — get_source_slice and search_source bypass no_session_active guard. executeToolCall early-return on !_activeSessionId was gating source tools behind a live session requirement even though /diagnostics/source and /diagnostics/source-search have no server-side session check. Added SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source'] — both tools now reachable without an active game session. Root cause: 29-byte {"error":"no_session_active"} was returned locally by MB before any HTTP call was made. MB_VERSION 4.0.10 -> 4.0.11.
@@ -468,6 +471,27 @@ const MB_TOOLS = [
         required: ['task']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_scenario_file',
+      description: 'Write a new QA scenario JSON file to tests/scenarios/. Enforces probe-first stability: all new scenarios are written as stability="probe" regardless of what you request. Returns explicit stability audit trail (requested_stability, written_stability, stability_forced). File names must be alphanumeric/underscore/hyphen only. No overwrite — existing files are hard-blocked. Returns warnings for low-signal or duplicate assertions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filename: {
+            type: 'string',
+            description: 'Filename without extension or path. Alphanumeric, underscores, hyphens only. Max 80 chars. Example: "my_new_scenario"'
+          },
+          scenario: {
+            type: 'object',
+            description: 'Full scenario definition object. Must include: name (string), turns (array of turn objects). Each turn must have action (string) and assert (array with at least one {op} object). Optional: description, stability (will be forced to probe), world_prompt, world_seed, category.'
+          }
+        },
+        required: ['filename', 'scenario']
+      }
+    }
   }
 ];
 
@@ -758,7 +782,17 @@ NORMAL CONNECTED RUNS: For typical forensic investigation when [Harness: Connect
 
 WHAT IT IS NOT: run_validation is not a shell. It maps symbolic task names to fixed hardcoded commands. Unknown task names are rejected. You cannot pass arguments, pipes, redirections, or arbitrary commands.
 
-SYNTAX CHECK WORKFLOW: When you suspect a file has a syntax error, or after you recommend a code change, call the relevant node_check_* task. exit_code 0 = clean. exit_code != 0 = stderr contains the parse error location.`;
+SYNTAX CHECK WORKFLOW: When you suspect a file has a syntax error, or after you recommend a code change, call the relevant node_check_* task. exit_code 0 = clean. exit_code != 0 = stderr contains the parse error location.
+
+SCENARIO AUTHORING: create_scenario_file writes a new QA scenario JSON to tests/scenarios/. Only use this when the developer asks or explicitly approves the intent -- do not create scenarios autonomously.
+
+PROBE-FIRST RULE: All new scenarios are written as stability="probe" regardless of what you request. The tool enforces this. Always check stability_forced and requested_stability in the response to confirm exactly what was written. If you requested "stable" and got "probe", that is correct and expected behavior.
+
+CATEGORY FIELD: Provide a category from the enum when you know the epistemic type of the test. Valid values: deterministic_reproduction, exploratory, ontology_stress, parser_fuzz, narrative_continuity, authority_test. This is distinct from operational stability (probe/stable/manual) -- it describes what kind of regression the test is designed to catch.
+
+WARNINGS: Check the warnings array in the response. low_signal means every assertion in the scenario is no_error only -- the test cannot catch behavioral regressions, only crashes. duplicate_assertion means a turn has redundant assertions. Both are soft (the file is still written) but are signals to strengthen the test before considering promotion.
+
+PROMOTION WORKFLOW: After creating a scenario, call harness_list_scenarios to confirm it appeared in the registry, then run it. Study the output. If it passes deterministically across multiple runs, flag it to the developer as a candidate for promotion to stable. You do NOT promote it yourself -- probe to stable requires the developer to manually update stability in the JSON file. You may not call create_scenario_file with the same name to overwrite; revision requires a new filename.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -866,7 +900,7 @@ function formatTurnBuffer() {
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
-  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation'];
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
@@ -1004,13 +1038,129 @@ async function executeToolCall(name, args) {
       if (!_taskMap[_task]) return JSON.stringify({ error: 'unknown_task', valid_tasks: Object.keys(_taskMap) });
       const _cmd = _taskMap[_task];
       const _timeout = _timeoutMap[_task] || 120000;
-      const { execSync } = require('child_process');
-      try {
-        const _out = execSync(_cmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', timeout: _timeout, encoding: 'utf8', shell: 'cmd.exe', env: { ...process.env } });
-        return JSON.stringify({ task: _task, command: _cmd, stdout: _out, stderr: '', exit_code: 0 });
-      } catch (_err) {
-        return JSON.stringify({ task: _task, command: _cmd, stdout: _err.stdout || '', stderr: _err.stderr || _err.message, exit_code: _err.status ?? 1 });
+      const { spawn } = require('child_process');
+      printLine(`${DIM}[run_validation] ${_cmd}${R}`);
+      return await new Promise((resolve) => {
+        let _stdout = '';
+        let _stderr = '';
+        let _timedOut = false;
+        // Pass full command string directly — no split/args array — avoids DEP0190 and shell injection surface
+        const _child = spawn(_cmd, {
+          cwd: 'c:\\Users\\daddy\\Desktop\\Game-main',
+          shell: true,
+          env: { ...process.env },
+        });
+        const _timer = setTimeout(() => {
+          _timedOut = true;
+          _child.kill('SIGKILL');
+        }, _timeout);
+        _child.stdout.on('data', (chunk) => {
+          const _text = chunk.toString();
+          _stdout += _text;
+          _text.split('\n').forEach(line => { if (line.trim()) printLine(`${DIM}  ${line}${R}`); });
+        });
+        _child.stderr.on('data', (chunk) => {
+          const _text = chunk.toString();
+          _stderr += _text;
+          _text.split('\n').forEach(line => { if (line.trim()) printLine(`${DIM}  [stderr] ${line}${R}`); });
+        });
+        _child.on('close', (code) => {
+          clearTimeout(_timer);
+          if (_timedOut) {
+            resolve(JSON.stringify({ task: _task, command: _cmd, stdout: _stdout, stderr: 'ETIMEDOUT', exit_code: 1 }));
+          } else {
+            resolve(JSON.stringify({ task: _task, command: _cmd, stdout: _stdout, stderr: _stderr, exit_code: code ?? 0 }));
+          }
+        });
+        _child.on('error', (err) => {
+          clearTimeout(_timer);
+          resolve(JSON.stringify({ task: _task, command: _cmd, stdout: _stdout, stderr: err.message, exit_code: 1 }));
+        });
+      });
+    } else if (name === 'create_scenario_file') {
+      const _fs   = require('fs');
+      const _path = require('path');
+      const _SCENARIOS_DIR = _path.join('c:\\Users\\daddy\\Desktop\\Game-main', 'tests', 'scenarios');
+      const VALID_CATEGORIES = ['deterministic_reproduction','exploratory','ontology_stress','parser_fuzz','narrative_continuity','authority_test'];
+
+      // --- filename validation ---
+      let _filename = (args.filename || '').replace(/\.json$/i, '');
+      if (!_filename || _filename.length > 80 || !/^[a-z0-9_-]+$/i.test(_filename) || _filename.includes('/') || _filename.includes('\\') || _filename.includes('..')) {
+        return JSON.stringify({ error: 'invalid_filename', detail: 'Filename must be alphanumeric/underscore/hyphen only, no path separators or .., max 80 chars.' });
       }
+      const _filePath = _path.join(_SCENARIOS_DIR, _filename + '.json');
+
+      // --- no overwrite ---
+      if (_fs.existsSync(_filePath)) {
+        return JSON.stringify({ error: 'file_exists', path: _filePath, detail: 'File already exists. Revisions require a new filename; humans consolidate.' });
+      }
+
+      // --- scenario extraction ---
+      const _sc = args.scenario;
+      if (!_sc || typeof _sc !== 'object') return JSON.stringify({ error: 'invalid_scenario', detail: 'scenario must be an object.' });
+      if (!_sc.name || typeof _sc.name !== 'string' || !_sc.name.trim()) return JSON.stringify({ error: 'invalid_scenario', detail: 'scenario.name must be a non-empty string.' });
+      if (!Array.isArray(_sc.turns) || _sc.turns.length < 1) return JSON.stringify({ error: 'invalid_scenario', detail: 'scenario.turns must be an array with at least 1 turn.' });
+      for (let _ti = 0; _ti < _sc.turns.length; _ti++) {
+        const _t = _sc.turns[_ti];
+        if (typeof _t.action !== 'string') return JSON.stringify({ error: 'invalid_scenario', detail: `turns[${_ti}].action must be a string.` });
+        if (!Array.isArray(_t.assert) || _t.assert.length < 1) return JSON.stringify({ error: 'invalid_scenario', detail: `turns[${_ti}].assert must be a non-empty array.` });
+        for (let _ai = 0; _ai < _t.assert.length; _ai++) {
+          if (!_t.assert[_ai].op || typeof _t.assert[_ai].op !== 'string') return JSON.stringify({ error: 'invalid_scenario', detail: `turns[${_ti}].assert[${_ai}] must have a non-empty op field.` });
+        }
+      }
+
+      // --- category validation ---
+      if (_sc.category !== undefined && !VALID_CATEGORIES.includes(_sc.category)) {
+        return JSON.stringify({ error: 'invalid_category', detail: `category must be one of: ${VALID_CATEGORIES.join(', ')}`, valid_categories: VALID_CATEGORIES });
+      }
+
+      // --- name conflict ---
+      let _existingFiles = [];
+      try { _existingFiles = _fs.readdirSync(_SCENARIOS_DIR).filter(f => f.endsWith('.json')); } catch(_e) {}
+      for (const _ef of _existingFiles) {
+        try {
+          const _existing = JSON.parse(_fs.readFileSync(_path.join(_SCENARIOS_DIR, _ef), 'utf8'));
+          if (_existing.name === _sc.name) return JSON.stringify({ error: 'name_conflict', detail: `scenario.name "${_sc.name}" already used by existing file.`, existing_file: _ef });
+        } catch (_e) {}
+      }
+
+      // --- signal quality warnings (soft) ---
+      const _warnings = [];
+      const _allOps = _sc.turns.flatMap(t => (t.assert || []).map(a => a.op));
+      const _allNoError = _allOps.length > 0 && _allOps.every(op => op === 'no_error');
+      if (_allNoError) _warnings.push('low_signal: all assertions are no_error only — test may not catch real regressions');
+      for (const _t of _sc.turns) {
+        const _serialized = (_t.assert || []).map(a => JSON.stringify(a));
+        const _seen = new Set();
+        for (const _s of _serialized) {
+          if (_seen.has(_s)) { _warnings.push(`duplicate_assertion in turn "${_t.label || '(unlabeled)'}" — same assertion object appears more than once`); break; }
+          _seen.add(_s);
+        }
+      }
+
+      // --- stability enforcement ---
+      const _requestedStability = _sc.stability ?? null;
+      const _stabilityForced = _sc.stability !== 'probe';
+      const _scToWrite = { ..._sc, stability: 'probe' };
+
+      // --- write ---
+      try {
+        _fs.writeFileSync(_filePath, JSON.stringify(_scToWrite, null, 2), 'utf8');
+      } catch (_werr) {
+        return JSON.stringify({ error: 'write_error', detail: _werr.message });
+      }
+
+      return JSON.stringify({
+        written: true,
+        path: _filePath,
+        filename: _filename + '.json',
+        requested_stability: _requestedStability,
+        written_stability: 'probe',
+        stability_forced: _stabilityForced,
+        category: _sc.category ?? null,
+        turns_count: _sc.turns.length,
+        warnings: _warnings
+      });
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }
