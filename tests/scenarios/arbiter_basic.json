@@ -1,8 +1,8 @@
 {
   "name": "arbiter_basic",
   "stability": "stable",
-  "description": "Social interaction with a present NPC produces an arbiter verdict in the response",
-  "world_prompt": "I am a traveler who has just arrived at a busy roadside inn. The innkeeper is behind the bar.",
+  "description": "Social interaction with a fixture NPC produces a real Arbiter verdict. Uses inject_npc before T2 to guarantee a visible Innkeeper (Thea) at the player's tile regardless of worldgen placement.",
+  "world_prompt": "I am a traveler who has just arrived at a roadside inn.",
   "turns": [
     {
       "label": "founding",
@@ -14,11 +14,15 @@
     },
     {
       "label": "npc_interaction",
-      "action": "I walk up to the innkeeper and ask about a room for the night",
+      "before": [
+        { "inject_npc": { "npc_name": "Thea", "job_category": "Innkeeper" } }
+      ],
+      "action": "I walk up to Thea and ask about a room for the night",
       "intent_channel": "do",
       "assert": [
         { "op": "no_error" },
-        { "path": "last_arbiter_verdict", "op": "present" }
+        { "path": "last_arbiter_verdict", "op": "present" },
+        { "path": "last_arbiter_verdict.raw", "op": "present" }
       ]
     }
   ]

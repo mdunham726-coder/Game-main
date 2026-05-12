@@ -148,6 +148,15 @@ class GameClient {
     return result.body;
   }
 
+  async injectNpc(spec) {
+    if (!this.sessionId) throw new Error('injectNpc requires an active session (call narrate first)');
+    const diagKey = process.env.DIAGNOSTICS_KEY || '';
+    const body    = { sessionId: this.sessionId, ...spec };
+    const headers = diagKey ? { 'x-diagnostics-key': diagKey } : {};
+    const result  = await httpRequest('POST', `${this.baseUrl}/diagnostics/inject-npc`, body, headers);
+    return result.body;
+  }
+
   reset() {
     this.sessionId = null;
     this.turnCount = 0;
@@ -517,6 +526,15 @@ async function runScenario(scenario) {
         const result   = await httpRequest('GET', `${BASE_URL}${endpoint}`, null);
         response       = result.body;
       } else {
+        // Process before-fixtures (e.g. inject_npc) — runs after T1 (sessionId exists), before this turn's narrate call
+        if (Array.isArray(turn.before)) {
+          for (const fixture of turn.before) {
+            if (fixture.inject_npc) {
+              const r = await client.injectNpc(fixture.inject_npc);
+              if (!r.injected) throw new Error(`inject_npc fixture failed: ${JSON.stringify(r)}`);
+            }
+          }
+        }
         const opts = { intent_channel: turn.intent_channel || 'do' };
         if (firstTurn && scenario.world_prompt)       opts.WORLD_PROMPT = scenario.world_prompt;
         if (firstTurn && scenario.world_seed != null) opts.WORLD_SEED  = scenario.world_seed;

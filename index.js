@@ -7215,6 +7215,67 @@ app.get('/diagnostics/objects', (req, res) => {
   });
 });
 
+// Harness NPC fixture injector — POST /diagnostics/inject-npc
+// Injects a synthetic NPC directly onto the player's current tile. For QA harness use only.
+// Auth: x-diagnostics-key header. Body: { sessionId, npc_name, job_category }.
+// The injected NPC is marked source:"harness_fixture" and fixture:true for forensic identification.
+app.post('/diagnostics/inject-npc', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'inject_npc_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(401).json({ error: 'unauthorized' });
+
+  const { sessionId, npc_name, job_category } = req.body || {};
+  if (!sessionId)    return res.status(400).json({ error: 'sessionId required' });
+  if (!npc_name)     return res.status(400).json({ error: 'npc_name required' });
+  if (!job_category) return res.status(400).json({ error: 'job_category required' });
+
+  const gs = sessionStates.get(sessionId);
+  if (!gs) return res.status(404).json({ error: 'session_not_found' });
+
+  const site = gs.world?.active_local_space || gs.world?.active_site;
+  if (!site) return res.status(400).json({ error: 'no_active_site', message: 'No active site or localspace in this session.' });
+
+  const pos = gs.player?.position;
+  if (!pos) return res.status(400).json({ error: 'no_player_position', message: 'Player position not set.' });
+
+  // Build synthetic NPC record — pre-filled, fixture-marked
+  const npc_id = `fixture#npc_${Date.now()}`;
+  const npc = {
+    id: npc_id,
+    site_id: site.site_id || site.id || 'unknown',
+    npc_name,
+    job_category,
+    gender: null, age: null,
+    _fill_frozen: true,        // skip NPC-FILL pipeline — already filled
+    is_learned: true,          // narrator receives real name, not null
+    player_recognition: null,
+    reputation_player: 50,
+    traits: [],
+    attributes: {},
+    object_capture_turn: null,
+    position: { mx: 0, my: 0, lx: pos.x, ly: pos.y },
+    source: 'harness_fixture', // forensic marker — injected by QA harness, not worldgen
+    fixture: true
+  };
+
+  // Add to site NPC registry
+  if (!Array.isArray(site.npcs)) site.npcs = [];
+  site.npcs.push(npc);
+
+  // Add NPC id to player's exact tile so computeVisibleNpcs picks it up
+  const grid = site.grid;
+  if (Array.isArray(grid) && grid[pos.y] && grid[pos.y][pos.x]) {
+    const tile = grid[pos.y][pos.x];
+    if (!Array.isArray(tile.npc_ids)) tile.npc_ids = [];
+    tile.npc_ids.push(npc_id);
+  } else {
+    // Grid missing or tile uninitialized — still added to registry; visibility depends on grid structure
+    console.warn(`[INJECT-NPC] grid tile at (${pos.x},${pos.y}) not found — NPC added to registry only`);
+  }
+
+  return res.json({ injected: true, npc_id, npc_name, job_category, tile: { x: pos.x, y: pos.y } });
+});
+
 // Entity inspector — GET /diagnostics/entity
 // Returns the raw engine record for any entity type: object, npc, player, or cell.
 // Params: sessionId (required), entity_type (object|npc|player|cell), entity_id (required except for player)
