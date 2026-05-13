@@ -37,6 +37,7 @@ const MOOD_HISTORY_CAP  = 20;   // hard cap on world.mood_history[]
 const MOOD_WINDOW       = 5;    // entries used for MOOD block in packet
 const EXTRACTION_TIMEOUT = 30000; // ms — Phase B LLM call
 const STATE_ATTR_WINDOW = 5;    // state: bucket decay window — state facts older than this many turns are suppressed from the narrator TRUTH block
+const ENV_ATTR_WINDOW   = 20;   // max env/NPC attributes emitted per entity in the narrator TRUTH block — most recent N by turn_set; prevents unbounded token growth
                                 // physical: and object: buckets are permanent and always included
                                 // NOTE: state: is a mixed bucket (ephemeral motion + ongoing aftermath); a future pass may split
                                 //   into state:ephemeral (window=1-2) and state:persistent (longer/condition-backed)
@@ -1252,6 +1253,8 @@ function assembleContinuityPacket(gameState, turnContext) {
     // v1.84.82: respect is_learned — do not expose npc_name in TRUTH block until the player has learned it
     const label = (npc.is_learned && npc.npc_name) ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
     const attrs = Object.values(npc.attributes)
+      .sort((a, b) => (b.turn_set || 0) - (a.turn_set || 0))
+      .slice(0, ENV_ATTR_WINDOW)
       .map(a => a.value)
       .join(' | ');
     // v1.85.19: append recognition suffix if NPC has recognized the player
@@ -1270,6 +1273,8 @@ function assembleContinuityPacket(gameState, turnContext) {
   // Location attributes — includes L0 cell attributes via locRecord fallback
   if (locRecord && locRecord.attributes && Object.keys(locRecord.attributes).length) {
     const locAttrs = Object.values(locRecord.attributes)
+      .sort((a, b) => (b.turn_set || 0) - (a.turn_set || 0))
+      .slice(0, ENV_ATTR_WINDOW)
       .map(a => a.value)
       .join(' | ');
     lines.push(`[${locLabel}]: ${locAttrs}`);
