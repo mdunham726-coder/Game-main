@@ -554,7 +554,7 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'read_probe_results',
-      description: 'Read probe run output from tests/probe-results/. With no folder param: lists available result folders sorted newest-first (use this first to identify which run to analyze). With folder specified: reads one file from that folder (default: summary.json). Use this when the developer says "analyze the results", "I ran some probes", "check the logs", or similar — do not wait to be asked for the tool name. Start with no folder to list available result sets, identify the most recent relevant folder by slug and timestamp, then read summary.json for aggregate stats. For per-run detail on large jobs (500+ runs), runs.jsonl can be large — prefer summary.json for initial analysis and only read runs.jsonl if per-run granularity is needed.',
+      description: 'Read probe run output from tests/probe-results/. With no folder param: lists available result folders sorted newest-first (use this first to identify which run to analyze). With folder specified: reads one file from that folder (default: summary.json). For failure forensics, read errors.jsonl (contains only failed rows, always small) or check hard_error_rows in summary.json. For per-run success-row analysis, read runs.jsonl with from_line/to_line to page through rows without truncation (default: first 50 rows).',
       parameters: {
         type: 'object',
         properties: {
@@ -564,8 +564,16 @@ const MB_TOOLS = [
           },
           file: {
             type: 'string',
-            enum: ['summary.json', 'runs.jsonl', 'console.txt', 'spec.snapshot.json'],
-            description: 'Which file to read from the folder. Default: summary.json.'
+            enum: ['summary.json', 'runs.jsonl', 'errors.jsonl', 'console.txt', 'spec.snapshot.json'],
+            description: 'Which file to read. Default: summary.json. errors.jsonl contains only hard-error rows (always small). For runs.jsonl use from_line/to_line to paginate.'
+          },
+          from_line: {
+            type: 'integer',
+            description: 'First row to return from runs.jsonl (1-based). Default: 1.'
+          },
+          to_line: {
+            type: 'integer',
+            description: 'Last row to return from runs.jsonl (1-based, inclusive). Default: min(total, 50). Increase to read more rows.'
           }
         },
         required: []
@@ -948,7 +956,7 @@ PROBE SPEC $SEED RULE: In request_template, the seed placeholder must be the JSO
 
 PROBE SPEC PROMPT CYCLING: A spec may include an optional prompt_cycle field (array of non-empty strings). When present, each run picks prompt_cycle[i % length] as the action field, overriding request_template.action for that run only. Additionally, any template field containing the string value "$PROMPT" will be substituted with the same cycle value -- this is how WORLD_PROMPT is populated in localspace distribution probes (e.g. request_template: { "action": "$PROMPT", "WORLD_PROMPT": "$PROMPT" }). request_template.action remains valid as a fallback/default. The runner prints prompt=N/M "first 40 chars..." on each run line, making multi-biome 50-run baselines scannable. Use prompt_cycle when you want a single spec to rotate through multiple world contexts rather than authoring one spec per biome.
 
-PROBE RESULTS LOCATION: All probe run output is saved to tests/probe-results/ (created automatically). Each probe execution creates a timestamped subfolder named YYYY-MM-DD_HHmm_<spec-slug>/. The folder contains four files: (1) runs.jsonl -- one JSON line per run including success and error runs. Shape: {run, seed, prompt_label, metrics, warnings, error}. error is null on success runs. metrics is null on error runs. Every run appears as a row, so row count always equals runs_requested. (2) summary.json -- aggregate stats: spec_name, spec_slug, started_at, completed_at, runs_requested, runs_completed, hard_errors, soft_warnings_total, aggregate_warnings[], and metrics{} keyed by metric name with min/max/mean/stddev (and p10/p50/p90 for percentile_metrics). (3) console.txt -- full human-readable probe-runner output captured verbatim. (4) spec.snapshot.json -- the exact probe spec used for this run. When the developer says "I ran some probes", "analyze the results", "analyze the logs", "check the overnight run", or similar: call read_probe_results with no folder to list available result sets, identify the most recent relevant folder by spec-slug and timestamp, then read summary.json for aggregate stats. Read runs.jsonl only if per-run granularity is needed -- it can be very large for overnight 500-run jobs. The failure rate is hard_errors / runs_requested. A runs_completed < runs_requested means some runs failed -- check console.txt for the error messages.
+PROBE RESULTS LOCATION: All probe run output is saved to tests/probe-results/ (created automatically). Each probe execution creates a timestamped subfolder named YYYY-MM-DD_HHmm_<spec-slug>/. The folder contains five files: (1) runs.jsonl -- one JSON line per run including success and error runs. Shape: {run, seed, prompt_text, prompt_label, session_id, retries, site_id, site_name, expected_localspace_count, formula_match, localspace_detail, null_fields, metrics, warnings, error}. error is null on success rows. metrics is null on error rows. retries is 0 on clean runs and >0 when the runner retried a transient fill failure. Every run appears as a row. runs.jsonl can be large for 100+ run jobs -- use from_line/to_line params to paginate (default: first 50 rows). (2) errors.jsonl -- only hard-error rows (error != null). Always small regardless of run count. Preferred for failure forensics. Created empty even when there are no errors (absence of rows = no failures, not a missing feature). (3) summary.json -- aggregate stats: spec_name, spec_slug, started_at, completed_at, runs_requested, runs_completed, hard_errors, hard_error_rows (full row objects for all failures -- use this for failure forensics without reading runs.jsonl), soft_warnings_total, aggregate_warnings[], and metrics{} keyed by metric name with min/max/mean/stddev (and p10/p50/p90 for percentile_metrics). (4) console.txt -- full human-readable probe-runner output captured verbatim. (5) spec.snapshot.json -- the exact probe spec used for this run. FAILURE FORENSICS WORKFLOW: read summary.json first -- hard_error_rows contains all failed rows inline. If you need more context, read errors.jsonl (always small). Only read runs.jsonl for per-run success-row analysis. The failure rate is hard_errors / runs_requested. A runs_completed < runs_requested means some runs failed hard.
 
 FILE EDITING TOOLS: Two general-purpose file-writing tools are available for making changes to files in the Game-main directory: write_file and patch_file. These complement the specialized create_scenario_file and create_probe_spec tools, which include domain-specific validation and remain the preferred choice for scenarios and probes.
 
@@ -1484,10 +1492,16 @@ async function executeToolCall(name, args) {
       try { _content = fs.readFileSync(_filePath, 'utf8'); } catch (e) {
         return JSON.stringify({ error: 'file_not_found', path: _filePath, detail: e.message });
       }
-      // For runs.jsonl return as-is (may be large); others parse+reserialize for structure
+      // For runs.jsonl: paginate by line to avoid truncation on large jobs
       if (_file === 'runs.jsonl') {
-        if (_content.length > 32000) return _content.slice(0, 32000) + '\n[TRUNCATED — runs.jsonl exceeds 32000 chars. Analyze summary.json instead for aggregate stats.]';
-        return _content;
+        const _lines    = _content.split('\n').filter(l => l.trim() !== '');
+        const _total    = _lines.length;
+        const _fromLine = Math.max(1, parseInt(args.from_line, 10) || 1);
+        const _toLine   = Math.min(_total, parseInt(args.to_line, 10) || Math.min(_total, 50));
+        const _page     = _lines.slice(_fromLine - 1, _toLine).join('\n');
+        const _header   = `[runs.jsonl: showing rows ${_fromLine}–${_toLine} of ${_total} total]\n`;
+        const _out      = _header + _page;
+        return _out.length > 60000 ? _out.slice(0, 60000) + '\n[TRUNCATED — use narrower from_line/to_line range]' : _out;
       }
       try {
         const _parsed = JSON.parse(_content);
