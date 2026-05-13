@@ -920,9 +920,45 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     const cleaned = (raw || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
     extracted = JSON.parse(cleaned);
   } catch (parseErr) {
-    console.error('[CB] Phase B JSON parse failed:', parseErr.message, '| raw:', (raw || '').slice(0, 200));
-    _setDiag({ error: 'json_parse_failed', raw: (raw || '').slice(0, 500), turn });
-    return null;
+    // Turn 1 founding extraction is uniquely critical — retry once before giving up
+    if (turn === 1) {
+      const _firstFailedRaw = (raw || '').slice(0, 500);
+      console.warn('[CB] Phase B JSON parse failed on Turn 1 — retrying once...', parseErr.message, '| raw:', _firstFailedRaw.slice(0, 200));
+      let _retryRaw = null;
+      try {
+        const _retryResp = await _makeExtractionCall();
+        _retryRaw = _retryResp?.data?.choices?.[0]?.message?.content || null;
+        const _retryCleaned = (_retryRaw || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+        extracted = JSON.parse(_retryCleaned);
+        console.log('[CB] Phase B Turn 1 retry parse succeeded.');
+      } catch (retryErr) {
+        if (retryErr instanceof SyntaxError) {
+          // Both attempts produced malformed JSON — preserve both raw snippets for diagnosis
+          console.error('[CB] Phase B Turn 1 retry also failed to parse:', retryErr.message);
+          _setDiag({
+            error: 'json_parse_failed_retry_exhausted',
+            raw_attempt_1: _firstFailedRaw,
+            raw_attempt_2: (_retryRaw || '').slice(0, 500),
+            turn
+          });
+        } else {
+          // Retry API call itself threw (network, timeout, etc.)
+          const _retryErrLabel = retryErr.code || retryErr.message;
+          console.error('[CB] Phase B Turn 1 retry API call failed:', _retryErrLabel);
+          _setDiag({
+            error: 'json_parse_failed_retry_api_error',
+            raw_attempt_1: _firstFailedRaw,
+            retry_error: _retryErrLabel,
+            turn
+          });
+        }
+        return null;
+      }
+    } else {
+      console.error('[CB] Phase B JSON parse failed:', parseErr.message, '| raw:', (raw || '').slice(0, 200));
+      _setDiag({ error: 'json_parse_failed', raw: (raw || '').slice(0, 500), turn });
+      return null;
+    }
   }
 
   // Validate top-level keys (watchpoint: do not let a collapsed schema slip through)

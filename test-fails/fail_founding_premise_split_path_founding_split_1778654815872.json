@@ -1,0 +1,72 @@
+{
+  "scenario": "founding_premise_split_path",
+  "label": "founding_split",
+  "action": "look around the room",
+  "sessionId": "1778654806503-6ojprl6sk",
+  "timestamp": "2026-05-13T06:46:55.873Z",
+  "failures": [
+    {
+      "rule": {
+        "op": "no_error"
+      },
+      "passed": false,
+      "expected": "no error",
+      "actual": "ls_fill_active_failed",
+      "evidence": "no error"
+    },
+    {
+      "rule": {
+        "path": "state.player.birth_record.canonical_name",
+        "op": "present"
+      },
+      "passed": false,
+      "expected": "present",
+      "evidence": "present"
+    },
+    {
+      "rule": {
+        "path": "state.player.birth_record.scenario_notes",
+        "op": "array_len_gt",
+        "value": 0
+      },
+      "passed": false,
+      "expected": "length > 0",
+      "actual": 0,
+      "evidence": "length=0"
+    },
+    {
+      "rule": {
+        "path": "state.player.birth_record.world_notes",
+        "op": "array_len_gt",
+        "value": 0
+      },
+      "passed": false,
+      "expected": "array at path"
+    }
+  ],
+  "response": {
+    "sessionId": "1778654806503-6ojprl6sk",
+    "error": "ls_fill_active_failed",
+    "narrative": "The location is coming into focus. Please try again.",
+    "diagnostics": {
+      "macro_biome": "coast",
+      "has_world_prompt": true,
+      "world_prompt_value": "Detected: coast",
+      "cells_generated": 16448,
+      "sample_cell_types": [
+        "plains_wildflower",
+        "tidepools",
+        "dunes_coastal",
+        "cliffs_coastal",
+        "meadow"
+      ],
+      "first_turn": false,
+      "position_macro": "(5,6)",
+      "position_local": "(97,85)",
+      "cell_type": "meadow",
+      "cell_subtype": "unknown",
+      "starting_location_hint": "port",
+      "turn_counter": 1
+    }
+  }
+}
