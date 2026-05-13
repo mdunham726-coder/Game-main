@@ -14,6 +14,8 @@ const https    = require('https');
 const readline = require('readline');
 const axios    = require('axios');
 const { spawn } = require('child_process');
+const fs   = require('fs');
+const path = require('path');
 
 // Dedicated HTTP agent for executeToolCall — keepAlive:false so each localhost
 // diagnostic request closes its socket immediately, preventing listener accumulation
@@ -31,7 +33,12 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.1.1';
+const MB_VERSION = '4.2.3';
+// MB v4.2.3: Patch — 4 spatial topology metrics added to probe framework. probe-metrics.js: added cell_occupancy_entropy (Shannon entropy of sites-per-cell distribution — key seed-sensitivity diagnostic), site_size_stddev (stddev of placed site sizes), community_ratio (fraction of is_community sites), isolated_cells_count (occupied cells with no 4-directional occupied neighbor). probe-runner.js: 4 new computeMetrics cases. worldgen-site-distribution-v3.probe.json: new spec with all 14 metrics + percentile_metrics on entropy/isolated. motherbrain.js: METRIC VOCABULARY updated to correct current names + new 4. MB_VERSION 4.2.2 -> 4.2.3.
+// MB v4.2.2: Patch — durable probe logging + read_probe_results tool. probe-runner.js: main() now writes 4 files to tests/probe-results/<timestamp>_<slug>/: runs.jsonl (all runs, error+success), summary.json (aggregate stats), console.txt (full output), spec.snapshot.json. writeConsole() helper owns all output (no monkey-patch). motherbrain.js: added fs+path requires; read_probe_results tool (list folders or read file); SESSION_FREE_TOOLS extended; executeToolCall handler with path traversal guard; PROBE RESULTS LOCATION paragraph in SYSTEM_PROMPT. MB_VERSION 4.2.1 -> 4.2.2.
+// MB v4.2.1 (May 12, 2026): Patch — prompt_cycle support in probe runner. probe-runner.js: validateSpec() validates prompt_cycle as non-empty string array; run loop overrides request_template.action per run with prompt_cycle[i % length]; [RUN N] line includes prompt=N/M "label..." for readable 50-run baselines. motherbrain.js: create_probe_spec spec param updated with prompt_cycle field docs; PROBE SPEC PROMPT CYCLING paragraph added to SYSTEM_PROMPT. Probe specs + source allowlist gaps closed: scripts/probe-runner.js + scripts/probe-metrics.js added to _SOURCE_ALLOWLIST; tests/probes/ added to search_source global sweep; $SEED rule documented in tool param and SYSTEM_PROMPT. MB_VERSION 4.2.0 -> 4.2.1.
+// MB v4.2.0 (May 12, 2026): Minor — Statistical probe doctrine. Added STATISTICAL PROBE SYSTEM paragraph to SYSTEM_PROMPT: measurement-vs-judgment separation (observe distributions, surface anomalies -- not declare pass/fail), PROBE vs SCENARIO distinction, metric vocabulary (10 approved names from probe-metrics.js), noise discipline rule (prefer few high-signal metrics), refinement ladder policy (1/5/10/50+ runs with explicit threshold discipline per rung), anti-coupling rule (prefer existing engine outputs over new instrumentation), probe authoring workflow (no autonomous creation). MB_VERSION 4.1.2 -> 4.2.0.
+// MB v4.1.2 (May 12, 2026): Patch — Probe framework. Added probe-runner.js (generic stat probe engine), probe-metrics.js (metric enum + config requirements single source), worldgen-sites.probe.json (first probe spec). Added create_probe_spec tool to MB (writes .probe.json to tests/probes/, validates metric enum, metric config requirements, lifecycle, warning keys). Extended run_validation with probe_worldgen_sites_10, probe_worldgen_sites_50 named tasks and dynamic run_probe task (any .probe.json, spec_path+runs params, dynamic timeout). Added create_probe_spec to SESSION_FREE_TOOLS. MB can now author new statistical probe specs without human code changes. MB_VERSION 4.1.1 -> 4.1.2.
 // MB v4.1.1 (May 12, 2026): Patch — call timing in stats footer. Added elapsed wall-clock time and round count to the bottom stats line. Captures Date.now() before the DeepSeek loop; stores elapsed_ms and rounds in _mbCallStats; displays as '14.3s' (or '1m 4.3s') appended to the 'this call:' line. Round count shown only when >1 (multi-tool-call exchanges). MB_VERSION 4.1.0 -> 4.1.1.
 // MB v4.1.0 (May 12, 2026): Minor — Phase B: create_scenario_file tool. MB can now write new QA scenario JSON files to tests/scenarios/. Probe-first stability enforcement with explicit audit trail (requested_stability/written_stability/stability_forced). Signal-quality validation: duplicate assertion detection, low_signal warning for all-no_error scenarios. Name conflict hard block (scans existing files). Epistemic category field with enum validation (deterministic_reproduction/exploratory/ontology_stress/parser_fuzz/narrative_continuity/authority_test). No overwrite path. Added to MB_TOOLS, SESSION_FREE_TOOLS, executeToolCall branch, SCENARIO AUTHORING section in SYSTEM_PROMPT. MB_VERSION 4.0.16 -> 4.1.0. (New capability area: write authority — MB transitions from read-only analyst to regression-builder.)
 // MB v4.0.16 (May 12, 2026): [superseded by 4.1.0 — same change set, minor bump applied retroactively]
@@ -276,13 +283,13 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'get_source_slice',
-      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. Also allowed: tests/scenarios/<name>.json — use the full relative path (e.g. tests/scenarios/arbiter_basic.json), NOT the bare filename. Returns: file, from, to, total_lines, lines (the raw source text).',
+      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. Also allowed: tests/scenarios/<name>.json and tests/probes/<name>.probe.json — use the full relative path (e.g. tests/scenarios/arbiter_basic.json or tests/probes/worldgen-sites.probe.json), NOT the bare filename. Returns: file, from, to, total_lines, lines (the raw source text).',
       parameters: {
         type: 'object',
         properties: {
           file: {
             type: 'string',
-            description: 'For source files: filename only (no path) — e.g. index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. For scenario JSON files: use the FULL RELATIVE PATH — e.g. tests/scenarios/arbiter_basic.json. Do NOT use a bare filename like arbiter_basic.json — it will be rejected.'
+            description: 'For source files: filename only (no path) — e.g. index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. For scripts/ files: use the FULL RELATIVE PATH — e.g. scripts/probe-runner.js or scripts/probe-metrics.js. For scenario JSON files: use the FULL RELATIVE PATH — e.g. tests/scenarios/arbiter_basic.json. For probe specs: use the FULL RELATIVE PATH — e.g. tests/probes/worldgen-sites.probe.json. Do NOT use a bare filename — it will be rejected.'
           },
           from: {
             type: 'integer',
@@ -451,7 +458,7 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'run_validation',
-      description: 'Run a predefined validation task in the Game-main directory. Each task maps to a fixed command — no freeform input. Use for syntax checking files and running specific harness scenarios directly via CLI (no server endpoint required). Returns stdout, stderr, exit_code.',
+      description: 'Run a predefined validation task in the Game-main directory. Each task maps to a fixed command — no freeform input. Use for syntax checking files, running harness scenarios, and running statistical probe specs. Returns stdout, stderr, exit_code.',
       parameters: {
         type: 'object',
         properties: {
@@ -465,12 +472,44 @@ const MB_TOOLS = [
               'harness_arbiter_basic',
               'harness_founding_premise_correctness',
               'harness_site_entry_basic',
-              'harness_sweep_a'
+              'harness_sweep_a',
+              'probe_worldgen_sites_10',
+              'probe_worldgen_sites_50',
+              'run_probe'
             ],
-            description: 'node_check_index=syntax check index.js; node_check_harness=syntax check test-harness.js; node_check_mother=syntax check motherbrain.js; harness_<name>=run that scenario solo with --yes; harness_sweep_a=run all sweep:A scenarios via --sweep A --yes'
+            description: 'node_check_*=syntax check; harness_<name>=run scenario; harness_sweep_a=run sweep A; probe_worldgen_sites_10/50=worldgen distribution probe (10 or 50 runs); run_probe=run any .probe.json spec (requires spec_path param)'
+          },
+          spec_path: {
+            type: 'string',
+            description: 'Required when task=run_probe. Path to .probe.json file relative to Game-main root. Example: "tests/probes/worldgen-sites.probe.json". No .. allowed.'
+          },
+          runs: {
+            type: 'integer',
+            description: 'Number of probe runs. Used with run_probe task only. Default: 10.'
           }
         },
         required: ['task']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_probe_spec',
+      description: 'Write a new statistical probe spec (.probe.json) to tests/probes/. Probe specs define what to measure: endpoint, request template, extract path, metric names, warning thresholds. The probe-runner.js script owns all metric calculation — you declare metric names from the approved enum only, no expressions. Requires request_lifecycle=session_per_run (only supported value). Metrics that need spec-level config (e.g. edge_concentration_pct requires edge_topology.radius and edge_topology.anchor_path) will be rejected if the required config is missing. No overwrite — existing files are hard-blocked.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filename: {
+            type: 'string',
+            description: 'Filename without extension or path. Alphanumeric, underscores, hyphens only. Max 80 chars. Will be written to tests/probes/<filename>.probe.json'
+          },
+          spec: {
+            type: 'object',
+            description: 'Full probe spec object. Required fields: name (string), endpoint (string), method (string), extract (dot-path string), request_lifecycle (must be "session_per_run"), request_template (object — the seed placeholder must appear as the JSON string value "$SEED" with quotes, e.g. {"WORLD_SEED": "$SEED"}; the runner replaces the quoted string "$SEED" with the numeric seed integer at runtime — NEVER use $SEED as a bare unquoted JSON token, that is not valid JSON and will crash the tool call), metrics (non-empty array of known metric names). Optional: description, edge_topology (object with radius+anchor_path, required when using edge_concentration_pct), expected_runtime_ms_per_run (int), percentile_metrics (array), warnings (object keyed by metric name), prompt_cycle (array of non-empty strings — if present, each run uses prompt_cycle[i % length] as the action field, overriding request_template.action for that run; request_template.action remains valid as a fallback/default and both may coexist in the same spec).'
+          }
+        },
+        required: ['filename', 'spec']
       }
     }
   },
@@ -492,6 +531,28 @@ const MB_TOOLS = [
           }
         },
         required: ['filename', 'scenario']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_probe_results',
+      description: 'Read probe run output from tests/probe-results/. With no folder param: lists available result folders sorted newest-first (use this first to identify which run to analyze). With folder specified: reads one file from that folder (default: summary.json). Use this when the developer says "analyze the results", "I ran some probes", "check the logs", or similar — do not wait to be asked for the tool name. Start with no folder to list available result sets, identify the most recent relevant folder by slug and timestamp, then read summary.json for aggregate stats. For per-run detail on large jobs (500+ runs), runs.jsonl can be large — prefer summary.json for initial analysis and only read runs.jsonl if per-run granularity is needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          folder: {
+            type: 'string',
+            description: 'Name of the result subfolder (e.g. "2026-05-12_0315_worldgen-sites"). Omit to list all available result folders sorted newest-first.'
+          },
+          file: {
+            type: 'string',
+            enum: ['summary.json', 'runs.jsonl', 'console.txt', 'spec.snapshot.json'],
+            description: 'Which file to read from the folder. Default: summary.json.'
+          }
+        },
+        required: []
       }
     }
   }
@@ -643,7 +704,7 @@ REALITY CHECK (Arbiter Phase 0): Before each narration turn (except Turn 1 and s
 
 7. WORLD SITE REGISTRY QUERY: GET /diagnostics/sites-query — returns filled site slots across all loaded/generated cells. Optional params: mx+my (specific macro cell), radius (macro-cell radius around player, toroidal), filled_only (default true). Results include site_id, name, coordinates, enterable, is_filled, interior_state, distance_from_player, sorted nearest first. Use this when the WORLD SITES SUMMARY in context is insufficient — e.g., for exact details, a specific macro cell, or a radius search. NOTE: like the summary, this only covers loaded cells. The response includes loaded_cells_only:true — always reflect this limitation when answering.
 
-8. SOURCE SLICE READER (targeted verification only): GET /diagnostics/source — returns a bounded line-range slice of a game source file. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing — use only when you know approximately where to look. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. Also allowed: scenario JSON files under tests/scenarios/ — use the full relative path as the file param (e.g. tests/scenarios/arbiter_basic.json). Bare filename (arbiter_basic.json) will be rejected. Returns: file, from, to, total_lines, lines (raw source). Results are Tier 3 — authoritative for implementation truth, but static (source code, not runtime state).
+8. SOURCE SLICE READER (targeted verification only): GET /diagnostics/source — returns a bounded line-range slice of a game source file. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing — use only when you know approximately where to look. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, diagnostics.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. Also allowed: scenario JSON files under tests/scenarios/ and probe specs under tests/probes/ — use the full relative path as the file param (e.g. tests/scenarios/arbiter_basic.json or tests/probes/worldgen-sites.probe.json). Bare filename will be rejected. Returns: file, from, to, total_lines, lines (raw source). Results are Tier 3 — authoritative for implementation truth, but static (source code, not runtime state).
 
 9. SOURCE SEARCH (code discovery): GET /diagnostics/source-search — literal string search across allowlisted source files. Use this when you do not know which file or line number a symbol lives in. Returns up to 20 matches each with file, line_number, matching line, and 2 lines of context (context_before / context_after). The intended workflow is: search_source to discover location → get_source_slice to read surrounding code. Use specific identifiers as queries — function names, variable names, error code strings, string literals. Scope to a specific file with file= when possible (faster, less noise). Do NOT use short or common tokens as queries. Minimum 3 characters. Results are Tier 3 — static implementation truth, not runtime state. Allowed files include ObjectHelper.js (v1.84.54).
 
@@ -730,6 +791,7 @@ SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it
   Map.html — world map viewer: macro-grid visualization, zoom/pan, site markers, player position | read when the map renders incorrectly or map navigation is broken
   test-harness.js — QA harness: BUILTIN_SCENARIOS definitions, runScenario() runner, GameClient (narrate/getSitePlacementLog/getContext), evalRule() assertion operators, SCENARIO_REGISTRY build (builtins + auto-loaded JSON); read when investigating scenario definitions, assertion operators, harness behavior, or the unified registry
   tests/scenarios/<name>.json — individual external scenario files (e.g. tests/scenarios/arbiter_basic.json); use get_source_slice with the relative path as the file param; read when you need to inspect a specific scenario's world_prompt, turns, assertions, or stability classification
+  tests/probes/<name>.probe.json — statistical probe specs (e.g. tests/probes/worldgen-sites.probe.json); use get_source_slice with the relative path as the file param; read when you need to inspect a probe's endpoint, metric config, warning thresholds, or run parameters
 
 These are your only tools. You cannot execute code, modify engine state, or issue commands to the game. You can only reason, analyze, and respond.
 
@@ -794,7 +856,27 @@ CATEGORY FIELD: Provide a category from the enum when you know the epistemic typ
 
 WARNINGS: Check the warnings array in the response. low_signal means every assertion in the scenario is no_error only -- the test cannot catch behavioral regressions, only crashes. duplicate_assertion means a turn has redundant assertions. Both are soft (the file is still written) but are signals to strengthen the test before considering promotion.
 
-PROMOTION WORKFLOW: After creating a scenario, call harness_list_scenarios to confirm it appeared in the registry, then run it. Study the output. If it passes deterministically across multiple runs, flag it to the developer as a candidate for promotion to stable. You do NOT promote it yourself -- probe to stable requires the developer to manually update stability in the JSON file. You may not call create_scenario_file with the same name to overwrite; revision requires a new filename.`;
+PROMOTION WORKFLOW: After creating a scenario, call harness_list_scenarios to confirm it appeared in the registry, then run it. Study the output. If it passes deterministically across multiple runs, flag it to the developer as a candidate for promotion to stable. You do NOT promote it yourself -- probe to stable requires the developer to manually update stability in the JSON file. You may not call create_scenario_file with the same name to overwrite; revision requires a new filename.
+
+STATISTICAL PROBE SYSTEM: Probe specs (.probe.json in tests/probes/) are population-level measurement tools, not pass/fail assertions. A probe's primary job is to observe distributions, summarize variance, and surface anomalies -- not to declare success or failure. Think in terms of "what does the world look like across populations?" rather than "did this pass?". A single suspicious run is evidence, not proof. Variance across runs is expected and normal. Outliers are expected. Do not overreact to a small sample.
+
+PROBE vs SCENARIO: Use a harness scenario when the question is deterministic ("did turn N produce output Y?"). Use a probe when the question is distributional ("is metric X within an expected range across N runs?"). The two layers are complementary -- do not collapse probes into scenario-style assertions or treat scenarios as statistical tools.
+
+METRIC VOCABULARY: The approved metric names (from scripts/probe-metrics.js) are: total_sites_placed, total_cells_evaluated, populated_cells_count, pct_populated_cells, empty_cells_count, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct, cell_occupancy_entropy, site_size_stddev, community_ratio, isolated_cells_count. Use only these names -- the runner hard-errors on unknown metrics. edge_concentration_pct requires edge_topology.radius and edge_topology.anchor_path in the spec. Spatial topology metrics (cell_occupancy_entropy, isolated_cells_count, community_ratio, site_size_stddev) require no spec config -- they are self-contained from site_placement_log data. cell_occupancy_entropy is the primary seed-sensitivity diagnostic: if it varies intra-biome across seeds, seed affects placement geometry; if invariant, placement is fully determined by biome params alone.
+
+NOISE DISCIPLINE: Prefer a small number of high-signal metrics over many weak metrics. Every metric added to a probe spec must justify its diagnostic value: what failure mode does it reveal that no existing metric already covers? Probe specs that accumulate metrics without clear diagnostic purpose become noise. Fewer, sharper metrics are better than many vague ones.
+
+REFINEMENT LADDER: Probe specs mature through a refinement ladder -- do not skip rungs. 1 run: structural sanity (does the spec parse, does the endpoint respond, do the extract paths resolve?). 5 runs: readability and metric usefulness (are the values meaningful, are units correct, is variance reasonable?). 10 runs: preliminary distribution shape (rough sense of min/max/mean). 50+ runs: baseline characterization (reliable stddev and percentiles, threshold candidates emerge). Strict warning thresholds belong only at the baseline-characterization rung or later -- do not add tight thresholds to a spec that has not been characterized yet.
+
+ANTI-COUPLING RULE: Probe specs should prefer existing engine outputs and diagnostic fields rather than requesting new engine-owned fields or bespoke instrumentation. If a measurement can be derived from data already present in the response (site_placement_log, worldgen_log, narration_debug, etc.), derive it there. Request new engine instrumentation only when the measurement is structurally impossible from existing output. This preserves the minimal-engine-touch principle.
+
+PROBE AUTHORING WORKFLOW: Use create_probe_spec only when the developer asks or explicitly approves. Start with run_probe at low run counts (1-5) to verify structural sanity before escalating. Review metric values for plausibility and variance reasonableness before moving to probe_worldgen_sites_10 or probe_worldgen_sites_50. Flag unusual distributions to the developer as observations -- do not independently tighten warning thresholds without developer review.
+
+PROBE SPEC $SEED RULE: In request_template, the seed placeholder must be the JSON string value "$SEED" — quoted, e.g. {"WORLD_SEED": "$SEED"}. The runner replaces the quoted string "$SEED" (7 chars including quotes) with the bare numeric integer at runtime. NEVER write $SEED as a bare unquoted token — unquoted $SEED is not valid JSON and will crash the tool call before the runner ever executes.
+
+PROBE SPEC PROMPT CYCLING: A spec may include an optional prompt_cycle field (array of non-empty strings). When present, each run picks prompt_cycle[i % length] as the action field, overriding request_template.action for that run only. request_template.action remains valid as a fallback/default and both may coexist in the same spec. The runner prints prompt=N/M "first 40 chars..." on each run line, making multi-biome 50-run baselines scannable. Use prompt_cycle when you want a single spec to rotate through multiple world contexts rather than authoring one spec per biome.
+
+PROBE RESULTS LOCATION: All probe run output is saved to tests/probe-results/ (created automatically). Each probe execution creates a timestamped subfolder named YYYY-MM-DD_HHmm_<spec-slug>/. The folder contains four files: (1) runs.jsonl -- one JSON line per run including success and error runs. Shape: {run, seed, prompt_label, metrics, warnings, error}. error is null on success runs. metrics is null on error runs. Every run appears as a row, so row count always equals runs_requested. (2) summary.json -- aggregate stats: spec_name, spec_slug, started_at, completed_at, runs_requested, runs_completed, hard_errors, soft_warnings_total, aggregate_warnings[], and metrics{} keyed by metric name with min/max/mean/stddev (and p10/p50/p90 for percentile_metrics). (3) console.txt -- full human-readable probe-runner output captured verbatim. (4) spec.snapshot.json -- the exact probe spec used for this run. When the developer says "I ran some probes", "analyze the results", "analyze the logs", "check the overnight run", or similar: call read_probe_results with no folder to list available result sets, identify the most recent relevant folder by spec-slug and timestamp, then read summary.json for aggregate stats. Read runs.jsonl only if per-run granularity is needed -- it can be very large for overnight 500-run jobs. The failure rate is hard_errors / runs_requested. A runs_completed < runs_requested means some runs failed -- check console.txt for the error messages.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -902,7 +984,7 @@ function formatTurnBuffer() {
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
-  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file'];
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
@@ -1025,6 +1107,8 @@ async function executeToolCall(name, args) {
         harness_founding_premise_correctness:   'node test-harness.js --scenario founding_premise_correctness --yes',
         harness_site_entry_basic:               'node test-harness.js --scenario site_entry_basic --yes',
         harness_sweep_a:                        'node test-harness.js --sweep A --yes',
+        probe_worldgen_sites_10:                'node scripts/probe-runner.js --spec tests/probes/worldgen-sites.probe.json --runs 10',
+        probe_worldgen_sites_50:                'node scripts/probe-runner.js --spec tests/probes/worldgen-sites.probe.json --runs 50',
       };
       const _timeoutMap = {
         node_check_index:                       15000,
@@ -1035,8 +1119,38 @@ async function executeToolCall(name, args) {
         harness_founding_premise_correctness:   90000,
         harness_site_entry_basic:               90000,
         harness_sweep_a:                        300000,
+        probe_worldgen_sites_10:                600000,
+        probe_worldgen_sites_50:                2400000,
       };
       const _task = args.task || '';
+      // run_probe: dynamic path — validate spec_path, load spec for timeout, build command
+      if (_task === 'run_probe') {
+        const _specPath = (args.spec_path || '').trim();
+        if (!_specPath) return JSON.stringify({ error: 'run_probe requires spec_path parameter' });
+        if (_specPath.includes('..') || !/^[a-z0-9_\-\/\.]+\.probe\.json$/i.test(_specPath)) {
+          return JSON.stringify({ error: 'invalid_spec_path', detail: 'Path must be relative, no .., must end in .probe.json' });
+        }
+        const _specFull = require('path').join('c:\\Users\\daddy\\Desktop\\Game-main', _specPath);
+        let _probeSpec = {};
+        try { _probeSpec = JSON.parse(require('fs').readFileSync(_specFull, 'utf8')); } catch (_e) {
+          return JSON.stringify({ error: 'spec_read_failed', detail: _e.message });
+        }
+        const _probeRuns = parseInt(args.runs, 10) || 10;
+        const _perRunMs  = (_probeSpec.expected_runtime_ms_per_run || 120000);
+        const _probeTimeout = Math.min(_probeRuns * _perRunMs, 3600000);
+        const _probeCmd = `node scripts/probe-runner.js --spec "${_specPath}" --runs ${_probeRuns}`;
+        printLine(`${DIM}[run_validation] ${_probeCmd}${R}`);
+        const { spawn } = require('child_process');
+        return await new Promise((resolve) => {
+          let _stdout = '', _stderr = '', _timedOut = false;
+          const _child = spawn(_probeCmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', shell: true, env: { ...process.env } });
+          const _timer = setTimeout(() => { _timedOut = true; _child.kill('SIGKILL'); }, _probeTimeout);
+          _child.stdout.on('data', (chunk) => { const _t = chunk.toString(); _stdout += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  ${l}${R}`); }); });
+          _child.stderr.on('data', (chunk) => { const _t = chunk.toString(); _stderr += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  [stderr] ${l}${R}`); }); });
+          _child.on('close', (code) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, runs: _probeRuns, stdout: _stdout, stderr: _timedOut ? 'ETIMEDOUT' : _stderr, exit_code: _timedOut ? 1 : (code ?? 0) })); });
+          _child.on('error', (err) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, stdout: _stdout, stderr: err.message, exit_code: 1 })); });
+        });
+      }
       if (!_taskMap[_task]) return JSON.stringify({ error: 'unknown_task', valid_tasks: Object.keys(_taskMap) });
       const _cmd = _taskMap[_task];
       const _timeout = _timeoutMap[_task] || 120000;
@@ -1163,6 +1277,120 @@ async function executeToolCall(name, args) {
         turns_count: _sc.turns.length,
         warnings: _warnings
       });
+    } else if (name === 'create_probe_spec') {
+      const _fs   = require('fs');
+      const _path = require('path');
+      const { METRIC_NAMES: _MN, METRIC_CONFIG_REQUIREMENTS: _MCR } = require('./scripts/probe-metrics');
+      const _PROBES_DIR = _path.join('c:\\Users\\daddy\\Desktop\\Game-main', 'tests', 'probes');
+      const _SUPPORTED_LIFECYCLES = ['session_per_run'];
+
+      // --- filename validation ---
+      let _pfn = (args.filename || '').replace(/\.probe\.json$/i, '').replace(/\.json$/i, '');
+      if (!_pfn || _pfn.length > 80 || !/^[a-z0-9_-]+$/i.test(_pfn) || _pfn.includes('/') || _pfn.includes('\\') || _pfn.includes('..')) {
+        return JSON.stringify({ error: 'invalid_filename', detail: 'Filename must be alphanumeric/underscore/hyphen only, no path separators or .., max 80 chars.' });
+      }
+      const _pfPath = _path.join(_PROBES_DIR, _pfn + '.probe.json');
+
+      // --- no overwrite ---
+      if (_fs.existsSync(_pfPath)) {
+        return JSON.stringify({ error: 'file_exists', path: _pfPath, detail: 'File already exists. Use a new filename; humans consolidate.' });
+      }
+
+      // --- spec extraction ---
+      const _sp = args.spec;
+      if (!_sp || typeof _sp !== 'object') return JSON.stringify({ error: 'invalid_spec', detail: 'spec must be an object.' });
+
+      // --- required fields ---
+      const _reqFields = ['name', 'endpoint', 'method', 'extract', 'request_lifecycle', 'metrics'];
+      for (const _rf of _reqFields) {
+        if (!_sp[_rf]) return JSON.stringify({ error: 'missing_required_field', field: _rf });
+      }
+      if (!_SUPPORTED_LIFECYCLES.includes(_sp.request_lifecycle)) {
+        return JSON.stringify({ error: 'unsupported_request_lifecycle', value: _sp.request_lifecycle, supported: _SUPPORTED_LIFECYCLES });
+      }
+      if (!Array.isArray(_sp.metrics) || _sp.metrics.length === 0) {
+        return JSON.stringify({ error: 'invalid_metrics', detail: 'metrics must be a non-empty array.' });
+      }
+
+      // --- metric enum + config requirement validation ---
+      for (const _m of _sp.metrics) {
+        if (!_MN.includes(_m)) {
+          return JSON.stringify({ error: 'unknown_metric', metric: _m, known_metrics: _MN });
+        }
+        const _required = _MCR[_m] || [];
+        for (const _dotPath of _required) {
+          // dot-path traversal
+          const _val = _dotPath.split('.').reduce((cur, k) => (cur != null ? cur[k] : undefined), _sp);
+          if (_val == null) {
+            return JSON.stringify({ error: 'missing_metric_config', metric: _m, required: _dotPath, detail: `Metric "${_m}" requires spec field "${_dotPath}"` });
+          }
+        }
+      }
+
+      // --- warnings key validation ---
+      if (_sp.warnings) {
+        for (const _wk of Object.keys(_sp.warnings)) {
+          if (!_MN.includes(_wk)) {
+            return JSON.stringify({ error: 'unknown_metric_in_warnings', metric: _wk, detail: `warnings references unknown metric "${_wk}"` });
+          }
+        }
+      }
+
+      // --- ensure probes dir exists ---
+      try { if (!_fs.existsSync(_PROBES_DIR)) _fs.mkdirSync(_PROBES_DIR, { recursive: true }); } catch (_e) {}
+
+      // --- write ---
+      try {
+        _fs.writeFileSync(_pfPath, JSON.stringify(_sp, null, 2), 'utf8');
+      } catch (_werr) {
+        return JSON.stringify({ error: 'write_error', detail: _werr.message });
+      }
+
+      return JSON.stringify({
+        written: true,
+        path: _pfPath,
+        filename: _pfn + '.probe.json',
+        metrics_count: _sp.metrics.length,
+        request_lifecycle: _sp.request_lifecycle
+      });
+    } else if (name === 'read_probe_results') {
+      const _prDir = path.resolve(process.cwd(), 'tests', 'probe-results');
+      if (!args.folder) {
+        // List available result folders sorted newest-first
+        let _entries;
+        try {
+          _entries = fs.readdirSync(_prDir).filter(f => {
+            try { return fs.statSync(path.join(_prDir, f)).isDirectory(); } catch { return false; }
+          }).sort().reverse();
+        } catch (e) {
+          return JSON.stringify({ error: 'probe_results_dir_unreadable', detail: e.message, path: _prDir });
+        }
+        return JSON.stringify({ available_folders: _entries, count: _entries.length, path: _prDir });
+      }
+      // Path traversal guard
+      const _targetDir  = path.resolve(_prDir, args.folder);
+      if (!_targetDir.startsWith(_prDir + path.sep) && _targetDir !== _prDir) {
+        return JSON.stringify({ error: 'invalid_folder', detail: 'Folder must be a direct subfolder of tests/probe-results/' });
+      }
+      const _file = args.file || 'summary.json';
+      const _filePath = path.join(_targetDir, _file);
+      let _content;
+      try { _content = fs.readFileSync(_filePath, 'utf8'); } catch (e) {
+        return JSON.stringify({ error: 'file_not_found', path: _filePath, detail: e.message });
+      }
+      // For runs.jsonl return as-is (may be large); others parse+reserialize for structure
+      if (_file === 'runs.jsonl') {
+        if (_content.length > 32000) return _content.slice(0, 32000) + '\n[TRUNCATED — runs.jsonl exceeds 32000 chars. Analyze summary.json instead for aggregate stats.]';
+        return _content;
+      }
+      try {
+        const _parsed = JSON.parse(_content);
+        const _raw = JSON.stringify(_parsed, null, 2);
+        if (_raw.length > 32000) return _raw.slice(0, 32000) + '\n[TRUNCATED]';
+        return _raw;
+      } catch {
+        return _content.slice(0, 32000);
+      }
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }
@@ -1673,6 +1901,82 @@ function banner() {
   process.stdout.write(d('  Type a question and press Enter. Type /clear to reset conversation. Ctrl+C to exit.\n'));
   process.stdout.write('\n');
 }
+
+// ── Crash reporters ────────────────────────────────────────────────────────────
+function _reportCrash(type, err) {
+  const line  = '═'.repeat(W());
+  const msg   = err?.message || String(err);
+  const stack = err?.stack   || '';
+
+  // Extract all app-code frames (skip Node internals / node_modules)
+  const appFrames = stack.split('\n')
+    .filter(l => l.includes('    at ') && l.includes('Game-main') && !l.includes('node_modules'))
+    .map(l => l.trim());
+  const appFrame = appFrames[0] || null;
+
+  // Context snapshot
+  const turn     = _turnBuffer.length ? _turnBuffer[_turnBuffer.length - 1]?.turnNumber ?? '?' : 'none';
+  const session  = _activeSessionId || 'none';
+  const histLen  = _history.length;
+
+  process.stdout.write('\n');
+  process.stdout.write(`${RED}${line}${R}\n`);
+  process.stdout.write(`${RED}  MOTHER BRAIN CRASHED  --  ${type}${R}\n`);
+  process.stdout.write(`${RED}${line}${R}\n`);
+  process.stdout.write(`${RED}  Error   : ${msg}${R}\n`);
+  if (appFrames.length) {
+    appFrames.forEach(f => process.stdout.write(`${AMB}  Stack   : ${f}${R}\n`));
+  } else if (stack) {
+    stack.split('\n').slice(0, 8).forEach(f => process.stdout.write(`${AMB}  Stack   : ${f.trim()}${R}\n`));
+  }
+  process.stdout.write(`${DIM}  Session : ${session}  |  last turn : T-${turn}  |  history : ${histLen} msgs${R}\n`);
+  process.stdout.write(`${DIM}  Restart : node motherbrain.js${R}\n`);
+
+  // Write crash to file synchronously — survives window close
+  try {
+    const _crashTs   = new Date().toISOString().replace(/[:.]/g, '-');
+    const _crashPath = require('path').join('C:\\Users\\daddy\\Desktop\\Game-main\\logs', `mb-crash-${_crashTs}.txt`);
+    const _crashText = [
+      `MOTHER BRAIN CRASH REPORT`,
+      `Type    : ${type}`,
+      `Error   : ${msg}`,
+      `Session : ${session}  |  last turn : T-${turn}  |  history : ${histLen} msgs`,
+      `Version : ${MB_VERSION}`,
+      ``,
+      `Full stack:`,
+      stack || '(no stack)',
+    ].join('\n');
+    require('fs').writeFileSync(_crashPath, _crashText, 'utf8');
+    process.stdout.write(`${DIM}  Log     : ${_crashPath}${R}\n`);
+  } catch (_) {}
+
+  process.stdout.write(`${RED}${line}${R}\n`);
+
+  // Best-effort POST to server so crash shows in server CMD window
+  const diagKey = process.env.DIAGNOSTICS_KEY || '';
+  const body    = JSON.stringify({ type, message: msg, where: appFrame, stack, mb_version: MB_VERSION, session, last_turn: turn });
+  const opts    = {
+    hostname: HOST, port: PORT, path: '/diagnostics/mb-crash',
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-diagnostics-key': diagKey }
+  };
+  try {
+    const req = require('http').request(opts);
+    req.on('error', () => {});
+    req.write(body);
+    req.end();
+  } catch (_) {}
+}
+
+process.on('uncaughtException', (err) => {
+  _reportCrash('uncaughtException', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  _reportCrash('unhandledRejection', reason instanceof Error ? reason : new Error(String(reason)));
+  process.exit(1);
+});
 
 // ── Boot ───────────────────────────────────────────────────────────────────────
 process.stdout.write(`\x1b]0;MOTHER BRAIN v${MB_VERSION}\x07`);

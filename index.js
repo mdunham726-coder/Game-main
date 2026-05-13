@@ -5015,6 +5015,24 @@ app.get('/ping', (req, res) => {
   res.json({ ok: true });
 });
 
+// Mother Brain crash reporter — logs crash to server console so it's visible in the server CMD window
+app.post('/diagnostics/mb-crash', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'diagnostics_disabled' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  const { type, message, where, stack, mb_version, session, last_turn } = req.body || {};
+  console.error(`\n[MOTHER BRAIN CRASHED] ${type} -- v${mb_version} -- session=${session} turn=${last_turn}`);
+  console.error(`[MOTHER BRAIN CRASHED] ${message}`);
+  if (stack) {
+    const appLines = stack.split('\n')
+      .filter(l => l.includes('    at ') && l.includes('Game-main') && !l.includes('node_modules'));
+    const printLines = appLines.length ? appLines : stack.split('\n').slice(0, 8);
+    printLines.forEach(l => console.error(`[MOTHER BRAIN CRASHED]   ${l.trim()}`));
+  }
+  res.json({ logged: true });
+});
+
+
 app.post('/init', (req, res) => {
   const sessionId = req.headers['x-session-id'];
   const { sessionId: resolvedSessionId, gameState, isFirstTurn } = getSessionState(sessionId);
@@ -6385,6 +6403,7 @@ app.get('/logs/download/:sessionId', (req, res) => {
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`[ENV CHECK] DIAGNOSTICS_KEY present: ${!!process.env.DIAGNOSTICS_KEY}`);
+  console.log(`[ENV CHECK] DEEPSEEK_API_KEY present: ${!!process.env.DEEPSEEK_API_KEY}`);
   // Notify Mother Brain that Node is online. _lastDiagnosticPayload will replay
   // this to MB on its first connect even if MB starts after Node.
   emitDiagnostics({ type: 'lifecycle', event: 'online', ts: new Date().toISOString(), port: PORT, sessionId: _mbSessionId });
@@ -7386,13 +7405,16 @@ const _SOURCE_ALLOWLIST = new Set([
   'diagnostics.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js',  // v1.84.54
   'cbpanel.js', 'npcpanel.js', 'sitelens.js', 'motherwatch.js',              // v1.85.1
   'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
-  'test-harness.js'                                                            // v1.85.53
+  'test-harness.js',                                                           // v1.85.53
+  'scripts/probe-runner.js', 'scripts/probe-metrics.js'                       // v1.85.75
 ]);
 // Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
-// Pattern: single path segment under tests/scenarios/, alphanumeric/underscore/hyphen name, .json only.
+// OR any probe spec: tests/probes/<name>.probe.json
+// Pattern: single path segment under tests/scenarios/ or tests/probes/, alphanumeric/underscore/hyphen name, .json only.
 function _isSourceAllowed(file) {
   if (_SOURCE_ALLOWLIST.has(file)) return true;
   if (/^tests\/scenarios\/[a-z0-9_-]+\.json$/i.test(file)) return true;
+  if (/^tests\/probes\/[a-z0-9_-]+\.probe\.json$/i.test(file)) return true;
   return false;
 }
 app.get('/diagnostics/source', (req, res) => {
@@ -7455,7 +7477,21 @@ app.get('/diagnostics/source-search', (req, res) => {
       return res.status(403).json({ error: 'not_allowed', message: `${fileParam} is not in the source allowlist.` });
     }
   }
-  const filesToSearch = fileParam ? [fileParam] : [..._SOURCE_ALLOWLIST];
+  const filesToSearch = fileParam ? [fileParam] : (() => {
+    const list = [..._SOURCE_ALLOWLIST];
+    // Also enumerate tests/scenarios/*.json and tests/probes/*.probe.json for global sweeps
+    for (const dir of ['tests/scenarios', 'tests/probes']) {
+      try {
+        const dirPath = path.join(__dirname, dir);
+        for (const f of fs.readdirSync(dirPath)) {
+          if (/^[a-z0-9_-]+\.(?:probe\.)?json$/i.test(f)) {
+            list.push(`${dir}/${f}`);
+          }
+        }
+      } catch (_e) { /* dir may not exist */ }
+    }
+    return list;
+  })();
   const fileScope     = fileParam || 'all';
   const results       = [];
   const MAX_RESULTS   = 20;
