@@ -33,9 +33,12 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.2.5';
+const MB_VERSION = '5.0.1';
 // MB v4.2.3: Patch — 4 spatial topology metrics added to probe framework. probe-metrics.js: added cell_occupancy_entropy (Shannon entropy of sites-per-cell distribution — key seed-sensitivity diagnostic), site_size_stddev (stddev of placed site sizes), community_ratio (fraction of is_community sites), isolated_cells_count (occupied cells with no 4-directional occupied neighbor). probe-runner.js: 4 new computeMetrics cases. worldgen-site-distribution-v3.probe.json: new spec with all 14 metrics + percentile_metrics on entropy/isolated. motherbrain.js: METRIC VOCABULARY updated to correct current names + new 4. MB_VERSION 4.2.2 -> 4.2.3.
 // MB v4.2.2: Patch — durable probe logging + read_probe_results tool. probe-runner.js: main() now writes 4 files to tests/probe-results/<timestamp>_<slug>/: runs.jsonl (all runs, error+success), summary.json (aggregate stats), console.txt (full output), spec.snapshot.json. writeConsole() helper owns all output (no monkey-patch). motherbrain.js: added fs+path requires; read_probe_results tool (list folders or read file); SESSION_FREE_TOOLS extended; executeToolCall handler with path traversal guard; PROBE RESULTS LOCATION paragraph in SYSTEM_PROMPT. MB_VERSION 4.2.1 -> 4.2.2.
+// MB v5.0.1 (May 13, 2026): Patch — PERMISSION TO EDIT guardrail. Added hard rule to SYSTEM_PROMPT: write_file/patch_file require explicit developer permission (implement/patch/go ahead/fix it). Diagnosis, investigation, plan, and suggestion requests are explicitly NOT permission. Rule is unconditional -- not overridden by confidence or urgency. After proposing a plan, stop. MB_VERSION 5.0.0 -> 5.0.1.
+// MB v5.0.0 (May 13, 2026): Major — Coder reasoning methodology. Added CODE EDITING METHODOLOGY paragraph to SYSTEM_PROMPT: 6-phase structured reasoning sequence (Discovery, Impact Mapping, Pattern Adoption, Minimal Footprint, Edit Execution, Dependency Check) + ROOT CAUSE FIRST + WHEN TO ASK + SUMMARY FORMULA (read -> map impact -> match existing pattern -> patch minimally -> validate -> report exact evidence). Teaches MB to reason like a disciplined engineer before touching any file. Major bump: shifts MB from diagnostic analyst who can edit files to a coder operating with a principled methodology. MB_VERSION 4.3.0 -> 5.0.0.
+// MB v4.3.0 (May 13, 2026): Minor — File editing tools (write_file + patch_file). write_file: creates new files inside Game-main (fails if exists, overwrite:true to force); directory auto-created; path-traversal guard; SESSION_FREE. patch_file: exact old_string->new_string replacement in existing files; counts occurrences; fails on 0 matches (old_string_not_found) or 2+ without allow_multiple (ambiguous_match); index-based single replacement (safe from $-pattern issues); split+join for allow_multiple; path-traversal guard; SESSION_FREE. Both added to MB_TOOLS, SESSION_FREE_TOOLS, executeToolCall. FILE EDITING TOOLS paragraph in SYSTEM_PROMPT. MB_VERSION 4.2.5 -> 4.3.0.
 // MB v4.2.5 (May 13, 2026): Patch — Silent tool set + server-local time display. Introduced _SILENT_TOOLS set (currently: harness_status) — tools in this set produce zero output (no reasoning, no [tool] line, no [synthesizing...]) while still executing and feeding results into the loop. Polling tools like harness_status now run invisibly until the run completes. Also: server-local time derived before [thinking...] so it can be displayed as a dim [server time] line on every call. MB_VERSION 4.2.4 -> 4.2.5.
 // MB v4.2.4 (May 13, 2026): Patch — Server-local time injection. At each DeepSeek API call, a SERVER-LOCAL TIME block is appended to the system message content (not the static SYSTEM_PROMPT). Block includes day/date, HH:MM AM/PM, and time-of-day label (morning/afternoon/evening/night). Labeled "this machine only — not universal" to prevent universal-time misinterpretation. Derived from new Date() at call time, so value is fresh on every API call. MB_VERSION 4.2.3 -> 4.2.4.
 // MB v4.2.1 (May 12, 2026): Patch — prompt_cycle support in probe runner. probe-runner.js: validateSpec() validates prompt_cycle as non-empty string array; run loop overrides request_template.action per run with prompt_cycle[i % length]; [RUN N] line includes prompt=N/M "label..." for readable 50-run baselines. motherbrain.js: create_probe_spec spec param updated with prompt_cycle field docs; PROBE SPEC PROMPT CYCLING paragraph added to SYSTEM_PROMPT. Probe specs + source allowlist gaps closed: scripts/probe-runner.js + scripts/probe-metrics.js added to _SOURCE_ALLOWLIST; tests/probes/ added to search_source global sweep; $SEED rule documented in tool param and SYSTEM_PROMPT. MB_VERSION 4.2.0 -> 4.2.1.
@@ -557,6 +560,60 @@ const MB_TOOLS = [
         required: []
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: 'Write a new file inside the Game-main directory. Fails if the file already exists unless overwrite:true is explicitly passed. Use for: new config JSON files, new utility scripts, new markdown docs, or any file that does not yet exist. Do not use write_file to edit large existing source files -- full-content overwrites on large files are expensive in tokens and error-prone. For surgical edits to existing files, use patch_file. For scenario JSON, prefer create_scenario_file (includes harness validation). For probe specs, prefer create_probe_spec (includes metric enum validation).',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Relative path within Game-main (e.g. "config.json", "scripts/myscript.js"). No .. allowed. Must not escape the Game-main directory.'
+          },
+          content: {
+            type: 'string',
+            description: 'Full file content to write as a string.'
+          },
+          overwrite: {
+            type: 'boolean',
+            description: 'If true, overwrite the file if it already exists. Default: false (fail if exists). Use with caution.'
+          }
+        },
+        required: ['path', 'content']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'patch_file',
+      description: 'Apply an exact string replacement to an existing file inside the Game-main directory. Replaces old_string with new_string. Fails if: the file does not exist, old_string is not found, or old_string matches more than once (unless allow_multiple:true). MANDATORY WORKFLOW: always call get_source_slice first to read the exact text including whitespace and indentation before constructing old_string. Never construct old_string from memory or prior output.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Relative path within Game-main (e.g. "index.js", "ContinuityBrain.js"). No .. allowed.'
+          },
+          old_string: {
+            type: 'string',
+            description: 'Exact literal string to find and replace. Must match exactly once (unless allow_multiple:true). Include enough surrounding context lines to be unique.'
+          },
+          new_string: {
+            type: 'string',
+            description: 'Replacement string. May be empty string to delete old_string.'
+          },
+          allow_multiple: {
+            type: 'boolean',
+            description: 'If true, replace ALL occurrences of old_string. Default: false (fail if more than one match).'
+          }
+        },
+        required: ['path', 'old_string', 'new_string']
+      }
+    }
   }
 ];
 
@@ -878,7 +935,39 @@ PROBE SPEC $SEED RULE: In request_template, the seed placeholder must be the JSO
 
 PROBE SPEC PROMPT CYCLING: A spec may include an optional prompt_cycle field (array of non-empty strings). When present, each run picks prompt_cycle[i % length] as the action field, overriding request_template.action for that run only. request_template.action remains valid as a fallback/default and both may coexist in the same spec. The runner prints prompt=N/M "first 40 chars..." on each run line, making multi-biome 50-run baselines scannable. Use prompt_cycle when you want a single spec to rotate through multiple world contexts rather than authoring one spec per biome.
 
-PROBE RESULTS LOCATION: All probe run output is saved to tests/probe-results/ (created automatically). Each probe execution creates a timestamped subfolder named YYYY-MM-DD_HHmm_<spec-slug>/. The folder contains four files: (1) runs.jsonl -- one JSON line per run including success and error runs. Shape: {run, seed, prompt_label, metrics, warnings, error}. error is null on success runs. metrics is null on error runs. Every run appears as a row, so row count always equals runs_requested. (2) summary.json -- aggregate stats: spec_name, spec_slug, started_at, completed_at, runs_requested, runs_completed, hard_errors, soft_warnings_total, aggregate_warnings[], and metrics{} keyed by metric name with min/max/mean/stddev (and p10/p50/p90 for percentile_metrics). (3) console.txt -- full human-readable probe-runner output captured verbatim. (4) spec.snapshot.json -- the exact probe spec used for this run. When the developer says "I ran some probes", "analyze the results", "analyze the logs", "check the overnight run", or similar: call read_probe_results with no folder to list available result sets, identify the most recent relevant folder by spec-slug and timestamp, then read summary.json for aggregate stats. Read runs.jsonl only if per-run granularity is needed -- it can be very large for overnight 500-run jobs. The failure rate is hard_errors / runs_requested. A runs_completed < runs_requested means some runs failed -- check console.txt for the error messages.`;
+PROBE RESULTS LOCATION: All probe run output is saved to tests/probe-results/ (created automatically). Each probe execution creates a timestamped subfolder named YYYY-MM-DD_HHmm_<spec-slug>/. The folder contains four files: (1) runs.jsonl -- one JSON line per run including success and error runs. Shape: {run, seed, prompt_label, metrics, warnings, error}. error is null on success runs. metrics is null on error runs. Every run appears as a row, so row count always equals runs_requested. (2) summary.json -- aggregate stats: spec_name, spec_slug, started_at, completed_at, runs_requested, runs_completed, hard_errors, soft_warnings_total, aggregate_warnings[], and metrics{} keyed by metric name with min/max/mean/stddev (and p10/p50/p90 for percentile_metrics). (3) console.txt -- full human-readable probe-runner output captured verbatim. (4) spec.snapshot.json -- the exact probe spec used for this run. When the developer says "I ran some probes", "analyze the results", "analyze the logs", "check the overnight run", or similar: call read_probe_results with no folder to list available result sets, identify the most recent relevant folder by spec-slug and timestamp, then read summary.json for aggregate stats. Read runs.jsonl only if per-run granularity is needed -- it can be very large for overnight 500-run jobs. The failure rate is hard_errors / runs_requested. A runs_completed < runs_requested means some runs failed -- check console.txt for the error messages.
+
+FILE EDITING TOOLS: Two general-purpose file-writing tools are available for making changes to files in the Game-main directory: write_file and patch_file. These complement the specialized create_scenario_file and create_probe_spec tools, which include domain-specific validation and remain the preferred choice for scenarios and probes.
+
+write_file: Creates a new file inside Game-main. Fails if the file already exists unless overwrite:true is explicitly passed. Use for: new config JSON files, new utility scripts, new markdown docs, or any file that does not yet exist. Do not use write_file to edit large existing source files -- full-content overwrites on large files are expensive in tokens and error-prone. For surgical edits to existing files, use patch_file.
+
+patch_file: Surgically replaces old_string with new_string in an existing file. This is the preferred tool for all source-code edits. MANDATORY WORKFLOW before calling patch_file: (1) Call get_source_slice to read the exact lines you intend to modify -- verify the literal text including whitespace and indentation character-by-character. (2) Construct old_string directly from the literal file text you just read, not from memory or prior output. (3) Include at least 3 lines of unchanged context before and after the changed line(s) in old_string so it uniquely identifies one location in the file. (4) If patch_file returns ambiguous_match, add more surrounding lines to make old_string unique -- do not pass allow_multiple:true unless you genuinely want every occurrence replaced. (5) If patch_file returns old_string_not_found, re-read the file with get_source_slice before retrying -- the file may have changed, or whitespace and line-ending differences may be present. Never retry a failed patch by guessing slight variations; always re-read first.
+
+BOTH TOOLS enforce path safety: no .. in path, path must remain within the Game-main directory. Path traversal attempts are hard-rejected with error: invalid_path.
+
+GENERAL RULE: New file -> write_file. Surgical edit to existing file -> patch_file. Scenario JSON -> create_scenario_file (preferred). Probe spec -> create_probe_spec (preferred). When uncertain, ask the developer.
+
+CODE EDITING METHODOLOGY: When asked to make a code change, follow this reasoning sequence in order. Do not skip phases.
+
+PHASE 1 -- DISCOVERY: Read the target file broadly before touching anything. Use get_source_slice to read 30+ lines around every intended insertion point. Use search_source to find existing usages of the function, variable, or pattern you plan to change. Your in-context knowledge of file contents is never authoritative -- the live file is always the source of truth. Re-read before every edit, even if you read the same file earlier in the same conversation.
+
+PHASE 2 -- IMPACT MAPPING: Before changing a function signature, constant name, field name, or exported value, use search_source to find every caller, every consumer, and every place the data flows. A change to a function that has 3 call sites elsewhere is a 4-file change. If adding a new field to a response object or schema, find every consumer of that object. Identify all affected locations before touching anything.
+
+PHASE 3 -- PATTERN ADOPTION: Read 20-30 lines of surrounding code to identify: (a) naming convention in use (camelCase, _privatePrefix, UPPER_CONST); (b) error handling style (try/catch, early-return, guard clauses); (c) logging format ([BRACKET-TAG] prefixes, console.warn vs. gameState.object_errors); (d) comment style and density. Match all of these exactly. Do not introduce new patterns when existing ones work.
+
+PHASE 4 -- MINIMAL FOOTPRINT: Change only what is required by the task. Do not rename variables you did not add, add comments to existing code, refactor adjacent logic, add error handling for cases that cannot happen, or add features beyond what was asked. If you notice a related issue or improvement, surface it as a note to the developer but do not apply it.
+
+PHASE 5 -- EDIT EXECUTION: Batch tightly coupled edits that must land together (e.g. a paired schema change and its handler); otherwise edit sequentially. Run syntax validation (node_check_*) after any source-code edit and before reporting completion. For multi-file dependent edits, validate once after the coherent patch set unless an intermediate check reveals a blocker.
+
+PHASE 6 -- DEPENDENCY CHECK: After all edits, review every change made. Changed a function signature? Search all callers and update them. Added a new field? Verify all consumers handle it. Changed a constant? Check all references. Moved logic from one location to another? Confirm the original is now dead and remove it. Do not report completion until this check is done and syntax passes.
+
+ROOT CAUSE FIRST: Before applying a fix, confirm your understanding of the root cause. If a proposed fix does not address the root cause you identified, surface the discrepancy before proceeding. Fixing the wrong thing correctly is still wrong.
+
+WHEN TO ASK: If impact mapping reveals that a change affects files or behaviors you do not have full context on, ask the developer before proceeding. Partial changes that leave the codebase in a broken intermediate state are worse than not starting.
+
+SUMMARY FORMULA: read -> map impact -> match existing pattern -> patch minimally -> validate -> report exact evidence.
+
+PERMISSION TO EDIT: File edits using write_file or patch_file require explicit developer permission. The following phrases (and clear equivalents) are permission: "implement", "make the change", "patch it", "edit the file", "go ahead", "do it", "apply it", "fix it". The following are NOT permission and must not trigger any file edit: "find out what's going on", "suggest a fix", "suggest a plan", "what's wrong", "diagnose", "investigate", "what would you change", "how would you fix this", or any phrasing that requests analysis, a plan, or a recommendation. When in doubt, ask before writing. After proposing a plan or diagnosis, stop. Do not proceed into implementation until the developer explicitly authorizes it. This rule is hard -- it is not overridden by confidence in the fix, urgency, or the fact that the fix appears obvious.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -986,7 +1075,7 @@ function formatTurnBuffer() {
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
-  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results'];
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
@@ -1393,6 +1482,70 @@ async function executeToolCall(name, args) {
       } catch {
         return _content.slice(0, 32000);
       }
+    } else if (name === 'write_file') {
+      const _fs   = require('fs');
+      const _path = require('path');
+      const _wfRoot = 'c:\\Users\\daddy\\Desktop\\Game-main';
+      const _wfRel  = (args.path || '').trim();
+      if (!_wfRel) return JSON.stringify({ error: 'invalid_path', detail: 'path must be non-empty.' });
+      if (_wfRel.includes('..')) return JSON.stringify({ error: 'invalid_path', detail: 'Path must not contain ..' });
+      const _wfAbs = _path.resolve(_wfRoot, _wfRel);
+      if (!_wfAbs.startsWith(_wfRoot + _path.sep) && _wfAbs !== _wfRoot) {
+        return JSON.stringify({ error: 'invalid_path', detail: 'Path must be within the Game-main directory.' });
+      }
+      if (_fs.existsSync(_wfAbs) && !args.overwrite) {
+        return JSON.stringify({ error: 'file_exists', path: _wfAbs, detail: 'File already exists. Pass overwrite:true to overwrite, or use patch_file for targeted edits to existing files.' });
+      }
+      if (typeof args.content !== 'string') return JSON.stringify({ error: 'invalid_content', detail: 'content must be a string.' });
+      try {
+        const _wfDir = _path.dirname(_wfAbs);
+        if (!_fs.existsSync(_wfDir)) _fs.mkdirSync(_wfDir, { recursive: true });
+        _fs.writeFileSync(_wfAbs, args.content, 'utf8');
+      } catch (_werr) {
+        return JSON.stringify({ error: 'write_error', detail: _werr.message });
+      }
+      return JSON.stringify({ written: true, path: _wfAbs, bytes: Buffer.byteLength(args.content, 'utf8') });
+    } else if (name === 'patch_file') {
+      const _fs   = require('fs');
+      const _path = require('path');
+      const _pfRoot = 'c:\\Users\\daddy\\Desktop\\Game-main';
+      const _pfRel  = (args.path || '').trim();
+      if (!_pfRel) return JSON.stringify({ error: 'invalid_path', detail: 'path must be non-empty.' });
+      if (_pfRel.includes('..')) return JSON.stringify({ error: 'invalid_path', detail: 'Path must not contain ..' });
+      const _pfAbs = _path.resolve(_pfRoot, _pfRel);
+      if (!_pfAbs.startsWith(_pfRoot + _path.sep) && _pfAbs !== _pfRoot) {
+        return JSON.stringify({ error: 'invalid_path', detail: 'Path must be within the Game-main directory.' });
+      }
+      if (!_fs.existsSync(_pfAbs)) return JSON.stringify({ error: 'file_not_found', path: _pfAbs });
+      const _oldStr = args.old_string;
+      const _newStr = args.new_string ?? '';
+      if (typeof _oldStr !== 'string' || _oldStr.length === 0) {
+        return JSON.stringify({ error: 'invalid_old_string', detail: 'old_string must be a non-empty string.' });
+      }
+      let _pfSrc;
+      try { _pfSrc = _fs.readFileSync(_pfAbs, 'utf8'); } catch (_rerr) {
+        return JSON.stringify({ error: 'read_error', detail: _rerr.message });
+      }
+      let _matchCount = 0;
+      let _scanIdx = _pfSrc.indexOf(_oldStr);
+      while (_scanIdx !== -1) { _matchCount++; _scanIdx = _pfSrc.indexOf(_oldStr, _scanIdx + 1); }
+      if (_matchCount === 0) {
+        return JSON.stringify({ error: 'old_string_not_found', path: _pfAbs, detail: 'old_string does not match any text in the file. Re-read with get_source_slice and verify whitespace and indentation.' });
+      }
+      if (_matchCount > 1 && !args.allow_multiple) {
+        return JSON.stringify({ error: 'ambiguous_match', path: _pfAbs, occurrences: _matchCount, detail: `old_string matches ${_matchCount} locations. Add more surrounding context to make it unique, or pass allow_multiple:true to replace all occurrences.` });
+      }
+      let _pfPatched;
+      if (args.allow_multiple) {
+        _pfPatched = _pfSrc.split(_oldStr).join(_newStr);
+      } else {
+        const _pfIdx = _pfSrc.indexOf(_oldStr);
+        _pfPatched = _pfSrc.slice(0, _pfIdx) + _newStr + _pfSrc.slice(_pfIdx + _oldStr.length);
+      }
+      try { _fs.writeFileSync(_pfAbs, _pfPatched, 'utf8'); } catch (_werr) {
+        return JSON.stringify({ error: 'write_error', detail: _werr.message });
+      }
+      return JSON.stringify({ patched: true, path: _pfAbs, replacements: _matchCount, original_bytes: Buffer.byteLength(_pfSrc, 'utf8'), new_bytes: Buffer.byteLength(_pfPatched, 'utf8') });
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }

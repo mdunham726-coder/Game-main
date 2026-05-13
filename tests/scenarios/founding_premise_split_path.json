@@ -22,9 +22,9 @@
       "intent_channel": "do",
       "assert": [
         { "op": "no_error" },
-        { "path": "narration_debug.continuity_block_text", "op": "present" },
-        { "path": "narration_debug.continuity_block_text", "op": "matches", "pattern": "Eleanor" },
-        { "path": "narration_debug.continuity_block_text", "op": "matches", "pattern": "Daniel" }
+        { "path": "debug.narration_debug.continuity_block_text", "op": "present" },
+        { "path": "debug.narration_debug.continuity_block_text", "op": "matches", "pattern": "Eleanor" },
+        { "path": "debug.narration_debug.continuity_block_text", "op": "matches", "pattern": "Daniel" }
       ]
     }
   ]

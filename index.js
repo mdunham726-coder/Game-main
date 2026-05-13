@@ -4557,6 +4557,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
     // Mirror RC data onto debug so harness assertions on debug.reality_check.fired/result resolve correctly.
     // turnObject.reality_check is the canonical frozen record; no re-derivation needed.
     debug.reality_check = turnObject.reality_check;
+    // Mirror narration_debug onto debug so harness assertions on debug.narration_debug.* resolve correctly.
+    debug.narration_debug = turnObject.narration_debug;
 
     // v1.84.21: Atomic payload archive write — single write after all stage snapshots are final
     if (!gameState.payload_archive) gameState.payload_archive = {};
