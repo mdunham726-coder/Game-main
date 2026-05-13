@@ -43,6 +43,17 @@ function _generateObjectId(name, containerType, containerId, tempRef) {
   return 'obj_' + crypto.createHash('sha256').update(input, 'utf8').digest('hex').slice(0, 12);
 }
 
+// ── Name normalization ────────────────────────────────────────────────────────
+// Strips ONE leading quantity prefix or size/state adjective for soft-match dedup.
+// Single-pass only — intentionally conservative to avoid false positives.
+// Input should already be lowercase + trimmed.
+function _normalizeName(n) {
+  return n
+    .replace(/^(stack|pile|bunch|set|piece|bit|pair|row|collection) of /i, '')
+    .replace(/^(small|large|tiny|big|old|worn|broken|battered|cracked|rusty|dusty|faded|crumpled|folded|half-empty|empty|full|open|closed|thick|thin|heavy|light|dark|dim|bright|clean|dirty|wet|dry|loose|tight|short|tall|long|narrow|wide) /i, '')
+    .trim();
+}
+
 // ── Container resolution ──────────────────────────────────────────────────────
 // Returns the object_ids array for a given container, or null if unresolvable.
 // Mutates container in place to add object_ids[] if absent (player only).
@@ -296,6 +307,33 @@ async function run(gameState, quarantine, turnNumber) {
       tempRefMap[temp_ref] = _existingMatch.id;
       _claimedObjectIds.add(_existingMatch.id);
       audit.push({ turn: turnNumber, action: 'promote_skipped_name_match', object_id: _existingMatch.id, object_name: name, container_type, container_id, temp_ref, ts });
+      continue;
+    }
+
+    // v1.85.80: soft-match guard — catches adjective-variant redescriptions of existing objects
+    // (e.g. narrator writes "small framed photo" when "framed photo" is already tracked).
+    // Strips ONE leading quantity prefix or size/state adjective then re-compares.
+    // Intentionally single-pass and conservative to limit false positives.
+    const _softNorm = _normalizeName(_nameLower);
+    let _softMatch = null;
+    if (_softNorm !== _nameLower) {
+      for (const [_oid2, _orec2] of Object.entries(gameState.objects)) {
+        if (
+          _orec2.status === 'active' &&
+          _orec2.current_container_type === container_type &&
+          _orec2.current_container_id   === container_id &&
+          _normalizeName(String(_orec2.name).toLowerCase().trim()) === _softNorm &&
+          !_claimedObjectIds.has(_oid2)
+        ) {
+          _softMatch = _orec2;
+          break;
+        }
+      }
+    }
+    if (_softMatch) {
+      tempRefMap[temp_ref] = _softMatch.id;
+      _claimedObjectIds.add(_softMatch.id);
+      audit.push({ turn: turnNumber, action: 'promote_skipped_soft_match', object_id: _softMatch.id, object_name: name, normalized_to: _softNorm, container_type, container_id, temp_ref, ts });
       continue;
     }
 

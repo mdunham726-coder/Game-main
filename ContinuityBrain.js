@@ -334,6 +334,13 @@ Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
 Do NOT emit an object_candidate for an object that is visible but spatially separated from the player by a barrier (display window, glass pane, counter, locked case, enclosed shelf, or any other physical boundary). Even if concrete and named, if the player cannot directly touch or take it without crossing a barrier or triggering an additional action, place it in visible_objects[] instead.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
+Semantic variant rule: If the narrator adds size or quality adjectives (small, large, tiny, old,
+worn, faded, cracked, broken, dusty, half-empty, etc.) or quantity prefixes (stack of, pile of,
+set of, bunch of, piece of) to a tracked object's name, this is a redescription of the existing
+entity — NOT a new object. Suppress the candidate entirely. Do NOT emit an object_candidate for
+it. Condition changes to existing objects belong in object_condition_updates using the exact
+object_id from TRACKED OBJECTS, and only when the narration describes a concrete change of
+physical state — not when an adjective is added for descriptive texture.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
