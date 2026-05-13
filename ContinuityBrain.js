@@ -129,6 +129,7 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
     "capabilities": [],
     "status_claims": [],
     "scenario_notes": [],
+    "world_notes": [],
     "canonical_name": null,
     "title_or_role": null
   }` : ''}
@@ -319,7 +320,8 @@ Fields:
   possessions      — physical items, objects, weapons, or gear explicitly named in primary source as owned or carried. Do NOT include abilities, powers, or things the player can do — those belong in capabilities. Empty array if none stated.
   capabilities     — abilities, powers, or things the player can do, as explicitly stated in primary source (e.g. "ability to transform", "power to fly", "magic to heal others"). Do NOT include physical items — those belong in possessions. Empty array if none stated.
   status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
-  scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
+  scenario_notes   — player-linked facts that don't fit any other field, as stated in the primary source: named relationships (e.g. "my wife Sarah"), personal current activity or situation, role context, personal objectives, starting circumstances. Facts about the player's immediate reality. Exclude atmosphere, world-setting, and broad framing — player-specific facts only. Empty array if none stated.
+  world_notes      — world-setting, atmospheric, or lore-level facts from the primary source: geography, history, cultural context, ambient description. These frame the world but are not facts about the player specifically. Empty array if none.
   canonical_name   — the player's personal name if explicitly stated. A word or phrase the player uses to refer to themselves as a specific individual, distinct from a title, role, or job descriptor. Only extract what is explicitly stated — do not infer. null if not stated.
   title_or_role    — a formal title, rank, or positional designation if explicitly claimed. A social or authoritative label, not a personal name. Only extract what is explicitly stated — do not infer. null if not stated.
 
@@ -944,6 +946,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     gameState.player.birth_record.capabilities     = Array.isArray(fp.capabilities)  ? fp.capabilities  : [];
     gameState.player.birth_record.status_claims    = Array.isArray(fp.status_claims) ? fp.status_claims : [];
     gameState.player.birth_record.scenario_notes   = Array.isArray(fp.scenario_notes)? fp.scenario_notes: [];
+    gameState.player.birth_record.world_notes        = Array.isArray(fp.world_notes)    ? fp.world_notes   : [];
     console.log('[CB] birth_record populated on Turn 1:', JSON.stringify(gameState.player.birth_record).slice(0, 200));
 
     // v1.85.19: Populate player.identity from founding premise
@@ -1004,6 +1007,21 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     }
     if (_capabilitiesPromoted > 0) {
       console.log(`[CB] birth_record promoted ${_capabilitiesPromoted} capabilit${_capabilitiesPromoted === 1 ? 'y' : 'ies'} to player.attributes[declared:]`);
+    }
+
+    // v1.85.84: Promote scenario_notes → player.attributes[declared:] — idempotent, Turn 1 only
+    // scenario_notes are player-linked facts (relationships, personal situation, context).
+    // world_notes are explicitly NOT promoted here — reserved, tested invariant.
+    let _scenarioNotesPromoted = 0;
+    for (const _note of (gameState.player.birth_record.scenario_notes || [])) {
+      const _nKey = `declared:${_note}`;
+      if (!gameState.player.attributes[_nKey]) {
+        gameState.player.attributes[_nKey] = { value: _note, bucket: 'declared', turn_set: 1, confidence: 'initial' };
+        _scenarioNotesPromoted++;
+      }
+    }
+    if (_scenarioNotesPromoted > 0) {
+      console.log(`[CB] birth_record promoted ${_scenarioNotesPromoted} scenario note(s) to player.attributes[declared:]`);
     }
   }
 

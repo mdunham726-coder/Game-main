@@ -1,0 +1,31 @@
+{
+  "name": "founding_premise_split_path",
+  "stability": "stable",
+  "description": "Founding premise (world_prompt) differs from T1 action. Verifies: raw_input override, canonical_name extraction, scenario_notes populated for player-linked facts (relationship + situational), world_notes field stored (reserved-not-promoted invariant), identity line survives into narrator TRUTH block by T2.",
+  "world_prompt": "My name is Eleanor Voss. My husband Daniel is away at sea for the next three weeks. Right now I am in the middle of writing a letter to him at my desk. The harbor town of Crestfall is known for its fishermen and foggy winters.",
+  "turns": [
+    {
+      "label": "founding_split",
+      "action": "look around the room",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "state.player.birth_record.raw_input", "op": "neq", "value": "look around the room" },
+        { "path": "state.player.birth_record.canonical_name", "op": "present" },
+        { "path": "state.player.birth_record.scenario_notes", "op": "array_len_gt", "value": 0 },
+        { "path": "state.player.birth_record.world_notes", "op": "present" },
+        { "path": "state.player.attributes", "op": "present" }
+      ]
+    },
+    {
+      "label": "identity_in_truth",
+      "action": "sit at the desk",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "last_identity_truth_line", "op": "present" },
+        { "path": "last_identity_truth_line", "op": "matches", "pattern": "Eleanor" }
+      ]
+    }
+  ]
+}

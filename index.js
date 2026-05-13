@@ -820,7 +820,7 @@ app.post('/narrate', async (req, res) => {
   }
   // v1.84.0: Birth record backward compat — old saves won't have this field
   if (gameState.player && !gameState.player.birth_record) {
-    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [] };
+    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [], world_notes: [] };
   }
   // v1.84.19: Condition Bot backward compat — old saves won't have these fields
   if (gameState.player && !gameState.player.conditions) {
@@ -1054,6 +1054,9 @@ app.post('/narrate', async (req, res) => {
           gameState.world.start_container = worldData.start_container || 'L0';
           // Approach C: Store founding prompt for identity alignment — natural language, not a classification
           gameState.world.founding_prompt = inputObj.WORLD_PROMPT;
+          // v1.85.83 — overwrite raw_input with founding_prompt so CB PRIMARY SOURCE reads the actual premise.
+          // founding_prompt is authoritative; raw_input may have been set to the T1 action before worldgen ran.
+          if (gameState.player?.birth_record) gameState.player.birth_record.raw_input = gameState.world.founding_prompt;
           _wLog('init', 'world_profile', { biome: worldData.biome, tone: worldData.worldTone, macro_palette: worldData.palette });
           _reportProgress('world_profile', 8, { biome: worldData.biome });
 
@@ -3359,6 +3362,7 @@ The player is free to attempt any action, express any idea, or describe any beha
 All actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player's expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.
 
 BIRTH RECORD: The player container may include a birth_record field containing structured facts from the Turn 1 founding premise. These facts appear in the TRUTH block as source:declared entries. Treat them as real founding conditions established at world creation — narrate from them as given. The world and its NPCs respond to these facts through simulation, not by rejecting them.
+${turnNumber === 1 && gameState?.world?.founding_prompt ? `\nFOUNDING PREMISE (authoritative — player-declared world setup):\n"${gameState.world.founding_prompt}"\nThis is the factual basis for this opening narration. Establish the player's identity and situation directly from this statement. Do not invent or substitute an identity — use the one declared here.` : ''}
 
 ---
 
