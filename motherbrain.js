@@ -33,9 +33,10 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.2.4';
+const MB_VERSION = '4.2.5';
 // MB v4.2.3: Patch — 4 spatial topology metrics added to probe framework. probe-metrics.js: added cell_occupancy_entropy (Shannon entropy of sites-per-cell distribution — key seed-sensitivity diagnostic), site_size_stddev (stddev of placed site sizes), community_ratio (fraction of is_community sites), isolated_cells_count (occupied cells with no 4-directional occupied neighbor). probe-runner.js: 4 new computeMetrics cases. worldgen-site-distribution-v3.probe.json: new spec with all 14 metrics + percentile_metrics on entropy/isolated. motherbrain.js: METRIC VOCABULARY updated to correct current names + new 4. MB_VERSION 4.2.2 -> 4.2.3.
 // MB v4.2.2: Patch — durable probe logging + read_probe_results tool. probe-runner.js: main() now writes 4 files to tests/probe-results/<timestamp>_<slug>/: runs.jsonl (all runs, error+success), summary.json (aggregate stats), console.txt (full output), spec.snapshot.json. writeConsole() helper owns all output (no monkey-patch). motherbrain.js: added fs+path requires; read_probe_results tool (list folders or read file); SESSION_FREE_TOOLS extended; executeToolCall handler with path traversal guard; PROBE RESULTS LOCATION paragraph in SYSTEM_PROMPT. MB_VERSION 4.2.1 -> 4.2.2.
+// MB v4.2.5 (May 13, 2026): Patch — Silent tool set + server-local time display. Introduced _SILENT_TOOLS set (currently: harness_status) — tools in this set produce zero output (no reasoning, no [tool] line, no [synthesizing...]) while still executing and feeding results into the loop. Polling tools like harness_status now run invisibly until the run completes. Also: server-local time derived before [thinking...] so it can be displayed as a dim [server time] line on every call. MB_VERSION 4.2.4 -> 4.2.5.
 // MB v4.2.4 (May 13, 2026): Patch — Server-local time injection. At each DeepSeek API call, a SERVER-LOCAL TIME block is appended to the system message content (not the static SYSTEM_PROMPT). Block includes day/date, HH:MM AM/PM, and time-of-day label (morning/afternoon/evening/night). Labeled "this machine only — not universal" to prevent universal-time misinterpretation. Derived from new Date() at call time, so value is fresh on every API call. MB_VERSION 4.2.3 -> 4.2.4.
 // MB v4.2.1 (May 12, 2026): Patch — prompt_cycle support in probe runner. probe-runner.js: validateSpec() validates prompt_cycle as non-empty string array; run loop overrides request_template.action per run with prompt_cycle[i % length]; [RUN N] line includes prompt=N/M "label..." for readable 50-run baselines. motherbrain.js: create_probe_spec spec param updated with prompt_cycle field docs; PROBE SPEC PROMPT CYCLING paragraph added to SYSTEM_PROMPT. Probe specs + source allowlist gaps closed: scripts/probe-runner.js + scripts/probe-metrics.js added to _SOURCE_ALLOWLIST; tests/probes/ added to search_source global sweep; $SEED rule documented in tool param and SYSTEM_PROMPT. MB_VERSION 4.2.0 -> 4.2.1.
 // MB v4.2.0 (May 12, 2026): Minor — Statistical probe doctrine. Added STATISTICAL PROBE SYSTEM paragraph to SYSTEM_PROMPT: measurement-vs-judgment separation (observe distributions, surface anomalies -- not declare pass/fail), PROBE vs SCENARIO distinction, metric vocabulary (10 approved names from probe-metrics.js), noise discipline rule (prefer few high-signal metrics), refinement ladder policy (1/5/10/50+ runs with explicit threshold discipline per rung), anti-coupling rule (prefer existing engine outputs over new instrumentation), probe authoring workflow (no autonomous creation). MB_VERSION 4.1.2 -> 4.2.0.
@@ -1414,8 +1415,12 @@ async function askMotherBrain(question) {
     return;
   }
 
-  // Show "thinking" indicator
+  // Show "thinking" indicator — include server-local time for visibility
+  const _now = new Date();
+  const _hour = _now.getHours();
+  const _tod = _hour < 6 ? 'night' : _hour < 12 ? 'morning' : _hour < 18 ? 'afternoon' : _hour < 21 ? 'evening' : 'night';
   printLine('');
+  printLine(d(`  [server time] ${_now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} \u00b7 ${_now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} \u00b7 ${_tod}`));
   printLine(g('  Mother Brain: [thinking…]'));
 
   // Fetch live game state from server (only available once a game session is active)
@@ -1458,9 +1463,7 @@ async function askMotherBrain(question) {
   fullContext += flightHistory;
 
   // Build messages array: system + full history + new question with context
-  const _now = new Date();
-  const _hour = _now.getHours();
-  const _tod = _hour < 6 ? 'night' : _hour < 12 ? 'morning' : _hour < 18 ? 'afternoon' : _hour < 21 ? 'evening' : 'night';
+  // _now / _hour / _tod already derived above (before [thinking…] display)
   const _timeBlock = `\n\nSERVER-LOCAL TIME (this machine only — not universal):\n${_now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n${_now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}\nTime of day: ${_tod}`;
   const systemMsg = { role: 'system', content: SYSTEM_PROMPT + _timeBlock };
   const userMsg   = {
@@ -1476,8 +1479,8 @@ async function askMotherBrain(question) {
   const _totUsage   = { pt: 0, ct: 0, tt: 0, ht: 0, mt: 0, ec: 0 };
   let   _round      = 0;
   const _callStart  = Date.now();
-  let   _lastPollTool = null; // for folding repeated single-tool polls into one line
-  let   _pollCount    = 0;
+  // Tools that run silently — no [tool] line, no reasoning, no [synthesizing...] printed
+  const _SILENT_TOOLS = new Set(['harness_status']);
 
   try {
     while (true) {
@@ -1522,13 +1525,11 @@ async function askMotherBrain(question) {
       const message     = choice?.message;
 
       if (finishReason === 'tool_calls' && message?.tool_calls?.length) {
-        // Detect repeat single-tool poll (e.g. harness_status called N times in a row)
-        const _roundTool    = message.tool_calls.length === 1 ? (message.tool_calls[0].function?.name || null) : null;
-        const _isRepeatPoll = (_roundTool !== null && _roundTool === _lastPollTool);
-        if (_isRepeatPoll) { _pollCount++; } else { _lastPollTool = _roundTool; _pollCount = 0; }
+        // Detect silent-tool round (all calls in this round are silent tools)
+        const _isSilentRound = message.tool_calls.every(tc => _SILENT_TOOLS.has(tc.function?.name));
 
-        // Print her reasoning sentence — suppressed on repeat polls (redundant)
-        if (!_isRepeatPoll && message.content && message.content.trim()) {
+        // Print her reasoning sentence — suppressed on silent rounds
+        if (!_isSilentRound && message.content && message.content.trim()) {
           const _pre = message.content.trim().split(/\n+/);
           for (const para of _pre) {
             if (para.trim()) printLine(g(`  ${para.trim()}`));
@@ -1553,21 +1554,14 @@ async function askMotherBrain(question) {
           }
           const argsStr = Object.entries(tcArgs).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
           const result  = await executeToolCall(tcName, tcArgs);
-          if (_isRepeatPoll) {
-            // Overwrite the previous [tool] line in place with a poll counter
-            readline.moveCursor(process.stdout, 0, -1);
-            readline.clearLine(process.stdout, 0);
-            readline.cursorTo(process.stdout, 0);
-            process.stdout.write(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)  [x${_pollCount + 1}]`) + '\n');
-            rl.prompt(true);
-          } else {
+          if (!_SILENT_TOOLS.has(tcName)) {
             printLine(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)`));
           }
           _loopMsgs.push({ role: 'tool', tool_call_id: tc.id, content: result });
         }
         if (_toolParseError) break;
 
-        if (!_isRepeatPoll) printLine(g('  Mother Brain: [synthesizing...]'));
+        if (!_isSilentRound) printLine(g('  Mother Brain: [synthesizing...]'));
         continue; // next round
       }
 

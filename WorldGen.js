@@ -631,13 +631,15 @@ function largeSiteSpacingViolation(placedSites, candidate) {
 // v1.85.40: compressed grid ladder — reduces traversal footprint, fill pressure,
 // context bloat, and startup latency while preserving meaningful scale progression.
 // NPC count scaling is intentionally unchanged (see getNPCCountFromSize).
+// local_space_count removed (v1.85.82): localspace density is now a 30-75% blanket
+// rule rolled per-site in generateL2Site(); fixed count table is no longer used.
 function siteGridFromSize(site_size) {
   const s = Math.max(1, Math.min(10, site_size ?? 3));
-  if (s === 1)  return { width:  5, height:  5, local_space_count:  4 };
-  if (s <= 4)   return { width:  7, height:  7, local_space_count:  6 };
-  if (s <= 7)   return { width:  9, height:  9, local_space_count:  9 };
-  if (s <= 9)   return { width: 11, height: 11, local_space_count: 12 };
-  /* s === 10 */ return { width: 13, height: 13, local_space_count: 16 };
+  if (s === 1)  return { width:  5, height:  5 };
+  if (s <= 4)   return { width:  7, height:  7 };
+  if (s <= 7)   return { width:  9, height:  9 };
+  if (s <= 9)   return { width: 11, height: 11 };
+  /* s === 10 */ return { width: 13, height: 13 };
 }
 
 // ─── World Bias Extraction ────────────────────────────────────────────────────
@@ -2261,18 +2263,25 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     streets.push({ x: midX, y });
   }
 
-  // local spaces
+  // local spaces — v1.85.82: 30-75% blanket density rule, shuffle-and-take placement
   const local_spaces = {};
-  const localSpaceCount = st.local_space_count;
+  const _eligibleTiles = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!grid[y][x]) _eligibleTiles.push({ x, y });
+    }
+  }
+  // Fisher-Yates shuffle using seeded RNG
+  for (let i = _eligibleTiles.length - 1; i > 0; i--) {
+    const j = rng.nextInt(i + 1);
+    const tmp = _eligibleTiles[i]; _eligibleTiles[i] = _eligibleTiles[j]; _eligibleTiles[j] = tmp;
+  }
+  const _lsPct = 30 + rng.nextInt(46); // 30-75 inclusive
+  const localSpaceCount = Math.max(1, Math.floor((_eligibleTiles.length * _lsPct) / 100));
+  console.log(`[LS-DENSITY] site=${siteId} eligible=${_eligibleTiles.length} pct=${_lsPct}% count=${localSpaceCount}`);
   let start_local_space_id = null;
   for (let i = 0; i < localSpaceCount; i++) {
-    let bx = 0, by = 0, tries = 0;
-    do {
-      bx = rng.nextInt(w);
-      by = rng.nextInt(h);
-      tries++;
-      if (tries > 200) break;
-    } while (grid[by][bx]);
+    const { x: bx, y: by } = _eligibleTiles[i];
     const local_space_id = `ls_${i}`;
     grid[by][bx] = { type: "local_space", local_space_id: local_space_id, npc_ids: [] };
     // v1.85.47: roll size, compute dimensions, derive enterable via deterministic hash (zero RNG consumption)

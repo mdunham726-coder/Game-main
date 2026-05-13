@@ -3396,6 +3396,12 @@ The player's attention is the camera. Stay with it.
 
 ---
 
+TURN CONTEXT:
+Current turn: ${turnNumber}.
+Do not reintroduce stable scene elements as if newly discovered; when the player looks again, acknowledge familiarity and vary focus, detail, or continuity instead.
+
+---
+
 WORLD TONE & CHARACTER:
 ${gameState?.world?.world_tone || "A functional, atmospheric world"}
 
