@@ -101,6 +101,7 @@ Player character: always present — entity_ref "player" | known attributes: ${k
 Active player conditions: ${activeConditions}
 Tracked objects in scene:
 ${trackedObjects}
+TRACKED OBJECT NAMING RULE: When emitting an object_candidate for an object that appears in the tracked list above, you MUST use the exact name shown in the tracked list as the "name" field. Do not paraphrase, abbreviate, or vary the name.
 ${apContext ? `\nPlayer actions this turn (use to identify which specific object was physically affected):\n${apContext}` : ''}
 
 PREVIOUS MOOD SNAPSHOT:

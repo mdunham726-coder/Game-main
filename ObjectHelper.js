@@ -338,6 +338,39 @@ async function run(gameState, quarantine, turnNumber) {
       continue;
     }
 
+    // v1.85.92: token-subset guard — catches multi-token compound variants of tracked objects
+    // (e.g. "framed photo" -> "small framed photo", "coffee mug" -> "ceramic coffee mug").
+    // Only fires when BOTH shorter AND longer name are >= 2 tokens; single-token generics
+    // ("photo", "key", "ring") are intentionally excluded to prevent false-positive merges.
+    // Either-direction containment: tokens(candidate) subset-of tokens(existing), or vice versa.
+    const _candidateTokens = _nameLower.split(/\s+/).filter(Boolean);
+    let _tokenSubsetMatch = null;
+    if (_candidateTokens.length >= 2) {
+      for (const [_oid3, _orec3] of Object.entries(gameState.objects)) {
+        if (
+          _orec3.status === 'active' &&
+          _orec3.current_container_type === container_type &&
+          _orec3.current_container_id   === container_id &&
+          !_claimedObjectIds.has(_oid3)
+        ) {
+          const _existingTokens = String(_orec3.name).toLowerCase().trim().split(/\s+/).filter(Boolean);
+          if (_existingTokens.length < 2) continue; // longer-name guard: existing must also be multi-token
+          const _shorter = _candidateTokens.length <= _existingTokens.length ? _candidateTokens : _existingTokens;
+          const _longer  = _candidateTokens.length <= _existingTokens.length ? _existingTokens : _candidateTokens;
+          if (_shorter.every(tok => _longer.includes(tok))) {
+            _tokenSubsetMatch = _orec3;
+            break;
+          }
+        }
+      }
+    }
+    if (_tokenSubsetMatch) {
+      tempRefMap[temp_ref] = _tokenSubsetMatch.id;
+      _claimedObjectIds.add(_tokenSubsetMatch.id);
+      audit.push({ turn: turnNumber, action: 'promote_skipped_token_subset', object_id: _tokenSubsetMatch.id, object_name: name, matched_to: _tokenSubsetMatch.name, tokens_candidate: _candidateTokens, tokens_existing: String(_tokenSubsetMatch.name).toLowerCase().trim().split(/\s+/).filter(Boolean), container_type, container_id, temp_ref, ts });
+      continue;
+    }
+
     const objectId = _generateObjectId(name, container_type, container_id, temp_ref);
 
     // If this ID already exists (same object re-narrated on a later turn), skip silently.
