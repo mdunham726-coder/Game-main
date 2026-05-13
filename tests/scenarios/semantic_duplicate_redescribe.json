@@ -1,7 +1,7 @@
 {
   "name": "semantic_duplicate_redescribe",
-  "description": "10-turn stress test for the CB semantic-variant suppression rule + ObjectHelper soft-match guard. Starts in Ken Williams' office (Sierra On-Line, 1987) and repeatedly re-observes the same environment with noun-phrase drift variants to verify no duplicate object records are promoted.",
-  "category": "deterministic_reproduction",
+  "description": "10-turn behavioral regression test for the CB semantic-variant suppression rule + ObjectHelper soft-match guard. Starts in Ken Williams' office (Sierra On-Line, 1987). Discovery turns T1-T5 populate the object registry. Re-description turns T6, T8, T10 (narrow re-observation of specific known objects) assert promoted === 0 -- proving CB recognized already-known objects and did not create new records. T7 (broad look-around) intentionally has no suppression assertion: one promotion is a legitimate new discovery (binder with flowcharts, never previously extracted as a discrete object); one is a timing artifact (photo frame origin-blocked on T6 before any ObjectRecord existed, correctly promoted as floor object on T7 -- not a suppression failure). World geometry is seed-deterministic; narration and extraction output vary across runs -- assertions use behavioral invariants only.",
+  "category": "worldgen_seeded",
   "stability": "probe",
   "world_prompt": "My name is Ken williams. My wife's name is roberta. She's not home right now. But I am, working at my desk on the finishing touches of what is to soon become our most popular game ever. I open the game and stare at the title screen which says....",
   "world_seed": 1075887258,
@@ -9,81 +9,64 @@
     {
       "action": "look around the office",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" }
       ]
     },
     {
       "action": "inspect the desk",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" }
       ]
     },
     {
       "action": "look at the monitor",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" }
       ]
     },
     {
       "action": "study the room carefully",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" }
       ]
     },
     {
       "action": "look over the papers on the desk",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" }
       ]
     },
     {
       "action": "glance at the photo on the desk",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" },
+        { "op": "eq", "path": "object_reality.promoted", "value": 0 }
       ]
     },
     {
       "action": "look around again",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" }
       ]
     },
     {
       "action": "examine the small framed photo",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" },
+        { "op": "eq", "path": "object_reality.promoted", "value": 0 }
       ]
     },
     {
       "action": "look at the stack of design documents",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" }
       ]
     },
     {
       "action": "look at the monitor screen carefully",
       "assert": [
-        {
-          "op": "no_error"
-        }
+        { "op": "no_error" },
+        { "op": "eq", "path": "object_reality.promoted", "value": 0 }
       ]
     }
   ]

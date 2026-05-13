@@ -20,5 +20,5 @@
     }
   ],
   "stability": "probe",
-  "category": "deterministic_reproduction"
+  "category": "worldgen_seeded"
 }
