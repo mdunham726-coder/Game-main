@@ -6881,13 +6881,15 @@ app.get('/diagnostics/sites', (req, res) => {
     const activeSiteCleanId = (as.site_id || '').replace(/\/l2$/, '');
     const activeCellSlot = cellSites.find(cs => cs.site_id === activeSiteCleanId);
     activeSite = {
-      site_id:      as.site_id ?? null,
-      name:         as.name ?? null,
-      description:  as.description ?? activeCellSlot?.description ?? null,
-      is_filled:    as.is_filled ?? false,
-      enterable:    as.enterable !== false,
-      site_size:    as.site_size ?? null,
-      local_spaces: lsEntries
+      site_id:             as.site_id ?? null,
+      name:                as.name ?? null,
+      description:         as.description ?? activeCellSlot?.description ?? null,
+      is_filled:           as.is_filled ?? false,
+      enterable:           as.enterable !== false,
+      site_size:           as.site_size ?? null,
+      ls_pct:              as.ls_pct ?? null,              // v1.85.94: density % rolled at generateL2Site()
+      eligible_tile_count: as.eligible_tile_count ?? null, // v1.85.94: non-street tile count used for density roll
+      local_spaces:        lsEntries
     };
   }
 
