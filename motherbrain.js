@@ -1476,6 +1476,8 @@ async function askMotherBrain(question) {
   const _totUsage   = { pt: 0, ct: 0, tt: 0, ht: 0, mt: 0, ec: 0 };
   let   _round      = 0;
   const _callStart  = Date.now();
+  let   _lastPollTool = null; // for folding repeated single-tool polls into one line
+  let   _pollCount    = 0;
 
   try {
     while (true) {
@@ -1520,8 +1522,13 @@ async function askMotherBrain(question) {
       const message     = choice?.message;
 
       if (finishReason === 'tool_calls' && message?.tool_calls?.length) {
-        // Print her reasoning sentence (content she wrote before the tool call)
-        if (message.content && message.content.trim()) {
+        // Detect repeat single-tool poll (e.g. harness_status called N times in a row)
+        const _roundTool    = message.tool_calls.length === 1 ? (message.tool_calls[0].function?.name || null) : null;
+        const _isRepeatPoll = (_roundTool !== null && _roundTool === _lastPollTool);
+        if (_isRepeatPoll) { _pollCount++; } else { _lastPollTool = _roundTool; _pollCount = 0; }
+
+        // Print her reasoning sentence — suppressed on repeat polls (redundant)
+        if (!_isRepeatPoll && message.content && message.content.trim()) {
           const _pre = message.content.trim().split(/\n+/);
           for (const para of _pre) {
             if (para.trim()) printLine(g(`  ${para.trim()}`));
@@ -1546,12 +1553,21 @@ async function askMotherBrain(question) {
           }
           const argsStr = Object.entries(tcArgs).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
           const result  = await executeToolCall(tcName, tcArgs);
-          printLine(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)`));
+          if (_isRepeatPoll) {
+            // Overwrite the previous [tool] line in place with a poll counter
+            readline.moveCursor(process.stdout, 0, -1);
+            readline.clearLine(process.stdout, 0);
+            readline.cursorTo(process.stdout, 0);
+            process.stdout.write(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)  [x${_pollCount + 1}]`) + '\n');
+            rl.prompt(true);
+          } else {
+            printLine(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)`));
+          }
           _loopMsgs.push({ role: 'tool', tool_call_id: tc.id, content: result });
         }
         if (_toolParseError) break;
 
-        printLine(g('  Mother Brain: [synthesizing...]'));
+        if (!_isRepeatPoll) printLine(g('  Mother Brain: [synthesizing...]'));
         continue; // next round
       }
 
