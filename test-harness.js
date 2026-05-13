@@ -23,6 +23,7 @@ const http  = require('http');
 const https = require('https');
 const fs    = require('fs');
 const path  = require('path');
+const { spawn } = require('child_process');
 
 // ─── CLI arg parsing ──────────────────────────────────────────────────────────
 const _args = process.argv.slice(2);
@@ -69,7 +70,10 @@ const SCENARIO_TOKEN_ESTIMATES = {
   multi_turn_session:      { turns: 3, inputTokens: 60000, outputTokens: 9000 },
   site_placement_endpoint: { turns: 0, inputTokens: 0,     outputTokens: 0    },
 };
-const UNKNOWN_SCENARIO_ESTIMATE = { turns: 3, inputTokens: 30000, outputTokens: 5000 };
+const UNKNOWN_SCENARIO_ESTIMATE  = { turns: 3, inputTokens: 30000, outputTokens: 5000 };
+// Per-run token estimate for a probe spec (one worldgen call per run).
+// Uses worldgen_basic constants as the conservative baseline.
+const PROBE_TOKENS_PER_RUN = { inputTokens: 22000, outputTokens: 4000 };
 
 // ─── Session cost accumulator ─────────────────────────────────────────────────
 let _sessionCost = { estimatedUsd: 0, actualUsd: 0, actualAvailable: false, runs: 0, turns: 0 };
@@ -77,6 +81,7 @@ let _sessionCost = { estimatedUsd: 0, actualUsd: 0, actualAvailable: false, runs
 // ─── Scenarios directory ──────────────────────────────────────────────────────
 // Shared by interactiveMenu() and main(). Single source of truth.
 const SCENARIOS_DIR = path.join(process.cwd(), 'tests', 'scenarios');
+const PROBES_DIR    = path.join(process.cwd(), 'tests', 'probes');
 function ensureScenariosDir() {
   if (!fs.existsSync(SCENARIOS_DIR)) {
     fs.mkdirSync(SCENARIOS_DIR, { recursive: true });
@@ -1058,6 +1063,7 @@ async function interactiveMenu() {
     console.log(`  Type P then Enter     — run all non-isolated scenarios (includes probes)`);
     console.log(`  Type 1-${SCENARIO_REGISTRY.length} then Enter   — run a single scenario by number`);
     console.log(`  Type F then Enter     — load a one-off scenario from tests/scenarios/`);
+    console.log(`  Type R then Enter     — run a probe spec from tests/probes/ (via probe-runner)`);
     console.log(`  Type V then Enter     — toggle verbose (narrative text on/off)`);
     console.log(`  Type Q then Enter     — quit`);
     console.log('');
@@ -1229,6 +1235,111 @@ async function interactiveMenu() {
       continue;
     }
 
+    if (answer === 'R') {
+      // ── Probe runner — select a .probe.json spec and run it via probe-runner.js ──
+      let _probeFiles;
+      try {
+        _probeFiles = fs.readdirSync(PROBES_DIR)
+          .filter(f => f.toLowerCase().endsWith('.probe.json') && fs.statSync(path.join(PROBES_DIR, f)).isFile())
+          .sort();
+      } catch (err) {
+        console.log(`\n  ${C.red}Could not read probes directory: ${err.message}${C.reset}`);
+        console.log(`  Expected: tests/probes/`);
+        continue;
+      }
+      if (_probeFiles.length === 0) {
+        console.log(`\n  No .probe.json files found in tests/probes/`);
+        console.log(`  Create a probe spec there (use Mother Brain's create_probe_spec tool) and try again.`);
+        continue;
+      }
+
+      // Pre-scan to extract rich metadata for display
+      console.log(`\n  Probe specs in tests/probes/:`);
+      const _probeMeta = _probeFiles.map(f => {
+        try {
+          const raw  = fs.readFileSync(path.join(PROBES_DIR, f), 'utf8');
+          const spec = JSON.parse(raw);
+          if (!spec || typeof spec !== 'object') return { f, ok: false };
+          const metricCount  = Array.isArray(spec.metrics) ? spec.metrics.length : '?';
+          const hasCycle     = Array.isArray(spec.prompt_cycle) && spec.prompt_cycle.length > 0;
+          const cycleLabel   = hasCycle ? `prompt_cycle: yes (${spec.prompt_cycle.length})` : 'prompt_cycle: no';
+          const desc         = spec.description ? spec.description.slice(0, 60) : spec.name || f;
+          return { f, ok: true, spec, metricCount, cycleLabel, desc, name: spec.name || f };
+        } catch {
+          return { f, ok: false };
+        }
+      });
+      _probeMeta.forEach((m, i) => {
+        if (m.ok) {
+          console.log(`    [${i + 1}] ${m.name} -- ${m.desc}  (${m.metricCount} metrics, ${m.cycleLabel})`);
+        } else {
+          console.log(`    [${i + 1}] ${m.f}  ${C.yellow}[unreadable]${C.reset}`);
+        }
+      });
+
+      const _rRaw = (await ask('\n  Select a probe [Q to cancel]: ')).trim();
+      if (_rRaw.toUpperCase() === 'Q' || _rRaw === '') continue;
+      const _rNum = parseInt(_rRaw, 10);
+      if (isNaN(_rNum) || _rNum < 1 || _rNum > _probeMeta.length) {
+        console.log(`  ${C.yellow}Invalid selection.${C.reset}`);
+        continue;
+      }
+      const _rMeta = _probeMeta[_rNum - 1];
+      if (!_rMeta.ok) {
+        console.log(`  ${C.red}Cannot use that file — it failed to parse. Fix the JSON and try again.${C.reset}`);
+        continue;
+      }
+
+      const _rPath = path.join(PROBES_DIR, _rMeta.f);
+      const _rSpec = _rMeta.spec;
+      const _rName = _rMeta.name;
+      console.log(`\n  ${C.cyan}[${_rName}]${C.reset} ${_rSpec.description || ''}`);
+
+      const runs = await askRunCount();
+
+      // Build estimate in same shape as estimateRuns() return
+      const _rTotalInput  = runs * PROBE_TOKENS_PER_RUN.inputTokens;
+      const _rTotalOutput = runs * PROBE_TOKENS_PER_RUN.outputTokens;
+      const _rCostUsd     = (_rTotalInput  / 1_000_000) * COST_ESTIMATES.inputPerMillionUsd
+                          + (_rTotalOutput / 1_000_000) * COST_ESTIMATES.outputPerMillionUsd;
+      const _rEst = {
+        totalTurns:    runs,
+        totalInput:    _rTotalInput,
+        totalOutput:   _rTotalOutput,
+        totalCostUsd:  _rCostUsd,
+        estimatedSecs: runs * AVG_SECS_PER_MODEL_TURN,
+        hasUnknown:    true,
+        modelCalls:    true,
+        breakdown: [{ name: _rName, perRun: { turns: 1, ...PROBE_TOKENS_PER_RUN }, turns: runs, input: _rTotalInput, output: _rTotalOutput }],
+      };
+      if (!(await askProceed(ask, _rName, runs, _rEst))) continue;
+      _sessionCost.estimatedUsd += _rCostUsd;
+
+      console.log(`\n  ${C.cyan}[probe-runner]${C.reset} ${_rMeta.f} --runs ${runs}`);
+      await new Promise((resolve) => {
+        const child = spawn('node', ['scripts/probe-runner.js', '--spec', _rPath, '--runs', String(runs)], {
+          cwd:   process.cwd(),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        child.stdout.on('data', chunk => process.stdout.write(chunk));
+        child.stderr.on('data', chunk => process.stderr.write(chunk));
+        child.on('error', err => {
+          console.log(`\n  ${C.red}Failed to launch probe-runner: ${err.message}${C.reset}`);
+          resolve();
+        });
+        child.on('close', code => {
+          if (code !== 0) console.log(`\n  ${C.yellow}probe-runner exited with code ${code}${C.reset}`);
+          resolve();
+        });
+      });
+
+      _sessionCost.runs  += 1;
+      _sessionCost.turns += runs;
+      console.log(`\nPress Enter to return to the menu.`);
+      await ask('');
+      continue;
+    }
+
     const num = parseInt(answer, 10);
     if (!isNaN(num) && num >= 1 && num <= SCENARIO_REGISTRY.length) {
       const scenario = SCENARIO_REGISTRY[num - 1];
@@ -1256,7 +1367,7 @@ async function interactiveMenu() {
       continue;
     }
 
-    console.log(`${C.yellow}Unrecognized input: "${answer}". Type A, P, F, 1-${SCENARIO_REGISTRY.length}, V, or Q then Enter.${C.reset}`);
+    console.log(`${C.yellow}Unrecognized input: "${answer}". Type A, P, F, R, 1-${SCENARIO_REGISTRY.length}, V, or Q then Enter.${C.reset}`);;
   }
 }
 
