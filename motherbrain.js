@@ -33,7 +33,9 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '5.0.2';
+const MB_VERSION = '5.0.6';
+// MB v5.0.6 (May 13, 2026): Patch — Server time relocated to stats footer. Removed [server time] line from before [thinking...] (fired before user saw output). Now printed as a dim line immediately after the session: stats line in the stats footer block, so it appears alongside cost/token summary after each completed exchange. MB_VERSION 5.0.5 -> 5.0.6.
+// MB v5.0.5 (May 13, 2026): Patch — Cross-restart conversation history. Added HISTORY_PATH (logs/mb-history.json) and HISTORY_KEEP=5 constants. _saveHistory() persists last 5 exchanges (10 messages) to disk after every answer. _loadHistory() reads and restores history at startup (called after banner()); prints dim '[MB] Loaded N prior exchanges from disk.' confirmation. /clear now also wipes the file. History survives motherbrain.js restarts; /clear for a true clean slate. MB_VERSION 5.0.4 -> 5.0.5.
 // MB v4.2.3: Patch — 4 spatial topology metrics added to probe framework. probe-metrics.js: added cell_occupancy_entropy (Shannon entropy of sites-per-cell distribution — key seed-sensitivity diagnostic), site_size_stddev (stddev of placed site sizes), community_ratio (fraction of is_community sites), isolated_cells_count (occupied cells with no 4-directional occupied neighbor). probe-runner.js: 4 new computeMetrics cases. worldgen-site-distribution-v3.probe.json: new spec with all 14 metrics + percentile_metrics on entropy/isolated. motherbrain.js: METRIC VOCABULARY updated to correct current names + new 4. MB_VERSION 4.2.2 -> 4.2.3.
 // MB v4.2.2: Patch — durable probe logging + read_probe_results tool. probe-runner.js: main() now writes 4 files to tests/probe-results/<timestamp>_<slug>/: runs.jsonl (all runs, error+success), summary.json (aggregate stats), console.txt (full output), spec.snapshot.json. writeConsole() helper owns all output (no monkey-patch). motherbrain.js: added fs+path requires; read_probe_results tool (list folders or read file); SESSION_FREE_TOOLS extended; executeToolCall handler with path traversal guard; PROBE RESULTS LOCATION paragraph in SYSTEM_PROMPT. MB_VERSION 4.2.1 -> 4.2.2.
 // MB v5.0.4 (May 13, 2026): Patch — ORS reconciliation observability. ObjectHelper.js: added reconciled counter (let reconciled = 0); increments only after ObjectRecord fully committed and one-container check passes (alongside promoted++, conditional on _priorRejection). Both return statements updated to include reconciled field. index.js: added reconciliation_count: 0 to _objectRealityDebug init; wired _ohResult.reconciled into _objectRealityDebug.reconciliation_count. Enables harness assertions on object_reality.reconciliation_count > 0 to verify RejectedCandidate cache reconciliation fired. game v1.85.90 -> v1.85.91.
@@ -1573,12 +1575,11 @@ async function askMotherBrain(question) {
     return;
   }
 
-  // Show "thinking" indicator — include server-local time for visibility
+  // Show "thinking" indicator
   const _now = new Date();
   const _hour = _now.getHours();
   const _tod = _hour < 6 ? 'night' : _hour < 12 ? 'morning' : _hour < 18 ? 'afternoon' : _hour < 21 ? 'evening' : 'night';
   printLine('');
-  printLine(d(`  [server time] ${_now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} \u00b7 ${_now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} \u00b7 ${_tod}`));
   printLine(g('  Mother Brain: [thinking…]'));
 
   // Fetch live game state from server (only available once a game session is active)
@@ -1794,6 +1795,7 @@ async function askMotherBrain(question) {
     process.stdout.write(d('  ' + '─'.repeat(Math.max(0, W() - 4))) + '\n');
     process.stdout.write(d(`  this call:  ${_callStr}`) + '\n');
     process.stdout.write(d(`  session:    ${_sesStr}  |  history: ${_histStr}`) + '\n');
+    process.stdout.write(d(`  [server time] ${_now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} \u00b7 ${_now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} \u00b7 ${_tod}`) + '\n');
     if (_mbCallHistory.length >= 2) {
       const _recentStr = _mbCallHistory.map(e => e.total_tokens.toLocaleString()).join('  ');
       process.stdout.write(d(`  recent:     ${_recentStr} tok`) + '\n');

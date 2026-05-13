@@ -1,0 +1,44 @@
+{
+  "name": "origin_gate_reconciliation",
+  "description": "Verifies that an object described by the narrator as player-held (Turn 1) is blocked by the origin gate, and when the same object is later described as grounded on a localspace floor (Turn 2), it is promoted with reconciliation_count > 0. Player starts inside a localspace at L2 depth for cache matching on container_id.",
+  "world_prompt": "You are in a small stone chamber. The room has rough stone walls, a packed dirt floor, and a single wooden table in the center. A lantern sits on the table. You are standing near the table.",
+  "world_seed": 31415,
+  "category": "worldgen_seeded",
+  "stability": "probe",
+  "turns": [
+    {
+      "action": "I reach for the lantern on the table, my fingers brushing its cool metal base.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "I examine the lantern on the table. It is a simple iron lantern with a glass chimney, sitting on the wooden table.",
+      "assert": [
+        {
+          "op": "no_error"
+        },
+        {
+          "op": "gt",
+          "path": "object_reality.promoted",
+          "expected": 0
+        },
+        {
+          "op": "gt",
+          "path": "object_reality.reconciliation_count",
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "action": "I wait quietly.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    }
+  ]
+}
