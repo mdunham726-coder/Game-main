@@ -836,6 +836,7 @@ app.post('/narrate', async (req, res) => {
   // v1.84.52: Object Reality System — initialize engine object registries on old saves
   if (!gameState.objects)       gameState.objects       = {};
   if (!gameState.object_errors) gameState.object_errors = [];
+  if (!Array.isArray(gameState._rejectedCandidates)) gameState._rejectedCandidates = [];
   if (gameState.player && !Array.isArray(gameState.player.object_ids)) gameState.player.object_ids = [];
   if (gameState.world && Array.isArray(gameState.world.npcs)) {
     gameState.world.npcs.forEach(npc => { if (!Array.isArray(npc.object_ids)) npc.object_ids = []; });
@@ -3751,6 +3752,25 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'narrator_independent_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+              // v1.85.90: Write rejected-candidate cache entry so ObjectHelper dedup guard can reconcile
+              // if the same object is later grounded as a floor/localspace entity. This does NOT create
+              // an ObjectRecord — it is negative evidence only. Anti-conjuration contract unchanged.
+              const _rcTurn = (gameState.turn_history?.length || 0) + 1;
+              const _rcNameLower = String(c.name).toLowerCase().trim();
+              const _rcNormalized = _rcNameLower
+                .replace(/^(stack|pile|bunch|set|piece|bit|pair|row|collection) of /i, '')
+                .replace(/^(small|large|tiny|big|old|worn|broken|battered|cracked|rusty|dusty|faded|crumpled|folded|half-empty|empty|full|open|closed|thick|thin|heavy|light|dark|dim|bright|clean|dirty|wet|dry|loose|tight|short|tall|long|narrow|wide) /i, '')
+                .trim();
+              if (!Array.isArray(gameState._rejectedCandidates)) gameState._rejectedCandidates = [];
+              gameState._rejectedCandidates.push({
+                name:             _rcNameLower,
+                normalized:       _rcNormalized,
+                turn:             _rcTurn,
+                reason:           'narrator_independent_player_blocked',
+                location_context: gameState.world?.active_local_space?.local_space_id || null
+              });
+              // Expire entries older than 5 turns to keep the cache bounded
+              gameState._rejectedCandidates = gameState._rejectedCandidates.filter(r => _rcTurn - r.turn <= 5);
               return false;
             }
             // v1.84.90: environment_interaction + player is only valid when the action's semantic class

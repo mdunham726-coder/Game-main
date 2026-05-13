@@ -358,6 +358,18 @@ async function run(gameState, quarantine, turnNumber) {
       continue;
     }
 
+    // v1.85.90: Check rejected-candidate cache. If this grounded promotion matches an object that was
+    // previously blocked by the origin gate (narrator tried to give it to the player before it was
+    // grounded), annotate the new record with reconciliation provenance. The promotion is NOT suppressed
+    // — this is the FIRST valid ObjectRecord for this physical object. Cache check is L2-depth only:
+    // location_context stores active_local_space.local_space_id; container_id is the same value for
+    // localspace promotions. At L1 depth location_context is null and reconciliation silently misses
+    // (safe failure — old behavior persists for site-layer edge cases).
+    const _rcCheckNorm = _softNorm !== _nameLower ? _softNorm : _nameLower;
+    const _priorRejection = Array.isArray(gameState._rejectedCandidates)
+      ? gameState._rejectedCandidates.find(r => r.normalized === _rcCheckNorm && r.location_context === container_id)
+      : null;
+
     // Write object record
     const record = {
       id:                     objectId,
@@ -370,7 +382,10 @@ async function run(gameState, quarantine, turnNumber) {
       source:                 'continuity_brain',
       status:                 'active',
       conditions:             [],
-      events:                 []
+      events:                 [],
+      reconciled_from_rejection: _priorRejection
+        ? { turn: _priorRejection.turn, reason: _priorRejection.reason }
+        : null
     };
     gameState.objects[objectId] = record;
     // v1.85.8: stamp fission lineage — parent_object_id links successor to the retired source object
