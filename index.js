@@ -820,7 +820,7 @@ app.post('/narrate', async (req, res) => {
   }
   // v1.84.0: Birth record backward compat — old saves won't have this field
   if (gameState.player && !gameState.player.birth_record) {
-    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [], world_notes: [] };
+    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [], world_notes: [], canonical_name: null, title_or_role: null };
   }
   // v1.84.19: Condition Bot backward compat — old saves won't have these fields
   if (gameState.player && !gameState.player.conditions) {

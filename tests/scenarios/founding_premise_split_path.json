@@ -2,7 +2,7 @@
   "name": "founding_premise_split_path",
   "stability": "stable",
   "description": "Founding premise (world_prompt) differs from T1 action. Verifies the full scenario_notes pipeline: raw_input override, canonical_name extraction, player-linked facts in scenario_notes, atmospheric sentence in world_notes (reserved-not-promoted invariant). T2 verifies TRUTH block contains both canonical identity AND at least one promoted scenario note — not just identity.",
-  "world_prompt": "I wake up inside a small cottage in Crestfall. My name is Eleanor Voss. My husband Daniel is away at sea for the next three weeks. Right now I am at my desk writing him a letter. The harbor town of Crestfall is known for its fishermen and the heavy fogs that roll in each winter.",
+  "world_prompt": "My name is Eleanor Voss. My husband Daniel is away at sea for the next three weeks. I have been writing him letters every day since his ship left. The harbor town of Crestfall is known for its fishermen and the heavy fogs that roll in each winter.",
   "turns": [
     {
       "label": "founding_split",
