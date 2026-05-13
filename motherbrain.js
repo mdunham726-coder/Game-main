@@ -33,9 +33,10 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '4.2.3';
+const MB_VERSION = '4.2.4';
 // MB v4.2.3: Patch — 4 spatial topology metrics added to probe framework. probe-metrics.js: added cell_occupancy_entropy (Shannon entropy of sites-per-cell distribution — key seed-sensitivity diagnostic), site_size_stddev (stddev of placed site sizes), community_ratio (fraction of is_community sites), isolated_cells_count (occupied cells with no 4-directional occupied neighbor). probe-runner.js: 4 new computeMetrics cases. worldgen-site-distribution-v3.probe.json: new spec with all 14 metrics + percentile_metrics on entropy/isolated. motherbrain.js: METRIC VOCABULARY updated to correct current names + new 4. MB_VERSION 4.2.2 -> 4.2.3.
 // MB v4.2.2: Patch — durable probe logging + read_probe_results tool. probe-runner.js: main() now writes 4 files to tests/probe-results/<timestamp>_<slug>/: runs.jsonl (all runs, error+success), summary.json (aggregate stats), console.txt (full output), spec.snapshot.json. writeConsole() helper owns all output (no monkey-patch). motherbrain.js: added fs+path requires; read_probe_results tool (list folders or read file); SESSION_FREE_TOOLS extended; executeToolCall handler with path traversal guard; PROBE RESULTS LOCATION paragraph in SYSTEM_PROMPT. MB_VERSION 4.2.1 -> 4.2.2.
+// MB v4.2.4 (May 13, 2026): Patch — Server-local time injection. At each DeepSeek API call, a SERVER-LOCAL TIME block is appended to the system message content (not the static SYSTEM_PROMPT). Block includes day/date, HH:MM AM/PM, and time-of-day label (morning/afternoon/evening/night). Labeled "this machine only — not universal" to prevent universal-time misinterpretation. Derived from new Date() at call time, so value is fresh on every API call. MB_VERSION 4.2.3 -> 4.2.4.
 // MB v4.2.1 (May 12, 2026): Patch — prompt_cycle support in probe runner. probe-runner.js: validateSpec() validates prompt_cycle as non-empty string array; run loop overrides request_template.action per run with prompt_cycle[i % length]; [RUN N] line includes prompt=N/M "label..." for readable 50-run baselines. motherbrain.js: create_probe_spec spec param updated with prompt_cycle field docs; PROBE SPEC PROMPT CYCLING paragraph added to SYSTEM_PROMPT. Probe specs + source allowlist gaps closed: scripts/probe-runner.js + scripts/probe-metrics.js added to _SOURCE_ALLOWLIST; tests/probes/ added to search_source global sweep; $SEED rule documented in tool param and SYSTEM_PROMPT. MB_VERSION 4.2.0 -> 4.2.1.
 // MB v4.2.0 (May 12, 2026): Minor — Statistical probe doctrine. Added STATISTICAL PROBE SYSTEM paragraph to SYSTEM_PROMPT: measurement-vs-judgment separation (observe distributions, surface anomalies -- not declare pass/fail), PROBE vs SCENARIO distinction, metric vocabulary (10 approved names from probe-metrics.js), noise discipline rule (prefer few high-signal metrics), refinement ladder policy (1/5/10/50+ runs with explicit threshold discipline per rung), anti-coupling rule (prefer existing engine outputs over new instrumentation), probe authoring workflow (no autonomous creation). MB_VERSION 4.1.2 -> 4.2.0.
 // MB v4.1.2 (May 12, 2026): Patch — Probe framework. Added probe-runner.js (generic stat probe engine), probe-metrics.js (metric enum + config requirements single source), worldgen-sites.probe.json (first probe spec). Added create_probe_spec tool to MB (writes .probe.json to tests/probes/, validates metric enum, metric config requirements, lifecycle, warning keys). Extended run_validation with probe_worldgen_sites_10, probe_worldgen_sites_50 named tasks and dynamic run_probe task (any .probe.json, spec_path+runs params, dynamic timeout). Added create_probe_spec to SESSION_FREE_TOOLS. MB can now author new statistical probe specs without human code changes. MB_VERSION 4.1.1 -> 4.1.2.
@@ -1457,7 +1458,11 @@ async function askMotherBrain(question) {
   fullContext += flightHistory;
 
   // Build messages array: system + full history + new question with context
-  const systemMsg = { role: 'system', content: SYSTEM_PROMPT };
+  const _now = new Date();
+  const _hour = _now.getHours();
+  const _tod = _hour < 6 ? 'night' : _hour < 12 ? 'morning' : _hour < 18 ? 'afternoon' : _hour < 21 ? 'evening' : 'night';
+  const _timeBlock = `\n\nSERVER-LOCAL TIME (this machine only — not universal):\n${_now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n${_now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}\nTime of day: ${_tod}`;
+  const systemMsg = { role: 'system', content: SYSTEM_PROMPT + _timeBlock };
   const userMsg   = {
     role: 'user',
     content: `[LIVE ENGINE DATA]\n${fullContext}\n\n[DEVELOPER QUESTION]\n${question}`

@@ -3,7 +3,7 @@
   "description": "10-turn stress test for the CB semantic-variant suppression rule + ObjectHelper soft-match guard. Starts in Ken Williams' office (Sierra On-Line, 1987) and repeatedly re-observes the same environment with noun-phrase drift variants to verify no duplicate object records are promoted.",
   "category": "deterministic_reproduction",
   "stability": "probe",
-  "world_prompt": "My name is Ken williams. My wife's name is roberta. She's not home right now. But I am and I'm working on the finishing touches of what is to soon become our most popular game ever. I open the game and stare at the title screen which says....",
+  "world_prompt": "My name is Ken williams. My wife's name is roberta. She's not home right now. But I am, working at my desk on the finishing touches of what is to soon become our most popular game ever. I open the game and stare at the title screen which says....",
   "world_seed": 1075887258,
   "turns": [
     {
