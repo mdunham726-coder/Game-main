@@ -599,6 +599,9 @@ function _describeTrackedObjects(gameState) {
 
   const validContainers = new Set(['player']);
   if (pos) validContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
+  // v1.85.81: include active localspace or site floor so L2/L1 ORS objects appear in TRACKED OBJECTS
+  if (loc && loc.local_space_id) validContainers.add(loc.local_space_id);
+  else if (loc && loc.site_id)   validContainers.add(loc.site_id);
   const visible = (loc && loc._visible_npcs) || [];
   for (const npc of visible) { if (npc.id) validContainers.add(npc.id); }
 

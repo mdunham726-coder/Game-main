@@ -3179,6 +3179,9 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // Collect in-scene container IDs
       const _sceneCids = new Set(['player']);
       if (_pos) _sceneCids.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
+      // v1.85.81: include active localspace or site floor
+      if (_loc && _loc.local_space_id) _sceneCids.add(_loc.local_space_id);
+      else if (_loc && _loc.site_id)   _sceneCids.add(_loc.site_id);
       const _visNpcs = (_loc && _loc._visible_npcs) || [];
       for (const _npc of _visNpcs) { if (_npc.id) _sceneCids.add(_npc.id); }
       // Build lines for objects with conditions
@@ -3972,6 +3975,9 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
             const _bcLoc   = _bcWorld.active_local_space || _bcWorld.active_site;
             const _bcCids  = new Set(['player']);
             if (_bcPos) _bcCids.add(`LOC:${_bcPos.mx},${_bcPos.my}:${_bcPos.lx},${_bcPos.ly}`);
+            // v1.85.81: include active localspace or site floor
+            if (_bcLoc && _bcLoc.local_space_id) _bcCids.add(_bcLoc.local_space_id);
+            else if (_bcLoc && _bcLoc.site_id)   _bcCids.add(_bcLoc.site_id);
             for (const _bn of ((_bcLoc && _bcLoc._visible_npcs) || [])) { if (_bn.id) _bcCids.add(_bn.id); }
             const _bcNameNorm = cu.name_match.toLowerCase();
             const _bcMatches  = Object.values(gameState.objects || {}).filter(r =>
@@ -7624,14 +7630,17 @@ app.get('/harness/scenarios', (req, res) => {
   child.on('error', err => res.status(500).json({ error: err.message }));
 });
 
-// POST /harness/run — blocking scenario run; body: { scenario: string, runs?: number }
+// POST /harness/run — async (fire-and-forget) scenario run; body: { scenario: string, runs?: number }
+// Returns immediately with { started: true }. Poll GET /harness/status until running:false,
+// then call GET /harness/result/last for the full result.
+// Guardrails: rejects with { started: false } when already running; captures errors in _lastHarnessResult.
 // Scenario name must be alphanumeric with underscores/hyphens only (no path traversal).
 // Server-side cap: MAX_MOTHER_RUNS per call. Lock: only one run at a time.
-app.post('/harness/run', async (req, res) => {
+app.post('/harness/run', (req, res) => {
   const diagKey = process.env.DIAGNOSTICS_KEY;
   if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
   if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
-  if (_harnessRunning) return res.status(409).json({ error: 'harness_busy', message: 'A harness run is already in progress.' });
+  if (_harnessRunning) return res.status(409).json({ started: false, error: 'harness already running', message: 'A harness run is already in progress. Poll /harness/status until running:false, then read /harness/result/last.' });
 
   const scenarioName = typeof req.body?.scenario === 'string' ? req.body.scenario.trim() : null;
   if (!scenarioName) return res.status(400).json({ error: 'scenario_required', message: 'Body must include { scenario: string }.' });
@@ -7640,39 +7649,46 @@ app.post('/harness/run', async (req, res) => {
     return res.status(400).json({ error: 'invalid_scenario_name', message: 'Scenario name must be alphanumeric with underscores/hyphens only.' });
   }
 
-  const runs      = Math.min(Math.max(1, parseInt(req.body?.runs, 10) || 1), MAX_MOTHER_RUNS);
-  const filePath  = path.join(HARNESS_SCENARIOS_DIR, scenarioName + '.json');
-  const useFile   = fs.existsSync(filePath);
+  const runs     = Math.min(Math.max(1, parseInt(req.body?.runs, 10) || 1), MAX_MOTHER_RUNS);
+  const filePath = path.join(HARNESS_SCENARIOS_DIR, scenarioName + '.json');
+  const useFile  = fs.existsSync(filePath);
 
   _harnessRunning = true;
-  try {
+  res.json({ started: true, scenario: scenarioName, runs, message: 'Run started. Poll /harness/status until running:false, then call /harness/result/last.' });
+
+  // Fire-and-forget: run loop detached from HTTP response
+  (async () => {
     const runDetails = [];
-    for (let i = 0; i < runs; i++) {
-      const result = await new Promise(resolve => {
-        const args = useFile
-          ? [path.join(__dirname, 'test-harness.js'), '--file', filePath, '--yes', '--result-file', HARNESS_RESULT_PATH]
-          : [path.join(__dirname, 'test-harness.js'), '--scenario', scenarioName, '--yes', '--result-file', HARNESS_RESULT_PATH];
-        const child = spawn(process.execPath, args, {
-          cwd: __dirname,
-          env: { ...process.env },
-          stdio: ['ignore', 'pipe', 'pipe'],
+    try {
+      for (let i = 0; i < runs; i++) {
+        const result = await new Promise(resolve => {
+          const args = useFile
+            ? [path.join(__dirname, 'test-harness.js'), '--file', filePath, '--yes', '--result-file', HARNESS_RESULT_PATH]
+            : [path.join(__dirname, 'test-harness.js'), '--scenario', scenarioName, '--yes', '--result-file', HARNESS_RESULT_PATH];
+          const child = spawn(process.execPath, args, {
+            cwd: __dirname,
+            env: { ...process.env },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', d => { stdout += d; });
+          child.stderr.on('data', d => { stderr += d; });
+          child.on('close',  code => resolve({ run: i + 1, exitCode: code, stdout: stdout.slice(0, 32000), stderr: stderr.slice(0, 4000) }));
+          child.on('error', err  => resolve({ run: i + 1, exitCode: -1, error: err.message }));
         });
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', d => { stdout += d; });
-        child.stderr.on('data', d => { stderr += d; });
-        child.on('close',  code => resolve({ run: i + 1, exitCode: code, stdout: stdout.slice(0, 32000), stderr: stderr.slice(0, 4000) }));
-        child.on('error', err  => resolve({ run: i + 1, exitCode: -1, error: err.message }));
-      });
-      runDetails.push(result);
+        runDetails.push(result);
+      }
+      let summary = null;
+      try { summary = JSON.parse(fs.readFileSync(HARNESS_RESULT_PATH, 'utf8')); } catch (_) {}
+      _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, summary, failed: false };
+    } catch (err) {
+      _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, error: err.message, failed: true };
+      console.error('[HARNESS] Background run error:', err.message);
+    } finally {
+      _harnessRunning = false;
     }
-    let summary = null;
-    try { summary = JSON.parse(fs.readFileSync(HARNESS_RESULT_PATH, 'utf8')); } catch (_) {}
-    _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, summary };
-    res.json(_lastHarnessResult);
-  } finally {
-    _harnessRunning = false;
-  }
+  })();
 });
 
 // GET /harness/result/last — retrieve the last completed harness run result

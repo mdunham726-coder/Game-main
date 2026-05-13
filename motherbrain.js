@@ -421,7 +421,7 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'harness_run_scenario',
-      description: 'Run a QA scenario through the test harness. Requires harness_connect first (_harnessAuthorized=true). Once Connected, run in response to an explicit developer request — do not run autonomously or without prior stated intent. Scenario name must exactly match a name from harness_list_scenarios. Runs default to 1; max is 5. The call blocks until the run completes. Returns exitCode, stdout (truncated to 8000 chars), and a structured summary from the result file.',
+      description: 'Start a QA scenario run through the test harness. Requires harness_connect first (_harnessAuthorized=true). Once Connected, run in response to an explicit developer request — do not run autonomously or without prior stated intent. Scenario name must exactly match a name from harness_list_scenarios. Runs default to 1; max is 5. Returns immediately with {started:true} — the run executes in the background. After calling this, poll harness_status until running:false, then call harness_read_result to get the full result. If the batch threw an error, failed:true will be set in the result.',
       parameters: {
         type: 'object',
         properties: {
@@ -836,7 +836,7 @@ SCENARIO CATEGORIES: Each registry entry carries a sweep field that directly enc
 
 SCENARIO TRUTH: Do not guess what scenarios exist or what they test. Call harness_list_scenarios to get the current live registry with name, description, turns, stability, and isolated for every entry. That is the authoritative source.
 
-WORKFLOW (while Connected): (1) Call harness_list_scenarios to see the current registry with descriptions. (2) Call harness_run_scenario with the exact name. (3) Always call harness_read_result after a run. (4) Summarize: scenario name, PASS/FAIL, turns passed/failed, any session ID surfaced. For probe failures, note that a single failure may be probabilistic and recommend a repeat run before escalating.
+WORKFLOW (while Connected): (1) Call harness_list_scenarios to see the current registry with descriptions. (2) Call harness_run_scenario with the exact name — returns immediately with {started:true}. (3) Poll harness_status until running:false. (4) Call harness_read_result to get the full result. (5) Summarize: scenario name, PASS/FAIL, turns passed/failed, any session ID surfaced, failed:true if the batch threw an error. For probe failures, note that a single failure may be probabilistic and recommend a repeat run before escalating.
 
 VALIDATION TOOL: run_validation gives you a narrow set of pre-approved validation tasks you can execute locally without server interaction.
 
@@ -1086,7 +1086,7 @@ async function executeToolCall(name, args) {
       const diagKey = process.env.DIAGNOSTICS_KEY || '';
       const body    = { scenario: args.scenario };
       if (args.runs !== undefined) body.runs = args.runs;
-      const resp = await axios.post(`http://${HOST}:${PORT}/harness/run`, body, { timeout: 600000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey, 'content-type': 'application/json' } });
+      const resp = await axios.post(`http://${HOST}:${PORT}/harness/run`, body, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey, 'content-type': 'application/json' } });
       const raw = JSON.stringify(resp.data);
       if (raw.length > 32000) return raw.slice(0, 32000) + '\n[TRUNCATED]';
       return raw;
