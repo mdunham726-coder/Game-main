@@ -950,7 +950,8 @@ app.post('/narrate', async (req, res) => {
     transferred: 0,
     errors: 0,
     audit: [],
-    error_entries: []
+    error_entries: [],
+    reconciliation_count: 0  // v1.85.91: ObjectRecords annotated with reconciled_from_rejection this turn
   };
 
   // v1.85.39: turn_stage SSE — parsing start
@@ -3955,6 +3956,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
           _objectRealityDebug.transferred  = _ohResult.transferred;
           _objectRealityDebug.errors       = _ohResult.errors;
           _objectRealityDebug.audit        = _ohResult.audit || [];
+          _objectRealityDebug.reconciliation_count = _ohResult.reconciled || 0;
           _objectRealityDebug.error_entries = (gameState.object_errors || []).filter(e => e.turn === turnNumber);
         } else {
           // v1.85.25: guard prevents 'empty_quarantine' from overwriting 'ap_dedup_all_transfers'.

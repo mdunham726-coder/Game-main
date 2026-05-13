@@ -195,17 +195,18 @@ function _pushError(gameState, entry) {
  *   Pass 1 — promotions ('promote' action)
  *   Pass 2 — transfers ('transfer' action)
  *
- * Returns { promoted, transferred, errors, audit }.
+ * Returns { promoted, transferred, errors, audit, reconciled }.
  * Does NOT modify the quarantine array or gameState.object_quarantine.
  */
 async function run(gameState, quarantine, turnNumber) {
   if (!Array.isArray(quarantine) || quarantine.length === 0) {
-    return { promoted: 0, transferred: 0, errors: 0, audit: [] };
+    return { promoted: 0, transferred: 0, errors: 0, audit: [], reconciled: 0 };
   }
 
   const audit       = [];
   const tempRefMap  = {};  // temp_ref → object_id (built during pass 1, consumed in pass 2)
   let promoted      = 0;
+  let reconciled    = 0;  // v1.85.91: counts ObjectRecords created with reconciled_from_rejection annotation
   let transferred   = 0;
   let errors        = 0;
   const ts          = new Date().toISOString();
@@ -419,6 +420,7 @@ async function run(gameState, quarantine, turnNumber) {
     tempRefMap[temp_ref] = objectId;
     _claimedObjectIds.add(objectId);
     promoted++;
+    if (_priorRejection) reconciled++;  // v1.85.91: only after record fully committed (post one-container check)
     // v1.85.10: stamp parent_object_id so UI can distinguish fission vs normal promoted rows
     audit.push({ turn: turnNumber, action: 'promoted', object_id: objectId, object_name: name, container_type, container_id, temp_ref, parent_object_id: entry.parent_object_id || null, ts });
     console.log(`[ObjectHelper] Promoted: ${objectId} (${name}) → ${container_type}/${container_id}`);
@@ -528,8 +530,8 @@ async function run(gameState, quarantine, turnNumber) {
     console.log(`[ObjectHelper] Transferred: ${objectId} (${record.name}) ${prevType}/${prevId} → ${to_container_type}/${to_container_id}`);
   }
 
-  console.log(`[ObjectHelper] Turn ${turnNumber}: promoted=${promoted} transferred=${transferred} errors=${errors}`);
-  return { promoted, transferred, errors, audit };
+  console.log(`[ObjectHelper] Turn ${turnNumber}: promoted=${promoted} transferred=${transferred} errors=${errors} reconciled=${reconciled}`);
+  return { promoted, transferred, errors, audit, reconciled };
 }
 
 // ── transferObjectDirect ──────────────────────────────────────────────────────

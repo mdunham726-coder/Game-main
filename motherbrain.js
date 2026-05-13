@@ -36,6 +36,7 @@ const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 const MB_VERSION = '5.0.2';
 // MB v4.2.3: Patch — 4 spatial topology metrics added to probe framework. probe-metrics.js: added cell_occupancy_entropy (Shannon entropy of sites-per-cell distribution — key seed-sensitivity diagnostic), site_size_stddev (stddev of placed site sizes), community_ratio (fraction of is_community sites), isolated_cells_count (occupied cells with no 4-directional occupied neighbor). probe-runner.js: 4 new computeMetrics cases. worldgen-site-distribution-v3.probe.json: new spec with all 14 metrics + percentile_metrics on entropy/isolated. motherbrain.js: METRIC VOCABULARY updated to correct current names + new 4. MB_VERSION 4.2.2 -> 4.2.3.
 // MB v4.2.2: Patch — durable probe logging + read_probe_results tool. probe-runner.js: main() now writes 4 files to tests/probe-results/<timestamp>_<slug>/: runs.jsonl (all runs, error+success), summary.json (aggregate stats), console.txt (full output), spec.snapshot.json. writeConsole() helper owns all output (no monkey-patch). motherbrain.js: added fs+path requires; read_probe_results tool (list folders or read file); SESSION_FREE_TOOLS extended; executeToolCall handler with path traversal guard; PROBE RESULTS LOCATION paragraph in SYSTEM_PROMPT. MB_VERSION 4.2.1 -> 4.2.2.
+// MB v5.0.4 (May 13, 2026): Patch — ORS reconciliation observability. ObjectHelper.js: added reconciled counter (let reconciled = 0); increments only after ObjectRecord fully committed and one-container check passes (alongside promoted++, conditional on _priorRejection). Both return statements updated to include reconciled field. index.js: added reconciliation_count: 0 to _objectRealityDebug init; wired _ohResult.reconciled into _objectRealityDebug.reconciliation_count. Enables harness assertions on object_reality.reconciliation_count > 0 to verify RejectedCandidate cache reconciliation fired. game v1.85.90 -> v1.85.91.
 // MB v5.0.3 (May 13, 2026): Patch — Phase 3: RejectedCandidate cache for origin-gate timing gap. index.js: on narrator_independent_player_blocked, write lightweight cache entry to gameState._rejectedCandidates (name, normalized, turn, reason, location_context). 5-turn expiry + location-context bound. ObjectHelper.js: before creating new ObjectRecord, check cache for prior rejection matching same normalized name + container_id. If found, annotate record with reconciled_from_rejection provenance. Grounded promotion is NOT suppressed — this is the first valid ObjectRecord. Anti-conjuration preserved, no retroactive possession, no duplicate inflation, audit trail added. Safe miss at L1 depth (null location_context), safe success at L2 depth. game v1.85.89 -> v1.85.90.
 // MB v5.0.2 (May 13, 2026): Patch — Rename deterministic_reproduction category to worldgen_seeded. Updated VALID_CATEGORIES array and SYSTEM_PROMPT CATEGORY FIELD description to accurately reflect what the seed controls (world geometry only; LLM narration/extraction are non-deterministic). Updated semantic_duplicate_redescribe.json and hello_world_minimal.json category fields. Updated scenario description to document T-7 timing artifact and T-6/T-8/T-10 as the proof turns. MB_VERSION 5.0.1 -> 5.0.2.
 // MB v5.0.1 (May 13, 2026): Patch — PERMISSION TO EDIT guardrail. Added hard rule to SYSTEM_PROMPT: write_file/patch_file require explicit developer permission (implement/patch/go ahead/fix it). Diagnosis, investigation, plan, and suggestion requests are explicitly NOT permission. Rule is unconditional -- not overridden by confidence or urgency. After proposing a plan, stop. MB_VERSION 5.0.0 -> 5.0.1.
@@ -649,6 +650,8 @@ function c(s)  { return `${CYN}${s}${R}`; }
 function r(s)  { return `${RED}${s}${R}`; }
 
 // ── State ──────────────────────────────────────────────────────────────────────
+const HISTORY_PATH   = path.join(__dirname, 'logs', 'mb-history.json');
+const HISTORY_KEEP   = 5;    // exchanges (pairs) to persist across restarts
 let _turnBuffer      = [];   // last TURN_BUFFER SSE turn payloads
 let _activeSessionId = null; // game session ID from latest turn event
 let _harnessAuthorized = false; // explicit operator consent: false=Offline, true=Connected
@@ -1755,6 +1758,7 @@ async function askMotherBrain(question) {
   _history.push({ role: 'user',      content: question });
   _history.push({ role: 'assistant', content: aiText   });
   _lastExchange = { question, answer: aiText };
+  _saveHistory();
 
   // Display response — clear the [thinking…] / [synthesizing...] line first
   readline.clearLine(process.stdout, 0);
@@ -1992,6 +1996,7 @@ function flushPaste() {
   if (!input) { prompt(); return; }
   if (input === '/clear') {
     _history = [];
+    try { fs.writeFileSync(HISTORY_PATH, '[]', 'utf8'); } catch (_e) { /* ignore */ }
     printLine(hr());
     printLine(g('  Conversation cleared.') + d('  (Turn buffer retained — engine history preserved.)'));
     printLine(hr());
@@ -2148,9 +2153,29 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 
+// ── Helpers: history persistence ─────────────────────────────────────────────
+function _saveHistory() {
+  try {
+    const keep = _history.slice(-(HISTORY_KEEP * 2));
+    fs.writeFileSync(HISTORY_PATH, JSON.stringify(keep, null, 2), 'utf8');
+  } catch (_e) { /* non-fatal */ }
+}
+function _loadHistory() {
+  try {
+    const raw = fs.readFileSync(HISTORY_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      _history = parsed.slice(-(HISTORY_KEEP * 2));
+      const exchanges = Math.floor(_history.length / 2);
+      process.stdout.write(d(`  [MB] Loaded ${exchanges} prior exchange${exchanges === 1 ? '' : 's'} from disk.\n\n`));
+    }
+  } catch (_e) { /* file absent or corrupt — start fresh */ }
+}
+
 // ── Boot ───────────────────────────────────────────────────────────────────────
 process.stdout.write(`\x1b]0;MOTHER BRAIN v${MB_VERSION}\x07`);
 banner();
+_loadHistory();
 connectSSE();
 prompt();
 
