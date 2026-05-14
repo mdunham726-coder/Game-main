@@ -4639,6 +4639,18 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
     // Store turn object in turn history
     gameState.turn_history.push(turnObject);
 
+    // v1.85.98: Background flight recorder append — JSONL archive per session per day
+    // Path: logs/flight-recorder/YYYY-MM-DD/session_{id}.jsonl — one line per turn, append-only
+    {
+      const _flDate = new Date().toISOString().slice(0, 10);
+      const _flSafeId = String(resolvedSessionId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const _flDir = path.join(__dirname, 'logs', 'flight-recorder', _flDate);
+      const _flLine = JSON.stringify({ timestamp: new Date().toISOString(), session_id: resolvedSessionId, turn: turnNumber, turnObject }) + '\n';
+      fsPromises.mkdir(_flDir, { recursive: true })
+        .then(() => fsPromises.appendFile(path.join(_flDir, 'session_' + _flSafeId + '.jsonl'), _flLine, 'utf8'))
+        .catch(err => console.warn('[FLIGHT-LOG] write failed:', err.message));
+    }
+
     // Mirror RC data onto debug so harness assertions on debug.reality_check.fired/result resolve correctly.
     // turnObject.reality_check is the canonical frozen record; no re-derivation needed.
     debug.reality_check = turnObject.reality_check;
