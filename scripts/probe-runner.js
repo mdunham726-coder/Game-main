@@ -528,9 +528,9 @@ async function main() {
       // Extract log from response
       log = dotGet(response, spec.extract);
       if (log == null) {
-        const _errCode     = (response && response.error) ? String(response.error) : '';
-        const _isTransient = _errCode === 'site_fill_failed' || _errCode.startsWith('engine_failed');
-        if (_isTransient && _retries < _maxRetries) {
+        const _errCode = (response && response.error) ? String(response.error) : 'missing_extract';
+        // Retry on any null extract — worldgen failures can have arbitrary error codes
+        if (_retries < _maxRetries) {
           _retries++;
           writeConsole(`[RUN ${i + 1}] retry ${_retries}/${_maxRetries} (${_errCode}) seed=${seed}`);
           continue runLoop;
