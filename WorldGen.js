@@ -2285,12 +2285,13 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     const local_space_id = `ls_${i}`;
     grid[by][bx] = { type: "local_space", local_space_id: local_space_id, npc_ids: [] };
     // v1.85.47: roll size, compute dimensions, derive enterable via deterministic hash (zero RNG consumption)
+    // v1.85.97: threshold raised 15→35 targeting ~65% enterable / ~35% non-enterable per site
     const _lsSize = rollGlobalLocalspaceSize(rng);
     const { width: _lsW, height: _lsH } = siteGridFromSize(_lsSize);
     let _lsHash = 0;
     const _lsHashStr = `${siteId}|${local_space_id}`;
     for (let _ci = 0; _ci < _lsHashStr.length; _ci++) { _lsHash = Math.imul(31, _lsHash) + _lsHashStr.charCodeAt(_ci) | 0; }
-    const _lsEnterable = ((_lsHash >>> 0) % 100) >= 15;
+    const _lsEnterable = ((_lsHash >>> 0) % 100) >= 35;
     local_spaces[local_space_id] = {
       local_space_id,
       parent_site_id: siteId,
