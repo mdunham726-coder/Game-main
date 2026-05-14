@@ -2548,12 +2548,31 @@ app.post('/narrate', async (req, res) => {
       return ['missing ', 'no ', 'bare ', 'without ', 'not wearing '].some(p => n.startsWith(p));
     }
 
-    // v1.85.22: baseline outfit init — fires on Turn 1 before narrator prompt assembly
-    // Uses _rawInput (action) directly because birth_record is not yet populated at this point in the pipeline.
+    // v1.85.97: baseline outfit init — fires on Turn 1 before narrator prompt assembly.
+    // Logic gate: DS classifier only runs when founding text contains an explicit "I am a/an X" / "I'm a/an X"
+    // form claim. No explicit form claim → humanoid assumed per Game Constitution (undeclared = default human).
+    // Fix B: uses gameState.world.founding_prompt (canonical) rather than raw action.
     if (turnNumber === 1 && !(gameState.player.worn_object_ids && gameState.player.worn_object_ids.length > 0)) {
       try {
-        const _boFoundingText = (action || '').trim();
-        const _boSystemMsg = `You are a founding-state classifier for a text-based game engine. Your ONLY job is to determine if the player's founding form is humanoid-capable, and if so, return exactly 5 baseline worn items.
+        const _boFoundingText = (gameState.world.founding_prompt || action || '').trim();
+        // Explicit form claim: "I am a wizard", "I'm a chicken nugget", etc.
+        // Does NOT match: "I am inside a tavern", "I am the king", location/action descriptions.
+        const _boHasExplicitForm = /\b(i am|i'm)\s+(a|an)\s+\w/i.test(_boFoundingText);
+
+        // Generic humanoid defaults — used when no form claim is present, or as DS failure fallback.
+        const _boGenericItems = [
+          { slot: 'shirt',     name: 'shirt',     description: 'A plain shirt.',      source: 'birth_default' },
+          { slot: 'pants',     name: 'trousers',  description: 'A pair of trousers.', source: 'birth_default' },
+          { slot: 'underwear', name: 'underwear', description: 'Basic underwear.',    source: 'birth_default' },
+          { slot: 'socks',     name: 'socks',     description: 'A pair of socks.',    source: 'birth_default' },
+          { slot: 'shoes',     name: 'shoes',     description: 'A pair of shoes.',    source: 'birth_default' },
+        ];
+
+        let _boItems = null; // null = skip outfit (explicit non-humanoid); array = create these items
+
+        if (_boHasExplicitForm) {
+          // Explicit "I am a/an X" — ask DS to classify and generate tone-adapted items
+          const _boSystemMsg = `You are a founding-state classifier for a text-based game engine. Your ONLY job is to determine if the player's founding form is humanoid-capable, and if so, return exactly 5 baseline worn items.
 
 RULES:
 - Humanoid-capable means: has a human-like body (human, elf, dwarf, cyborg, android, vampire, zombie, knight, wizard, etc.)
@@ -2568,33 +2587,48 @@ RULES:
 
 OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
 {"is_humanoid_capable": true|false, "worn_items": [{"slot": "shirt|pants|underwear|socks|shoes", "name": "...", "description": "...", "source": "birth_default|birth_custom"}]}`;
-        const _boResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-          model: 'deepseek-chat',
-          messages: [
-            { role: 'system', content: _boSystemMsg },
-            { role: 'user', content: `Founding premise: "${_boFoundingText}"` }
-          ],
-          temperature: 0.2,
-          max_tokens: 400
-        }, {
-          headers: {
-            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          httpsAgent: _sharedHttpsAgent,
-          timeout: 15000
-        });
-        let _boRaw = _boResp?.data?.choices?.[0]?.message?.content || '';
-        let _boParsed = null;
-        try { _boParsed = JSON.parse(_boRaw); } catch (_) {
-          const _boMatch = _boRaw.match(/\{[\s\S]*\}/);
-          if (_boMatch) { try { _boParsed = JSON.parse(_boMatch[0]); } catch (_) {} }
+          const _boResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            messages: [
+              { role: 'system', content: _boSystemMsg },
+              { role: 'user', content: `Founding premise: "${_boFoundingText}"` }
+            ],
+            temperature: 0.2,
+            max_tokens: 400
+          }, {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            httpsAgent: _sharedHttpsAgent,
+            timeout: 15000
+          });
+          let _boRaw = _boResp?.data?.choices?.[0]?.message?.content || '';
+          let _boParsed = null;
+          try { _boParsed = JSON.parse(_boRaw); } catch (_) {
+            const _boMatch = _boRaw.match(/\{[\s\S]*\}/);
+            if (_boMatch) { try { _boParsed = JSON.parse(_boMatch[0]); } catch (_) {} }
+          }
+          if (_boParsed && _boParsed.is_humanoid_capable === true && Array.isArray(_boParsed.worn_items)) {
+            _boItems = _boParsed.worn_items;
+          } else if (_boParsed && _boParsed.is_humanoid_capable === false) {
+            console.log('[BORN-OUTFIT] Turn 1: explicit non-humanoid form — no baseline outfit created');
+            _boItems = null;
+          } else {
+            console.warn('[BORN-OUTFIT] Turn 1: DS parse failed — falling back to generic defaults');
+            _boItems = _boGenericItems;
+          }
+        } else {
+          // No explicit form claim — humanoid assumed per Game Constitution, use generic defaults (no DS call)
+          console.log('[BORN-OUTFIT] Turn 1: no explicit form claim — assuming humanoid, applying generic defaults');
+          _boItems = _boGenericItems;
         }
-        if (_boParsed && _boParsed.is_humanoid_capable === true && Array.isArray(_boParsed.worn_items)) {
+
+        if (_boItems !== null) {
           if (!gameState.objects || typeof gameState.objects !== 'object') gameState.objects = {};
           if (!Array.isArray(gameState.player.worn_object_ids)) gameState.player.worn_object_ids = [];
           const _validSlots = new Set(['shirt', 'pants', 'underwear', 'socks', 'shoes']);
-          for (const _boItem of _boParsed.worn_items) {
+          for (const _boItem of _boItems) {
             if (!_boItem || !_boItem.slot || !_validSlots.has(_boItem.slot)) continue;
             const _boName = String(_boItem.name || _boItem.slot).trim();
             // v1.85.32: Fix 2 — absence filter. DS may return absence slot-fillers despite the prompt rule.
@@ -2625,11 +2659,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
               gameState.player.worn_object_ids.push(_boId);
             }
           }
-          console.log(`[BORN-OUTFIT] Turn 1 baseline outfit created: ${gameState.player.worn_object_ids.length} items (humanoid)`);
-        } else if (_boParsed && _boParsed.is_humanoid_capable === false) {
-          console.log('[BORN-OUTFIT] Turn 1: non-humanoid form — no baseline outfit created');
-        } else {
-          console.warn('[BORN-OUTFIT] Turn 1: DS parse failed or unexpected response — skipping outfit init');
+          console.log(`[BORN-OUTFIT] Turn 1 baseline outfit created: ${gameState.player.worn_object_ids.length} items`);
         }
       } catch (_boErr) {
         console.warn('[BORN-OUTFIT] Turn 1 outfit init error (non-fatal):', _boErr.message);

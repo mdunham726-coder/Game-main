@@ -505,6 +505,7 @@
       _slowFillPct = null; _currentDisplayPct = 0;
     }
     function populateWgOverlay(wgLog) {
+      clearInterval(_stepTickInterval); _stepTickInterval = null; // stop live tick before replacing content
       const _hasLog = wgLog && Array.isArray(wgLog) && wgLog.length > 0;
       document.getElementById('worldgen-box-title').textContent = _hasLog ? 'WORLDGEN — COMPLETE' : 'WORLDGEN — DONE (no log)';
       document.getElementById('worldgen-box-title').style.color = _hasLog ? '#2ecc71' : '#f39c12';
