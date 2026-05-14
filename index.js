@@ -66,7 +66,7 @@ const _initProgress = new Map();
 // ── Session TTL eviction ─────────────────────────────────────────────────────
 // Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
 const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
-const SESSION_MAX_AGE_MS = 20 * 60 * 1000; // 20 minutes
+const SESSION_MAX_AGE_MS = 3 * 60 * 1000; // 3 minutes — probe sessions are single-turn throw-aways
 setInterval(() => {
   const _sweepNow = Date.now();
   let _evictCount = 0;
@@ -81,7 +81,7 @@ setInterval(() => {
   if (_evictCount > 0) {
     console.log(`[SESSION-EVICT] Evicted ${_evictCount} idle session(s). Active: ${sessionStates.size}`);
   }
-}, 5 * 60 * 1000).unref();
+}, 60 * 1000).unref(); // sweep every 1 minute
 function _pushProgress(token, step, pct, detail = {}) {
   if (!token) return;
   const arr = _initProgress.get(token) || [];
@@ -6311,6 +6311,22 @@ app.post('/consult-deepseek', async (req, res) => {
       contextLength: context.length
     });
   }
+});
+
+// =============================================================================
+// DELETE /session — explicit session teardown (used by probe-runner after data capture)
+// =============================================================================
+app.delete('/session', (req, res) => {
+  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'no_session_id', message: 'Provide sessionId via x-session-id header or ?sessionId= query param.' });
+  }
+  const existed = sessionStates.has(sessionId);
+  sessionStates.delete(sessionId);
+  _sessionLastUsed.delete(sessionId);
+  _consultHistory.delete(sessionId);
+  console.log(`[SESSION-DELETE] ${sessionId} | existed=${existed} | active_sessions=${sessionStates.size}`);
+  return res.json({ deleted: true, existed, sessionId });
 });
 
 app.delete('/consult-deepseek/clear', (req, res) => {

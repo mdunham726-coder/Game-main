@@ -177,6 +177,21 @@ function httpGet(host, port, urlPath, headers) {
   });
 }
 
+function httpDelete(host, port, urlPath, headers) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host, port, path: `/${urlPath}`, method: 'DELETE', headers: headers || {} },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => { resolve(res.statusCode); });
+      }
+    );
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Parse parent_cell string: "LOC:mx,my:lx,ly" -> { mx, my, lx, ly }
 // ---------------------------------------------------------------------------
@@ -669,6 +684,16 @@ async function main() {
       warnings: runWarnings,
       error: null,
     });
+
+    // Explicit session teardown — free server memory immediately after all data is captured.
+    // This keeps RAM flat regardless of run count (critical for 500-1000 run tests).
+    if (_sessionId) {
+      try {
+        await httpDelete('localhost', PORT, `session?sessionId=${encodeURIComponent(_sessionId)}`);
+      } catch (_delErr) {
+        // Non-fatal — server may have already evicted it; do not abort the probe.
+      }
+    }
 
     // Inter-run delay: let the server settle between worldgen sessions.
     // Spec field `inter_run_delay_ms` overrides default. Skip delay after the last run.
