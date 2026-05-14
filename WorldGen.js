@@ -2364,6 +2364,8 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     height: h,
     grid,
     local_spaces,
+    ls_pct:              _lsPct,              // v1.85.94: generation-time localspace density % (30-75); persisted for probe observability
+    eligible_tile_count: _eligibleTiles.length, // v1.85.94: non-street tile count used for localspace density roll
     npcs: npcs, // PHASE 3C: Store NPC array for persistence
     created_at: new Date().toISOString()
   };

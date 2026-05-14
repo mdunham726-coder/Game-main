@@ -1,0 +1,12 @@
+{
+  "spec_name": "worldgen-site-distribution-v3",
+  "spec_slug": "worldgen-site-distribution-v3",
+  "started_at": "2026-05-12T08:20:21.501Z",
+  "completed_at": "2026-05-12T08:20:25.997Z",
+  "runs_requested": 5,
+  "runs_completed": 0,
+  "hard_errors": 5,
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {}
+}

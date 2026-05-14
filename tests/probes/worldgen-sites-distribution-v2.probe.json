@@ -1,0 +1,60 @@
+{
+  "name": "Overworld Site Distribution v2 — includes edge concentration metric",
+  "description": "Same as v1 but adds edge_concentration_pct using inferred bounds fallback. Measures how sites cluster at the periphery of the placement area.",
+  "endpoint": "narrate",
+  "method": "POST",
+  "extract": "site_placement_log",
+  "request_lifecycle": "session_per_run",
+  "request_template": {
+    "action": "look around",
+    "WORLD_PROMPT": "i am standing in an open field",
+    "WORLD_SEED": "$SEED"
+  },
+  "metrics": [
+    "total_sites_placed",
+    "total_cells_evaluated",
+    "populated_cells_count",
+    "pct_populated_cells",
+    "empty_cells_count",
+    "max_sites_per_cell",
+    "mean_sites_per_populated_cell",
+    "enterable_ratio",
+    "spacing_rejections",
+    "edge_concentration_pct"
+  ],
+  "percentile_metrics": [
+    "total_sites_placed",
+    "populated_cells_count",
+    "pct_populated_cells",
+    "max_sites_per_cell",
+    "enterable_ratio",
+    "spacing_rejections",
+    "edge_concentration_pct"
+  ],
+  "edge_topology": {
+    "radius": 3,
+    "anchor_path": "startAnchor"
+  },
+  "warnings": {
+    "total_sites_placed": {
+      "min": 1,
+      "hard_max": 200
+    },
+    "spacing_rejections": {
+      "hard_max": 100
+    },
+    "enterable_ratio": {
+      "min": 0.3,
+      "max": 0.9
+    },
+    "pct_populated_cells": {
+      "min": 5,
+      "max": 95
+    },
+    "edge_concentration_pct": {
+      "min": 0,
+      "max": 100
+    }
+  },
+  "expected_runtime_ms_per_run": 5000
+}

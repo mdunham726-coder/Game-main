@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-05-12T05:11:01.220Z",
+  "timestamp": "2026-05-13T20:38:13.702Z",
   "scenariosPassed": 1,
   "scenariosFailed": 0,
   "scenariosSkipped": 0,
@@ -7,12 +7,12 @@
   "turnsFailed": 0,
   "results": [
     {
-      "name": "hello_world_minimal",
+      "name": "localspace_density_basic",
       "skipped": false,
       "passed": 2,
       "failed": 0,
       "total": 2,
-      "sessionId": "1778562612554-4jed4mocr"
+      "sessionId": "1778704675824-jcno9vbgv"
     }
   ]
 }

@@ -1,0 +1,27 @@
+{
+  "name": "localspace_density_basic",
+  "stability": "stable",
+  "description": "L2-start world triggers generateL2Site(); active_site.ls_pct and eligible_tile_count are persisted and in-range after first entry",
+  "world_prompt": "I am standing inside a tavern",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "density_check",
+      "action": "__GET_SESSION /diagnostics/sites",
+      "assert": [
+        { "path": "active_site",                    "op": "present"         },
+        { "path": "active_site.ls_pct",             "op": "gte", "value": 30 },
+        { "path": "active_site.ls_pct",             "op": "lte", "value": 75 },
+        { "path": "active_site.eligible_tile_count","op": "gt",  "value": 0  },
+        { "path": "active_site.local_spaces",       "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}

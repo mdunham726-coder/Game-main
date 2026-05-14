@@ -1,0 +1,27 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-13_1947_localspace-distribution
+[probe-runner] Spec: localspace-distribution
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size
+
+[RUN 1] seed=-623459059 random "I am inside a hedge maze folly pavilion" ls_pct=69% ls_count=24 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 2] seed=-1159067602 random "I am inside a military checkpoint guardh..." ls_pct=64% ls_count=23 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 3] seed=-1910025417 random "I am inside a mountainside monastery" ls_pct=74% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 4] seed=1709399821 random "I am inside a thieves' guild safehouse" ls_pct=73% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 5] seed=-1887421052 random "I am inside the brig of a prison barge o..." ls_pct=62% ls_count=22 eligible_tiles=36
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  ls_pct                           min=62.00  max=74.00  mean=68.40  stddev=4.76  p10=62.80  p50=69.00  p90=73.60
+  eligible_tile_count              min=36.00  max=36.00  mean=36.00  stddev=0.00
+  localspace_count                 min=22.00  max=26.00  mean=24.20  stddev=1.60  p10=22.40  p50=24.00  p90=26.00
+  enterable_localspace_ratio       min=0.83  max=1.00  mean=0.97  stddev=0.07  p10=0.90  p50=1.00  p90=1.00
+  site_size                        min=2.00  max=2.00  mean=2.00  stddev=0.00
+[probe-runner] Results saved: tests/probe-results/2026-05-13_1947_localspace-distribution
+
+[probe-runner] No anomalies detected.

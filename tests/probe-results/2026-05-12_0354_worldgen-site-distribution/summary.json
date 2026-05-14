@@ -1,0 +1,73 @@
+{
+  "spec_name": "worldgen-site-distribution",
+  "spec_slug": "worldgen-site-distribution",
+  "started_at": "2026-05-12T07:54:13.625Z",
+  "completed_at": "2026-05-12T07:56:36.195Z",
+  "runs_requested": 5,
+  "runs_completed": 5,
+  "hard_errors": 0,
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {
+    "total_sites_placed": {
+      "min": 73,
+      "max": 73,
+      "mean": 73,
+      "stddev": 0
+    },
+    "total_cells_evaluated": {
+      "min": 49,
+      "max": 49,
+      "mean": 49,
+      "stddev": 0
+    },
+    "populated_cells_count": {
+      "min": 29,
+      "max": 29,
+      "mean": 29,
+      "stddev": 0
+    },
+    "pct_populated_cells": {
+      "min": 59.183673469387756,
+      "max": 59.183673469387756,
+      "mean": 59.183673469387756,
+      "stddev": 0
+    },
+    "empty_cells_count": {
+      "min": 20,
+      "max": 20,
+      "mean": 20,
+      "stddev": 0
+    },
+    "max_sites_per_cell": {
+      "min": 5,
+      "max": 5,
+      "mean": 5,
+      "stddev": 0
+    },
+    "mean_sites_per_populated_cell": {
+      "min": 2.5172413793103448,
+      "max": 2.5172413793103448,
+      "mean": 2.5172413793103448,
+      "stddev": 0
+    },
+    "enterable_ratio": {
+      "min": 0.5616438356164384,
+      "max": 0.5616438356164384,
+      "mean": 0.5616438356164384,
+      "stddev": 0
+    },
+    "spacing_rejections": {
+      "min": 1,
+      "max": 1,
+      "mean": 1,
+      "stddev": 0
+    },
+    "edge_concentration_pct": {
+      "min": 50.68493150684932,
+      "max": 50.68493150684932,
+      "mean": 50.68493150684932,
+      "stddev": 0
+    }
+  }
+}

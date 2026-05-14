@@ -1,0 +1,27 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-13_1753_localspace-distribution
+[probe-runner] Spec: localspace-distribution
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size
+
+[RUN 1] seed=-1960544395 prompt=1/5 "I am standing inside a tavern" ls_pct=61% ls_count=9 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 2] seed=451022200 prompt=2/5 "I am standing in a village blacksmith's ..." ls_pct=73% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 3] seed=-1876306941 prompt=3/5 "I am inside a dusty library tower" ls_pct=43% ls_count=15 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 4] seed=-1981473275 prompt=4/5 "I am in a bustling town marketplace" ls_pct=35% ls_count=50 eligible_tiles=144
+[pause] 5000ms between runs…
+[RUN 5] seed=-1067011662 prompt=5/5 "I am in a quiet temple sanctuary" ls_pct=75% ls_count=27 eligible_tiles=36
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  ls_pct                           min=35.00  max=75.00  mean=57.40  stddev=15.97  p10=38.20  p50=61.00  p90=74.20
+  eligible_tile_count              min=16.00  max=144.00  mean=53.60  stddev=45.86
+  localspace_count                 min=9.00  max=50.00  mean=25.40  stddev=14.04  p10=11.40  p50=26.00  p90=40.80
+  enterable_localspace_ratio       min=0.82  max=1.00  mean=0.91  stddev=0.08  p10=0.83  p50=0.89  p90=1.00
+  site_size                        min=1.00  max=10.00  mean=3.40  stddev=3.32
+[probe-runner] Results saved: tests/probe-results/2026-05-13_1753_localspace-distribution
+
+[probe-runner] No anomalies detected.

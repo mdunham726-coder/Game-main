@@ -1,0 +1,26 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-13_1826_localspace-distribution
+[probe-runner] Spec: localspace-distribution
+[probe-runner] Runs: 3 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size
+
+[RUN 1] seed=914500338 random "I am inside a hidden valley commune off ..." ERROR: read ECONNRESET
+[RUN 2] seed=315050413 random "I am in a military checkpoint on a borde..." ERROR: 
+[RUN 3] seed=-1656434619 random "I am inside a druid's sacred grove clear..." ERROR: 
+
+======================================================================
+AGGREGATE  (0/3 runs succeeded)
+======================================================================
+  ls_pct                           no data
+  eligible_tile_count              no data
+  localspace_count                 no data
+  enterable_localspace_ratio       no data
+  site_size                        no data
+[probe-runner] Results saved: tests/probe-results/2026-05-13_1826_localspace-distribution
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 1] HTTP error: read ECONNRESET
+  [ERROR] [RUN 2] HTTP error: 
+  [ERROR] [RUN 3] HTTP error: 
+----------------------------------------------------------------------

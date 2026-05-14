@@ -1,0 +1,24 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-12_1048_worldgen-site-distribution
+[probe-runner] Spec: worldgen-site-distribution
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: total_sites_placed, total_cells_evaluated, populated_cells_count, pct_populated_cells, empty_cells_count, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct
+
+[RUN 1] seed=1421734825 total_sites=73 populated=29 (59.2%) max_in_cell=5 enterable=56% edge=50.7% [edge:inferred] rejections=1
+
+======================================================================
+AGGREGATE  (1/1 runs succeeded)
+======================================================================
+  total_sites_placed               min=73.00  max=73.00  mean=73.00  stddev=0.00
+  total_cells_evaluated            min=49.00  max=49.00  mean=49.00  stddev=0.00
+  populated_cells_count            min=29.00  max=29.00  mean=29.00  stddev=0.00
+  pct_populated_cells              min=59.18  max=59.18  mean=59.18  stddev=0.00
+  empty_cells_count                min=20.00  max=20.00  mean=20.00  stddev=0.00
+  max_sites_per_cell               min=5.00  max=5.00  mean=5.00  stddev=0.00
+  mean_sites_per_populated_cell    min=2.52  max=2.52  mean=2.52  stddev=0.00
+  enterable_ratio                  min=0.56  max=0.56  mean=0.56  stddev=0.00
+  spacing_rejections               min=1.00  max=1.00  mean=1.00  stddev=0.00
+  edge_concentration_pct           min=50.68  max=50.68  mean=50.68  stddev=0.00
+[probe-runner] Results saved: tests/probe-results/2026-05-12_1048_worldgen-site-distribution
+
+[probe-runner] No anomalies detected.

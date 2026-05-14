@@ -1,0 +1,73 @@
+{
+  "spec_name": "worldgen-site-distribution-swamp",
+  "spec_slug": "worldgen-site-distribution-swamp",
+  "started_at": "2026-05-12T07:44:04.077Z",
+  "completed_at": "2026-05-12T07:44:29.592Z",
+  "runs_requested": 1,
+  "runs_completed": 1,
+  "hard_errors": 0,
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {
+    "total_sites_placed": {
+      "min": 62,
+      "max": 62,
+      "mean": 62,
+      "stddev": 0,
+      "p10": 62,
+      "p50": 62,
+      "p90": 62
+    },
+    "populated_cells_count": {
+      "min": 26,
+      "max": 26,
+      "mean": 26,
+      "stddev": 0
+    },
+    "pct_populated_cells": {
+      "min": 53.06122448979592,
+      "max": 53.06122448979592,
+      "mean": 53.06122448979592,
+      "stddev": 0,
+      "p10": 53.06122448979592,
+      "p50": 53.06122448979592,
+      "p90": 53.06122448979592
+    },
+    "max_sites_per_cell": {
+      "min": 5,
+      "max": 5,
+      "mean": 5,
+      "stddev": 0,
+      "p10": 5,
+      "p50": 5,
+      "p90": 5
+    },
+    "mean_sites_per_populated_cell": {
+      "min": 2.3846153846153846,
+      "max": 2.3846153846153846,
+      "mean": 2.3846153846153846,
+      "stddev": 0
+    },
+    "enterable_ratio": {
+      "min": 0.4838709677419355,
+      "max": 0.4838709677419355,
+      "mean": 0.4838709677419355,
+      "stddev": 0
+    },
+    "spacing_rejections": {
+      "min": 1,
+      "max": 1,
+      "mean": 1,
+      "stddev": 0
+    },
+    "edge_concentration_pct": {
+      "min": 20.967741935483872,
+      "max": 20.967741935483872,
+      "mean": 20.967741935483872,
+      "stddev": 0,
+      "p10": 20.967741935483872,
+      "p50": 20.967741935483872,
+      "p90": 20.967741935483872
+    }
+  }
+}

@@ -1,0 +1,220 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-13_2309_localspace-distribution
+[probe-runner] Spec: localspace-distribution
+[probe-runner] Runs: 100 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size
+
+[RUN 1] seed=-1902676052 random "I am inside a roadside pilgrim hostel" ls_pct=69% ls_count=24 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 2] seed=-1203302068 random "I am inside a command post tent on a cea..." ls_pct=55% ls_count=19 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 3] seed=1407217788 random "I am inside a royal menagerie keeper's l..." ls_pct=68% ls_count=68 eligible_tiles=100
+[pause] 5000ms between runs…
+[RUN 4] seed=51600218 random "I am in a Silk Road trading post" ls_pct=44% ls_count=15 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 5] seed=-1082019729 random "I am inside a megacorp server farm" ls_pct=41% ls_count=14 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 6] seed=248395206 random "I am in a cave system used as a refugee ..." ls_pct=33% ls_count=11 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 7] seed=-470999872 random "I am inside a military checkpoint guardh..." ERROR: read ECONNRESET
+[RUN 8] seed=576275671 random "I am inside a command post tent on a cea..." ERROR: 
+[RUN 9] seed=-1492949339 random "I am in a Prohibition-era roadhouse" ERROR: 
+[RUN 10] seed=1273624166 random "I am standing inside a tavern" ERROR: 
+[RUN 11] seed=737894080 random "I am inside a Cold War underground bunke..." ERROR: 
+[RUN 12] seed=1918497338 random "I am inside a Mayan pyramid chamber" ERROR: 
+[RUN 13] seed=358231091 random "I am in a gene-mod clinic in a slum dist..." ERROR: 
+[RUN 14] seed=-1361475867 random "I am in a neon-lit underground fight clu..." ERROR: 
+[RUN 15] seed=-1538048325 random "I am inside a dusty library tower" ERROR: 
+[RUN 16] seed=757816602 random "I am in an abandoned asylum" ERROR: 
+[RUN 17] seed=-651016029 random "I am inside a military checkpoint guardh..." ERROR: 
+[RUN 18] seed=247124219 random "I am inside a command post tent on a cea..." ERROR: 
+[RUN 19] seed=-1600809232 random "I am inside a secret printing press" ERROR: 
+[RUN 20] seed=869612132 random "I am inside a necromancer's laboratory" ERROR: 
+[RUN 21] seed=-1229569157 random "I am in a bathhouse used by Roman soldie..." ERROR: 
+[RUN 22] seed=-1430219061 random "I am inside the cockpit of a space shutt..." ERROR: 
+[RUN 23] seed=-1346167152 random "I am inside a shantytown dwelling on a f..." ERROR: 
+[RUN 24] seed=-1296613987 random "I am inside a thieves' guild safehouse" ERROR: 
+[RUN 25] seed=724275559 random "I am inside a nuclear submarine torpedo ..." ERROR: 
+[RUN 26] seed=1341672216 random "I am inside a courthouse during a high-p..." ERROR: 
+[RUN 27] seed=130850165 random "I am in a gene-mod clinic in a slum dist..." ERROR: 
+[RUN 28] seed=1496086829 random "I am inside a ghost town saloon" ERROR: 
+[RUN 29] seed=1443862117 random "I am inside a siege camp command tent" ERROR: 
+[RUN 30] seed=-1463451211 random "I am inside a subterranean aqueduct main..." ERROR: 
+[RUN 31] seed=265054387 random "I am inside a desert bandit fortress" ERROR: 
+[RUN 32] seed=1781701073 random "I am inside a generation ship colonist b..." ERROR: 
+[RUN 33] seed=-492345027 random "I am inside a virtual reality arcade" ERROR: 
+[RUN 34] seed=-949488904 random "I am inside a tournament viewing pavilio..." ERROR: 
+[RUN 35] seed=237420221 random "I am in a Prohibition-era roadhouse" ERROR: 
+[RUN 36] seed=-589057436 random "I am in a fishing village smokehouse" ERROR: 
+[RUN 37] seed=632948012 random "I am in a polar research base mid-winter" ERROR: 
+[RUN 38] seed=-2113653714 random "I am inside a tournament viewing pavilio..." ERROR: 
+[RUN 39] seed=-933452891 random "I am inside a cyberpunk street-level cli..." ERROR: 
+[RUN 40] seed=-535105808 random "I am in an underground hacker collective" ERROR: 
+[RUN 41] seed=342172255 random "I am inside a medieval siege engine work..." ERROR: 
+[RUN 42] seed=981540759 random "I am in a cloning facility aboard a wars..." ERROR: 
+[RUN 43] seed=-1003475843 random "I am inside an astronomical observatory" ERROR: 
+[RUN 44] seed=-1202202659 random "I am inside a gladiatorial arena" ERROR: 
+[RUN 45] seed=1425610208 random "I am inside a grand hotel lobby" ERROR: 
+[RUN 46] seed=761804851 random "I am inside a crumbling ruin of an old f..." ERROR: 
+[RUN 47] seed=708974125 random "I am inside a frontier town saloon outsi..." ERROR: 
+[RUN 48] seed=368286176 random "I am in an abandoned asylum" ERROR: 
+[RUN 49] seed=-254858112 random "I am inside the brig of a prison barge o..." ERROR: 
+[RUN 50] seed=-1871300679 random "I am inside a coal mine shaft" ERROR: 
+[RUN 51] seed=-1608769228 random "I am inside a jungle temple complex" ERROR: 
+[RUN 52] seed=1285139377 random "I am inside a natural history museum aft..." ERROR: 
+[RUN 53] seed=-563314199 random "I am in an alchemist's shop crammed with..." ERROR: 
+[RUN 54] seed=-2081165935 random "I am inside a frontier town saloon outsi..." ERROR: 
+[RUN 55] seed=2099292771 random "I am in a royal throne room" ERROR: 
+[RUN 56] seed=530097367 random "I am inside a pirate ship's lower deck" ERROR: 
+[RUN 57] seed=-97680600 random "I am inside a post-apocalyptic scavenger..." ERROR: 
+[RUN 58] seed=396270963 random "I am inside a lava tube habitat on an al..." ERROR: 
+[RUN 59] seed=704598807 random "I am inside a Mars colony habitat dome" ERROR: 
+[RUN 60] seed=-1142509128 random "I am inside a water treatment facility" ERROR: 
+[RUN 61] seed=1411134470 random "I am inside an urban commune greenhouse" ERROR: 
+[RUN 62] seed=-1539524039 random "I am inside a bustling train station con..." ERROR: 
+[RUN 63] seed=-214258071 random "I am inside a covered city bazaar" ERROR: 
+[RUN 64] seed=215828966 random "I am inside a post-apocalyptic scavenger..." ERROR: 
+[RUN 65] seed=2058132886 random "I am inside a time traveler's pocket dim..." ERROR: 
+[RUN 66] seed=-1328946898 random "I am inside a rainforest research statio..." ERROR: 
+[RUN 67] seed=-1871715554 random "I am in a casino on a riverboat" ERROR: 
+[RUN 68] seed=2028253955 random "I am inside a tanner's workshop" ERROR: 
+[RUN 69] seed=857488082 random "I am inside a megacorp server farm" ERROR: 
+[RUN 70] seed=689411217 random "I am inside the cockpit of a space shutt..." ERROR: 
+[RUN 71] seed=-311519471 random "I am inside a coal mine shaft" ERROR: 
+[RUN 72] seed=-775911122 random "I am inside a ninja clan's hidden dojo" ERROR: 
+[RUN 73] seed=270361743 random "I am in a guard barracks" ERROR: 
+[RUN 74] seed=-1107613315 random "I am inside a cathedral undergoing renov..." ERROR: 
+[RUN 75] seed=-196004270 random "I am inside the crew berth of a whaling ..." ERROR: 
+[RUN 76] seed=-1147347002 random "I am inside a flooded underground resear..." ERROR: 
+[RUN 77] seed=850691006 random "I am inside a hollowed asteroid mining s..." ERROR: 
+[RUN 78] seed=1451499857 random "I am inside a time traveler's pocket dim..." ERROR: 
+[RUN 79] seed=-1619162328 random "I am in a tavern used as a spy dead drop" ERROR: 
+[RUN 80] seed=-1955877522 random "I am inside a Mongol chieftain's yurt" ERROR: 
+[RUN 81] seed=790480973 random "I am inside an urban commune greenhouse" ERROR: 
+[RUN 82] seed=-378052529 random "I am in a tavern used as a spy dead drop" ERROR: 
+[RUN 83] seed=-663356635 random "I am in a robot assembly plant" ERROR: 
+[RUN 84] seed=1427910060 random "I am inside a wealthy merchant's manor" ERROR: 
+[RUN 85] seed=777003242 random "I am in a harbor master's office" ERROR: 
+[RUN 86] seed=-700927525 random "I am in a neon-lit underground fight clu..." ERROR: 
+[RUN 87] seed=-1116158856 random "I am in an ancient Egyptian tomb complex" ERROR: 
+[RUN 88] seed=265411486 random "I am in a lighthouse keeper's tower" ERROR: 
+[RUN 89] seed=-165036705 random "I am inside an urban commune greenhouse" ERROR: 
+[RUN 90] seed=754723433 random "I am inside a cryo-sleep vault on a colo..." ERROR: 
+[RUN 91] seed=1978679589 random "I am inside a cryo-sleep vault on a colo..." ERROR: 
+[RUN 92] seed=1296600035 random "I am inside a gladiator training school" ERROR: 
+[RUN 93] seed=-1898708097 random "I am inside a shipyard dry dock" ERROR: 
+[RUN 94] seed=-1025517719 random "I am in a sewer beneath a large city" ERROR: 
+[RUN 95] seed=253020602 random "I am inside a bustling train station con..." ERROR: 
+[RUN 96] seed=-676482189 random "I am inside a military checkpoint guardh..." ERROR: 
+[RUN 97] seed=685458168 random "I am inside a lava tube habitat on an al..." ERROR: 
+[RUN 98] seed=-1032065864 random "I am inside an astronomical observatory" ERROR: 
+[RUN 99] seed=-397154949 random "I am in a plague ward of a city hospice" ERROR: 
+[RUN 100] seed=-673803729 random "I am inside a command post tent on a cea..." ERROR: 
+
+======================================================================
+AGGREGATE  (6/100 runs succeeded)
+======================================================================
+  ls_pct                           min=33.00  max=69.00  mean=51.67  stddev=13.54  p10=37.00  p50=49.50  p90=68.50
+  eligible_tile_count              min=36.00  max=100.00  mean=46.67  stddev=23.85
+  localspace_count                 min=11.00  max=68.00  mean=25.17  stddev=19.59  p10=12.50  p50=17.00  p90=46.00
+  enterable_localspace_ratio       min=0.58  max=1.00  mean=0.91  stddev=0.15  p10=0.75  p50=0.97  p90=1.00
+  site_size                        min=2.00  max=9.00  mean=4.17  stddev=2.27
+[probe-runner] Results saved: tests/probe-results/2026-05-13_2309_localspace-distribution
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 7] HTTP error: read ECONNRESET
+  [ERROR] [RUN 8] HTTP error: 
+  [ERROR] [RUN 9] HTTP error: 
+  [ERROR] [RUN 10] HTTP error: 
+  [ERROR] [RUN 11] HTTP error: 
+  [ERROR] [RUN 12] HTTP error: 
+  [ERROR] [RUN 13] HTTP error: 
+  [ERROR] [RUN 14] HTTP error: 
+  [ERROR] [RUN 15] HTTP error: 
+  [ERROR] [RUN 16] HTTP error: 
+  [ERROR] [RUN 17] HTTP error: 
+  [ERROR] [RUN 18] HTTP error: 
+  [ERROR] [RUN 19] HTTP error: 
+  [ERROR] [RUN 20] HTTP error: 
+  [ERROR] [RUN 21] HTTP error: 
+  [ERROR] [RUN 22] HTTP error: 
+  [ERROR] [RUN 23] HTTP error: 
+  [ERROR] [RUN 24] HTTP error: 
+  [ERROR] [RUN 25] HTTP error: 
+  [ERROR] [RUN 26] HTTP error: 
+  [ERROR] [RUN 27] HTTP error: 
+  [ERROR] [RUN 28] HTTP error: 
+  [ERROR] [RUN 29] HTTP error: 
+  [ERROR] [RUN 30] HTTP error: 
+  [ERROR] [RUN 31] HTTP error: 
+  [ERROR] [RUN 32] HTTP error: 
+  [ERROR] [RUN 33] HTTP error: 
+  [ERROR] [RUN 34] HTTP error: 
+  [ERROR] [RUN 35] HTTP error: 
+  [ERROR] [RUN 36] HTTP error: 
+  [ERROR] [RUN 37] HTTP error: 
+  [ERROR] [RUN 38] HTTP error: 
+  [ERROR] [RUN 39] HTTP error: 
+  [ERROR] [RUN 40] HTTP error: 
+  [ERROR] [RUN 41] HTTP error: 
+  [ERROR] [RUN 42] HTTP error: 
+  [ERROR] [RUN 43] HTTP error: 
+  [ERROR] [RUN 44] HTTP error: 
+  [ERROR] [RUN 45] HTTP error: 
+  [ERROR] [RUN 46] HTTP error: 
+  [ERROR] [RUN 47] HTTP error: 
+  [ERROR] [RUN 48] HTTP error: 
+  [ERROR] [RUN 49] HTTP error: 
+  [ERROR] [RUN 50] HTTP error: 
+  [ERROR] [RUN 51] HTTP error: 
+  [ERROR] [RUN 52] HTTP error: 
+  [ERROR] [RUN 53] HTTP error: 
+  [ERROR] [RUN 54] HTTP error: 
+  [ERROR] [RUN 55] HTTP error: 
+  [ERROR] [RUN 56] HTTP error: 
+  [ERROR] [RUN 57] HTTP error: 
+  [ERROR] [RUN 58] HTTP error: 
+  [ERROR] [RUN 59] HTTP error: 
+  [ERROR] [RUN 60] HTTP error: 
+  [ERROR] [RUN 61] HTTP error: 
+  [ERROR] [RUN 62] HTTP error: 
+  [ERROR] [RUN 63] HTTP error: 
+  [ERROR] [RUN 64] HTTP error: 
+  [ERROR] [RUN 65] HTTP error: 
+  [ERROR] [RUN 66] HTTP error: 
+  [ERROR] [RUN 67] HTTP error: 
+  [ERROR] [RUN 68] HTTP error: 
+  [ERROR] [RUN 69] HTTP error: 
+  [ERROR] [RUN 70] HTTP error: 
+  [ERROR] [RUN 71] HTTP error: 
+  [ERROR] [RUN 72] HTTP error: 
+  [ERROR] [RUN 73] HTTP error: 
+  [ERROR] [RUN 74] HTTP error: 
+  [ERROR] [RUN 75] HTTP error: 
+  [ERROR] [RUN 76] HTTP error: 
+  [ERROR] [RUN 77] HTTP error: 
+  [ERROR] [RUN 78] HTTP error: 
+  [ERROR] [RUN 79] HTTP error: 
+  [ERROR] [RUN 80] HTTP error: 
+  [ERROR] [RUN 81] HTTP error: 
+  [ERROR] [RUN 82] HTTP error: 
+  [ERROR] [RUN 83] HTTP error: 
+  [ERROR] [RUN 84] HTTP error: 
+  [ERROR] [RUN 85] HTTP error: 
+  [ERROR] [RUN 86] HTTP error: 
+  [ERROR] [RUN 87] HTTP error: 
+  [ERROR] [RUN 88] HTTP error: 
+  [ERROR] [RUN 89] HTTP error: 
+  [ERROR] [RUN 90] HTTP error: 
+  [ERROR] [RUN 91] HTTP error: 
+  [ERROR] [RUN 92] HTTP error: 
+  [ERROR] [RUN 93] HTTP error: 
+  [ERROR] [RUN 94] HTTP error: 
+  [ERROR] [RUN 95] HTTP error: 
+  [ERROR] [RUN 96] HTTP error: 
+  [ERROR] [RUN 97] HTTP error: 
+  [ERROR] [RUN 98] HTTP error: 
+  [ERROR] [RUN 99] HTTP error: 
+  [ERROR] [RUN 100] HTTP error: 
+----------------------------------------------------------------------

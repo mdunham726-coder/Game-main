@@ -1,0 +1,12 @@
+{
+  "spec_name": "worldgen-sites-refined",
+  "spec_slug": "worldgen-sites-refined",
+  "started_at": "2026-05-12T08:49:39.072Z",
+  "completed_at": "2026-05-12T08:49:40.031Z",
+  "runs_requested": 1,
+  "runs_completed": 0,
+  "hard_errors": 1,
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {}
+}

@@ -1,0 +1,29 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-12_0342_worldgen-site-distribution
+[probe-runner] Spec: worldgen-site-distribution
+[probe-runner] Runs: 3 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: total_sites_placed, populated_cells_count, pct_populated_cells, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct
+
+[RUN 1] seed=999 ERROR: 
+[RUN 2] seed=1000 ERROR: 
+[RUN 3] seed=1001 ERROR: 
+
+======================================================================
+AGGREGATE  (0/3 runs succeeded)
+======================================================================
+  total_sites_placed               no data
+  populated_cells_count            no data
+  pct_populated_cells              no data
+  max_sites_per_cell               no data
+  mean_sites_per_populated_cell    no data
+  enterable_ratio                  no data
+  spacing_rejections               no data
+  edge_concentration_pct           no data
+[probe-runner] Results saved: tests/probe-results/2026-05-12_0342_worldgen-site-distribution
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 1] HTTP error: 
+  [ERROR] [RUN 2] HTTP error: 
+  [ERROR] [RUN 3] HTTP error: 
+----------------------------------------------------------------------

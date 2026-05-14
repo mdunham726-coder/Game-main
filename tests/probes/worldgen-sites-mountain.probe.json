@@ -1,0 +1,52 @@
+{
+  "name": "worldgen-site-distribution-mountain",
+  "description": "Mountain-biome variant: measures site distribution for a high-altitude rocky prompt.",
+  "request_lifecycle": "session_per_run",
+  "endpoint": "narrate",
+  "method": "POST",
+  "request_template": {
+    "action": "I am standing on a windswept mountain peak.",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "site_placement_log",
+  "edge_topology": {
+    "radius": 3,
+    "anchor_path": "state.world.position",
+    "_note": "7x7 patch, radius=3"
+  },
+  "expected_runtime_ms_per_run": 60000,
+  "metrics": [
+    "total_sites_placed",
+    "populated_cells_count",
+    "pct_populated_cells",
+    "max_sites_per_cell",
+    "mean_sites_per_populated_cell",
+    "enterable_ratio",
+    "spacing_rejections",
+    "edge_concentration_pct"
+  ],
+  "percentile_metrics": [
+    "total_sites_placed",
+    "pct_populated_cells",
+    "max_sites_per_cell",
+    "edge_concentration_pct"
+  ],
+  "warnings": {
+    "total_sites_placed": {
+      "min": 40,
+      "max": 100
+    },
+    "pct_populated_cells": {
+      "min": 40,
+      "max": 95
+    },
+    "max_sites_per_cell": {
+      "hard_max": 5
+    },
+    "enterable_ratio": {
+      "aggregate_only": true,
+      "min": 0.45,
+      "max": 0.55
+    }
+  }
+}

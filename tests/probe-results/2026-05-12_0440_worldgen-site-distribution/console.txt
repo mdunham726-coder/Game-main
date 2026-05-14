@@ -1,0 +1,25 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-12_0440_worldgen-site-distribution
+[probe-runner] Spec: worldgen-site-distribution
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: total_sites_placed, populated_cells_count, pct_populated_cells, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct
+
+[RUN 1] seed=637488747 total_sites=67 populated=33 (67.3%) max_in_cell=5 enterable=55% edge=28.4% rejections=1
+
+======================================================================
+AGGREGATE  (1/1 runs succeeded)
+======================================================================
+  total_sites_placed               min=67.00  max=67.00  mean=67.00  stddev=0.00  p10=67.00  p50=67.00  p90=67.00
+  populated_cells_count            min=33.00  max=33.00  mean=33.00  stddev=0.00
+  pct_populated_cells              min=67.35  max=67.35  mean=67.35  stddev=0.00  p10=67.35  p50=67.35  p90=67.35
+  max_sites_per_cell               min=5.00  max=5.00  mean=5.00  stddev=0.00  p10=5.00  p50=5.00  p90=5.00
+  mean_sites_per_populated_cell    min=2.03  max=2.03  mean=2.03  stddev=0.00
+  enterable_ratio                  min=0.55  max=0.55  mean=0.55  stddev=0.00 [WARN]
+  spacing_rejections               min=1.00  max=1.00  mean=1.00  stddev=0.00
+  edge_concentration_pct           min=28.36  max=28.36  mean=28.36  stddev=0.00  p10=28.36  p50=28.36  p90=28.36
+[probe-runner] Results saved: tests/probe-results/2026-05-12_0440_worldgen-site-distribution
+
+----------------------------------------------------------------------
+SOFT WARNINGS:
+  [WARN] [AGGREGATE] enterable_ratio = 0.55 above max 0.55 (mean)
+----------------------------------------------------------------------

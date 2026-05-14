@@ -1,0 +1,22 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-12_0344_worldgen-site-distribution-swamp
+[probe-runner] Spec: worldgen-site-distribution-swamp
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: total_sites_placed, populated_cells_count, pct_populated_cells, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct
+
+[RUN 1] seed=-56734914 total_sites=62 populated=26 (53.1%) max_in_cell=5 enterable=48% edge=21.0% rejections=1
+
+======================================================================
+AGGREGATE  (1/1 runs succeeded)
+======================================================================
+  total_sites_placed               min=62.00  max=62.00  mean=62.00  stddev=0.00  p10=62.00  p50=62.00  p90=62.00
+  populated_cells_count            min=26.00  max=26.00  mean=26.00  stddev=0.00
+  pct_populated_cells              min=53.06  max=53.06  mean=53.06  stddev=0.00  p10=53.06  p50=53.06  p90=53.06
+  max_sites_per_cell               min=5.00  max=5.00  mean=5.00  stddev=0.00  p10=5.00  p50=5.00  p90=5.00
+  mean_sites_per_populated_cell    min=2.38  max=2.38  mean=2.38  stddev=0.00
+  enterable_ratio                  min=0.48  max=0.48  mean=0.48  stddev=0.00
+  spacing_rejections               min=1.00  max=1.00  mean=1.00  stddev=0.00
+  edge_concentration_pct           min=20.97  max=20.97  mean=20.97  stddev=0.00  p10=20.97  p50=20.97  p90=20.97
+[probe-runner] Results saved: tests/probe-results/2026-05-12_0344_worldgen-site-distribution-swamp
+
+[probe-runner] No anomalies detected.

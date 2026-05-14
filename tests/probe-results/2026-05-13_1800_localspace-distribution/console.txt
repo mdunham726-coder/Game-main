@@ -1,0 +1,19 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-13_1800_localspace-distribution
+[probe-runner] Spec: localspace-distribution
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size
+
+[RUN 1] seed=506552559 prompt=1/5 "I am standing inside a tavern" ls_pct=61% ls_count=9 eligible_tiles=16
+
+======================================================================
+AGGREGATE  (1/1 runs succeeded)
+======================================================================
+  ls_pct                           min=61.00  max=61.00  mean=61.00  stddev=0.00  p10=61.00  p50=61.00  p90=61.00
+  eligible_tile_count              min=16.00  max=16.00  mean=16.00  stddev=0.00
+  localspace_count                 min=9.00  max=9.00  mean=9.00  stddev=0.00  p10=9.00  p50=9.00  p90=9.00
+  enterable_localspace_ratio       min=1.00  max=1.00  mean=1.00  stddev=0.00  p10=1.00  p50=1.00  p90=1.00
+  site_size                        min=1.00  max=1.00  mean=1.00  stddev=0.00
+[probe-runner] Results saved: tests/probe-results/2026-05-13_1800_localspace-distribution
+
+[probe-runner] No anomalies detected.

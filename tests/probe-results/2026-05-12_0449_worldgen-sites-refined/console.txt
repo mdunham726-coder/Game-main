@@ -1,0 +1,27 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-12_0449_worldgen-sites-refined
+[probe-runner] Spec: worldgen-sites-refined
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: total_sites_placed, total_cells_evaluated, populated_cells_count, pct_populated_cells, empty_cells_count, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct
+
+[RUN 1] seed=-110921750 ERROR: missing extract path "site_placement_log"
+
+======================================================================
+AGGREGATE  (0/1 runs succeeded)
+======================================================================
+  total_sites_placed               no data
+  total_cells_evaluated            no data
+  populated_cells_count            no data
+  pct_populated_cells              no data
+  empty_cells_count                no data
+  max_sites_per_cell               no data
+  mean_sites_per_populated_cell    no data
+  enterable_ratio                  no data
+  spacing_rejections               no data
+  edge_concentration_pct           no data
+[probe-runner] Results saved: tests/probe-results/2026-05-12_0449_worldgen-sites-refined
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 1] extract path "site_placement_log" returned null/undefined
+----------------------------------------------------------------------

@@ -1,0 +1,220 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-13_1951_localspace-distribution
+[probe-runner] Spec: localspace-distribution
+[probe-runner] Runs: 100 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size
+
+[RUN 1] seed=-1912075690 random "I am inside a frontier gold rush assay o..." ls_pct=54% ls_count=19 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 2] seed=-1002788009 random "I am inside the crew berth of a whaling ..." ls_pct=63% ls_count=10 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 3] seed=-2037970984 random "I am inside a natural history museum aft..." ls_pct=71% ls_count=102 eligible_tiles=144
+[pause] 5000ms between runs…
+[RUN 4] seed=-181507544 random "I am inside a frontier gold rush assay o..." ls_pct=54% ls_count=19 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 5] seed=1097267371 random "I am inside a makeshift refugee shelter" ls_pct=31% ls_count=11 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 6] seed=84666311 random "I am inside a shantytown dwelling on a f..." ls_pct=38% ls_count=24 eligible_tiles=64
+[pause] 5000ms between runs…
+[RUN 7] seed=-1923740490 random "I am inside a desert bandit fortress" ls_pct=38% ls_count=13 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 8] seed=-1762219731 random "I am inside a cathedral undergoing renov..." ls_pct=33% ls_count=11 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 9] seed=-1568696664 random "I am inside an underwater coral reef hab..." ls_pct=53% ls_count=19 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 10] seed=1805241077 random "I am inside a tanner's workshop" ls_pct=60% ls_count=21 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 11] seed=1186323484 random "I am inside a siege camp command tent" ls_pct=50% ls_count=8 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 12] seed=99182795 random "I am inside a falconer's mews" ls_pct=71% ls_count=11 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 13] seed=1969314259 random "I am inside a cryo-sleep vault on a colo..." ERROR: missing extract path "site_placement_log"
+[RUN 14] seed=-988924685 random "I am in a cave system used as a refugee ..." ls_pct=33% ls_count=11 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 15] seed=1033100527 random "I am inside a gladiator training school" ls_pct=57% ls_count=57 eligible_tiles=100
+[pause] 5000ms between runs…
+[RUN 16] seed=1629708863 random "I am in a robot assembly plant" ls_pct=67% ls_count=24 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 17] seed=1103486708 random "I am inside a hollowed asteroid mining s..." ls_pct=50% ls_count=32 eligible_tiles=64
+[pause] 5000ms between runs…
+[RUN 18] seed=-544042843 random "I am inside the cockpit of a space shutt..." ls_pct=67% ls_count=24 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 19] seed=-1353700231 random "I am in a tavern used as a spy dead drop" ls_pct=56% ls_count=20 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 20] seed=2096540383 random "I am inside a dank prison cell block" ls_pct=69% ls_count=24 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 21] seed=675967167 random "I am inside a desert caravanserai inn" ls_pct=60% ls_count=21 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 22] seed=473389070 random "I am inside a makeshift refugee shelter" ls_pct=31% ls_count=11 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 23] seed=1376141259 random "I am inside a swamp witch's hut" ls_pct=66% ls_count=23 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 24] seed=1264649439 random "I am in an underground hacker collective" ls_pct=60% ls_count=21 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 25] seed=1870322114 random "I am in an underground mine shaft" ls_pct=35% ls_count=5 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 26] seed=-906905224 random "I am inside a Mongol chieftain's yurt" ls_pct=52% ls_count=18 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 27] seed=1551359535 random "I am inside a vertical farm skyscraper" ls_pct=69% ls_count=69 eligible_tiles=100
+[pause] 5000ms between runs…
+[RUN 28] seed=446821120 random "I am inside a royal menagerie keeper's l..." ls_pct=68% ls_count=68 eligible_tiles=100
+[pause] 5000ms between runs…
+[RUN 29] seed=696608159 random "I am inside a flooded underground resear..." ls_pct=62% ls_count=22 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 30] seed=-1683527736 random "I am in a casino on a riverboat" ls_pct=66% ls_count=23 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 31] seed=-815932807 random "I am inside a traveling circus tent" ls_pct=45% ls_count=16 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 32] seed=1195850 random "I am inside a frozen tundra outpost" ls_pct=75% ls_count=27 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 33] seed=1301149735 random "I am inside a secret printing press" ls_pct=44% ls_count=28 eligible_tiles=64
+[pause] 5000ms between runs…
+[RUN 34] seed=1521153390 random "I am inside an urban commune greenhouse" ls_pct=74% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 35] seed=-946630426 random "I am inside a dusty library tower" ls_pct=43% ls_count=15 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 36] seed=261189526 random "I am inside an astronomical observatory" ls_pct=62% ls_count=39 eligible_tiles=64
+[pause] 5000ms between runs…
+[RUN 37] seed=-857394016 random "I am inside a generation ship colonist b..." ls_pct=36% ls_count=12 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 38] seed=-192986881 random "I am inside the cockpit of a space shutt..." ls_pct=67% ls_count=24 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 39] seed=-1928954259 random "I am inside a water treatment facility" ERROR: missing extract path "site_placement_log"
+[RUN 40] seed=1518111353 random "I am inside an astronomical observatory" ls_pct=62% ls_count=39 eligible_tiles=64
+[pause] 5000ms between runs…
+[RUN 41] seed=2119161184 random "I am inside a stable at a coaching inn" ls_pct=40% ls_count=25 eligible_tiles=64
+[pause] 5000ms between runs…
+[RUN 42] seed=244853457 random "I am inside an urban commune greenhouse" ls_pct=74% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 43] seed=-225354717 random "I am inside a thieves' guild safehouse" ls_pct=73% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 44] seed=-1715740025 random "I am inside a vertical farm skyscraper" ls_pct=69% ls_count=69 eligible_tiles=100
+[pause] 5000ms between runs…
+[RUN 45] seed=751738598 random "I am inside a mountainside monastery" ls_pct=74% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 46] seed=2117322873 random "I am inside a hedge maze folly pavilion" ls_pct=69% ls_count=24 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 47] seed=1012010099 random "I am inside a Mongol chieftain's yurt" ls_pct=52% ls_count=18 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 48] seed=1742314931 random "I am in a Victorian-era textile factory" ls_pct=72% ls_count=11 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 49] seed=-1804014240 random "I am inside an urban commune greenhouse" ls_pct=74% ls_count=26 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 50] seed=-1587305546 random "I am inside a rainforest research statio..." ls_pct=40% ls_count=57 eligible_tiles=144
+[pause] 5000ms between runs…
+[RUN 51] seed=-1077913249 random "I am inside an AI core room in a megacit..." ls_pct=43% ls_count=15 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 52] seed=-1559485008 random "I am inside a 1970s recording studio" ls_pct=60% ls_count=21 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 53] seed=1462078550 random "I am in an underground mushroom farm" ls_pct=40% ls_count=6 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 54] seed=-926849716 random "I am in a gene-mod clinic in a slum dist..." ls_pct=75% ls_count=27 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 55] seed=1524639925 random "I am in an underground speakeasy jazz cl..." ls_pct=34% ls_count=12 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 56] seed=-945332766 random "I am inside a military checkpoint guardh..." ls_pct=64% ls_count=23 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 57] seed=-708349067 random "I am inside a flooded underground resear..." ls_pct=62% ls_count=22 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 58] seed=-1394650024 random "I am inside a prison on a remote island" ls_pct=39% ls_count=14 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 59] seed=855704450 random "I am inside a necromancer's laboratory" ls_pct=75% ls_count=27 eligible_tiles=36
+[pause] 5000ms between runs…
+[RUN 60] seed=-572474966 random "I am in an abandoned asylum" ls_pct=61% ls_count=9 eligible_tiles=16
+[pause] 5000ms between runs…
+[RUN 61] seed=-161411814 random "I am inside a natural history museum aft..." ls_pct=71% ls_count=102 eligible_tiles=144
+[pause] 5000ms between runs…
+[RUN 62] seed=-270012675 random "I am inside a 1970s recording studio" ERROR: read ECONNRESET
+[RUN 63] seed=1131951335 random "I am inside a World War 2 army field hos..." ERROR: 
+[RUN 64] seed=-569753680 random "I am inside a gladiator training school" ERROR: 
+[RUN 65] seed=-1535712615 random "I am inside a black market trading post ..." ERROR: 
+[RUN 66] seed=-1665807611 random "I am in an underground mushroom farm" ERROR: 
+[RUN 67] seed=1080305098 random "I am in a university lecture hall" ERROR: 
+[RUN 68] seed=1781989534 random "I am inside a rainforest research statio..." ERROR: 
+[RUN 69] seed=1522962237 random "I am in a cloning facility aboard a wars..." ERROR: 
+[RUN 70] seed=-1687156729 random "I am inside a coastal fortification gun ..." ERROR: 
+[RUN 71] seed=922091179 random "I am in a tavern used as a spy dead drop" ERROR: 
+[RUN 72] seed=1580360598 random "I am inside a stable at a coaching inn" ERROR: 
+[RUN 73] seed=1279631381 random "I am inside the operations room of a dee..." ERROR: 
+[RUN 74] seed=668943792 random "I am standing in a village blacksmith's ..." ERROR: 
+[RUN 75] seed=402641507 random "I am in a chimney sweep's attic hideout" ERROR: 
+[RUN 76] seed=182588164 random "I am inside a Mars colony habitat dome" ERROR: 
+[RUN 77] seed=1809176673 random "I am in a guard barracks" ERROR: 
+[RUN 78] seed=-1073014914 random "I am inside a gladiator training school" ERROR: 
+[RUN 79] seed=1140314095 random "I am inside a submarine crew quarters" ERROR: 
+[RUN 80] seed=-1242254494 random "I am inside a lava tube habitat on an al..." ERROR: 
+[RUN 81] seed=-1915390694 random "I am inside a hedge maze folly pavilion" ERROR: 
+[RUN 82] seed=-421330395 random "I am inside an AI core room in a megacit..." ERROR: 
+[RUN 83] seed=335910509 random "I am in an underground speakeasy jazz cl..." ERROR: 
+[RUN 84] seed=-1546468426 random "I am inside the brig of a prison barge o..." ERROR: 
+[RUN 85] seed=-114048563 random "I am inside a newspaper press room in th..." ERROR: 
+[RUN 86] seed=-423515696 random "I am inside an elven tree-city dwelling" ERROR: 
+[RUN 87] seed=-495871409 random "I am in a midnight emergency room" ERROR: 
+[RUN 88] seed=-507362334 random "I am in a Viking longhouse mead hall" ERROR: 
+[RUN 89] seed=698979473 random "I am in an abandoned asylum" ERROR: 
+[RUN 90] seed=-1471871410 random "I am inside a frontier town saloon outsi..." ERROR: 
+[RUN 91] seed=191679206 random "I am inside the operations room of a dee..." ERROR: 
+[RUN 92] seed=-1483938256 random "I am inside a jungle temple complex" ERROR: 
+[RUN 93] seed=-257617723 random "I am inside a Mayan pyramid chamber" ERROR: 
+[RUN 94] seed=1937592825 random "I am inside a smuggler's den beneath a s..." ERROR: 
+[RUN 95] seed=1543476216 random "I am in a wormhole transit station" ERROR: 
+[RUN 96] seed=-1056963519 random "I am in a chimney sweep's attic hideout" ERROR: 
+[RUN 97] seed=1105123417 random "I am in an underground hacker collective" ERROR: 
+[RUN 98] seed=76109569 random "I am inside a generation ship colonist b..." ERROR: 
+[RUN 99] seed=323250526 random "I am inside a military checkpoint guardh..." ERROR: 
+[RUN 100] seed=-1106909683 random "I am inside a gladiator training school" ERROR: 
+
+======================================================================
+AGGREGATE  (59/100 runs succeeded)
+======================================================================
+  ls_pct                           min=31.00  max=75.00  mean=56.83  stddev=13.87  p10=35.80  p50=60.00  p90=74.00
+  eligible_tile_count              min=16.00  max=144.00  mean=46.31  stddev=29.86
+  localspace_count                 min=5.00  max=102.00  mean=26.32  stddev=20.13  p10=11.00  p50=22.00  p90=57.00
+  enterable_localspace_ratio       min=0.00  max=1.00  mean=0.85  stddev=0.24  p10=0.58  p50=1.00  p90=1.00
+  site_size                        min=1.00  max=10.00  mean=3.63  stddev=2.41
+[probe-runner] Results saved: tests/probe-results/2026-05-13_1951_localspace-distribution
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 13] extract path "site_placement_log" returned null/undefined
+  [ERROR] [RUN 39] extract path "site_placement_log" returned null/undefined
+  [ERROR] [RUN 62] HTTP error: read ECONNRESET
+  [ERROR] [RUN 63] HTTP error: 
+  [ERROR] [RUN 64] HTTP error: 
+  [ERROR] [RUN 65] HTTP error: 
+  [ERROR] [RUN 66] HTTP error: 
+  [ERROR] [RUN 67] HTTP error: 
+  [ERROR] [RUN 68] HTTP error: 
+  [ERROR] [RUN 69] HTTP error: 
+  [ERROR] [RUN 70] HTTP error: 
+  [ERROR] [RUN 71] HTTP error: 
+  [ERROR] [RUN 72] HTTP error: 
+  [ERROR] [RUN 73] HTTP error: 
+  [ERROR] [RUN 74] HTTP error: 
+  [ERROR] [RUN 75] HTTP error: 
+  [ERROR] [RUN 76] HTTP error: 
+  [ERROR] [RUN 77] HTTP error: 
+  [ERROR] [RUN 78] HTTP error: 
+  [ERROR] [RUN 79] HTTP error: 
+  [ERROR] [RUN 80] HTTP error: 
+  [ERROR] [RUN 81] HTTP error: 
+  [ERROR] [RUN 82] HTTP error: 
+  [ERROR] [RUN 83] HTTP error: 
+  [ERROR] [RUN 84] HTTP error: 
+  [ERROR] [RUN 85] HTTP error: 
+  [ERROR] [RUN 86] HTTP error: 
+  [ERROR] [RUN 87] HTTP error: 
+  [ERROR] [RUN 88] HTTP error: 
+  [ERROR] [RUN 89] HTTP error: 
+  [ERROR] [RUN 90] HTTP error: 
+  [ERROR] [RUN 91] HTTP error: 
+  [ERROR] [RUN 92] HTTP error: 
+  [ERROR] [RUN 93] HTTP error: 
+  [ERROR] [RUN 94] HTTP error: 
+  [ERROR] [RUN 95] HTTP error: 
+  [ERROR] [RUN 96] HTTP error: 
+  [ERROR] [RUN 97] HTTP error: 
+  [ERROR] [RUN 98] HTTP error: 
+  [ERROR] [RUN 99] HTTP error: 
+  [ERROR] [RUN 100] HTTP error: 
+----------------------------------------------------------------------

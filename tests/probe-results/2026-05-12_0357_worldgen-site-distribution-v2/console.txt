@@ -1,0 +1,28 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-12_0357_worldgen-site-distribution-v2
+[probe-runner] Spec: worldgen-site-distribution-v2
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: total_sites_placed, total_cells_evaluated, populated_cells_count, pct_populated_cells, empty_cells_count, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct
+
+[RUN 1] seed=-793879617 prompt=1/5 "I am standing in a dense forest." total_sites=65 populated=26 (53.1%) max_in_cell=5 enterable=43% edge=69.2% [edge:inferred] rejections=3
+[RUN 2] seed=-1168070182 prompt=2/5 "I am standing in a vast desert." total_sites=55 populated=25 (51.0%) max_in_cell=5 enterable=44% edge=49.1% [edge:inferred] rejections=0
+[RUN 3] seed=-1578130027 prompt=3/5 "I am standing in a murky swamp." total_sites=62 populated=26 (53.1%) max_in_cell=5 enterable=48% edge=48.4% [edge:inferred] rejections=1
+[RUN 4] seed=-2093249744 prompt=4/5 "I am standing in a snowy tundra." total_sites=71 populated=30 (61.2%) max_in_cell=5 enterable=48% edge=59.2% [edge:inferred] rejections=0
+[RUN 5] seed=-206070367 prompt=5/5 "I am standing in a grassy plain." total_sites=57 populated=23 (46.9%) max_in_cell=5 enterable=53% edge=50.9% [edge:inferred] rejections=0
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  total_sites_placed               min=55.00  max=71.00  mean=62.00  stddev=5.73
+  total_cells_evaluated            min=49.00  max=49.00  mean=49.00  stddev=0.00
+  populated_cells_count            min=23.00  max=30.00  mean=26.00  stddev=2.28
+  pct_populated_cells              min=46.94  max=61.22  mean=53.06  stddev=4.65
+  empty_cells_count                min=19.00  max=26.00  mean=23.00  stddev=2.28
+  max_sites_per_cell               min=5.00  max=5.00  mean=5.00  stddev=0.00
+  mean_sites_per_populated_cell    min=2.20  max=2.50  mean=2.39  stddev=0.11
+  enterable_ratio                  min=0.43  max=0.53  mean=0.47  stddev=0.03
+  spacing_rejections               min=0.00  max=3.00  mean=0.80  stddev=1.17
+  edge_concentration_pct           min=48.39  max=69.23  mean=55.35  stddev=7.93
+[probe-runner] Results saved: tests/probe-results/2026-05-12_0357_worldgen-site-distribution-v2
+
+[probe-runner] No anomalies detected.

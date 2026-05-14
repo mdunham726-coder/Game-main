@@ -1,0 +1,12 @@
+{
+  "spec_name": "localspace-distribution",
+  "spec_slug": "localspace-distribution",
+  "started_at": "2026-05-13T22:26:24.639Z",
+  "completed_at": "2026-05-13T22:26:38.052Z",
+  "runs_requested": 3,
+  "runs_completed": 0,
+  "hard_errors": 3,
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {}
+}

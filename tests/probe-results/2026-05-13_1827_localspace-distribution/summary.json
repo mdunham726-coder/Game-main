@@ -1,0 +1,52 @@
+{
+  "spec_name": "localspace-distribution",
+  "spec_slug": "localspace-distribution",
+  "started_at": "2026-05-13T22:27:07.607Z",
+  "completed_at": "2026-05-13T23:10:56.938Z",
+  "runs_requested": 100,
+  "runs_completed": 96,
+  "hard_errors": 4,
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {
+    "ls_pct": {
+      "min": 33,
+      "max": 75,
+      "mean": 56.635416666666664,
+      "stddev": 12.859108146616892,
+      "p10": 36,
+      "p50": 59,
+      "p90": 74
+    },
+    "eligible_tile_count": {
+      "min": 16,
+      "max": 144,
+      "mean": 40.25,
+      "stddev": 17.91472857734663
+    },
+    "localspace_count": {
+      "min": 5,
+      "max": 51,
+      "mean": 21.635416666666668,
+      "stddev": 8.838975939537464,
+      "p10": 11,
+      "p50": 21,
+      "p90": 32
+    },
+    "enterable_localspace_ratio": {
+      "min": 0.5454545454545454,
+      "max": 1,
+      "mean": 0.8967124264801566,
+      "stddev": 0.14222821616726172,
+      "p10": 0.6,
+      "p50": 1,
+      "p90": 1
+    },
+    "site_size": {
+      "min": 1,
+      "max": 10,
+      "mean": 3.3125,
+      "stddev": 1.8445443204217133
+    }
+  }
+}

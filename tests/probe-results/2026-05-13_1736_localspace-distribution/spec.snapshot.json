@@ -1,0 +1,50 @@
+{
+  "name": "localspace-distribution",
+  "description": "Measures localspace density distribution across N independent L2-start sessions. Each run fires a fresh POST /narrate with a unique seed and a distinct L2 world prompt from prompt_cycle, then GETs /diagnostics/sites to read active_site localspace metrics. Validates ls_pct is in [30,75], eligible_tile_count > 0, and localspace_count >= 1 per run.",
+  "request_lifecycle": "session_per_run",
+  "endpoint": "narrate",
+  "method": "POST",
+  "request_template": {
+    "action": "$PROMPT",
+    "WORLD_PROMPT": "$PROMPT",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "site_placement_log",
+  "prompt_cycle": [
+    "I am standing inside a tavern",
+    "I am standing in a village blacksmith's forge",
+    "I am inside a dusty library tower",
+    "I am in a bustling town marketplace",
+    "I am in a quiet temple sanctuary"
+  ],
+  "post_extract": {
+    "endpoint": "diagnostics/sites",
+    "extract": "active_site",
+    "session_scoped": true
+  },
+  "inter_run_delay_ms": 5000,
+  "metrics": [
+    "ls_pct",
+    "eligible_tile_count",
+    "localspace_count",
+    "enterable_localspace_ratio",
+    "site_size"
+  ],
+  "percentile_metrics": [
+    "ls_pct",
+    "localspace_count",
+    "enterable_localspace_ratio"
+  ],
+  "warnings": {
+    "ls_pct": {
+      "min": 30,
+      "max": 75
+    },
+    "eligible_tile_count": {
+      "min": 1
+    },
+    "localspace_count": {
+      "min": 1
+    }
+  }
+}

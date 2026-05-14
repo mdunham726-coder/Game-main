@@ -1,0 +1,39 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-12_0420_worldgen-site-distribution-v3
+[probe-runner] Spec: worldgen-site-distribution-v3
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: total_sites_placed, total_cells_evaluated, populated_cells_count, pct_populated_cells, empty_cells_count, max_sites_per_cell, mean_sites_per_populated_cell, enterable_ratio, spacing_rejections, edge_concentration_pct, cell_occupancy_entropy, site_size_stddev, community_ratio, isolated_cells_count
+
+[RUN 1] seed=-1752520569 prompt=1/5 "I am standing in a dense forest." ERROR: missing extract path "site_placement_log"
+[RUN 2] seed=1426573874 prompt=2/5 "I am standing in a vast desert." ERROR: missing extract path "site_placement_log"
+[RUN 3] seed=2006729065 prompt=3/5 "I am standing in a murky swamp." ERROR: missing extract path "site_placement_log"
+[RUN 4] seed=1530969843 prompt=4/5 "I am standing in a snowy tundra." ERROR: missing extract path "site_placement_log"
+[RUN 5] seed=693149706 prompt=5/5 "I am standing in a grassy plain." ERROR: missing extract path "site_placement_log"
+
+======================================================================
+AGGREGATE  (0/5 runs succeeded)
+======================================================================
+  total_sites_placed               no data
+  total_cells_evaluated            no data
+  populated_cells_count            no data
+  pct_populated_cells              no data
+  empty_cells_count                no data
+  max_sites_per_cell               no data
+  mean_sites_per_populated_cell    no data
+  enterable_ratio                  no data
+  spacing_rejections               no data
+  edge_concentration_pct           no data
+  cell_occupancy_entropy           no data
+  site_size_stddev                 no data
+  community_ratio                  no data
+  isolated_cells_count             no data
+[probe-runner] Results saved: tests/probe-results/2026-05-12_0420_worldgen-site-distribution-v3
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 1] extract path "site_placement_log" returned null/undefined
+  [ERROR] [RUN 2] extract path "site_placement_log" returned null/undefined
+  [ERROR] [RUN 3] extract path "site_placement_log" returned null/undefined
+  [ERROR] [RUN 4] extract path "site_placement_log" returned null/undefined
+  [ERROR] [RUN 5] extract path "site_placement_log" returned null/undefined
+----------------------------------------------------------------------

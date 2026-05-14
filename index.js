@@ -62,6 +62,26 @@ const _consultHistory = new Map();
 
 // ── Real-time init progress bus (for first-turn progress polling) ─────────────
 const _initProgress = new Map();
+
+// ── Session TTL eviction ─────────────────────────────────────────────────────
+// Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
+const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
+const SESSION_MAX_AGE_MS = 20 * 60 * 1000; // 20 minutes
+setInterval(() => {
+  const _sweepNow = Date.now();
+  let _evictCount = 0;
+  for (const [_sid, _ts] of _sessionLastUsed) {
+    if (_sweepNow - _ts > SESSION_MAX_AGE_MS) {
+      sessionStates.delete(_sid);
+      _sessionLastUsed.delete(_sid);
+      _consultHistory.delete(_sid);
+      _evictCount++;
+    }
+  }
+  if (_evictCount > 0) {
+    console.log(`[SESSION-EVICT] Evicted ${_evictCount} idle session(s). Active: ${sessionStates.size}`);
+  }
+}, 5 * 60 * 1000).unref();
 function _pushProgress(token, step, pct, detail = {}) {
   if (!token) return;
   const arr = _initProgress.get(token) || [];
@@ -93,12 +113,14 @@ function getSessionState(sessionId) {
       isFirstTurn: true,
       logger: logger
     });
+    _sessionLastUsed.set(newSessionId, Date.now());
     console.log('[DIAG-3a-SERVER-GETSESSIONSTATE] New session stored in Map. Map size now:', sessionStates.size);
     logger.sessionStarted({ newSessionId });
     return { sessionId: newSessionId, ...sessionStates.get(newSessionId) };
   }
   // [DIAG-3b] Returning existing session
   console.log('[DIAG-3b-SERVER-GETSESSIONSTATE] RETURNING EXISTING SESSION for sessionId:', sessionId);
+  _sessionLastUsed.set(sessionId, Date.now());
   const existing = sessionStates.get(sessionId);
   console.log('[DIAG-3b-SERVER-GETSESSIONSTATE] Existing session isFirstTurn:', existing?.isFirstTurn);
   return { sessionId, ...existing };
