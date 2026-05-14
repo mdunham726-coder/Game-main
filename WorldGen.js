@@ -2064,7 +2064,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     fringeCells,
   };
 
-  reportProgress?.('complete', 100, { waterCoveragePct });
+  reportProgress?.('complete', 48, { waterCoveragePct });
 
   return { cells, hydrologyStats };
 }
