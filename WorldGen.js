@@ -1269,9 +1269,9 @@ function generateElevationStructure(mx, my, biome, worldSeed, reportProgress = n
       }
       elevMap[ly * l1w + lx] = Math.max(0, Math.min(1, v));
       cellIdx++;
-      // Progress ticks at 25/50/75/100% of elev_map build (~12/14/16/18%)
+      // Progress ticks at 25/50/75/100% of elev_map build (13-17%)
       if (cellIdx % 4096 === 0) {
-        reportProgress?.('elev_map', 10 + Math.round(cellIdx / total * 8), { cellIdx });
+        reportProgress?.('elev_map', 13 + Math.round(cellIdx / total * 4), { cellIdx });
       }
     }
   }
@@ -1511,7 +1511,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
   // ── Pre-step: Build structured elevation field ────────────────────────────
   const { elevMap, massifCount, basinCount, elevStructureFeatures } =
     generateElevationStructure(mx, my, biome, worldSeed, reportProgress, hydroStrength);
-  reportProgress?.('elevation_structure', 20, { massifCount, basinCount });
+  reportProgress?.('elevation_structure', 18, { massifCount, basinCount });
 
   // ── Pre-step: Build global flow field from elevation ──────────────────────
   // flowDir[i]   — D4 direction index (0=N 1=E 2=S 3=W) or -1 for local sinks
@@ -1583,11 +1583,11 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       // Accumulate high-elevation cells as river source candidates
       if (finalElev >= 0.65) mountainCandidates.push({ key: cellKey, elev: finalElev, lx, ly });
 
-      // Progress: 4 checkpoints at 31 / 41 / 51 / 60 %
+      // Progress: 4 checkpoints at 22 / 26 / 31 / 37 %
       cellsProcessed++;
       if (cellsProcessed % 4096 === 0) {
         reportProgress?.('pass1_2',
-          Math.round(22 + (cellsProcessed / l1total) * 38),
+          Math.round(20 + (cellsProcessed / l1total) * 17),
           { cellsProcessed, total: l1total });
       }
     }
@@ -1760,7 +1760,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         compassDir: compassFromVector(sdx, sdy),
       });
     }
-    reportProgress?.('pass3_rivers', 65, { riversCut: riverCount, totalRiverCells, riverCells, streamCells, riverThreshold, RIVER_CELL_MULTIPLIER: 2 });
+    reportProgress?.('pass3_rivers', 40, { riversCut: riverCount, totalRiverCells, riverCells, streamCells, riverThreshold, RIVER_CELL_MULTIPLIER: 2 });
 
     // ── Pass 3c: Lake basin flood-fill at sinks ─────────────────────────────
     const BASIN_RADIUS = 4;
@@ -1798,13 +1798,13 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         }
       }
     }
-    reportProgress?.('pass3_lakes', 70, { lakeBasins, lakeCells });
+    reportProgress?.('pass3_lakes', 41, { lakeBasins, lakeCells });
 
   } else {
     // Flow field incoherent or biome has no meaningful accumulation (coast/wetland) —
     // emit progress stubs so the client progress bar fills smoothly.
-    reportProgress?.('pass3_rivers', 65, { riversCut: 0, totalRiverCells: 0, riverThreshold });
-    reportProgress?.('pass3_lakes',  70, { lakeBasins: 0, lakeCells: 0 });
+    reportProgress?.('pass3_rivers', 40, { riversCut: 0, totalRiverCells: 0, riverThreshold });
+    reportProgress?.('pass3_lakes',  41, { lakeBasins: 0, lakeCells: 0 });
 
     // ── Pass 3b_wet: Wetland diffuse pool placement ────────────────────────
     if (biome === 'wetland') {
@@ -1886,7 +1886,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
           channelCells++;
         }
       }
-      reportProgress?.('pass3_pools', 64, { poolCells, channelCells, channelPairsCount });
+      reportProgress?.('pass3_pools', 39, { poolCells, channelCells, channelPairsCount });
     }
   }
 
@@ -1919,7 +1919,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
         }
       }
     }
-    reportProgress?.('pass3_stream_halo', 71, { streamHaloCells });
+    reportProgress?.('pass3_stream_halo', 42, { streamHaloCells });
   }
 
   // ── Pass 3d: Multi-source BFS for water_distance (always runs) ───────────
@@ -1946,7 +1946,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
     bfsVisited++;
     if (bfsVisited % 1638 === 0) {
       reportProgress?.('pass3_bfs',
-        72 + Math.floor(bfsVisited / bfsTotal * 10),
+        43 + Math.floor(bfsVisited / bfsTotal * 5),
         { bfsVisited });
     }
     if (curDist >= BFS_CAP) continue;
@@ -2027,7 +2027,7 @@ function generateFullMacroCell(mx, my, biome, worldSeed, existingCells, reportPr
       }
     }
   }
-  reportProgress?.('pass3_fringe', 84, { fringeCells });
+  reportProgress?.('pass3_fringe', 48, { fringeCells });
 
   // maxFlowAccum, medianFlowAccum, and riverThreshold were computed earlier in
   // Pass 3b_flow and are already bound as locals — no recomputation needed here.

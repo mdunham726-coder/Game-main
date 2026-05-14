@@ -502,6 +502,7 @@
       document.getElementById('worldgen-copy-btn').style.display = 'none';
       document.getElementById('worldgen-sites-btn').style.display = 'none';
       document.getElementById('worldgen-overlay').classList.add('visible');
+      _slowFillPct = null; _currentDisplayPct = 0;
     }
     function populateWgOverlay(wgLog) {
       const _hasLog = wgLog && Array.isArray(wgLog) && wgLog.length > 0;
@@ -535,6 +536,7 @@
       document.getElementById('worldgen-overlay').classList.remove('visible');
       clearInterval(_stepTickInterval); _stepTickInterval = null;
       _allKnownSteps = []; _stepDisplayIdx = -1;
+      _slowFillPct = null; _currentDisplayPct = 0;
     }
     function copyWgLogOverlay() {
       const log = window.lastGameResponse?.worldgen_log || null;
@@ -562,13 +564,20 @@
       pass3_lakes:         'Flooding lake basins',
       pass3_bfs:           'Computing water proximity',
       complete:            'World generation complete',
+      site_seeding:        'Seeding world sites',
+      start_site:          'Locating starting site',
+      site_fill:           'Filling starting site',
+      routing:             'Entering the world',
+      engine_build:        'Processing world state',
+      narrating:           'Generating narration...',
+      world_update:        'Applying world updates',
     };
 
-    function updateWgOverlayProgress(steps) {
+    function updateWgOverlayProgress(steps, displayPct) {
       const stepsDiv = document.getElementById('worldgen-steps');
       if (!stepsDiv || !steps || steps.length === 0) return;
       const latest = steps[steps.length - 1];
-      const pct    = latest?.pct ?? 0;
+      const pct    = (displayPct != null) ? Math.round(displayPct) : (latest?.pct ?? 0);
       const filled = Math.round(pct / 5); // 20-char bar
       const bar    = '█'.repeat(Math.min(filled, 20)) + '░'.repeat(Math.max(0, 20 - filled));
       const latestName = _WG_STEP_NAMES[latest?.step] || String(latest?.step ?? '');
@@ -589,6 +598,8 @@
     let _allKnownSteps = [];
     let _stepDisplayIdx = -1;
     let _stepTickInterval = null;
+    let _slowFillPct = null;    // number = current slow-fill value during narration stall
+    let _currentDisplayPct = 0; // monotonically increasing displayed pct
 
     // ── v1.85.39: Between-turn progress panel ──────────────────────────────────
     // Stage definition: key, player-readable label, bar weight (raw).
@@ -796,7 +807,18 @@
           _stepTickInterval = setInterval(() => {
             if (_stepDisplayIdx < _allKnownSteps.length - 1) {
               _stepDisplayIdx++;
-              updateWgOverlayProgress(_allKnownSteps.slice(0, _stepDisplayIdx + 1));
+              _slowFillPct = null; // real step arrived — clear slow-fill
+              const realPct = _allKnownSteps[_stepDisplayIdx]?.pct ?? 0;
+              _currentDisplayPct = Math.max(_currentDisplayPct, realPct);
+              updateWgOverlayProgress(_allKnownSteps.slice(0, _stepDisplayIdx + 1), _currentDisplayPct);
+            } else {
+              // No new real step — slow-fill during narration stall
+              const latestStep = _allKnownSteps[_stepDisplayIdx]?.step;
+              if (latestStep === 'narrating') {
+                _slowFillPct = Math.min(96, (_slowFillPct != null ? _slowFillPct : _currentDisplayPct) + 0.4);
+                _currentDisplayPct = Math.max(_currentDisplayPct, _slowFillPct);
+                updateWgOverlayProgress(_allKnownSteps.slice(0, _stepDisplayIdx + 1), _currentDisplayPct);
+              }
             }
           }, 450);
         }

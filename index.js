@@ -1032,6 +1032,10 @@ app.post('/narrate', async (req, res) => {
   let _enterAmbiguous = false;    // v1.85.4: true when null-target enter finds >1 enterable site
   let _preTurnLoc = null;         // v1.85.4: location fingerprint captured before Engine.buildOutput
   let _actionHadNoEffect = false; // v1.85.4: true when move/enter/exit intent produced no state change
+  // Progress token + reporter — hoisted so narration/CB/Arbiter phases can push updates on Turn 1.
+  // No-op on non-first turns (token is null).
+  let _progToken = null;
+  let _reportProgress = () => {};
   if (isFirstTurn === true) {
     isFirstTurn = false;
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
@@ -1052,8 +1056,8 @@ app.post('/narrate', async (req, res) => {
     const _wLog = (pass, step, data) => _worldgenLog.push({ pass, step, data, ms: Date.now() - _wLogT0 });
 
     // Progress token — sent by client via x-progress-token header (pre-issued by GET /narrate/session-token)
-    const _progToken = req.headers['x-progress-token'] || null;
-    const _reportProgress = (step, pct, detail = {}) => _pushProgress(_progToken, step, pct, detail);
+    _progToken = req.headers['x-progress-token'] || null;
+    _reportProgress = (step, pct, detail = {}) => _pushProgress(_progToken, step, pct, detail);
 
     let startAnchor = null;        // hoisted — referenced by worldgen summary block outside if(worldData)
     let _sitePlacementLog = null;  // hoisted — frozen to gameState after patch+spacing pass
@@ -1175,6 +1179,7 @@ app.post('/narrate', async (req, res) => {
             placed_sites:          _placedSitesList,
           };
           _wLog('sites', 'placement_pass_complete', { accepted: _totalAccepted, spacing_rejections: _spacingRejections });
+          _reportProgress('site_seeding', 12, { sites: _totalAccepted, spacing_rejections: _spacingRejections });
           
           if (logger) {
             logger.biomeDetected(worldData.biome);
@@ -1300,6 +1305,7 @@ app.post('/narrate', async (req, res) => {
           }
           console.log('[WORLDGEN] Full macro cell complete:', Object.keys(_fullMacroCellsObj).length,
             'new cells | rivers:', _hydroStats?.riverCount, '| lakes:', _hydroStats?.lakeBasins);
+          _reportProgress('start_site', 50, { container: gameState.world.start_container });
 
           // Phase 7: Legacy L2 stub block removed.
           // recordSiteToCell now stores the stub under the canonical site.interior_key.
@@ -1375,6 +1381,7 @@ app.post('/narrate', async (req, res) => {
               _startSlot.identity    = _lssParsed.identity;
               _startSlot.is_filled   = true;
               console.log(`[L2-START-SITE-FILL] Slot filled: name="${_lssParsed.name}" identity="${_lssParsed.identity}"`);
+              _reportProgress('site_fill', 55, { site: _lssParsed.name });;
               // Mirror to world.sites stub — derived, not canonical
               const _lssIk = _startSlot.interior_key;
               if (_lssIk && gameState.world.sites?.[_lssIk]) {
@@ -1446,6 +1453,7 @@ app.post('/narrate', async (req, res) => {
               _startSlot.identity    = _l1Parsed.identity;
               _startSlot.is_filled   = true;
               console.log(`[L1-START-SITE-FILL] Slot filled: name="${_l1Parsed.name}" identity="${_l1Parsed.identity}"`);
+              _reportProgress('site_fill', 55, { site: _l1Parsed.name });
               // Mirror to world.sites stub — derived, not canonical
               const _l1Ik = _startSlot.interior_key;
               if (_l1Ik && gameState.world.sites?.[_l1Ik]) {
@@ -1568,6 +1576,7 @@ app.post('/narrate', async (req, res) => {
                 grid_dims:                 _scGridDims
               };
               console.log('[START-CONTAINER] Routing log:', JSON.stringify(gameState.world._startRoutingLog));
+              _reportProgress('routing', 58, { depth: gameState.world.current_depth || 1, container: gameState.world.start_container });
             }
           }
         }
@@ -1580,6 +1589,7 @@ app.post('/narrate', async (req, res) => {
         gameState = engineOutput.state;
         sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: false, logger });
       }
+      _reportProgress('engine_build', 61, {});
 
       // Worldgen observability: compute world-shape summaries from the full 128×128 macro,
       // then freeze the log. Runs only on first turn (after full macro pre-generation).
@@ -3544,6 +3554,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
     try {
       // v1.85.39: narration stage start
       emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+      _reportProgress('narrating', 64, {});
       _narratorStart = Date.now();
       response = await _makeNarCall();
       _narratorEnd = Date.now();
@@ -4951,6 +4962,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
           }
         }
         emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, player_recognition_changes: _arbRecApplied, player_form_change: _arbFormApplied, gameSessionId: resolvedSessionId });
+        _reportProgress('world_update', 91, {});
         gameState._lastArbiterVerdict = { turn: turnNumber, raw: _arbParsed, applied: { player_form_change: _arbFormApplied, player_recognition_changes: _arbRecApplied } }; // v1.85.21: forensic — raw=what Arbiter emitted, applied=what engine wrote
       } catch (e) {
         emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, error: e.message, gameSessionId: resolvedSessionId });
