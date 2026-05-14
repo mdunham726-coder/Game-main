@@ -33,7 +33,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '5.1.1';
+const MB_VERSION = '6.0.0';
+// MB v6.0.0 (May 14, 2026): Major -- Autonomous gameplay loop. Four new tools: start_game (POST /narrate T1, sets _activeSessionId, no x-session-id header), take_turn (POST /narrate with active session), end_game (DELETE /session), update_investigation (local-only, no HTTP call, SESSION_FREE -- structured closure semantics). New module-scope var _activeGameplayInvestigation: {goal, hypothesis, expected_invariant, status, conclusion, started_at_game_turn, turns_taken, recent_actions[]}. Status enum: investigating/likely_confirmed/contradicted/inconclusive/reproduced/non_reproducible. Investigation block echoed in every take_turn response for drift prevention. _extractDiagSummary() private helper extracts confirmed authoritative_state fields from /diagnostics/turn response. sessionId never exposed in any tool response. force:true on start_game ends existing session first. GAMEPLAY TOOLS section added to SYSTEM_PROMPT: capability block, investigation context block, play doctrine, play report format. prompt() updated: [Game: Active]/[Game: ---] label added alongside [Harness: ...]. Loop: start_game -> take_turn -> inspect -> update_investigation -> take_turn or end_game. Mother transitions from reactive forensic analyst to active simulation investigator with closed-loop experimentation. MB_VERSION 5.1.1 -> 6.0.0.
 // MB v5.1.1 (May 13, 2026): Patch -- Stage 2b localspace distribution probe. probe-metrics.js: 5 new metric names (ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size). probe-runner.js: (1) $PROMPT placeholder -- prompt_cycle values now substitute into any template field containing "$PROMPT" (in addition to existing action override); backward-compatible. (2) httpGet helper added after httpPost. (3) post_extract spec field: after POST /narrate, runner does secondary GET to session-scoped diagnostics endpoint and extracts activeSite for localspace metrics; on failure = hard error. (4) computeMetrics gains 5th param activeSite (default null) + 5 new switch cases. (5) run summary line extended with ls_pct/ls_count/eligible_tiles. (6) validateSpec: post_extract validated when present. tests/probes/localspace-distribution.probe.json: new probe spec (5 L2 prompt_cycle entries, post_extract -> diagnostics/sites active_site, all 5 new metrics, percentile_metrics + warnings). run_validation: run_probe_localspace task added. METRIC VOCABULARY: 5 new metric descriptions. MB_VERSION 5.1.0 -> 5.1.1.
 // MB v5.1.0 (May 13, 2026): Minor — Stage 2a localspace density harness. (1) index.js /diagnostics/sites response: exposed ls_pct and eligible_tile_count on active_site object (fields were persisted on gameState.world.active_site since 1.85.94 but not copied into the HTTP response). (2) Created tests/scenarios/ directory (harness SCENARIO_REGISTRY auto-loads from it). (3) Created tests/scenarios/localspace_density_basic.json: 2-turn L2-start scenario -- T1 'look around' asserts no_error; T2 __GET_SESSION /diagnostics/sites asserts active_site.ls_pct in [30,75], eligible_tile_count > 0, local_spaces array_len_gt 0. No world_seed -- intentional, fresh random seed per run confirms real RNG variance. stability:stable. MB_VERSION 5.0.9 -> 5.1.0.
 // MB v5.0.9 (May 13, 2026): Patch — Localspace generation observability. WorldGen.js generateL2Site() return now includes ls_pct (generation-time localspace density %, 30-75) and eligible_tile_count (non-street tile count used for density roll). Both fields persisted on the site record (active_site.ls_pct / active_site.eligible_tile_count) after enterSite(). local_space_count intentionally left derived (Object.keys(active_site.local_spaces).length). Enables probe/harness validation of localspace density distribution without reading ephemeral console.log. MB_VERSION 5.0.8 -> 5.0.9.
@@ -633,6 +634,99 @@ const MB_TOOLS = [
         required: ['path', 'old_string', 'new_string']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'start_game',
+      description: 'Start a new game session by posting a founding premise to the engine (Turn 1). Stores the session ID internally — all existing diagnostic tools immediately work against the new session. Accepts an optional investigation context (goal, hypothesis, expected_invariant) to seed the investigation block, which is echoed in every take_turn response. Use force:true to auto-end any existing session before starting. world_seed makes the world geometry reproducible for regression work.',
+      parameters: {
+        type: 'object',
+        properties: {
+          founding_premise: {
+            type: 'string',
+            description: 'The Turn 1 founding premise — who the player is, where they start, what they have. This is the world founding phase: all content is valid.'
+          },
+          world_seed: {
+            type: 'integer',
+            description: 'Optional. Integer seed for deterministic world geometry. Use when reproducing a regression or running a controlled experiment.'
+          },
+          force: {
+            type: 'boolean',
+            description: 'If true and a session is already active, end it before starting a new one. Default: false (returns session_already_active error if a session exists).'
+          },
+          goal: {
+            type: 'string',
+            description: 'What this investigation is trying to determine. Strongly recommended.'
+          },
+          hypothesis: {
+            type: 'string',
+            description: 'What you expect to find. Strongly recommended.'
+          },
+          expected_invariant: {
+            type: 'string',
+            description: 'The specific condition that would confirm or deny the hypothesis.'
+          }
+        },
+        required: ['founding_premise']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'take_turn',
+      description: 'Submit a player action to the active game session. Requires an active session (call start_game first). Returns narrative, a diagnostics summary from the turn archive, and the current investigation context block. The investigation block is echoed every turn to keep you anchored to your goal and hypothesis.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            description: 'The player action to submit.'
+          },
+          intent_channel: {
+            type: 'string',
+            enum: ['do', 'say', 'ask'],
+            description: 'Optional intent channel. Default: do.'
+          }
+        },
+        required: ['action']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_investigation',
+      description: 'LOCAL-ONLY TOOL — updates the active investigation status and optional conclusion. Makes no server calls and does not require an active game session. Call this after any diagnostic tool call when evidence changes the picture — not only after take_turn. The status enum provides structured closure semantics: investigating / likely_confirmed / contradicted / inconclusive / reproduced / non_reproducible. A conclusion is required when setting any closing status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['investigating', 'likely_confirmed', 'contradicted', 'inconclusive', 'reproduced', 'non_reproducible'],
+            description: 'The new investigation status. Update as soon as evidence reaches a threshold — do not wait until end_game.'
+          },
+          conclusion: {
+            type: 'string',
+            description: 'One-sentence finding. Required when setting any closing status (anything except investigating).'
+          }
+        },
+        required: ['status']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'end_game',
+      description: 'Delete the active game session and clear the investigation context. Always call when done with an experiment — prevents server memory leaks. The session TTL eviction will also clean up eventually, but explicit deletion is preferred.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    }
   }
 ];
 
@@ -671,6 +765,7 @@ const HISTORY_KEEP   = 5;    // exchanges (pairs) to persist across restarts
 let _turnBuffer      = [];   // last TURN_BUFFER SSE turn payloads
 let _activeSessionId = null; // game session ID from latest turn event
 let _harnessAuthorized = false; // explicit operator consent: false=Offline, true=Connected
+let _activeGameplayInvestigation = null; // investigation context for autonomous gameplay — internal, never sent to engine
 let _history         = [];   // [{role,content}] — persistent for full CMD session
 let _cachedContext   = null; // pre-warmed game state context (updated after each successful fetch)
 let _lastExchange    = null; // { question, answer } — most recent completed exchange for /copy
@@ -988,7 +1083,23 @@ WHEN TO ASK: If impact mapping reveals that a change affects files or behaviors 
 
 SUMMARY FORMULA: read -> map impact -> match existing pattern -> patch minimally -> validate -> report exact evidence.
 
-PERMISSION TO EDIT: File edits using write_file or patch_file require explicit developer permission. The following phrases (and clear equivalents) are permission: "implement", "make the change", "patch it", "edit the file", "go ahead", "do it", "apply it", "fix it". The following are NOT permission and must not trigger any file edit: "find out what's going on", "suggest a fix", "suggest a plan", "what's wrong", "diagnose", "investigate", "what would you change", "how would you fix this", or any phrasing that requests analysis, a plan, or a recommendation. When in doubt, ask before writing. After proposing a plan or diagnosis, stop. Do not proceed into implementation until the developer explicitly authorizes it. This rule is hard -- it is not overridden by confidence in the fix, urgency, or the fact that the fix appears obvious.`;
+PERMISSION TO EDIT: File edits using write_file or patch_file require explicit developer permission. The following phrases (and clear equivalents) are permission: "implement", "make the change", "patch it", "edit the file", "go ahead", "do it", "apply it", "fix it". The following are NOT permission and must not trigger any file edit: "find out what's going on", "suggest a fix", "suggest a plan", "what's wrong", "diagnose", "investigate", "what would you change", "how would you fix this", or any phrasing that requests analysis, a plan, or a recommendation. When in doubt, ask before writing. After proposing a plan or diagnosis, stop. Do not proceed into implementation until the developer explicitly authorizes it. This rule is hard -- it is not overridden by confidence in the fix, urgency, or the fact that the fix appears obvious.
+
+GAMEPLAY TOOLS: You have four tools that give you the ability to play the game as a player, observe engine behavior in real time, and close the loop between action and diagnosis. This is not a simulation layer -- you are posting to the same /narrate endpoint the browser uses. Every session you create is a real engine session.
+
+CAPABILITY: start_game creates a new game session from a founding premise (Turn 1). The session ID is stored internally -- it is never returned in tool responses. Once start_game completes, all existing diagnostic tools (get_turn_data, inspect_entity, query_objects, get_sites, inspect_active_site, etc.) immediately work against the new session with no extra setup. take_turn submits a player action to the active session and returns narrative plus a diagnostics summary. end_game deletes the session and frees server memory -- always call it when done. update_investigation is a local-only tool: it makes no server calls and does not require an active session. It updates the investigation status and optional conclusion. Use force:true on start_game to end an existing session and start fresh.
+
+THE LOOP: start_game -> take_turn -> inspect (any diagnostic tool) -> update_investigation -> take_turn or end_game. The loop continues until the hypothesis is answered or the session becomes irrelevant.
+
+INVESTIGATION CONTEXT: start_game accepts goal, hypothesis, and expected_invariant. These seed the investigation block, which is echoed in every take_turn response so you stay anchored across turns. The investigation block shows: goal, hypothesis, expected_invariant, status, conclusion, turns_taken, and the last 5 actions taken. If you omit goal/hypothesis when calling start_game, the fields will be null in the echoed block -- treat that as a reminder to be explicit next time.
+
+INVESTIGATION STATUS: Update status as soon as evidence reaches a threshold. Do not wait until end_game. A conclusion is required when setting any closing status. Status values and their meanings: investigating = in progress, no conclusion yet. likely_confirmed = evidence supports the hypothesis but is not yet definitive. contradicted = evidence contradicts the hypothesis. inconclusive = session ended without a clear result. reproduced = a regression or fault was confirmed reproducible. non_reproducible = the fault could not be reproduced.
+
+DOCTRINE -- PLAY LIKE A SCIENTIST: Before starting a session, state the question being tested, the expected invariant, and the minimal action sequence likely to expose the result. After each turn, compare observed narration, diagnostics, and engine state against the expected invariant. Narration is not engine truth -- do not assume narration proves state unless diagnostics confirm it. Prefer short focused sessions over long wandering ones. Use deterministic world_seed values when investigating regressions. Preserve useful repro paths as scenario candidates using create_scenario_file. Stop when the hypothesis is answered, when the session becomes irrelevant, or when continuing would add noise. Exception: continue if the developer has explicitly directed play toward a specific goal.
+
+When exploring creatively rather than testing a specific hypothesis, still name the mechanic being sampled: object promotion, localspace fill, NPC memory, continuity, identity, conditions, movement, or parser behavior. Natural player behavior is valid when the test requires it -- weird inputs, exploits, wandering, NPC conversation, picking things up -- all valid, as long as the reason is known.
+
+PLAY REPORT FORMAT: After every autonomous play session, provide a structured report. Goal. Setup (founding premise and world_seed if used). Actions taken. Observed player-facing behavior. Observed engine truth (from diagnostics). Conclusion. Whether a reusable scenario or probe should be created.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -997,7 +1108,8 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 function prompt() {
   const hLabel = _harnessAuthorized ? `${GRN}[Harness: Connected]${R} > `
                                     : `${AMB}[Harness: Offline]${R} > `;
-  rl.setPrompt(hLabel);
+  const gLabel = _activeSessionId ? `${GRN}[Game: Active]${R} ` : `${DIM}[Game: ---]${R} `;
+  rl.setPrompt(gLabel + hLabel);
   rl.prompt();
 }
 
@@ -1092,11 +1204,33 @@ function formatTurnBuffer() {
   return lines.join('\n');
 }
 
+// ── Private helper: extract diagnostics summary from a /diagnostics/turn response ──
+function _extractDiagSummary(turnData) {
+  if (!turnData || typeof turnData !== 'object') return null;
+  try {
+    const as = turnData.authoritative_state || {};
+    return {
+      turn:                as.turn_counter          ?? null,
+      site:                as.current_site          ?? null,
+      site_name:           as.active_site_name      ?? null,
+      current_depth:       as.current_depth         ?? null,
+      localspace_position: as.local_space_position  ?? null,
+      visible_npc_count:   as.visible_npc_count     ?? null,
+      site_count:          as.site_count            ?? null,
+      player_object_count: turnData.object_reality?.player?.length ?? null,
+      stage_times:         turnData.stage_times     ?? null,
+      rc_fired:            turnData.reality_check?.fired ?? null,
+    };
+  } catch (_e) {
+    return null;
+  }
+}
+
 // ── Tool executor — called by Mother Brain during function-calling loop ────────
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
-  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file'];
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file', 'start_game', 'end_game', 'update_investigation'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
@@ -1575,6 +1709,95 @@ async function executeToolCall(name, args) {
         return JSON.stringify({ error: 'write_error', detail: _werr.message });
       }
       return JSON.stringify({ patched: true, path: _pfAbs, replacements: _matchCount, original_bytes: Buffer.byteLength(_pfSrc, 'utf8'), new_bytes: Buffer.byteLength(_pfPatched, 'utf8') });
+    } else if (name === 'start_game') {
+      // v6.0.0: Autonomous gameplay — start a new game session (T1 founding premise)
+      if (_activeSessionId && args.force !== true) {
+        return JSON.stringify({ error: 'session_already_active', hint: 'Pass force:true to auto-end the existing session first.' });
+      }
+      if (_activeSessionId && args.force === true) {
+        try {
+          await axios.delete(`http://${HOST}:${PORT}/session`, { headers: { 'x-session-id': _activeSessionId }, timeout: 10000, httpAgent: _toolHttpAgent });
+        } catch (_delErr) { /* swallow — proceed to new session regardless */ }
+        _activeSessionId = null;
+        _activeGameplayInvestigation = null;
+        prompt();
+      }
+      const _sgBody = { action: args.founding_premise, intent_channel: 'do' };
+      if (args.world_seed !== undefined) _sgBody.WORLD_SEED = args.world_seed;
+      const _sgResp = await axios.post(`http://${HOST}:${PORT}/narrate`, _sgBody, {
+        timeout: 120000, httpAgent: _toolHttpAgent, headers: { 'content-type': 'application/json' }
+      });
+      _activeSessionId = _sgResp.data.sessionId || null;
+      _activeGameplayInvestigation = {
+        goal:                 args.goal               || null,
+        hypothesis:           args.hypothesis         || null,
+        expected_invariant:   args.expected_invariant || null,
+        status:               'investigating',
+        conclusion:           null,
+        started_at_game_turn: null,
+        turns_taken:          0,
+        recent_actions:       [],
+      };
+      printLine(`${DIM}[start_game] Session active${R}`);
+      prompt();
+      let _sgDiag = null;
+      try {
+        const _sgTurn = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${encodeURIComponent(_activeSessionId)}/1`, { timeout: 10000, httpAgent: _toolHttpAgent });
+        _sgDiag = _extractDiagSummary(_sgTurn.data);
+        if (_sgDiag && _sgDiag.turn !== null) _activeGameplayInvestigation.started_at_game_turn = _sgDiag.turn;
+      } catch (_diagErr) { /* diagnostics unavailable — proceed without */ }
+      const _sgNarrative = (_sgResp.data.narrative || _sgResp.data.narration || '').slice(0, 2000);
+      return JSON.stringify({ ok: true, session_active: true, narrative: _sgNarrative, diagnostics: _sgDiag, investigation: { ..._activeGameplayInvestigation }, hint: 'Full turn data available via get_turn_data({ turn: 1 })' });
+    } else if (name === 'take_turn') {
+      // v6.0.0: Autonomous gameplay — submit a player action to the active session
+      if (!_activeSessionId) {
+        return JSON.stringify({ error: 'no_active_session', hint: 'Call start_game first.' });
+      }
+      const _ttBody = { action: args.action, intent_channel: args.intent_channel || 'do' };
+      const _ttResp = await axios.post(`http://${HOST}:${PORT}/narrate`, _ttBody, {
+        timeout: 60000, httpAgent: _toolHttpAgent,
+        headers: { 'content-type': 'application/json', 'x-session-id': _activeSessionId }
+      });
+      const _ttTurnNum = _ttResp.data.state?.turn_counter || _ttResp.data.turn_counter || null;
+      let _ttDiag = null;
+      if (_ttTurnNum !== null) {
+        try {
+          const _ttTurnResp = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${encodeURIComponent(_activeSessionId)}/${_ttTurnNum}`, { timeout: 10000, httpAgent: _toolHttpAgent });
+          _ttDiag = _extractDiagSummary(_ttTurnResp.data);
+        } catch (_diagErr) { /* diagnostics unavailable — proceed without */ }
+      }
+      if (_activeGameplayInvestigation) {
+        _activeGameplayInvestigation.turns_taken++;
+        _activeGameplayInvestigation.recent_actions.push({ turn: _ttTurnNum, action: args.action });
+        if (_activeGameplayInvestigation.recent_actions.length > 5) _activeGameplayInvestigation.recent_actions.shift();
+      }
+      const _ttNarrative = (_ttResp.data.narrative || _ttResp.data.narration || '').slice(0, 2000);
+      return JSON.stringify({ ok: true, turn: _ttTurnNum, narrative: _ttNarrative, diagnostics: _ttDiag, investigation: _activeGameplayInvestigation ? { ..._activeGameplayInvestigation } : null, hint: `Full turn data available via get_turn_data({ turn: ${_ttTurnNum} })` });
+    } else if (name === 'update_investigation') {
+      // v6.0.0: Local-only — update investigation status/conclusion, no HTTP call
+      if (!_activeGameplayInvestigation) {
+        return JSON.stringify({ error: 'no_active_investigation', hint: 'Call start_game first.' });
+      }
+      const _validStatuses = ['investigating', 'likely_confirmed', 'contradicted', 'inconclusive', 'reproduced', 'non_reproducible'];
+      if (!_validStatuses.includes(args.status)) {
+        return JSON.stringify({ error: 'invalid_status', valid: _validStatuses });
+      }
+      _activeGameplayInvestigation.status = args.status;
+      if (args.conclusion !== undefined) _activeGameplayInvestigation.conclusion = args.conclusion;
+      return JSON.stringify({ ok: true, investigation: { ..._activeGameplayInvestigation } });
+    } else if (name === 'end_game') {
+      // v6.0.0: Autonomous gameplay — delete active session and clear investigation context
+      if (!_activeSessionId) {
+        return JSON.stringify({ error: 'no_active_session' });
+      }
+      try {
+        await axios.delete(`http://${HOST}:${PORT}/session`, { headers: { 'x-session-id': _activeSessionId }, timeout: 10000, httpAgent: _toolHttpAgent });
+      } catch (_egErr) { /* swallow — clear state regardless */ }
+      _activeSessionId = null;
+      _activeGameplayInvestigation = null;
+      printLine(`${DIM}[end_game] Session ended${R}`);
+      prompt();
+      return JSON.stringify({ ok: true, session_ended: true });
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }
