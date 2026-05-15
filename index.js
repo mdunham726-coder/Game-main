@@ -2891,7 +2891,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       const _lsNpcNames = _lsNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
       if (_lsNpcs.length > 0) {
         npcsStr = JSON.stringify(_lsNpcs.map(n => {
-          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
+          // v1.87.1: narrator sees learned_name (what player heard) not always full canonical npc_name
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? (n.learned_name || n.npc_name) : null, is_learned: n.is_learned ?? false };
           if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
             const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
             if (_carries.length) _ne.carries = _carries;
@@ -2923,7 +2924,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // Sync npcsStr with visible NPCs — this is the hard authority boundary for narration
       if (_siteNpcs.length > 0) {
         npcsStr = JSON.stringify(_siteNpcs.map(n => {
-          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
+          // v1.87.1: narrator sees learned_name (what player heard) not always full canonical npc_name
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? (n.learned_name || n.npc_name) : null, is_learned: n.is_learned ?? false };
           if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
             const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
             if (_carries.length) _ne.carries = _carries;
@@ -4991,14 +4993,22 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
             console.warn(`[ARBITER] is_learned rejected — npc_id=${lc.npc_id} has no npc_name (fill pending?)`);
             continue;
           }
-          if (_lnpc.npc_name.toLowerCase().trim() !== String(lc.revealed_name).toLowerCase().trim()) {
+          // v1.87.1: two-tier match — exact full name OR first-token only ("Elara" matches "Elara Thorne")
+          const _revLower = String(lc.revealed_name).toLowerCase().trim();
+          const _canonLower = _lnpc.npc_name.toLowerCase().trim();
+          const _firstToken = _canonLower.split(/\s+/)[0];
+          const _exactMatch = _revLower === _canonLower;
+          const _firstTokenMatch = !_exactMatch && _revLower === _firstToken;
+          if (!_exactMatch && !_firstTokenMatch) {
             console.warn(`[ARBITER] name_mismatch — npc_id=${lc.npc_id} engine="${_lnpc.npc_name}" arbiter="${lc.revealed_name}"`);
             _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: false, reason: 'name_mismatch' });
             continue;
           }
           _lnpc.is_learned = true;
-          _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: true });
-          console.log(`[ARBITER] is_learned=true for npc_id=${lc.npc_id} name="${_lnpc.npc_name}" event=${lc.event_type}`);
+          // learned_name = what the player actually heard; canonical npc_name unchanged
+          _lnpc.learned_name = _exactMatch ? _lnpc.npc_name : lc.revealed_name;
+          _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: true, match_tier: _exactMatch ? 'exact' : 'first_token' });
+          console.log(`[ARBITER] is_learned=true (${_exactMatch ? 'exact' : 'first-name'} match) for npc_id=${lc.npc_id} learned_name="${_lnpc.learned_name}" canonical="${_lnpc.npc_name}" event=${lc.event_type}`);
         }
         // --- player_recognition_changes ---
         const _ALLOWED_RECOGNITION_TYPES = ['name_addressed','title_used','identity_stated_by_npc','explicit_acknowledgment'];
@@ -5015,10 +5025,17 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
             console.warn(`[ARBITER] player_recognition rejected — npc_id=${rc.npc_id} not in visible set`);
             continue;
           }
+          // v1.87.1: allow refinement from generic pronoun/label -> specific name
+          const _GENERIC_RECOGNITION_TOKENS = new Set(['you','they','them','it','stranger','traveler','someone','the player','player']);
           if (_rnpc.player_recognition) {
-            // Idempotent — recognition is permanent; don't overwrite
-            _arbRecApplied.push({ npc_id: rc.npc_id, known_identity: rc.known_identity, event_type: rc.event_type, applied: false, reason: 'already_recognized' });
-            continue;
+            const _existingIdentity = (_rnpc.player_recognition.known_identity || '').toLowerCase().trim();
+            if (!_GENERIC_RECOGNITION_TOKENS.has(_existingIdentity)) {
+              // Already has a real name — idempotent, don't overwrite
+              _arbRecApplied.push({ npc_id: rc.npc_id, known_identity: rc.known_identity, event_type: rc.event_type, applied: false, reason: 'already_recognized' });
+              continue;
+            }
+            // Existing identity is generic — allow refinement to more specific name
+            console.log(`[ARBITER] player_recognition refined: "${_rnpc.player_recognition.known_identity}" -> "${rc.known_identity}" for npc_id=${rc.npc_id}`);
           }
           _rnpc.player_recognition = { recognizes_player: true, known_identity: rc.known_identity, learned_turn: turnNumber, source: rc.event_type };
           _arbRecApplied.push({ npc_id: rc.npc_id, known_identity: rc.known_identity, event_type: rc.event_type, applied: true });

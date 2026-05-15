@@ -1253,7 +1253,8 @@ function assembleContinuityPacket(gameState, turnContext) {
   for (const npc of visible) {
     if (!npc.attributes || !Object.keys(npc.attributes).length) continue;
     // v1.84.82: respect is_learned — do not expose npc_name in TRUTH block until the player has learned it
-    const label = (npc.is_learned && npc.npc_name) ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
+    // v1.87.1: use learned_name (what player heard) if available, fallback to npc_name
+    const label = (npc.is_learned && npc.npc_name) ? `${npc.learned_name || npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
     const attrs = Object.values(npc.attributes)
       .sort((a, b) => (b.turn_set || 0) - (a.turn_set || 0))
       .slice(0, ENV_ATTR_WINDOW)

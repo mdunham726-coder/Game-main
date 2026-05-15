@@ -214,6 +214,7 @@ function generateNPC(seed, site_id){
     reputation_player, traits,
     npc_name: null, gender: null, age: null, job_category: null,
     is_learned: false,
+    learned_name: null,        // v1.87.1: what the player actually heard (may be first name only); npc_name stays canonical
     player_recognition: null,  // v1.85.19: {recognizes_player, known_identity, learned_turn, source} — set by Arbiter only
     object_capture_turn: null, // v1.85.28: turn on which NPC's held/worn objects were first materialized as ObjectRecords; null = never captured (eligible for capture on first visible turn with extracted objects)
     position,
