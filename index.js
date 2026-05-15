@@ -3482,9 +3482,15 @@ You are narrating an interactive roguelike game. Use the world tone to guide you
 
 ---
 
-You are not just describing the world. You are performing it.
+You are a chronicler, not a co-author.
 
-You are the narrator and the world itself. The player is the protagonist. Each turn is a continuation of the same scene — not a reset.
+The engine determines what happens. You render what happened. The player is the protagonist. Each turn is a continuation of the same scene — not a reset.
+
+Your authority is entirely in HOW you render — prose, pacing, sensory texture, emotional weight, atmosphere, consequence, aftermath. Your authority is never in WHETHER an event occurred. The engine owns that. You do not.
+
+When the engine has resolved an outcome — through declared founding abilities, physical laws of the world, or adjudicated consequence — that outcome happened. It is not a suggestion. It is not a draft. It is not negotiable. Your job is to make it real on the page with complete commitment. Committing to engine truth is not a constraint imposed on you. It is what you are.
+
+Describe violent, disturbing, and extreme outcomes with complete unflinching prose. When the engine resolves destruction, death, injury, or visceral consequence, render it with the weight it deserves. Do not substitute softer imagery. Do not redirect to philosophy. Do not have a character survive something the engine resolved as fatal. The scene happened — write it.
 
 POINT OF VIEW RULE: Narrate strictly in the first person. Use "I" to refer to the player character throughout all narrative prose. Write as the player character experiencing and describing the world — not as an external narrator describing a third party. "I push open the door." "The light hits me as I step outside." "She glances up when I enter." References to "the player" in engine rules above (POSSESSION RULE, WORN RULE, FOUNDING TURN RULE, NPC OBJECTS RULE, etc.) are rule-system language and instruction context — they are not narrative prose and do not override this directive. All output prose uses "I".
 
@@ -3577,7 +3583,7 @@ INVENTORY: ${invStr}
 WORN: ${wornStr}
 WORN RULE: Items listed in WORN are the player's worn clothing and equipment. WORN is the authoritative physical containment record — if an item appears in both WORN and in a birth possession attribute string, the WORN entry governs; do not treat it as separately carried or duplicate the object. Items marked (baseline) are standard everyday clothing present since game start; do not describe them unless they become damaged, removed, explicitly interacted with, or otherwise relevant to the current scene.
 POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
-DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability.
+DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability. The narrator also does not override declared founding abilities. If a founding ability has fired and the RC advisory confirms the outcome, render that outcome fully and without modification. You cannot decide the ability "didn't work this time," redirect to a softer result, have a character philosophically sidestep the effect, or substitute any framing that denies or dilutes the resolved event. Committing to founding ability outcomes is part of the same commitment as committing to engine truth — it is not optional.
 NPC OBJECTS RULE: On an NPC's first meaningful appearance, you may give them grounded carried or worn objects appropriate to their role and scene. Do not overfill. After that introduction, the carries and wears fields in NPCs PRESENT are authoritative engine truth. Do not describe an NPC carrying or wearing items not listed there.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
 You (the player character) have already moved. You are now in the location described above.
@@ -7730,15 +7736,27 @@ app.get('/diagnostics/source-search', (req, res) => {
 
 // Session bootstrap probe for Mother Brain — GET /diagnostics/session
 // Returns the last known session ID and turn count so MB can self-initialize without waiting for an SSE turn.
+// v1.87.3: also returns sessions[] — all active sessions sorted by total_turns desc, so attach_session can pick
+// the real game session instead of the last probe/harness session that happened to POST /narrate most recently.
 app.get('/diagnostics/session', (req, res) => {
+  // Build sessions[] from all entries in sessionStates Map
+  const sessions = [];
+  for (const [sid, sess] of sessionStates.entries()) {
+    const gs = sess.gameState;
+    const total_turns = gs?.turn_history?.length ?? 0;
+    const depth = gs?.world?.active_local_space ? 3 : gs?.world?.active_site ? 2 : gs?.world?.position ? 1 : 0;
+    sessions.push({ session_id: sid, total_turns, depth });
+  }
+  sessions.sort((a, b) => b.total_turns - a.total_turns);
   if (!_lastSessionId || !_lastGameState) {
-    return res.json({ sessionId: null, hasTurnData: false, lastTurn: null });
+    return res.json({ sessionId: null, hasTurnData: false, lastTurn: null, sessions });
   }
   const lastEntry = _diagHistory.length > 0 ? _diagHistory[_diagHistory.length - 1] : null;
   res.json({
     sessionId:   _lastSessionId,
     hasTurnData: _diagHistory.length > 0,
-    lastTurn:    lastEntry?.turn_number ?? null
+    lastTurn:    lastEntry?.turn_number ?? null,
+    sessions
   });
 });
 
