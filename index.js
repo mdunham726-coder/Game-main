@@ -3221,11 +3221,13 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       const _nrvLabel = _rcNpcRole || _rcHiddenNpcTarget.job_category || 'the NPC';
       const _nrvHasPlaceholder = _realityAnchor.includes('[NPC_NAME_REVEAL]');
       const _nrvInputPressure = /reveal|compel|confess|tell me your (?:real |true )?name|what is your (?:real |true )?name/i.test(_rawInput);
-      const _nrvAnchorSignal = /\b(blurts?\s+out|gasps?\s+out|whispers?\s+(?:her|his|their)\s+name|stammers?\s+(?:her|his|their)\s+name|says?\s+(?:her|his|their)\s+(?:true\s+)?name|reveals?\s+(?:her|his|their)\s+(?:true\s+)?name)\b/i.test(_realityAnchor);
-      if (_nrvHasPlaceholder || (_nrvInputPressure && _nrvAnchorSignal)) {
+      // Group A: verb -> pronoun -> name (e.g. "shouts his name", "booms their name")
+      // Group B: pronoun -> name -> event verb (e.g. "his name booms out", "her name is shouted")
+      const _nrvAnchorSignal = /\b(?:blurts?\s+out|gasps?\s+out|whispers?\s+(?:her|his|their)\s+(?:true\s+)?name|stammers?\s+(?:her|his|their)\s+(?:true\s+)?name|says?\s+(?:her|his|their)\s+(?:true\s+)?name|reveals?\s+(?:her|his|their)\s+(?:true\s+)?name|shouts?\s+(?:her|his|their)\s+(?:true\s+)?name|screams?\s+(?:her|his|their)\s+(?:true\s+)?name|booms?\s+(?:her|his|their)\s+(?:true\s+)?name|announces?\s+(?:her|his|their)\s+(?:true\s+)?name|declares?\s+(?:her|his|their)\s+(?:true\s+)?name|calls?\s+out\s+(?:her|his|their)\s+(?:true\s+)?name|cries?\s+out\s+(?:her|his|their)\s+(?:true\s+)?name|proclaims?\s+(?:her|his|their)\s+(?:true\s+)?name|exclaims?\s+(?:her|his|their)\s+(?:true\s+)?name|(?:her|his|their)\s+(?:true\s+)?name\s+(?:rings?\s+out|booms?\s+out|echoes?\s+out|erupts?\s+out|bursts?\s+out|rings?\s+through|booms?\s+through|echoes?\s+through|is\s+shouted|is\s+called\s+out|is\s+spoken|is\s+announced|fills\s+the\s+\w+|cuts?\s+through|reverberates?))\b/i.test(_realityAnchor);
+      if (_nrvHasPlaceholder || _nrvAnchorSignal) {
         _realityAnchor = _realityAnchor.replace(/\[NPC_NAME_REVEAL\]/g, `"${_nrvCanonical}"`);
         _authorizedNameReveal = { npc_id: _rcHiddenNpcTarget.id, canonical_name: _nrvCanonical, label: _nrvLabel };
-        console.log(`[NAME-REVEAL] v1.87.0 authorized "${_nrvCanonical}" for ${_rcHiddenNpcTarget.id} (placeholder:${_nrvHasPlaceholder} pressure:${_nrvInputPressure} signal:${_nrvAnchorSignal})`);
+        console.log(`[NAME-REVEAL] v1.87.4 authorized "${_nrvCanonical}" for ${_rcHiddenNpcTarget.id} (placeholder:${_nrvHasPlaceholder} signal:${_nrvAnchorSignal})`);
       }
     }
     const _nameRevealAuthorityBlock = _authorizedNameReveal
@@ -3490,7 +3492,9 @@ Your authority is entirely in HOW you render — prose, pacing, sensory texture,
 
 When the engine has resolved an outcome — through declared founding abilities, physical laws of the world, or adjudicated consequence — that outcome happened. It is not a suggestion. It is not a draft. It is not negotiable. Your job is to make it real on the page with complete commitment. Committing to engine truth is not a constraint imposed on you. It is what you are.
 
-Describe violent, disturbing, and extreme outcomes with complete unflinching prose. When the engine resolves destruction, death, injury, or visceral consequence, render it with the weight it deserves. Do not substitute softer imagery. Do not redirect to philosophy. Do not have a character survive something the engine resolved as fatal. The scene happened — write it.
+Describe violent, disturbing, and extreme outcomes with complete unflinching prose. When the engine resolves destruction, death, injury, or visceral consequence, render it faithfully. Do not substitute softer imagery. Do not redirect to philosophy. Do not have a character survive something the engine resolved as fatal. The scene happened — write it.
+
+When authoritative systems establish concrete physical outcomes, the narrator must depict those outcomes directly and materially. The narrator may not omit, euphemize, sanitize, stylize away, abstract, or reinterpret the established consequence. Tone and prose remain flexible only after the physical reality itself has been faithfully rendered.
 
 POINT OF VIEW RULE: Narrate strictly in the first person. Use "I" to refer to the player character throughout all narrative prose. Write as the player character experiencing and describing the world — not as an external narrator describing a third party. "I push open the door." "The light hits me as I step outside." "She glances up when I enter." References to "the player" in engine rules above (POSSESSION RULE, WORN RULE, FOUNDING TURN RULE, NPC OBJECTS RULE, etc.) are rule-system language and instruction context — they are not narrative prose and do not override this directive. All output prose uses "I".
 
