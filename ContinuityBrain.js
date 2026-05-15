@@ -41,7 +41,8 @@ const ENV_ATTR_WINDOW   = 20;   // max env/NPC attributes emitted per entity in 
                                 // physical: and object: buckets are permanent and always included
                                 // NOTE: state: is a mixed bucket (ephemeral motion + ongoing aftermath); a future pass may split
                                 //   into state:ephemeral (window=1-2) and state:persistent (longer/condition-backed)
-const CB_VERSION        = '1.5.1';
+const LOC_ATTR_WINDOW   = 10;   // max location environment facts after injection-time dedup — backstop for env bloat even if dedup misses an edge case
+const CB_VERSION        = '1.5.2';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -664,6 +665,42 @@ function _resolveEntityRef(entityRef, gameState) {
 // LIBERAL on concrete visible detail; CONSERVATIVE on interpretation.
 // Promotion filters run AFTER extraction schema separates fields.
 
+// ── Injection-time environment dedup helpers ────────────────────────────────
+// Used only to produce a dedup key — originals are always what go into the prompt.
+// Conservative: only strips known location-ish trailing phrases. Preserves
+// state-carrying prepositions (with, in, on, under, covered/filled/stained with).
+const _ENV_STRIP_PHRASES = [
+  /\bacross the way\b/g,
+  /\bof main street\b/g,
+  /\bof the street\b/g,
+  /\bof the road\b/g,
+  /\balong the street\b/g,
+  /\bagainst the facade\b/g,
+  /\bagainst the wall\b/g,
+  /\bagainst facade\b/g,
+  /\bagainst wall\b/g,
+  /\bfrom this angle\b/g,
+  /\bbetween buildings\b/g,
+  /\bon the corner\b/g,
+  /\bof the building\b/g,
+  /\bof the area\b/g,
+  /\bof the block\b/g,
+  /\bjutting from the facade\b/g,
+  /\bjutting from facade\b/g,
+  /\bon the far side\b/g,
+  /\bon the near side\b/g,
+  /\bon the other side\b/g,
+];
+
+function _toCanonicalEnv(str) {
+  let s = str.toLowerCase().replace(/\s+/g, ' ').trim();
+  // strip leading articles
+  s = s.replace(/^(?:a |an |the )/, '');
+  // strip allowlisted trailing location phrases
+  for (const rx of _ENV_STRIP_PHRASES) s = s.replace(rx, '');
+  return s.trim();
+}
+
 const BANNED_INTERPRETATION_PATTERNS = {
   aura:         /\baura\b/i,
   presence:     /\bpresence\b/i,
@@ -1274,12 +1311,44 @@ function assembleContinuityPacket(gameState, turnContext) {
   }
 
   // Location attributes — includes L0 cell attributes via locRecord fallback
+  // v1.5.2: injection-time dedup pass — collapses near-duplicate env phrasings before narrator sees them.
+  // Storage (locRecord.attributes) is untouched; only the narrator-facing view is deduped.
+  // Newest wins by default (sort DESC); exception: if newest is a strict generic substring of an already-kept
+  // older richer fact, the richer one is retained. Both the survivor list AND the seen-map entry are updated
+  // on replacement so the joined output always reflects the winner correctly.
   if (locRecord && locRecord.attributes && Object.keys(locRecord.attributes).length) {
-    const locAttrs = Object.values(locRecord.attributes)
+    const _sorted = Object.values(locRecord.attributes)
       .sort((a, b) => (b.turn_set || 0) - (a.turn_set || 0))
-      .slice(0, ENV_ATTR_WINDOW)
-      .map(a => a.value)
-      .join(' | ');
+      .slice(0, ENV_ATTR_WINDOW);
+
+    const _seenCanonical = new Map(); // canonical key -> index in _survivors
+    const _survivors = [];
+    let _collapsed = 0;
+
+    for (const attr of _sorted) {
+      const _ckey = _toCanonicalEnv(attr.value);
+      if (!_seenCanonical.has(_ckey)) {
+        _seenCanonical.set(_ckey, _survivors.length);
+        _survivors.push(attr.value);
+      } else {
+        // Collision — check exception: if currently kept value is a strict generic substring of incoming
+        // (incoming is longer and contains kept as a substring), replace with the richer incoming value.
+        const _keptIdx = _seenCanonical.get(_ckey);
+        const _keptVal = _survivors[_keptIdx];
+        if (attr.value.length > _keptVal.length && attr.value.includes(_keptVal)) {
+          // Older richer fact wins — replace both the survivor list entry and the seen-map index
+          _survivors[_keptIdx] = attr.value;
+          // seen-map index unchanged (same slot); value in _survivors is now the richer one
+        }
+        _collapsed++;
+      }
+    }
+
+    if (_collapsed > 0) {
+      console.log(`[CB-DEDUP] env_dedup_collapsed location="${locLabel}" turn=${turnContext?.turn ?? '?'} original=${_sorted.length} kept=${_survivors.length} collapsed=${_collapsed}`);
+    }
+
+    const locAttrs = _survivors.join(' | ');
     lines.push(`[${locLabel}]: ${locAttrs}`);
     truthLines++;
   }

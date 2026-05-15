@@ -30,10 +30,10 @@ const METRIC_NAMES = [
   'ls_unique_name_rate',
   'ls_size_spread',
   'ls_mean_size',
+  // Continuity/narrator metrics — require post_extract resolving to debug.narration_debug.continuity_block_chars (a number)
+  'continuity_block_chars',
 ];
 
-// Maps metric name -> array of required dot-paths that must exist in the spec.
-// Metrics with no special config requirements have no entry here.
 const METRIC_CONFIG_REQUIREMENTS = {
   edge_concentration_pct: ['edge_topology.radius', 'edge_topology.anchor_path'],
 };

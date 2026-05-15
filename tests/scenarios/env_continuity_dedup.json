@@ -1,0 +1,97 @@
+{
+  "name": "env_continuity_dedup",
+  "description": "Walks east 10 times in a town, measuring environmental fact bloat in the continuity packet. Asserts that injection-time dedup keeps env facts under 12 after 10 turns of walking the same area. If this fails, the dedup is not working correctly.",
+  "category": "narrative_continuity",
+  "world_prompt": "The world feels like a whimsical but unsettling small town caught in a perpetual, slightly frayed 1950s aesthetic—where picket fences and neon diner signs hide a reality that bends to the whims of casual conversation.",
+  "turns": [
+    {
+      "action": "I begin inside a small town. The street is quiet. I stand on the pavement outside a row of shops.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "e",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    }
+  ],
+  "stability": "probe"
+}

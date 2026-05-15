@@ -1,0 +1,26 @@
+{
+  "name": "env-continuity-bloat",
+  "description": "Measures environmental fact bloat across repeated walking turns in the same area. Starts player on a named street, walks east for 10 turns, then measures: (1) env fact count in the location attribute bucket, (2) env fact count after injection-time dedup (survivor count from the assembled continuity line), (3) collapse ratio. The dedup pass at assembleContinuityPacket is expected to keep env facts stable at ~5-8 unique canonical facts rather than growing to 20+.",
+  "request_lifecycle": "session_per_run",
+  "endpoint": "narrate",
+  "method": "POST",
+  "request_template": {
+    "action": "I am standing on Main Street in a quiet town, in front of a row of weathered buildings with cracked pavement and a red-and-white awning. A rusted mailbox stands crooked nearby.",
+    "WORLD_PROMPT": "A quiet town on a warm afternoon. Main Street has cracked pavement, faded facades with peeling paint, a red-and-white awning over a shop door, and a rusted mailbox with its flag at half-mast. Weeds push through the concrete seams.",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "narrative",
+  "prompt_mode": "fixed",
+  "max_retries": 1,
+  "post_extract": {
+    "endpoint": "diagnostics/turn",
+    "extract": "narration_debug.continuity_snapshot",
+    "session_scoped": true,
+    "turn_offset": -1
+  },
+  "metrics": [
+    "total_sites_placed",
+    "total_cells_evaluated"
+  ],
+  "warnings": {}
+}

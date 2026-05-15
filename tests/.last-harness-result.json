@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-13T20:38:13.702Z",
+  "timestamp": "2026-05-15T06:33:53.127Z",
   "scenariosPassed": 1,
   "scenariosFailed": 0,
   "scenariosSkipped": 0,
-  "turnsPassed": 2,
+  "turnsPassed": 11,
   "turnsFailed": 0,
   "results": [
     {
-      "name": "localspace_density_basic",
+      "name": "env_continuity_dedup",
       "skipped": false,
-      "passed": 2,
+      "passed": 11,
       "failed": 0,
-      "total": 2,
-      "sessionId": "1778704675824-jcno9vbgv"
+      "total": 11,
+      "sessionId": "1778826642494-e7t3lkxfh"
     }
   ]
 }

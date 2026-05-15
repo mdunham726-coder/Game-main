@@ -1,0 +1,34 @@
+{
+  "name": "env-continuity-dedup",
+  "description": "Measures environmental continuity fact dedup ratio across repeated walking turns. Starts player on a named street, walks east 8 times, then reads the continuity block character count from the last turn. The dedup pass in assembleContinuityPacket should keep continuity_block_chars under 1000. This is a distributional probe to confirm the dedup is working across random seeds, not just one fixed seed.",
+  "request_lifecycle": "session_per_run",
+  "endpoint": "narrate",
+  "method": "POST",
+  "request_template": {
+    "action": "$PROMPT",
+    "WORLD_PROMPT": "$PROMPT",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "site_placement_log",
+  "prompt_mode": "random",
+  "max_retries": 1,
+  "prompt_cycle": [
+    "I am standing on Main Street in a quiet town, in front of a row of weathered buildings with cracked pavement and a red-and-white awning. A rusted mailbox stands crooked nearby.",
+    "I am walking along a cobblestone lane in an old village. Stone cottages with thatched roofs line both sides. A wooden sign creaks above a pub door.",
+    "I stand at the edge of a dusty desert road. Adobe buildings with sun-bleached walls stretch ahead. A worn cactus fence borders the path.",
+    "I am on the wooden boardwalk of a coastal town. Salt-worn shop fronts with faded signs face the harbor. A bell buoy clangs in the distance.",
+    "I am in a narrow alley between tall brick buildings. Fire escapes zigzag up the walls. A single streetlamp flickers overhead."
+  ],
+  "post_extract": {
+    "endpoint": "diagnostics/turn",
+    "extract": "narration_debug.continuity_block_chars",
+    "session_scoped": true,
+    "turn_offset": -1
+  },
+  "inter_run_delay_ms": 5000,
+  "metrics": [
+    "total_sites_placed",
+    "total_cells_evaluated"
+  ],
+  "warnings": {}
+}

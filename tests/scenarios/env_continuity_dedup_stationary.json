@@ -1,0 +1,97 @@
+{
+  "name": "env_continuity_dedup_stationary",
+  "description": "Stays in place for 10 turns in a town, measuring environmental fact bloat. Player does not move — narrator re-describes the same scene each turn. Tests whether injection-time dedup collapses near-duplicate env phrasings. Expected: env fact count in continuity packet stays under 12 after 10 turns. Pre-patch baseline would saturate at 20 with ~65% redundancy.",
+  "category": "narrative_continuity",
+  "world_prompt": "The world feels like a whimsical but unsettling small town caught in a perpetual, slightly frayed 1950s aesthetic—where picket fences and neon diner signs hide a reality that bends to the whims of casual conversation.",
+  "turns": [
+    {
+      "action": "I begin inside a small town. The street is quiet. I stand on the pavement outside a row of shops.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    }
+  ],
+  "stability": "probe"
+}

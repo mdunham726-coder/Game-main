@@ -1,0 +1,65 @@
+{
+  "name": "env_continuity_dedup_v2",
+  "description": "Regression test for environmental continuity fact bloat. Walks east 8 times from a fixed starting premise on Main Street, then verifies that the injection-time dedup pass in assembleContinuityPacket keeps the continuity block under 1000 characters. The pre-patch behavior would grow continuity_block_chars to ~1700+ after 8 walks due to 20+ near-duplicate env facts.",
+  "stability": "probe",
+  "world_prompt": "A quiet town on a warm afternoon. Main Street has cracked pavement, faded facades with peeling paint, a red-and-white awning over a shop door, and a rusted mailbox with its flag at half-mast. Weeds push through the concrete seams.",
+  "world_seed": 42,
+  "category": "narrative_continuity",
+  "turns": [
+    {
+      "action": "I am standing on Main Street in a quiet town, in front of a row of weathered buildings with cracked pavement and a red-and-white awning. A rusted mailbox stands crooked nearby.",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 1000}
+      ]
+    }
+  ]
+}

@@ -325,6 +325,11 @@ function computeMetrics(metricNames, log, spec, response, activeSite = null) {
         results[m] = _sizes.reduce((a, b) => a + b, 0) / _sizes.length;
         break;
       }
+      // Continuity/narrator metrics — post_extract.extract must point to debug.narration_debug.continuity_block_chars
+      // activeSite will be the resolved value (a number) when that path is used
+      case 'continuity_block_chars':
+        results[m] = (typeof activeSite === 'number') ? activeSite : null;
+        break;
       default: results[m] = null;
     }
   }
