@@ -3001,6 +3001,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     let _rcEnd = null;
     let _emoteRemoveExecuted = false; // v1.85.42: set inside RC else-block, consumed by narrator assembly
     let _emoteRemovedItemName = null;
+    let _rcHiddenNpcTarget = null; // v1.87.0: NPC with hidden canonical name on SAY-channel turns — hoisted for post-RC resolver access
     const _rcSuffix = 'Focus on immediate physical, social, and legal consequences. Respond in plain prose, 2-3 sentences maximum. No headers, no bullet points. Be direct and specific.';
     if (turnNumber === 1) {
       _rcSkippedReason = 'turn_1';
@@ -3154,6 +3155,15 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       if (_rcPossessionDebug.inventory_match) {
         _rcSystemParts.push(`Player inventory confirmed: ${_rcPossessionDebug.matched_item_name} (engine state).`);
       }
+      // v1.87.0: NPC name-reveal gate — when target NPC has a canonical name hidden from the player,
+      // instruct RC to use a placeholder instead of inventing a name. The engine will substitute the
+      // real canonical name after RC returns, before the narrator sees the anchor block.
+      _rcHiddenNpcTarget = (resolvedChannel === 'say' && _npcTalkResult?.npc && !_npcTalkResult.npc.is_learned && _npcTalkResult.npc.npc_name)
+        ? _npcTalkResult.npc
+        : null;
+      if (_rcHiddenNpcTarget) {
+        _rcSystemParts.push(`The addressed NPC's canonical name is unknown to the player. If your response includes the NPC revealing their true name, write [NPC_NAME_REVEAL] as a placeholder instead of inventing a name.`);
+      }
       const _rcSystemMsg = _rcSystemParts.length > 0
         ? `You are evaluating an action taken within an established game world. Evaluate the immediate consequences within the established world's genre and physical rules — do not substitute modern real-world assumptions unless the world is explicitly set in the modern era. ${_rcSystemParts.join('. ')}.`
         : null;
@@ -3198,6 +3208,27 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: false, skipped_reason: _rcSkippedReason, query: null, result: null, gameSessionId: resolvedSessionId });
       console.log(`[REALITY-CHECK] skipped — turn ${turnNumber}, reason: ${_rcSkippedReason}`);
     }
+    // v1.87.0: Post-RC name-reveal resolver — detect whether RC signaled a true-name reveal and
+    // substitute the engine's canonical NPC name before the narrator sees the anchor block.
+    // Two-tier detection: (1) RC obeyed the placeholder instruction → [NPC_NAME_REVEAL] literal;
+    // (2) Conservative fallback — BOTH player-input pressure AND NPC-performing-reveal signal in
+    // the RC anchor must be present. Neither condition alone triggers the fallback.
+    let _authorizedNameReveal = null;
+    if (_rcHiddenNpcTarget && _realityAnchor) {
+      const _nrvCanonical = _rcHiddenNpcTarget.npc_name;
+      const _nrvLabel = _rcNpcRole || _rcHiddenNpcTarget.job_category || 'the NPC';
+      const _nrvHasPlaceholder = _realityAnchor.includes('[NPC_NAME_REVEAL]');
+      const _nrvInputPressure = /reveal|compel|confess|tell me your (?:real |true )?name|what is your (?:real |true )?name/i.test(_rawInput);
+      const _nrvAnchorSignal = /\b(blurts?\s+out|gasps?\s+out|whispers?\s+(?:her|his|their)\s+name|stammers?\s+(?:her|his|their)\s+name|says?\s+(?:her|his|their)\s+(?:true\s+)?name|reveals?\s+(?:her|his|their)\s+(?:true\s+)?name)\b/i.test(_realityAnchor);
+      if (_nrvHasPlaceholder || (_nrvInputPressure && _nrvAnchorSignal)) {
+        _realityAnchor = _realityAnchor.replace(/\[NPC_NAME_REVEAL\]/g, `"${_nrvCanonical}"`);
+        _authorizedNameReveal = { npc_id: _rcHiddenNpcTarget.id, canonical_name: _nrvCanonical, label: _nrvLabel };
+        console.log(`[NAME-REVEAL] v1.87.0 authorized "${_nrvCanonical}" for ${_rcHiddenNpcTarget.id} (placeholder:${_nrvHasPlaceholder} pressure:${_nrvInputPressure} signal:${_nrvAnchorSignal})`);
+      }
+    }
+    const _nameRevealAuthorityBlock = _authorizedNameReveal
+      ? `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has just revealed their true canonical name: "${_authorizedNameReveal.canonical_name}". This is engine-verified fact. If your narration depicts the name reveal occurring this turn, use this exact name only — do not substitute, alter, or invent a different name. If your narration depicts a non-reveal outcome (refusal, deflection, interruption), you do not need to use this name.\n`
+      : '';
     const _realityAnchorBlock = _realityAnchor
       ? `\n\nPossible consequences of the player's action (advisory):\n${_realityAnchor}\nUse these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.\n`
       : '';
@@ -3562,8 +3593,8 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Do not assign specific proper names, business names, or official designations to any building, organization, or landmark unless that entity is explicitly listed in the site data above. Treat this as a strict world-truth constraint — the narrator describes what the engine has established, not the reverse. Generic architectural description is permitted; narrator-invented proper nouns are not.
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
-- NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}`;
+- NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or assume a proper name when npc_name is null; if the fiction calls for a name to be spoken, wait for an ENGINE AUTHORITY block to supply it. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
+${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -5064,6 +5095,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
       player_identity: gameState.player.identity ?? null,          // v1.85.21
       last_identity_truth_line: gameState._lastIdentityTruthLine ?? null, // v1.85.21: verbatim Player: line injected into narrator
       last_arbiter_verdict: gameState._lastArbiterVerdict ?? null,  // v1.85.21: {turn, raw, applied}
+      name_reveal_authorized: _authorizedNameReveal ?? null,         // v1.87.0: {npc_id, canonical_name, label} or null
       debug 
     });
   } catch (err) {

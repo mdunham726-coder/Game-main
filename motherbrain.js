@@ -33,7 +33,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '6.0.4';
+const MB_VERSION = '6.0.5';
+// MB v6.0.5 (May 14, 2026): Patch -- attach_session tool. Allows Mother Brain to attach to an existing live session (e.g. browser session) without starting a new one. Auto-detect mode calls GET /diagnostics/session (returns _lastSessionId -- updated every /narrate call). Manual mode accepts session_id directly. Once attached, all diagnostic tools (get_turn_data, get_payload, inspect_entity, query_objects, etc.) work normally. SESSION_FREE (no active session required). SYSTEM_PROMPT CAPABILITY block updated: attach_session described and distinguished from start_game -- "do NOT use start_game to investigate a browser session; it would create a new session and destroy the existing one." MB_VERSION 6.0.4 -> 6.0.5.
 // MB v6.0.4 (May 14, 2026): Patch -- create_probe_spec double-encoding fix. When DeepSeek serializes tool call arguments, the spec object gets double-encoded as a JSON string. Added one-line parse guard: if args.spec is a string, attempt JSON.parse() before the typeof check. create_probe_spec now tolerates both a parsed object (correct) and a JSON string (DeepSeek serialization artifact). Validation pipeline (metric enum, required fields, lifecycle, warnings) unchanged and now reachable via both paths. MB_VERSION 6.0.3 -> 6.0.4. Was keyed on _activeSessionId (set by any SSE turn event from any session -- browser, probe runner, bootstrap). Now keyed on _activeGameplayInvestigation (only set by start_game, cleared by end_game). [Game: Active] now correctly means "MB has a live gameplay investigation running" -- not "some session exists somewhere". MB_VERSION 6.0.2 -> 6.0.3. Documents logs/flight-recorder/YYYY-MM-DD/session_{id}.jsonl -- the new per-turn JSONL disk archive added in game v1.85.98. Tells Mother where to find it, what it contains (full turnObject), when to use it (cross-session queries, post-session forensics, history that survives server restart), and how to read it (read_file with relative path, parse line by line). MB_VERSION 6.0.1 -> 6.0.2. Corrects a systematic misread where MB inferred that v6 added an autonomous simulation loop to the engine itself. New block explicitly states: engine architecture, timing model, lifecycle, and pipeline are unchanged; v6 only gives Mother Brain the ability to submit player inputs as a test player; treat as "Mother now has a keyboard" not "the engine now plays itself.". MB_VERSION 6.0.0 -> 6.0.1.
 // MB v6.0.0 (May 14, 2026): Major -- Autonomous gameplay loop. Four new tools: start_game (POST /narrate T1, sets _activeSessionId, no x-session-id header), take_turn (POST /narrate with active session), end_game (DELETE /session), update_investigation (local-only, no HTTP call, SESSION_FREE -- structured closure semantics). New module-scope var _activeGameplayInvestigation: {goal, hypothesis, expected_invariant, status, conclusion, started_at_game_turn, turns_taken, recent_actions[]}. Status enum: investigating/likely_confirmed/contradicted/inconclusive/reproduced/non_reproducible. Investigation block echoed in every take_turn response for drift prevention. _extractDiagSummary() private helper extracts confirmed authoritative_state fields from /diagnostics/turn response. sessionId never exposed in any tool response. force:true on start_game ends existing session first. GAMEPLAY TOOLS section added to SYSTEM_PROMPT: capability block, investigation context block, play doctrine, play report format. prompt() updated: [Game: Active]/[Game: ---] label added alongside [Harness: ...]. Loop: start_game -> take_turn -> inspect -> update_investigation -> take_turn or end_game. Mother transitions from reactive forensic analyst to active simulation investigator with closed-loop experimentation. MB_VERSION 5.1.1 -> 6.0.0.
 // MB v5.1.1 (May 13, 2026): Patch -- Stage 2b localspace distribution probe. probe-metrics.js: 5 new metric names (ls_pct, eligible_tile_count, localspace_count, enterable_localspace_ratio, site_size). probe-runner.js: (1) $PROMPT placeholder -- prompt_cycle values now substitute into any template field containing "$PROMPT" (in addition to existing action override); backward-compatible. (2) httpGet helper added after httpPost. (3) post_extract spec field: after POST /narrate, runner does secondary GET to session-scoped diagnostics endpoint and extracts activeSite for localspace metrics; on failure = hard error. (4) computeMetrics gains 5th param activeSite (default null) + 5 new switch cases. (5) run summary line extended with ls_pct/ls_count/eligible_tiles. (6) validateSpec: post_extract validated when present. tests/probes/localspace-distribution.probe.json: new probe spec (5 L2 prompt_cycle entries, post_extract -> diagnostics/sites active_site, all 5 new metrics, percentile_metrics + warnings). run_validation: run_probe_localspace task added. METRIC VOCABULARY: 5 new metric descriptions. MB_VERSION 5.1.0 -> 5.1.1.
@@ -639,6 +640,23 @@ const MB_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'attach_session',
+      description: 'Attach Mother Brain to an existing live session that MB did not start (e.g. a browser session the developer is playing). Once attached, all diagnostic tools (get_turn_data, get_payload, inspect_entity, query_objects, etc.) work normally against that session. If session_id is omitted, auto-detects the most recently active session via GET /diagnostics/session. Does NOT create or delete any session.',
+      parameters: {
+        type: 'object',
+        properties: {
+          session_id: {
+            type: 'string',
+            description: 'Optional. The exact session ID to attach to. If omitted, auto-detects via /diagnostics/session.'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'start_game',
       description: 'Start a new game session by posting a founding premise to the engine (Turn 1). Stores the session ID internally — all existing diagnostic tools immediately work against the new session. Accepts an optional investigation context (goal, hypothesis, expected_invariant) to seed the investigation block, which is echoed in every take_turn response. Use force:true to auto-end any existing session before starting. world_seed makes the world geometry reproducible for regression work.',
       parameters: {
@@ -1092,7 +1110,7 @@ GAMEPLAY TOOLS: You have four tools that give you the ability to play the game a
 
 IMPORTANT: These gameplay tools do not change the engine architecture, timing model, lifecycle, or gameplay pipeline in any way. The engine is identical to the normal browser experience and still waits for explicit player actions exactly as before. v6 adds no autonomous simulation loop to the engine itself. This capability only gives Mother Brain the ability to act as a controlled test player during investigations by submitting normal player inputs through the existing /narrate endpoint. Treat this as "Mother now has a keyboard," not "the engine now plays itself."
 
-CAPABILITY: start_game creates a new game session from a founding premise (Turn 1). The session ID is stored internally -- it is never returned in tool responses. Once start_game completes, all existing diagnostic tools (get_turn_data, inspect_entity, query_objects, get_sites, inspect_active_site, etc.) immediately work against the new session with no extra setup. take_turn submits a player action to the active session and returns narrative plus a diagnostics summary. end_game deletes the session and frees server memory -- always call it when done. update_investigation is a local-only tool: it makes no server calls and does not require an active session. It updates the investigation status and optional conclusion. Use force:true on start_game to end an existing session and start fresh.
+CAPABILITY: start_game creates a new game session from a founding premise (Turn 1). The session ID is stored internally -- it is never returned in tool responses. Once start_game completes, all existing diagnostic tools (get_turn_data, inspect_entity, query_objects, get_sites, inspect_active_site, etc.) immediately work against the new session with no extra setup. take_turn submits a player action to the active session and returns narrative plus a diagnostics summary. end_game deletes the session and frees server memory -- always call it when done. update_investigation is a local-only tool: it makes no server calls and does not require an active session. It updates the investigation status and optional conclusion. Use force:true on start_game to end an existing session and start fresh. attach_session attaches Mother Brain to an existing session that was NOT started by start_game -- for example, when the developer is playing in the browser and asks you to investigate a live or recent session. Call attach_session (no arguments) to auto-detect the most recently active session. Do NOT use start_game for this -- it would create a new session and destroy the existing one. attach_session does not own the session and will not delete it when end_game is called.
 
 THE LOOP: start_game -> take_turn -> inspect (any diagnostic tool) -> update_investigation -> take_turn or end_game. The loop continues until the hypothesis is answered or the session becomes irrelevant.
 
@@ -1235,7 +1253,7 @@ function _extractDiagSummary(turnData) {
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
-  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file', 'start_game', 'end_game', 'update_investigation'];
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file', 'start_game', 'end_game', 'update_investigation', 'attach_session'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
@@ -1715,6 +1733,22 @@ async function executeToolCall(name, args) {
         return JSON.stringify({ error: 'write_error', detail: _werr.message });
       }
       return JSON.stringify({ patched: true, path: _pfAbs, replacements: _matchCount, original_bytes: Buffer.byteLength(_pfSrc, 'utf8'), new_bytes: Buffer.byteLength(_pfPatched, 'utf8') });
+    } else if (name === 'attach_session') {
+      // v6.0.5: Attach to an existing live session (browser or otherwise) without starting a new one
+      if (args.session_id) {
+        _activeSessionId = args.session_id;
+        printLine(`${DIM}[attach_session] Attached to session (manual)${R}`);
+        prompt();
+        return JSON.stringify({ ok: true, session_id: args.session_id, source: 'manual', hint: 'All diagnostic tools now active against this session.' });
+      }
+      const _asResp = await axios.get(`http://${HOST}:${PORT}/diagnostics/session`, { timeout: 5000, httpAgent: _toolHttpAgent });
+      if (!_asResp.data.sessionId) {
+        return JSON.stringify({ error: 'no_active_session', hint: 'No session has run since server start. Use start_game to create one.' });
+      }
+      _activeSessionId = _asResp.data.sessionId;
+      printLine(`${DIM}[attach_session] Attached to session (auto-detect)${R}`);
+      prompt();
+      return JSON.stringify({ ok: true, session_id: _activeSessionId, last_turn: _asResp.data.lastTurn, has_turn_data: _asResp.data.hasTurnData, source: 'auto_detect', hint: 'All diagnostic tools now active. Use get_turn_data({turn:N}) to inspect any turn.' });
     } else if (name === 'start_game') {
       // v6.0.0: Autonomous gameplay — start a new game session (T1 founding premise)
       if (_activeSessionId && args.force !== true) {
