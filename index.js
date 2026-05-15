@@ -3071,16 +3071,30 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       if (_isEmoteTurn) {
         _rcPossessionDebug.fired = true;
         _rcPossessionDebug.is_emote_turn = true;
+        // v1.85.99: Extract only the *inner* text of the emote (between asterisks) for object ref detection.
+        // Previously used _rawInput.replace(/\*/g,'') which included surrounding dialog text, causing
+        // pure gesture emotes like *frowns* in "you don't know this face? *frowns* Very" to scan the
+        // full dialog sentence against inventory — always failing and incorrectly skipping the RC.
+        const _emoteInner = (_rawInput.match(/\*([^*]+)\*/) || [])[1] || '';
+        // Gate: only run inventory scan when the emote inner text contains a determiner or possessive —
+        // the reliable signal that it references a concrete object ("*draws my sword*", "*holds the torch*").
+        // Pure gestures (*frowns*, *nods*, *sighs*, *laughs*) contain no determiner and skip the scan,
+        // allowing RC to fire normally.
+        const _emoteHasObjectRef = /\b(?:my|the|a|an|this|that|these|those|its|your)\b/i.test(_emoteInner);
+        if (!_emoteHasObjectRef) {
+          _rcPossessionDebug.skip_reason = 'emote_pure_gesture';
+          console.log(`[RC-POSSESSION] turn:${turnNumber} emote_pure_gesture — RC allowed to fire normally inner:"${_emoteInner}"`);
+        } else {
         const _emotePlayerIds = [...new Set([...(gameState?.player?.object_ids || []), ...(gameState?.player?.worn_object_ids || [])])];
         let _emoteBestScore = 0;
         let _emoteBestRec = null;
-        const _emoteRawStripped = _rawInput.replace(/\*/g, '');
         // v1.85.44: Extract noun phrase before aliasScore. Strips action-language scaffolding
         // (remove-verb phrases, grammatical function words) so the query is noun/object terms only.
         // "off" not stripped globally — may appear in item names; handled as part of verb phrases only.
         // "your" stripped — safe: this scan targets player containers only.
         // Corrects argument order: query=nounPhrase (needle), name=itemName (haystack).
-        const _emoteNounPhrase = _emoteRawStripped
+        // v1.85.99: Source changed from full-input _emoteRawStripped to _emoteInner (asterisk content only).
+        const _emoteNounPhrase = _emoteInner
           .replace(/\b(?:strip\s+off|take\s+off|unequip|undress|remove)\b/gi, '')
           .replace(/\b(?:my|the|a|an|these|those|some|its|your)\b/gi, '')
           .replace(/\s{2,}/g, ' ')
@@ -3088,7 +3102,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         for (const _epid of _emotePlayerIds) {
           const _eprec = gameState?.objects?.[_epid];
           if (!_eprec || _eprec.status !== 'active') continue;
-          const _esc = Actions.aliasScore(_emoteNounPhrase || _emoteRawStripped, _eprec.name || '', _eprec.aliases || []);
+          const _esc = Actions.aliasScore(_emoteNounPhrase || _emoteInner, _eprec.name || '', _eprec.aliases || []);
           if (_esc > _emoteBestScore) { _emoteBestScore = _esc; _emoteBestRec = _eprec; }
         }
         _rcPossessionDebug.best_score = _emoteBestScore;
@@ -3122,6 +3136,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           _rcPossessionDebug.skip_reason = 'emote_no_inventory_match';
           _rcSkippedReason = 'emote_no_inventory_match';
         }
+        } // end _emoteHasObjectRef
       }
       debug.rc_possession = _rcPossessionDebug;
       console.log(`[RC-POSSESSION] turn:${turnNumber} is_emote:${_rcPossessionDebug.is_emote_turn} score:${_rcPossessionDebug.best_score} match:${_rcPossessionDebug.inventory_match} item:"${_rcPossessionDebug.matched_item_name || ''}"`);
