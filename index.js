@@ -4688,14 +4688,6 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
     // Persist updated gameState with turn history
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
 
-    // v1.59.0: Background autosave — transparent recovery if server restarts mid-session
-    fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
-      .then(() => fsPromises.writeFile(
-        getAutosavePath(resolvedSessionId),
-        JSON.stringify({ gameState, sessionId: resolvedSessionId, timestamp: new Date().toISOString() })
-      ))
-      .catch(err => console.warn('[AUTOSAVE] write failed:', err.message));
-
     // v1.84.21: Background payload archive write — separate file to keep autosave.json lean
     // TODO: rolling cap at 200 turns if payload_archive.json grows too large
     fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
@@ -5010,12 +5002,17 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
             console.log(`[ARBITER] form change REJECTED — "${_arbFormChange.new_form}" is transient state, not identity form`);
           } else {
             if (!gameState.player.identity) {
-              gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, aliases: [], public_identity_known: false };
+              gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, last_known_form: null, aliases: [], public_identity_known: false };
             }
             const _priorForm = gameState.player.identity.current_form;
             gameState.player.identity.current_form = _arbFormChange.new_form;
+            gameState.player.identity.last_known_form = _arbFormChange.new_form; // v1.86.0: persists until next valid Arbiter form write
             _arbFormApplied = { new_form: _arbFormChange.new_form, prior_form: _priorForm };
-            console.log(`[ARBITER] player form: ${_priorForm} -> ${_arbFormChange.new_form}`);
+            if (_priorForm && _priorForm !== _arbFormChange.new_form) {
+              console.log(`[ARBITER] form OVERWRITE: "${_priorForm}" -> "${_arbFormChange.new_form}"`);
+            } else {
+              console.log(`[ARBITER] player form: ${_priorForm} -> ${_arbFormChange.new_form}`);
+            }
           }
         }
         emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, player_recognition_changes: _arbRecApplied, player_form_change: _arbFormApplied, gameSessionId: resolvedSessionId });
@@ -5026,6 +5023,14 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_freeformBloc
         gameState._lastArbiterVerdict = { turn: turnNumber, raw: null, error: String(e?.message || e), applied: { reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null } };
       }
     })();
+
+    // v1.86.0: Background autosave — moved post-Arbiter so last_known_form / current_form are captured after write-back
+    fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
+      .then(() => fsPromises.writeFile(
+        getAutosavePath(resolvedSessionId),
+        JSON.stringify({ gameState, sessionId: resolvedSessionId, timestamp: new Date().toISOString() })
+      ))
+      .catch(err => console.warn('[AUTOSAVE] write failed:', err.message));
 
     // Update rolling history for delta/avg computation next turn
     _diagHistory.push({

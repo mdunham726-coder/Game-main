@@ -2456,13 +2456,14 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       const stripDom = document.getElementById('identity-strip-live');
       const pid = data?.player_identity;
       if (stripDom) {
-        if (!pid || (!pid.canonical_name && !pid.title_or_role && !pid.current_form)) {
+        if (!pid || (!pid.canonical_name && !pid.title_or_role && !pid.current_form && !pid.last_known_form)) {
           stripDom.innerHTML = '<span style="color:#888;">&mdash;</span>';
         } else {
           const parts = [];
           if (pid.canonical_name) parts.push(_escHtml(pid.canonical_name));
           if (pid.title_or_role)  parts.push(_escHtml(pid.title_or_role));
-          if (pid.current_form)   parts.push(_escHtml(pid.current_form));
+          const _stripForm = pid.current_form || pid.last_known_form;
+          if (_stripForm)         parts.push(_escHtml(_stripForm));
           stripDom.innerHTML = `<span style="color:#c39bd3;">${parts.join(' | ')}</span>`;
         }
       }
@@ -2477,6 +2478,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       logLines.push(`canonical_name: ${pid?.canonical_name ?? '\u2014'}`);
       logLines.push(`title_or_role:  ${pid?.title_or_role  ?? '\u2014'}`);
       logLines.push(`current_form:   ${pid?.current_form   ?? '\u2014'}`);
+      logLines.push(`last_known_form:${pid?.last_known_form ?? '\u2014'}`);
       const rawForm  = av?.raw?.player_form_change;
       const applForm = av?.applied?.player_form_change;
       if (rawForm?.new_form) {

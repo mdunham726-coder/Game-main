@@ -989,11 +989,12 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
 
     // v1.85.19: Populate player.identity from founding premise
     if (!gameState.player.identity) {
-      gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, aliases: [], public_identity_known: false };
+      gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, last_known_form: null, aliases: [], public_identity_known: false };
     }
     gameState.player.identity.canonical_name       = fp.canonical_name || null;
     gameState.player.identity.title_or_role        = fp.title_or_role  || null;
     gameState.player.identity.current_form         = fp.form           || null;
+    gameState.player.identity.last_known_form      = fp.form           || null; // v1.86.0: mirror current_form at founding
     gameState.player.identity.public_identity_known = !!(fp.canonical_name || fp.title_or_role);
     // Also store in birth_record for audit
     gameState.player.birth_record.canonical_name   = fp.canonical_name || null;
@@ -1237,11 +1238,12 @@ function assembleContinuityPacket(gameState, turnContext) {
   // v1.85.19: Player identity line
   gameState._lastIdentityTruthLine = null; // v1.85.21: reset each assembly — null when no identity fields present
   const _pid = gameState.player?.identity;
-  if (_pid && (_pid.canonical_name || _pid.title_or_role || _pid.current_form)) {
+  if (_pid && (_pid.canonical_name || _pid.title_or_role || _pid.current_form || _pid.last_known_form)) {
     const _pidParts = [];
     if (_pid.canonical_name) _pidParts.push(`canonical name: ${_pid.canonical_name}`);
     if (_pid.title_or_role)  _pidParts.push(`title: ${_pid.title_or_role}`);
-    if (_pid.current_form)   _pidParts.push(`current form: ${_pid.current_form}`);
+    const _activeForm = _pid.current_form || _pid.last_known_form; // v1.86.0: fall back to last_known_form when current_form absent
+    if (_activeForm)         _pidParts.push(`current form: ${_activeForm}`);
     lines.push(`Player: ${_pidParts.join(' | ')}`);
     gameState._lastIdentityTruthLine = lines[lines.length - 1]; // v1.85.21: verbatim — exactly what narrator received
     truthLines++;
