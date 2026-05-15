@@ -1,0 +1,25 @@
+{
+  "name": "env-continuity-bloat-v2",
+  "description": "Per-seed baseline of continuity_block_chars on Turn 1 using a fixed, env-rich founding premise. Same town-main-street scenario across many seeds. Tighter warning thresholds than env-continuity-dedup-v2 because the founding prompt is fixed and variance should be low. Regression signal: if continuity_block_chars grows significantly across seeds with identical input, that indicates env-fact injection is not deterministic or the dedup pass is seed-sensitive. post_extract intentionally omitted: computeMetrics reads continuity_block_chars from the primary /narrate response via the response fallback path.",
+  "request_lifecycle": "session_per_run",
+  "endpoint": "narrate",
+  "method": "POST",
+  "request_template": {
+    "action": "I am standing on Main Street in a quiet town, in front of a row of weathered buildings with cracked pavement and a red-and-white awning. A rusted mailbox stands crooked nearby.",
+    "WORLD_PROMPT": "A quiet town on a warm afternoon. Main Street has cracked pavement, faded facades with peeling paint, a red-and-white awning over a shop door, and a rusted mailbox with its flag at half-mast. Weeds push through the concrete seams.",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "debug.narration_debug",
+  "prompt_mode": "fixed",
+  "max_retries": 1,
+  "inter_run_delay_ms": 5000,
+  "metrics": [
+    "continuity_block_chars"
+  ],
+  "warnings": {
+    "continuity_block_chars": {
+      "warn_above": 1200,
+      "fail_above": 2500
+    }
+  }
+}

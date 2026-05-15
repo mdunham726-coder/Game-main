@@ -6903,6 +6903,28 @@ app.get('/diagnostics/turn/:sessionId/:turn', (req, res) => {
   return res.json(result);
 });
 
+// Latest turn — GET /diagnostics/turn/latest?sessionId=X
+// Returns the most-recent turnObject for a session without needing a turn number.
+// Compatible with probe-runner post_extract (?sessionId=X query param pattern).
+// post_extract.extract path: narration_debug.continuity_block_chars
+app.get('/diagnostics/turn/latest', (req, res) => {
+  const { sessionId } = req.query;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId query param is required' });
+  }
+  const session = sessionStates.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found' });
+  }
+  const history = session.gameState?.turn_history || [];
+  if (history.length === 0) {
+    return res.status(404).json({ error: 'no_turns' });
+  }
+  // Sort descending by turn_number and return the highest
+  const latest = history.slice().sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0];
+  return res.json(latest);
+});
+
 // Payload archive — GET /diagnostics/payload/:sessionId/:turn
 // Returns raw DeepSeek payload archive for a specific turn (prompt + response per pipeline stage).
 // Pipeline order: reality_check -> narrator -> continuity_brain -> condition_bot

@@ -1,0 +1,32 @@
+{
+  "name": "env-continuity-dedup-v2",
+  "description": "Distributional baseline for environmental continuity block size (continuity_block_chars) across multiple biome archetypes on Turn 1. Each run starts a fresh session with a founding premise placing the player in a distinct environmental archetype (town street, alley, coastal boardwalk, desert road, cobblestone village). Measures whether the env-fact dedup pass in ContinuityBrain keeps the continuity block at a reasonable size even on the first turn, where env facts from the founding premise are injected. A single-turn probe by design — multi-turn bloat regression is covered by the env_continuity_bloat_walk harness scenario. post_extract is intentionally omitted: computeMetrics reads continuity_block_chars from the primary /narrate response (debug.narration_debug.continuity_block_chars) via the response fallback path.",
+  "request_lifecycle": "session_per_run",
+  "endpoint": "narrate",
+  "method": "POST",
+  "request_template": {
+    "action": "$PROMPT",
+    "WORLD_PROMPT": "$PROMPT",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "debug.narration_debug",
+  "prompt_mode": "random",
+  "max_retries": 1,
+  "prompt_cycle": [
+    "I am standing on Main Street in a quiet town, in front of a row of weathered buildings with cracked pavement and a red-and-white awning. A rusted mailbox stands crooked nearby.",
+    "I am walking along a cobblestone lane in an old village. Stone cottages with thatched roofs line both sides. A wooden sign creaks above a pub door.",
+    "I stand at the edge of a dusty desert road. Adobe buildings with sun-bleached walls stretch ahead. A worn cactus fence borders the path.",
+    "I am on the wooden boardwalk of a coastal town. Salt-worn shop fronts with faded signs face the harbor. A bell buoy clangs in the distance.",
+    "I am in a narrow alley between tall brick buildings. Fire escapes zigzag up the walls. A single streetlamp flickers overhead."
+  ],
+  "inter_run_delay_ms": 5000,
+  "metrics": [
+    "continuity_block_chars"
+  ],
+  "warnings": {
+    "continuity_block_chars": {
+      "warn_above": 1500,
+      "fail_above": 3000
+    }
+  }
+}

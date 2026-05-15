@@ -325,11 +325,18 @@ function computeMetrics(metricNames, log, spec, response, activeSite = null) {
         results[m] = _sizes.reduce((a, b) => a + b, 0) / _sizes.length;
         break;
       }
-      // Continuity/narrator metrics — post_extract.extract must point to debug.narration_debug.continuity_block_chars
-      // activeSite will be the resolved value (a number) when that path is used
-      case 'continuity_block_chars':
-        results[m] = (typeof activeSite === 'number') ? activeSite : null;
+      // Continuity/narrator metrics — reads from activeSite when post_extract resolves to a number,
+      // otherwise falls back to the primary /narrate response at debug.narration_debug.continuity_block_chars.
+      // post_extract is NOT required for this metric; the fallback covers single-turn probe specs.
+      case 'continuity_block_chars': {
+        if (typeof activeSite === 'number') {
+          results[m] = activeSite;
+        } else {
+          const _fallback = dotGet(response, 'debug.narration_debug.continuity_block_chars');
+          results[m] = (typeof _fallback === 'number') ? _fallback : null;
+        }
         break;
+      }
       default: results[m] = null;
     }
   }

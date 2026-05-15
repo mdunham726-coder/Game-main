@@ -1,0 +1,65 @@
+{
+  "name": "env_continuity_bloat_walk",
+  "description": "Catastrophic regression detector for env-fact continuity bloat during repeated movement. Walks east 7 times from a fixed env-rich founding premise. Each movement turn asserts continuity_block_chars < 2500 — a generous threshold calibrated for first-run use with no baseline data. Tighten the threshold after a successful run reveals actual steady-state values. Failure here means dedup has regressed severely (pre-dedup behavior produced ~1700+ chars after 8 walks; catastrophic regression would push well past 2500). The < 2500 ceiling is intentionally not ambitious — it detects complete dedup breakdown, not mild drift.",
+  "stability": "probe",
+  "world_prompt": "A quiet town on a warm afternoon. Main Street has cracked pavement, faded facades with peeling paint, a red-and-white awning over a shop door, and a rusted mailbox with its flag at half-mast. Weeds push through the concrete seams.",
+  "world_seed": 42,
+  "category": "narrative_continuity",
+  "turns": [
+    {
+      "action": "I am standing on Main Street in a quiet town, in front of a row of weathered buildings with cracked pavement and a red-and-white awning. A rusted mailbox stands crooked nearby.",
+      "assert": [
+        {"op": "no_error"}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500}
+      ]
+    },
+    {
+      "action": "walk east",
+      "assert": [
+        {"op": "no_error"},
+        {"op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500}
+      ]
+    }
+  ]
+}

@@ -30,7 +30,9 @@ const METRIC_NAMES = [
   'ls_unique_name_rate',
   'ls_size_spread',
   'ls_mean_size',
-  // Continuity/narrator metrics — require post_extract resolving to debug.narration_debug.continuity_block_chars (a number)
+  // Continuity/narrator metrics — reads from primary /narrate response (debug.narration_debug.continuity_block_chars) via
+  // fallback in computeMetrics(); post_extract is NOT required. If post_extract is present and resolves to a number it
+  // takes precedence, but omitting post_extract is the normal usage pattern for single-turn continuity probes.
   'continuity_block_chars',
 ];
 
