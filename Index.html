@@ -713,6 +713,10 @@
         } else if (status === 'complete') {
           _stageStatus[key] = 'done';
           _markStage(key, 'done');
+          if (key === 'authority_gate' && evt.rc_allowed === false) {
+            const _agLbl = document.getElementById('stage-lbl-authority_gate');
+            if (_agLbl) _agLbl.textContent = 'Routing player input  (RC skipped)';
+          }
           _setProgress(_calcProgress());
         } else if (status === 'skip') {
           _stageStatus[key] = 'skip';
@@ -2146,6 +2150,14 @@ extraction     : ${nd.continuity_extraction_success === true ? 'OK' : nd.continu
 alerts         : ${(nd.continuity_diagnostics?.alerts?.length ?? 0)}${(nd.continuity_diagnostics?.alerts?.length > 0) ? ' [' + nd.continuity_diagnostics.alerts.map(a => a.severity + '/' + a.type).join(', ') + ']' : ''}
 entities_upd   : ${(nd.continuity_diagnostics?.entity_updates_applied || []).join(', ') || '(none)'}
 entities_clr   : ${(nd.continuity_diagnostics?.entity_continuity_cleared || []).join(', ') || '(none)'}`;
+          if (nd.authority_gate) {
+            const ag = nd.authority_gate;
+            const agObjs = (ag.referenced_objects  || []).join(', ') || 'none';
+            const agEnts = (ag.referenced_entities || []).join(', ') || 'none';
+            const agAbs  = (ag.referenced_abilities|| []).join(', ') || 'none';
+            const agConf = ag.llm_confidence != null ? ag.llm_confidence.toFixed(2) : 'n/a';
+            intentSection += `\n-- Authority Gate\ndecision     : ${ag.decision}\nroute        : ${ag.route}\nrc_allowed   : ${ag.rc_allowed}\ninput_type   : ${ag.input_type ?? 'n/a'}\nreason_code  : ${ag.reason_code}\nparsed_action: ${ag.parsed_action ?? 'n/a'}\nlayer_1_match: ${ag.gate_fast_path_hit != null ? String(ag.gate_fast_path_hit) : 'n/a'}\nllm_called   : ${ag.llm_called}${ag.llm_called && agConf !== 'n/a' ? '  confidence: ' + agConf : ''}\nduration_ms  : ${ag.authority_gate_duration_ms ?? 'n/a'}\nevidence     : engine_supported=${ag.evidence_supported ?? 'n/a'}\nrefs         : objs[${agObjs}] entities[${agEnts}] abilities[${agAbs}]`;
+          }
         }
       }
 
@@ -2830,6 +2842,28 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           'INPUT',
           `raw_input: "${t.input?.raw ?? '(none)'}"`,
           `parsed_action: "${t.input?.parsed_intent?.action ?? '(none)'}"`,
+          '',
+          'AUTHORITY GATE',
+          (() => {
+            const ag = t.narration_debug?.authority_gate;
+            if (!ag) return '(no authority_gate data)';
+            return [
+              `decision:              ${ag.decision ?? 'null'}`,
+              `route:                 ${ag.route ?? 'null'}`,
+              `rc_allowed:            ${ag.rc_allowed ?? 'null'}`,
+              `input_type:            ${ag.input_type ?? 'null'}`,
+              `reason_code:           ${ag.reason_code ?? 'null'}`,
+              `parsed_action:         ${ag.parsed_action ?? 'null'}`,
+              `layer_1_matched:       ${ag.gate_fast_path_hit ?? 'null'}`,
+              `llm_called:            ${ag.llm_called ?? 'null'}`,
+              `llm_confidence:        ${ag.llm_confidence ?? 'null'}`,
+              `authority_gate_dur_ms: ${ag.authority_gate_duration_ms ?? 'null'}`,
+              `referenced_objects:    ${JSON.stringify(ag.referenced_objects ?? [])}`,
+              `referenced_entities:   ${JSON.stringify(ag.referenced_entities ?? [])}`,
+              `referenced_abilities:  ${JSON.stringify(ag.referenced_abilities ?? [])}`,
+              `evidence_supported:    ${ag.evidence_supported ?? 'null'}`,
+            ].join('\n');
+          })(),
           '',
           'REALITY CHECK',
           `fired: ${rc.fired ?? false}`,

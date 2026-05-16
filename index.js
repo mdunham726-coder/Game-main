@@ -2991,17 +2991,20 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // Inject parsed target onto gameState for gate's object-existence helpers.
     // Cleared immediately after gate returns so it never pollutes other logic.
     let _authorityGateResult = null;
+    let _agDurationMs = 0;
     gameState._lastParsedTarget = inputObj?.player_intent?.target || null;
     if (turnNumber === 1) {
       emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
-      _authorityGateResult = { decision: 'allow_no_rc', route: 'narrator', rc_allowed: false, input_type: 'valid_low_risk', reason_code: 'turn_1_founding', referenced_objects: [], referenced_entities: [], referenced_abilities: [], evidence: { engine_supported: true, matched_records: [] }, _llm_called: false };
+      _authorityGateResult = { decision: 'allow_no_rc', route: 'narrator', rc_allowed: false, input_type: 'valid_low_risk', reason_code: 'turn_1_founding', referenced_objects: [], referenced_entities: [], referenced_abilities: [], evidence: { engine_supported: true, matched_records: [] }, _llm_called: false, gate_fast_path_hit: false, llm_confidence: null };
     } else {
       emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+      const _agStart = Date.now();
       _authorityGateResult = await AuthorityGate.runAuthorityGate(_rawInput, gameState, _parsedAction, process.env.DEEPSEEK_API_KEY);
-      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
+      _agDurationMs = Date.now() - _agStart;
+      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId, decision: _authorityGateResult.decision, rc_allowed: _authorityGateResult.rc_allowed });
     }
     delete gameState._lastParsedTarget;
-    console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'}`);
+    console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} fast_path:${_authorityGateResult.gate_fast_path_hit ? 'L1' : 'L2'} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'} dur:${_agDurationMs}ms`);
     if (_authorityGateResult.decision === 'freeform') {
       // Gate denied — block RC; narrator receives denial block assembled below.
       // _rcSkippedReason is set here; the existing RC skip block below will not override it
@@ -4717,15 +4720,20 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         condition_bot:     { ran: _conditionBotRan, ...(_conditionBotStats) },
         state_attrs_suppressed: _cbMeta.stateAttrsSuppressed ?? 0,  // v1.84.31: # state: facts aged out this turn
         authority_gate: _authorityGateResult ? {             // v1.88.0
-          decision:             _authorityGateResult.decision,
-          route:                _authorityGateResult.route,
-          rc_allowed:           _authorityGateResult.rc_allowed,
-          reason_code:          _authorityGateResult.reason_code,
-          referenced_objects:   _authorityGateResult.referenced_objects,
-          referenced_entities:  _authorityGateResult.referenced_entities,
-          referenced_abilities: _authorityGateResult.referenced_abilities,
-          evidence_supported:   _authorityGateResult.evidence?.engine_supported ?? null,
-          llm_called:           _authorityGateResult._llm_called ?? false,
+          decision:                   _authorityGateResult.decision,
+          route:                      _authorityGateResult.route,
+          rc_allowed:                 _authorityGateResult.rc_allowed,
+          input_type:                 _authorityGateResult.input_type,
+          reason_code:                _authorityGateResult.reason_code,
+          gate_fast_path_hit:         _authorityGateResult.gate_fast_path_hit ?? null,
+          llm_called:                 _authorityGateResult._llm_called ?? false,
+          llm_confidence:             _authorityGateResult.llm_confidence ?? null,
+          parsed_action:              _parsedAction,
+          referenced_objects:         _authorityGateResult.referenced_objects,
+          referenced_entities:        _authorityGateResult.referenced_entities,
+          referenced_abilities:       _authorityGateResult.referenced_abilities,
+          evidence_supported:         _authorityGateResult.evidence?.engine_supported ?? null,
+          authority_gate_duration_ms: _agDurationMs,
         } : null
       },
       logs: turnLogs,

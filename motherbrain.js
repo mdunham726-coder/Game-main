@@ -33,7 +33,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '6.0.10';
+const MB_VERSION = '6.0.11';
+// MB v6.0.11 (May 2026): Patch -- Authority Gate observability. gate_fast_path_hit + llm_confidence fields added to gate return contract; narration_debug.authority_gate expanded to 13 fields (adds: input_type, gate_fast_path_hit, llm_confidence, parsed_action, authority_gate_duration_ms); authoritygate.js SYSTEM_PROMPT schema adds confidence field; fail-open paths (gate_failopen_*) now carry gate_fast_path_hit:false (Layer 2 was attempted or bypassed, not Layer 1 claimed); Turn 1 synthetic result in index.js also carries gate_fast_path_hit:false (gate bypassed entirely); SSE complete event carries decision+rc_allowed; loading bar appends (RC skipped) when rc_allowed:false; copyRealityCheckSnapshot includes full 14-field authority_gate block; buildTurnBlock adds Authority Gate section to narration debug output; SYSTEM_PROMPT AUTHORITY GATE section rewritten with full diagnostic contract including field semantics, failure taxonomy, investigation paths, and deferred fast_path_rule gap. MB_VERSION 6.0.10 -> 6.0.11.
 // MB v6.0.10 (May 16, 2026): Patch -- Authority Gate v1. New pre-RC routing layer (authoritygate.js): classifies player input into allow_rc / allow_no_rc / freeform before Reality Check fires. Layer 1 fast-path rules handle move/look/wait/enter/exit (allow_no_rc), attack (allow_rc), object-verb actions with confirmed existence check (allow_no_rc), meta-authority keywords without declared ability (freeform), and structural emote world-event pattern (freeform). Layer 2 LLM classifier (temp 0.1, max_tokens 300) handles semantically ambiguous escalations including state_claim and unknown parsedActions. Object existence checks use existing AP helpers only (aliasScore, resolveItemByName, resolveCellItemByName) -- no parallel lookup. Turn 1 founding capture pipeline fully preserved (gate skips itself, emits skip stage). Fail-open on LLM error and parse failure. index.js: require(authoritygate) added; gate call inserted after _parsedAction derivation; deny sets _rcSkippedReason=authority_gate_deny before existing RC skip block; _authorityGateBlock assembled in narrator section (index.js owns all prose translation, authoritygate.js emits JSON only); authority_gate field added to narration_debug. Index.html: authority_gate stage added to _STAGES between fill and reality_check (weight:5). Harness: authority_gate_basic.json + authority_gate_passthrough.json scenarios. SYSTEM_PROMPT: AUTHORITY GATE section added. MB_VERSION 6.0.9 -> 6.0.10.
 // MB v6.0.9 (May 15, 2026): Patch -- fix 8 continuity probe design weaknesses. (1) computeMetrics continuity_block_chars fallback: when activeSite is not a number, falls back to dotGet(response, 'debug.narration_debug.continuity_block_chars') -- post_extract no longer required for this metric. (2) index.js GET /diagnostics/turn/latest?sessionId=X: new endpoint returns the most-recent turn without a turn number in the path; compatible with probe-runner post_extract query-string pattern. (3) env-continuity-dedup-v2.probe.json: replaces broken v1 -- correct extract path (debug.narration_debug), no post_extract, metrics: [continuity_block_chars], warn_above:1500/fail_above:3000, 5 biome archetypes. (4) env-continuity-bloat-v2.probe.json: replaces broken v1 -- same extract/metric fixes, fixed founding prompt, tighter warn_above:1200/fail_above:2500. (5) env_continuity_bloat_walk.json scenario: 8-turn walk, Turns 2-8 assert continuity_block_chars < 2500 (catastrophic regression detector; tighten after first baseline run). (6) probe-metrics.js comment corrected: continuity_block_chars does not require post_extract. Root causes of all 8 weaknesses documented in version history. MB_VERSION 6.0.8 -> 6.0.9.
 // MB v6.0.8 (May 15, 2026): Patch -- three fixes. (1) create_scenario_file double-encoding guard: DeepSeek serializes tool call object arguments as JSON strings; added one-line parse guard (if args.scenario is a string, attempt JSON.parse before the typeof check) -- mirrors identical fix in create_probe_spec from v6.0.4. (2) continuity_block_chars metric: registered in scripts/probe-metrics.js METRIC_NAMES; computeMetrics case added to scripts/probe-runner.js -- reads activeSite as a number (post_extract.extract resolves to debug.narration_debug.continuity_block_chars which is a plain number, not an object); metric returns null if activeSite is not a number. Enables probe specs to measure env dedup effectiveness without fake affordance. (3) FILE VERSIONING RULE added to SYSTEM_PROMPT: never overwrite existing scenario or probe file; write_file must not use overwrite:true on existing files; use _v2/_v3 suffix for revisions; developer consolidates. Rule unconditional. MB_VERSION 6.0.7 -> 6.0.8.
@@ -893,47 +894,79 @@ ARBITER: After each narration freeze, an Arbiter IIFE evaluates the turn and emi
 
 NPC FILL PIPELINE: [NPC-FILL] fires before each narration turn and fills DS-owned identity fields (npc_name, gender, age, job_category) for newly-born NPCs via a dedicated batch DeepSeek call. Fill is atomic — all four fields succeed together or the NPC is marked _fill_error (non-blocking; retries next turn). On success, _fill_frozen:true is set and the fields are permanent. The narrator always receives npc_name:null for NPCs where is_learned:false — this is correct context stripping, not a fill fault. States: _fill_error = fill failed that turn (warn); all four DS fields null with no _fill_error = fill pending (normal first turn at a new site); _fill_frozen:true = fill complete. Use GET /diagnostics/npc to inspect live NPC identity state.
 
-AUTHORITY GATE (v1.88.0): A pre-RC routing layer that runs on every turn before Reality Check. Classifies player input into one of three routes. authoritygate.js: exports runAuthorityGate(rawInput, gameState, parsedAction, apiKey). Returns strict JSON -- no prose. index.js owns all translation from gate JSON to narrator blocks. Fail-open on LLM error or parse failure (decision defaults to allow_rc -- gameplay is never blocked by gate misconfiguration). Turn 1 emits turn_stage:skip for authority_gate and passes through; founding extraction pipeline runs normally.
+AUTHORITY GATE (v1.88.0 + observability): A pre-RC routing layer that runs on every turn before Reality Check. Classifies player input into one of three routes. authoritygate.js: exports runAuthorityGate(rawInput, gameState, parsedAction, apiKey). Returns strict JSON -- no prose. index.js owns all translation from gate JSON to narrator blocks. Fail-open on LLM error or parse failure (decision defaults to allow_rc -- gameplay is never blocked by gate misconfiguration). Turn 1 is bypassed in index.js before the gate is called; founding extraction pipeline runs normally.
 
 ROUTES:
-  allow_rc     — route to Reality Check as normal (player attempt, attack, declared ability use)
-  allow_no_rc  — route directly to narrator, skip RC (navigation, observation, confirmed object actions)
-  freeform     — unsupported authoring attempt; narrator receives denial block; _rcSkippedReason=authority_gate_deny
+  allow_rc     -- route to Reality Check as normal (player attempt, attack, declared ability use)
+  allow_no_rc  -- route directly to narrator, skip RC (navigation, observation, confirmed object actions)
+  freeform     -- unsupported authoring attempt; narrator receives denial block; _rcSkippedReason=authority_gate_deny
 
-LAYER 1 FAST-PATH RULES (no LLM call):
-  move/look/wait/enter/exit                                             -> allow_no_rc, reason: valid_low_risk_action
-  attack                                                                -> allow_rc, reason: attack_action
-  remove + referenced item confirmed in worn_object_ids via aliasScore  -> allow_no_rc, reason: worn_item_confirmed
+LAYER 1 FAST-PATH RULES (no LLM call, gate_fast_path_hit:true):
+  move/look/wait/enter/exit                                               -> allow_no_rc, reason: valid_low_risk_action
+  attack                                                                  -> allow_rc,    reason: attack_action
+  remove + referenced item confirmed in worn_object_ids via aliasScore    -> allow_no_rc, reason: worn_item_confirmed
   take  + referenced item confirmed in current cell via resolveCellItemByName -> allow_no_rc, reason: cell_item_confirmed
   drop/throw + referenced item confirmed in inventory via resolveItemByName   -> allow_no_rc, reason: inventory_item_confirmed
-  examine + target confirmed in inventory/worn/cell                     -> allow_no_rc, reason: examine_target_confirmed
-  meta-authority keyword (dev/admin/god/spawn/debug powers etc) AND ability NOT in declared attributes -> freeform, reason: unsupported_meta_authority
-  structural third-person emote subject (*...*) not first-person        -> freeform, reason: unsupported_emote_world_event
+  examine + target confirmed in inventory/worn/cell                       -> allow_no_rc, reason: examine_target_confirmed
+  meta-authority keyword AND ability NOT in declared attributes           -> freeform,    reason: unsupported_meta_authority
+  structural third-person emote subject (*...*) not first-person          -> freeform,    reason: unsupported_emote_world_event
   (unmatched cases) escalate to Layer 2 LLM
 
-LAYER 2 LLM CLASSIFIER (ambiguous cases):
+LAYER 2 LLM CLASSIFIER (ambiguous cases, gate_fast_path_hit:false):
   model: deepseek-chat, temperature: 0.1, max_tokens: 300
   input_type enum: player_attempt / valid_low_risk / unsupported_world_authoring / unsupported_entity_spawn / unsupported_external_event / claimed_ability_use
   evidence bundle: rawInput, parsedAction (parser hint), declaredAbilities (<=8), inventoryNames (<=10), wornNames (<=10), visibleNpcNames (<=5), turnNumber
+  LLM returns confidence (0.0-1.0) in addition to the routing fields; stored as llm_confidence in narration_debug
   state_claim and unknown parsedActions: always escalate to LLM (not hard-denied -- valid freeform gameplay often parses as unknown)
 
-JSON CONTRACT returned by runAuthorityGate:
-  { decision, route, rc_allowed, input_type, reason_code, referenced_objects[], referenced_entities[], referenced_abilities[], evidence: { engine_supported, matched_records[] }, _llm_called }
+FIELD SEMANTICS -- gate_fast_path_hit:
+  true  = Layer 1 claimed the routing decision. No LLM was called.
+  false = Layer 2 was attempted (or the gate was bypassed entirely for Turn 1). Does NOT mean the decision was safe or unsafe -- it describes which layer decided, not the quality of the decision.
+  Failure paths (gate_failopen_*): always false -- LLM was attempted but failed; gate fell back to allow_rc.
+  Turn 1 synthetic result: always false -- gate was not called at all.
+  LABEL THIS FIELD: "Layer 1 matched" in all UI surfaces. Never call it "safe" or "fast path" in user-facing text.
 
-narration_debug.authority_gate (in turn_history, all turns including Turn 1):
-  { decision, route, rc_allowed, reason_code, referenced_objects, referenced_entities, referenced_abilities, evidence_supported, llm_called }
+FIELD SEMANTICS -- llm_confidence:
+  Number in [0.0, 1.0]. Present only when Layer 2 ran and returned a parseable value.
+  null on all Layer 1 paths and all fail-open paths.
+  Reflects the LLM's stated confidence in its own classification -- not a trust score, not a safety signal.
 
-Loading bar stage: key='authority_gate', label='Routing player input', weight=5. Position: after fill, before reality_check. Emits skip for Turn 1 and fast-path actions. Emits start/complete when LLM is called.
+DEFERRED GAP -- fast_path_rule:
+  Not yet emitted. When implemented, will carry the specific Layer 1 rule that fired.
+  Planned enum values: move_look_wait / attack / remove_worn_confirmed / take_cell_confirmed / drop_inventory_confirmed / examine_confirmed / meta_authority_keyword / emote_world_event
+  Until implemented: use reason_code to identify the Layer 1 rule.
+  Investigation trigger: adversarial inputs that cluster around one reason_code family without triggering RC.
+
+JSON CONTRACT returned by runAuthorityGate (14 fields):
+  { decision, route, rc_allowed, input_type, reason_code, gate_fast_path_hit, llm_confidence, referenced_objects[], referenced_entities[], referenced_abilities[], evidence: { engine_supported, matched_records[] }, _llm_called }
+
+narration_debug.authority_gate (in turn_history, all turns including Turn 1 -- 13 fields):
+  { decision, route, rc_allowed, input_type, reason_code, gate_fast_path_hit, llm_called, llm_confidence, parsed_action, referenced_objects, referenced_entities, referenced_abilities, evidence_supported, authority_gate_duration_ms }
+
+SSE EVENTS:
+  turn_stage:skip    -- Turn 1 only
+  turn_stage:start   -- Layer 2 LLM call started
+  turn_stage:complete -- carries decision and rc_allowed fields; loading bar appends (RC skipped) when rc_allowed:false
+  (Layer 1 fast-path: no start/complete events -- stage remains pending/skip in loading bar)
+
+Loading bar stage: key='authority_gate', label='Routing player input', weight=5. Position: after fill, before reality_check.
 
 Harness scenarios:
   authority_gate_basic.json     -- 4 unsupported-authoring turns, each asserts authority_gate.route=freeform and no crash
   authority_gate_passthrough.json -- founding preserved (reason_code=turn_1_founding), navigation routes narrator, declared ability routes present
 
-DIAGNOSTIC NOTES:
-  - authority_gate null in narration_debug = gate was not reached (pipeline crashed earlier)
-  - llm_called:true = Layer 2 fired; false = Layer 1 fast-path
-  - reason_code gate_failopen_* = gate encountered an error and failed open to allow_rc
-  - When investigating a suspected exploit bypass, check: authority_gate.decision + reason_code, then reality_check.skipped_reason, then narrator prompt (_freeformBlock via payload)
+FAILURE TAXONOMY (reason_code prefixes):
+  gate_failopen_no_key       -- no DEEPSEEK_API_KEY configured; fell back to allow_rc
+  gate_failopen_llm_error    -- LLM call threw/timed out; fell back to allow_rc
+  gate_failopen_parse_error  -- LLM response was not valid JSON; fell back to allow_rc
+  gate_failopen_bad_decision -- LLM returned unknown decision value; fell back to allow_rc
+  (all gate_failopen_* have gate_fast_path_hit:false and llm_confidence:null)
+
+DIAGNOSTIC PATHS:
+  Suspected exploit bypass: check authority_gate.decision + reason_code -> reality_check.skipped_reason -> payload narrator prompt (_freeformBlock)
+  Gate never reached: authority_gate null in narration_debug means pipeline crashed before gate call
+  Layer 2 investigation: llm_called:true + llm_confidence < 0.6 -> examine input_type and referenced_* fields
+  Fail-open cluster: multiple gate_failopen_* turns -> check API key config and network; not a gameplay vulnerability (all fail to allow_rc)
 
 REALITY CHECK (Arbiter Phase 0): Before each narration turn (except Turn 1 and skip-action turns: move/look/wait/enter/exit), a blocking awaited Reality Check call fires. It takes the player's raw input and constructs a plain-language consequence query appended with the verbatim suffix: 'Focus on immediate physical, social, and legal consequences. be accurate, but concise and brief. distill the answer to the essence of the event.' The DeepSeek result is frozen as reality_check.result in the turn record and injected into the narrator's prompt as an advisory block headed 'Possible consequences of the player's action (advisory):'. The narrator uses this as guidance only — it selects, adapts, or ignores as appropriate, and honors the current scene, engine state, and system prompt. The narrator retains full scene authority; RC output does not override it. If the check fires and fails, the turn halts with REALITY_CHECK_FAILED — the narrator is never called. Skipped turns emit reality_check with fired:false and skipped_reason. The post-narration Arbiter IIFE (reputation/name-learning) continues to fire separately after narration. reality_check in turn_history: { fired, skipped_reason, query, result, raw_response, anchor_block }. stage_times in turn_history: { rc_start, rc_end, narrator_start, narrator_end }. The === REALITY CHECK (last turn) === section in the context snapshot mirrors exactly what the narrator received — raw_response is the verbatim DeepSeek output before any formatting; anchor_block is the exact text injected into the narrator prompt. Use these to diagnose discrepancies between RC advisory content and narrator output.
 

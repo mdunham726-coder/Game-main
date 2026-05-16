@@ -78,6 +78,7 @@ RETURN SCHEMA (JSON only, no prose, no wrapper text):
   "rc_allowed": true | false,
   "input_type": "<one of the input_type values above>",
   "reason_code": "<snake_case reason, e.g. valid_player_action, unsupported_world_event, ability_not_declared>",
+  "confidence": 0.75,
   "referenced_objects": [],
   "referenced_entities": [],
   "referenced_abilities": [],
@@ -190,13 +191,15 @@ function _isMetaAuthorityAttempt(rawInput, declaredAbilities) {
 
 // ── Synthetic fast-path result ────────────────────────────────────────────────
 
-function _fastResult(decision, route, rcAllowed, inputType, reasonCode) {
+function _fastResult(decision, route, rcAllowed, inputType, reasonCode, fastPathHit = true) {
   return {
     decision,
     route,
     rc_allowed: rcAllowed,
     input_type: inputType,
     reason_code: reasonCode,
+    gate_fast_path_hit: fastPathHit,
+    llm_confidence:     null,
     referenced_objects: [],
     referenced_entities: [],
     referenced_abilities: [],
@@ -275,7 +278,7 @@ async function runAuthorityGate(rawInput, gameState, parsedAction, apiKey) {
   if (!apiKey) {
     // No API key — fail open (allow_rc) so gameplay is never blocked by gate misconfiguration
     console.warn('[AUTHORITY-GATE] No API key — fail open: allow_rc');
-    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_no_key');
+    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_no_key', false);
   }
 
   const userMessage = `Classify this player input.
@@ -308,7 +311,7 @@ Return the JSON schema described in your instructions. No prose.`;
     raw = resp?.data?.choices?.[0]?.message?.content || null;
   } catch (err) {
     console.error('[AUTHORITY-GATE] LLM call failed:', err.message, '— fail open: allow_rc');
-    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_llm_error');
+    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_llm_error', false);
   }
 
   let result = null;
@@ -318,11 +321,15 @@ Return the JSON schema described in your instructions. No prose.`;
     if (!result || typeof result.decision !== 'string') throw new Error('Missing decision field');
   } catch (parseErr) {
     console.error('[AUTHORITY-GATE] JSON parse failed:', parseErr.message, '| raw:', (raw || '').slice(0, 200), '— fail open: allow_rc');
-    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_parse_error');
+    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_parse_error', false);
   }
 
-  // Normalize — ensure _llm_called is set
-  result._llm_called = true;
+  // Normalize — ensure _llm_called, gate_fast_path_hit, and llm_confidence are set
+  result._llm_called        = true;
+  result.gate_fast_path_hit = false;
+  result.llm_confidence     = (result.confidence != null && !isNaN(Number(result.confidence)))
+    ? Math.max(0, Math.min(1, Number(result.confidence)))
+    : null;
 
   // Safety: if decision is not a known value, fail open
   if (!['allow_rc', 'allow_no_rc', 'freeform'].includes(result.decision)) {
