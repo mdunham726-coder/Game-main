@@ -6939,23 +6939,71 @@ app.get('/diagnostics/log', (req, res) => {
   res.json({ turns, total_turns: history.length });
 });
 
+// Disk fallback for turn archive reads — consults flight-recorder JSONL when in-memory session is gone.
+// turnNum: numeric → return that specific turn's turnObject; null → return the highest-turn turnObject found.
+// Never throws. Returns null on any error, missing directory, missing file, or malformed line.
+async function _readTurnFromDisk(sessionId, turnNum) {
+  try {
+    const safeId = String(sessionId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const flRoot = path.join(__dirname, 'logs', 'flight-recorder');
+    let dateDirs;
+    try {
+      dateDirs = await fsPromises.readdir(flRoot);
+    } catch (e) {
+      return null; // flight-recorder root does not exist yet
+    }
+    // Sort descending — most recent date checked first (early exit for recent sessions)
+    dateDirs.sort((a, b) => b.localeCompare(a));
+    for (const dateDir of dateDirs) {
+      const filePath = path.join(flRoot, dateDir, 'session_' + safeId + '.jsonl');
+      let raw;
+      try {
+        raw = await fsPromises.readFile(filePath, 'utf8');
+      } catch (e) {
+        if (e.code === 'ENOENT') continue;
+        continue; // skip unreadable files without throwing
+      }
+      let bestParsed = null;
+      for (const line of raw.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let parsed;
+        try { parsed = JSON.parse(trimmed); } catch (e) { continue; }
+        if (!parsed || !parsed.turnObject) continue;
+        if (turnNum !== null) {
+          if (parsed.turn === turnNum) return parsed.turnObject;
+        } else {
+          if (!bestParsed || (parsed.turn || 0) > (bestParsed.turn || 0)) bestParsed = parsed;
+        }
+      }
+      if (turnNum === null && bestParsed) return bestParsed.turnObject;
+    }
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // Turn archive — GET /diagnostics/turn/:sessionId/:turn
 // Returns the full turnObject for a specific turn from turn_history[].
 // Optional ?fields= comma-separated: narrative, extraction_packet, continuity_snapshot,
 //   authoritative_state, input, stage_times, reality_check, narration_debug
-app.get('/diagnostics/turn/:sessionId/:turn', (req, res) => {
+app.get('/diagnostics/turn/:sessionId/:turn', async (req, res) => {
   const { sessionId, turn } = req.params;
   const turnNum = parseInt(turn, 10);
   if (!sessionId || isNaN(turnNum)) {
     return res.status(400).json({ error: 'sessionId and numeric turn are required' });
   }
   const session = sessionStates.get(sessionId);
-  if (!session) {
-    return res.status(404).json({ error: 'session_not_found' });
-  }
-  const history = session.gameState?.turn_history || [];
-  const turnObj = history.find(t => t.turn_number === turnNum);
+  const history = session?.gameState?.turn_history || [];
+  let turnObj = history.find(t => t.turn_number === turnNum);
   if (!turnObj) {
+    turnObj = await _readTurnFromDisk(sessionId, turnNum);
+  }
+  if (!turnObj) {
+    if (!session) {
+      return res.status(404).json({ error: 'session_not_found' });
+    }
     return res.status(404).json({ error: 'turn_not_found', turn: turnNum, total_turns: history.length });
   }
   const fieldsParam = req.query.fields;
@@ -6995,21 +7043,25 @@ app.get('/diagnostics/turn/:sessionId/:turn', (req, res) => {
 // Returns the most-recent turnObject for a session without needing a turn number.
 // Compatible with probe-runner post_extract (?sessionId=X query param pattern).
 // post_extract.extract path: narration_debug.continuity_block_chars
-app.get('/diagnostics/turn/latest', (req, res) => {
+app.get('/diagnostics/turn/latest', async (req, res) => {
   const { sessionId } = req.query;
   if (!sessionId) {
     return res.status(400).json({ error: 'sessionId query param is required' });
   }
   const session = sessionStates.get(sessionId);
-  if (!session) {
-    return res.status(404).json({ error: 'session_not_found' });
+  const history = session?.gameState?.turn_history || [];
+  let latest = history.length > 0
+    ? history.slice().sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0]
+    : null;
+  if (!latest) {
+    latest = await _readTurnFromDisk(sessionId, null);
   }
-  const history = session.gameState?.turn_history || [];
-  if (history.length === 0) {
+  if (!latest) {
+    if (!session) {
+      return res.status(404).json({ error: 'session_not_found' });
+    }
     return res.status(404).json({ error: 'no_turns' });
   }
-  // Sort descending by turn_number and return the highest
-  const latest = history.slice().sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0];
   return res.json(latest);
 });
 
