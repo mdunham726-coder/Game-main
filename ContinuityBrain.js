@@ -40,6 +40,8 @@ const STATE_ATTR_WINDOW = 5;    // state: bucket decay window — state facts ol
                                 // physical: and object: buckets are permanent and always included
                                 // NOTE: state: is a mixed bucket (ephemeral motion + ongoing aftermath); a future pass may split
                                 //   into state:ephemeral (window=1-2) and state:persistent (longer/condition-backed)
+const ENV_ATTR_WINDOW   = 20;   // cap on env attributes emitted per entity (NPC or location) in the TRUTH block
+                                // sorted by turn_set desc so the most recent facts survive the cut
 const CB_VERSION        = '1.5.1';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
@@ -1008,6 +1010,8 @@ function assembleContinuityPacket(gameState, turnContext) {
     // v1.84.82: respect is_learned — do not expose npc_name in TRUTH block until the player has learned it
     const label = (npc.is_learned && npc.npc_name) ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
     const attrs = Object.values(npc.attributes)
+      .sort((x, y) => (y.turn_set || 0) - (x.turn_set || 0))
+      .slice(0, ENV_ATTR_WINDOW)
       .map(a => a.value)
       .join(' | ');
     lines.push(`${label}: ${attrs}`);
@@ -1021,6 +1025,8 @@ function assembleContinuityPacket(gameState, turnContext) {
   // Location attributes — includes L0 cell attributes via locRecord fallback
   if (locRecord && locRecord.attributes && Object.keys(locRecord.attributes).length) {
     const locAttrs = Object.values(locRecord.attributes)
+      .sort((x, y) => (y.turn_set || 0) - (x.turn_set || 0))
+      .slice(0, ENV_ATTR_WINDOW)
       .map(a => a.value)
       .join(' | ');
     lines.push(`[${locLabel}]: ${locAttrs}`);
