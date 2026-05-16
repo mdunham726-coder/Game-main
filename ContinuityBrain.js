@@ -37,12 +37,10 @@ const MOOD_HISTORY_CAP  = 20;   // hard cap on world.mood_history[]
 const MOOD_WINDOW       = 5;    // entries used for MOOD block in packet
 const EXTRACTION_TIMEOUT = 30000; // ms — Phase B LLM call
 const STATE_ATTR_WINDOW = 5;    // state: bucket decay window — state facts older than this many turns are suppressed from the narrator TRUTH block
-const ENV_ATTR_WINDOW   = 20;   // max env/NPC attributes emitted per entity in the narrator TRUTH block — most recent N by turn_set; prevents unbounded token growth
                                 // physical: and object: buckets are permanent and always included
                                 // NOTE: state: is a mixed bucket (ephemeral motion + ongoing aftermath); a future pass may split
                                 //   into state:ephemeral (window=1-2) and state:persistent (longer/condition-backed)
-const LOC_ATTR_WINDOW   = 10;   // max location environment facts after injection-time dedup — backstop for env bloat even if dedup misses an edge case
-const CB_VERSION        = '1.5.2';
+const CB_VERSION        = '1.5.1';
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -68,7 +66,7 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   // v1.84.65: build authoritative valid containers list for this turn's scope
   const _vcPos  = (gameState.world || {}).position;
   const _vcLoc  = (gameState.world || {}).active_local_space || (gameState.world || {}).active_site;
-  const _vcLines = ['- player  (player inventory)', '- player_worn  (worn items)'];
+  const _vcLines = ['- player  (player inventory)'];
   // v1.84.87: suppress cell key when inside a localspace — the interior floor is the correct container,
   // not the parent outdoor tile. Emitting both caused CB to pick the cell key (prior training bias).
   if (_vcPos && !(_vcLoc && _vcLoc.local_space_id)) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
@@ -95,7 +93,6 @@ Active location: ${location}
 Valid containers for object placement this turn:
 ${_validContainersList}
 Grid container_id MUST be an exact LOC:... value from this list. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
-CRITICAL: 'grid' is ONLY valid at L0 (overworld). If the player is inside a site (L1) or localspace interior (L2), the 'grid' container type is invalid — use the site or localspace container ID listed above instead.
 Current player input (this turn): "${rawInput || ''}"
 Confirmed player inventory (pre-turn): ${(() => { const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : []; const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {}; const _cbNames = _cbIds.map(id => _cbObjs[id]?.status === 'active' ? _cbObjs[id].name : null).filter(Boolean); return _cbNames.length ? _cbNames.join(', ') : '(empty)'; })()}
 Visible entities: ${entities}
@@ -103,7 +100,6 @@ Player character: always present — entity_ref "player" | known attributes: ${k
 Active player conditions: ${activeConditions}
 Tracked objects in scene:
 ${trackedObjects}
-TRACKED OBJECT NAMING RULE: When emitting an object_candidate for an object that appears in the tracked list above, you MUST use the exact name shown in the tracked list as the "name" field. Do not paraphrase, abbreviate, or vary the name.
 ${apContext ? `\nPlayer actions this turn (use to identify which specific object was physically affected):\n${apContext}` : ''}
 
 PREVIOUS MOOD SNAPSHOT:
@@ -121,7 +117,6 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "mood_snapshot": { ... },
   "condition_events": [...],
   "object_candidates": [],
-  "visible_objects": [],
   "object_transfers": [],
   "object_condition_updates": [],
   "object_retirements": []${isFoundingTurn ? `,
@@ -129,12 +124,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
     "form": null,
     "location_premise": null,
     "possessions": [],
-    "capabilities": [],
     "status_claims": [],
-    "scenario_notes": [],
-    "world_notes": [],
-    "canonical_name": null,
-    "title_or_role": null
+    "scenario_notes": []
   }` : ''}
 }
 
@@ -157,51 +148,28 @@ For each named or identifiable entity in the narration, produce one entry:
   "entity_ref": "<npc_id from engine state, or descriptive label ONLY if no match>",
   "physical_attributes": [],
   "observable_states": [],
-  "held_objects": [],
-  "worn_objects": [],
+  "held_or_worn_objects": [],
   "rejected_interpretations": []
 }
 
 physical_attributes
   Permanent or semi-permanent features of the body.
   Test: "Would this still be true if I walked away and came back tomorrow?"
-  ACCEPT: scar over left eye | grey beard | missing finger | patched eyebrow
-  REJECT: suspicious expression | tired look | nervous energy
+  Include only features that exist independently of context, mood, or current activity. Exclude emotional expressions, behavioral tendencies, and inferred character traits.
 
 observable_states
   Current verifiable condition. Changeable. No inference required.
   Test: "Can I confirm this by looking, without guessing why?"
-  ACCEPT: arm in sling | hood pulled low | lamp is unlit | hunched over counter
-  REJECT: hiding something | grieving | planning
+  Include only states that are directly visible — posture, position, and physical indicators confirmable on sight without knowing the reason. Exclude intent, emotion, and states that require inference to identify. When an observable state is a visible sign of bodily harm to the player, the underlying injury must also be emitted as a condition_event. An observable state does not absorb a condition.
 
-  CONTESTED EMOTE RULE: If the raw player input contains an asterisk-wrapped emote
-  implying a physical object interaction, and the narration described that interaction
-  as incomplete, failed, or contested, do not extract NPC state changes predicated on
-  that interaction having succeeded. Extract only what the narration actually describes
-  as the outcome.
-
-held_objects
-  Items physically carried, held in hand, tucked under arm, gripped, or transported by this entity (not strapped or worn on the body).
-  Test: "Is this object actively held, gripped, or carried in their hands or arms — not fastened to the body?"
-  ACCEPT: iron dagger in hand | sealed letter | satchel over shoulder | bundle tucked under arm
-  REJECT: clothing strapped or fastened to body (use worn_objects) | "weapons" (too vague) | "burdens" (metaphor)
-  FORMAT: flat strings only — do NOT emit objects with name/description/reason fields. Each entry must be a plain noun phrase string.
-
-worn_objects
-  Clothing, armor, jewelry, or equipment strapped, buckled, tied, or fastened directly to the body.
-  Test: "Is this object worn on or secured to the body rather than held in the hands?"
-  ACCEPT: leather coat | iron ring | worn boots | belt | holstered blade fastened to hip
-  REJECT: items actively held or gripped in hands (use held_objects) | "burdens" (metaphor)
-  FORMAT: flat strings only — do NOT emit objects with name/description/reason fields. Each entry must be a plain noun phrase string.
-  REJECT: phrases describing absence or lack — "missing X", "no shirt", "bare feet", "without shoes", "not wearing X" — these are state facts, not worn objects
+held_or_worn_objects
+  Items visibly on or in the hands/body of THIS entity specifically.
+  Test: "Is this object attached to or held by this entity right now?"
+  Include only objects that are explicitly named and confirmed as held or worn by this entity. Exclude category labels, vague collective nouns, and metaphors. Exclude absence descriptions — they are not held or worn objects.
 
 rejected_interpretations (per-entity)
   REQUIRED. Items you considered but rejected. Format: "phrase → reason"
-  EXAMPLES:
-    suspicious demeanor → interpretive, not observable
-    sacred aura → metaphorical
-    melancholy presence → emotional inference
-    hidden motive → requires mind-reading
+  Capture interpretive, emotional, metaphorical, and inferential phrases from the narration that did not qualify for any field above.
 
 ---
 
@@ -212,9 +180,7 @@ Test: "Would this be here if there were no people in the room?"
 
 Format: { "location_ref": "<location name>", "features": [...] }
 
-ACCEPT: chipped wooden counter | overturned stool | water stain on east wall | guttered candle near door
-REJECT: oppressive silence (mood) | sacred atmosphere (interpretation) | dimly lit (ambiguous — only include if explicitly stated)
-Note: named, specific objects visible through a window, display case, or barrier but not directly reachable are NOT environmental features. Place them in visible_objects[] instead.
+Include only concrete, named physical objects or material conditions of the space itself. Exclude mood, atmosphere, interpretation, and ambiguous sensory descriptions unless a specific physical state is explicitly named.
 
 ---
 
@@ -223,11 +189,7 @@ SPATIAL RELATIONS
 Verifiable positional facts. One per entry. Short natural language.
 Test: "Is this a position, or an inference about intent?"
 
-ACCEPT: "merchant standing near the east door"
-        "crate blocking the north passage"
-        "two men seated at the corner table"
-REJECT: "merchant seems to be watching the door" (intent inference)
-        "the room feels crowded" (mood)
+Include only positions and orientations that are explicitly stated in the narration. Exclude intent inferences, mood descriptions, and anything requiring a guess about purpose or feeling.
 
 ---
 
@@ -238,10 +200,7 @@ These are scene-level or environment-level inferences that don't belong to any s
 
 Format: ["phrase → reason", ...]
 
-EXAMPLES:
-  "the room feels ceremonial → scene-level interpretation"
-  "a confrontation seems inevitable → inference about future event"
-  "oppressive silence → mood, not a physical feature"
+Capture scene-level mood, atmosphere, inferred future events, and interpretive framing that cannot be verified from physical observation alone.
 
 ---
 
@@ -261,18 +220,13 @@ All values are SHORT LABELS or PHRASES. No sentences. No narrative prose.
 }
 
 tone
-  ACCEPT: "quiet, watchful" | "tense, formal" | "hostile, guarded"
-  REJECT: "the air hangs heavy with unspoken threat" → prose, not a label
+  Two to three short adjective labels, comma-separated. Must be a mood or atmosphere label — not a prose sentence or narrative description.
 
 scene_focus
-  ACCEPT: "central dais" | "north exit" | "the merchant's hands"
-  REJECT: "the tension coiled around the man near the fire" → this is a sentence
+  A concrete noun phrase naming what the scene's attention centers on. Must identify a specific object, place, or person — not a feeling, abstraction, or interpretive framing.
 
 delta_note
-  ACCEPT: "tension easing since confrontation resolved"
-          "hostility introduced this turn"
-          "stable — no shift"
-  REJECT: multi-sentence narrative explanation
+  One short phrase describing what changed this turn, or 'stable — no shift'. A single phrase only — not a sentence, not an explanation.
 
 Respond with ONLY the JSON object. No explanation, no wrapper text.
 
@@ -283,14 +237,11 @@ CONDITION EVENTS
 Review the narration for evidence of new physical conditions or interactions with existing conditions.
 Active player conditions are listed above.
 
-CRITICAL RULE: Only emit condition_events when there is CLEAR physical evidence in the narration.
-If you are unsure whether something is a new condition, do not emit it.
-If you are unsure whether an interaction matches an existing condition, do not emit it.
-False negatives are preferred over false positives.
+CRITICAL RULE: When evidence is ambiguous or requires inference, do not emit — omission is preferred over fabrication. When the narration explicitly describes a physical effect on the player's body, that is not inference — emit it. The condition_events and observable_states buckets are not mutually exclusive. A visible sign of bodily harm belongs in observable_states; the underlying bodily injury belongs in condition_events. When both apply, both must be emitted.
 
 event_type rules:
-- "new_condition": narration clearly describes a NEW physical injury or condition not already in the active list. Emit ONLY if the evidence would independently describe a new physical condition without inference.
-- "interaction": narration shows usage, aggravation, or treatment of an EXISTING active condition. Only emit if you can clearly match to a condition in the active list by description. If no strong match exists, do not emit — do not create new conditions from interaction evidence.
+- "new_condition": narration explicitly describes a new physical harm, impairment, contamination, intoxication, illness, residue, or embedded foreign material affecting the player, not already in the active list. The evidence must state the condition directly, not imply it.
+- "interaction": narration shows usage, aggravation, or treatment of an existing active condition. Only emit if you can match to a condition in the active list by exact condition_id. If no match exists, do not emit.
 
 Format each event:
 {
@@ -320,13 +271,9 @@ SOURCE PRECEDENCE RULES — read carefully:
 Fields:
   form             — character type or role as stated in primary source (e.g. "merchant", "soldier", "wanderer"). null if not stated.
   location_premise — starting location as stated in primary source (e.g. "city gates", "the Thornwood road"). null if not stated.
-  possessions      — physical items, objects, weapons, or gear explicitly named in primary source as owned or carried. Do NOT include abilities, powers, or things the player can do — those belong in capabilities. Empty array if none stated.
-  capabilities     — abilities, powers, or things the player can do, as explicitly stated in primary source (e.g. "ability to transform", "power to fly", "magic to heal others"). Do NOT include physical items — those belong in possessions. Empty array if none stated.
+  possessions      — items explicitly named in primary source as owned or carried. Empty array if none stated.
   status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
-  scenario_notes   — player-linked facts that don't fit any other field, as stated in the primary source: named relationships (e.g. "my wife Sarah"), personal current activity or situation, role context, personal objectives, starting circumstances. Facts about the player's immediate reality. Exclude atmosphere, world-setting, and broad framing — player-specific facts only. Empty array if none stated.
-  world_notes      — world-setting, atmospheric, or lore-level facts from the primary source: geography, history, cultural context, ambient description. These frame the world but are not facts about the player specifically. Empty array if none.
-  canonical_name   — the player's personal name if explicitly stated. A word or phrase the player uses to refer to themselves as a specific individual, distinct from a title, role, or job descriptor. Only extract what is explicitly stated — do not infer. null if not stated.
-  title_or_role    — a formal title, rank, or positional designation if explicitly claimed. A social or authoritative label, not a personal name. Only extract what is explicitly stated — do not infer. null if not stated.
+  scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
 
 ` : ''}
 
@@ -337,27 +284,17 @@ OBJECT CANDIDATES (optional)
 Identify concrete, discrete, portable physical objects explicitly mentioned in the narration.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
-Do NOT emit an object_candidate for an object that is visible but spatially separated from the player by a barrier (display window, glass pane, counter, locked case, enclosed shelf, or any other physical boundary). Even if concrete and named, if the player cannot directly touch or take it without crossing a barrier or triggering an additional action, place it in visible_objects[] instead.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
-Semantic variant rule: If the narrator adds size or quality adjectives (small, large, tiny, old,
-worn, faded, cracked, broken, dusty, half-empty, etc.) or quantity prefixes (stack of, pile of,
-set of, bunch of, piece of) to a tracked object's name, this is a redescription of the existing
-entity — NOT a new object. Suppress the candidate entirely. Do NOT emit an object_candidate for
-it. Condition changes to existing objects belong in object_condition_updates using the exact
-object_id from TRACKED OBJECTS, and only when the narration describes a concrete change of
-physical state — not when an adjective is added for descriptive texture.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
-Fragment objects derived from a retiring tracked object must go in object_retirements[].successors[]
-— never in object_candidates[].
 
 For each object, emit one entry in the "object_candidates" array:
 {
   "temp_ref": "<short stable handle — reuse the same ref if this object appears again in a later turn>",
   "name": "<object name, lowercase, specific>",
   "description": "<brief physical description>",
-  "container_type": "grid" | "npc" | "player" | "localspace" | "site" | "player_worn" | "npc_worn",
+  "container_type": "grid" | "npc" | "player" | "localspace",
   "container_id": "<exact value from valid containers list above — use the localspace ID when inside a localspace>",
   "reason": "<exact phrase from narration supporting this placement>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
@@ -385,10 +322,8 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
                               actions. If the player's input uses any of these verbs with
                               no accompanying take/grab/pick-up instruction, condition (1)
                               is NOT met. Classify such items as narrator_independent
-                              (container_type: 'localspace' if the player is currently
-                              inside a localspace at L2 depth, 'site' if inside a site
-                              at L1, or 'grid' if at L0),
-                              NOT environment_interaction.
+                              (container_type: grid or localspace), NOT
+                              environment_interaction.
                           (2) Item has environmental basis in described scene (ground, floor,
                               attached to something visible, plausible feature of location).
                           (3) Player input does NOT frame item as already held, carried,
@@ -401,20 +336,13 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
 
   narrator_independent  — Narrator introduced the item with no player request and no NPC
                           transfer. Player input did not reference the item in any way.
-                          CONTAINER RESTRICTION: must use container_type 'localspace' or
-                          'grid' or 'site' only — NEVER 'player'. Use 'localspace' (with
-                          the active localspace ID as container_id) when the player is
-                          currently inside a localspace at L2 depth. Use 'site' (with the
-                          site container_id from the valid containers list above) when inside a site
-                          at L1 depth. Use 'grid' (with the current LOC cell key as
-                          container_id) when at L0. The narrator may place
-                          items in the environment (on a table, on the floor, on the
-                          ground), but narrator prose alone cannot put an item in the
-                          player's hand. If the narration described the item as "in your
-                          hand" or "in your pocket" but the player never requested it and
-                          no NPC gave it, classify container_type as 'localspace' (if at
-                          L2), 'site' (if at L1), or 'grid' (if at L0) — not 'player'.
-                          ALLOW for localspace/site/grid.
+                          CONTAINER RESTRICTION: must use container_type 'grid' or 'localspace'
+                          only — NEVER 'player'. The narrator may place items in the environment
+                          (on a table, on the floor, on the ground), but narrator prose alone
+                          cannot put an item in the player's hand. If the narration described the
+                          item as "in your hand" or "in your pocket" but the player never
+                          requested it and no NPC gave it, classify container_type as 'grid'
+                          (current floor/surface) — not 'player'. ALLOW for grid/localspace.
 
   player_claimed        — Player input mentioned, implied, or gestured the item as currently
                           held, gathered, shown, or carried — in any form: speech ("I have X"),
@@ -431,34 +359,6 @@ If no qualifying objects are present, emit: "object_candidates": []
 
 ---
 
-VISIBLE OBJECTS (optional)
-
-Identify concrete, specific, named objects explicitly described in the narration that are NOT directly accessible from the player's current position due to a spatial boundary.
-
-Use this category when ALL THREE conditions are true:
-  (1) The object is concretely named or specifically described — not a generic reference.
-  (2) The object is not in the player's inventory or worn items.
-  (3) The object is separated from the player by a physical boundary of any kind.
-
-Boundary test: "Can the player physically touch or take this object right now, without crossing a barrier, without asking an NPC, and without triggering a new action?"
-  YES → use object_candidates[] instead.
-  NO  → use visible_objects[] here.
-
-Use object_candidates[] instead when the object is on open floor, directly within reach, or has been handed to the player.
-Use environmental_features[] instead when the reference is generic or collective rather than a specific named object.
-
-For each qualifying object, emit one entry:
-{
-  "name": "<object name, lowercase, specific>",
-  "description": "<brief physical description>",
-  "reason": "<exact phrase from narration supporting this placement>",
-  "spatial_context": "<freeform short phrase describing the barrier or spatial separation — describe plainly what separates the player from the object>"
-}
-
-If no qualifying objects are present, emit: "visible_objects": []
-
----
-
 OBJECT TRANSFERS (optional)
 
 Identify objects that clearly changed hands or location in this narration.
@@ -471,9 +371,9 @@ For objects already listed in TRACKED OBJECTS, always use the exact object_id fi
 {
   "temp_ref": "<if the object was promoted this turn — must match an entry in object_candidates>",
   "object_id": "<if the object already exists from a prior turn>",
-  "from_container_type": "grid" | "npc" | "player" | "localspace" | "site" | "player_worn" | "npc_worn",
+  "from_container_type": "grid" | "npc" | "player",
   "from_container_id": "<exact value from valid containers list above>",
-  "to_container_type": "grid" | "npc" | "player" | "localspace" | "site" | "player_worn" | "npc_worn",
+  "to_container_type": "grid" | "npc" | "player",
   "to_container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this transfer>"
 }
@@ -487,16 +387,13 @@ OBJECT CONDITION UPDATES (optional)
 Annotate tracked objects whose physical condition changed in this narration.
 Only use object_ids listed in "Tracked objects in scene" above — exact IDs only.
 
-ACCEPT: concrete, observable physical changes — split, bruised, cracked, soaked, half-buried, burned, bent, shattered, dented, torn, bleeding, sticky, smeared, coated, stained, fouled, covered in residue.
-REJECT: pristine or default states — unblemished, intact, undamaged, normal, clean, fine, whole.
-REJECT: inferences or implied states — "looks worse for wear", "seems damaged".
+Include only concrete, observable physical changes explicitly described in the narration. Exclude pristine or default states — an unmodified object requires no annotation. Exclude inferences and impressions — only emit when the physical change is stated directly.
 
 Rules:
 - Only emit when narration EXPLICITLY describes the physical change to the object.
 - If PLAYER ACTIONS THIS TURN names the affected object, use that object_id.
 - If two tracked objects share a name and the narration does not clearly distinguish them, and no player action context resolves it, emit a name_match entry instead — never omit a real condition.
 - One entry per affected object only.
-- When narration explicitly describes residue, debris, or material adhering to a tracked object that was used as an instrument, emit a condition update for that instrument. Implied contact alone does not qualify — the adhering material must be concretely described on the instrument in the narration.
 
 Preferred form (use when object_id is unambiguous):
 {
@@ -521,41 +418,10 @@ OBJECT RETIREMENTS (optional)
 When narration explicitly describes a tracked object physically ceasing to exist as itself — split into named sub-objects, fully consumed/eaten, destroyed with no remaining form — emit a retirement entry for the original.
 
 EMIT for: object split into distinct sub-objects, object fully consumed/eaten, object burned to nothing.
-DO NOT EMIT for: damage or condition change, movement, picking up, dropping, any interaction that leaves the object intact, or instrument use (cutting, striking, stabbing, smashing, throwing — the weapon or tool used to destroy something else is never retired by the act of use; only the target may be retired).
+DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
 Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
 
-FISSION BAR: The original object must be GONE AS ITSELF. Splitting an apple into two halves = fission
-(the apple no longer exists as an apple). Denting a can = condition update (the can still exists).
-Cracking a phone screen = condition update. Bruising an apple = condition update. When in doubt,
-condition update wins — only retire when narration makes clear the original form is definitively gone.
-
-INSTRUMENT RULE: An object that causes destruction is not itself destroyed. Only the object that physically ceases to exist as itself is retired. The tool, weapon, or instrument used in the action remains active — retire the target, never the instrument.
-
-{
-  "object_id": "<exact id from tracked objects list>",
-  "reason": "<exact narration phrase — what happened to it>",
-  "successors": [
-    {
-      "temp_ref": "frag_0",
-      "name": "<fragment name, lowercase, specific>",
-      "description": "<brief physical description>",
-      "container_type": "<match retiring object's container_type, or override if narration is explicit>",
-      "container_id": "<match retiring object's container_id, or narration-specified override>"
-    }
-  ]
-}
-
-successors[] rules:
-- OPTIONAL. Omit the field entirely when nothing distinct survives (burned to ash, fully eaten,
-  dissolved, absorbed, crumbled to powder).
-- Emit successors ONLY for distinct, persistent, interactable physical remnants — objects a person
-  could pick up, use, or reference independently. DO NOT emit for: juice, pulp, crumbs, dust,
-  splinters, droplets, particles, or any incidental debris with no independent physical significance.
-- Successors inherit the retiring object's container_type and container_id by default.
-  Override ONLY when narration explicitly places a fragment somewhere else
-  (e.g. "one half tumbled to the ground while the other stayed in your grip").
-- temp_ref must be unique within this entry: use frag_0, frag_1, frag_2, etc.
-- DO NOT duplicate successors in object_candidates[].
+{ "object_id": "<exact id from tracked objects list>", "reason": "<exact narration phrase — what happened to it>" }
 
 If none, emit: "object_retirements": []
 
@@ -604,9 +470,6 @@ function _describeTrackedObjects(gameState) {
 
   const validContainers = new Set(['player']);
   if (pos) validContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
-  // v1.85.81: include active localspace or site floor so L2/L1 ORS objects appear in TRACKED OBJECTS
-  if (loc && loc.local_space_id) validContainers.add(loc.local_space_id);
-  else if (loc && loc.site_id)   validContainers.add(loc.site_id);
   const visible = (loc && loc._visible_npcs) || [];
   for (const npc of visible) { if (npc.id) validContainers.add(npc.id); }
 
@@ -665,42 +528,6 @@ function _resolveEntityRef(entityRef, gameState) {
 // LIBERAL on concrete visible detail; CONSERVATIVE on interpretation.
 // Promotion filters run AFTER extraction schema separates fields.
 
-// ── Injection-time environment dedup helpers ────────────────────────────────
-// Used only to produce a dedup key — originals are always what go into the prompt.
-// Conservative: only strips known location-ish trailing phrases. Preserves
-// state-carrying prepositions (with, in, on, under, covered/filled/stained with).
-const _ENV_STRIP_PHRASES = [
-  /\bacross the way\b/g,
-  /\bof main street\b/g,
-  /\bof the street\b/g,
-  /\bof the road\b/g,
-  /\balong the street\b/g,
-  /\bagainst the facade\b/g,
-  /\bagainst the wall\b/g,
-  /\bagainst facade\b/g,
-  /\bagainst wall\b/g,
-  /\bfrom this angle\b/g,
-  /\bbetween buildings\b/g,
-  /\bon the corner\b/g,
-  /\bof the building\b/g,
-  /\bof the area\b/g,
-  /\bof the block\b/g,
-  /\bjutting from the facade\b/g,
-  /\bjutting from facade\b/g,
-  /\bon the far side\b/g,
-  /\bon the near side\b/g,
-  /\bon the other side\b/g,
-];
-
-function _toCanonicalEnv(str) {
-  let s = str.toLowerCase().replace(/\s+/g, ' ').trim();
-  // strip leading articles
-  s = s.replace(/^(?:a |an |the )/, '');
-  // strip allowlisted trailing location phrases
-  for (const rx of _ENV_STRIP_PHRASES) s = s.replace(rx, '');
-  return s.trim();
-}
-
 const BANNED_INTERPRETATION_PATTERNS = {
   aura:         /\baura\b/i,
   presence:     /\bpresence\b/i,
@@ -730,20 +557,12 @@ function _isConcreteDetail(str) {
 
 function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   const _dupCounts = {};
-  // skipFilter=true for object bucket: item names are concrete nouns, not atmospheric descriptions.
-  const promote = (bucket, items, skipFilter = false) => {
+  const promote = (bucket, items) => {
     for (const item of (items || [])) {
-      if (typeof item !== 'string') {
-        let _safeVal; try { _safeVal = JSON.stringify(item); } catch { _safeVal = String(item); }
-        logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: _safeVal, turn, reason: 'type_error:expected_string' });
+      const _check = _isConcreteDetail(item);
+      if (!_check.ok) {
+        logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
         continue;
-      }
-      if (!skipFilter) {
-        const _check = _isConcreteDetail(item);
-        if (!_check.ok) {
-          logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
-          continue;
-        }
       }
       const key = `${bucket}:${item}`;
       const existing = npc.attributes[key];
@@ -759,8 +578,7 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_objects, true);   // v1.85.28: split from held_or_worn_objects
-  promote('object',   candidate.worn_objects, true);    // v1.85.28: worn_objects → same attribute bucket for narrator display
+  promote('object',   candidate.held_or_worn_objects);
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'npc', entity_id: npc.id, entity_name: npc.npc_name || npc.id, count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -771,11 +589,6 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
   if (!locationRecord.attributes) locationRecord.attributes = {}; // backward-compat: old saves lack attributes field
   let _dupCount = 0;
   for (const feat of (features || [])) {
-    if (typeof feat !== 'string') {
-      let _safeVal; try { _safeVal = JSON.stringify(feat); } catch { _safeVal = String(feat); }
-      logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: _safeVal, turn, reason: 'type_error:expected_string' });
-      continue;
-    }
     const _check = _isConcreteDetail(feat);
     if (!_check.ok) {
       logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: feat, turn, reason: 'banned_pattern:' + _check.pattern });
@@ -796,23 +609,15 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
 
 // ── Player attribute promotion ──────────────────────────────────────────────────
 // Parallel to _promoteEntityAttributes — targets gameState.player.attributes.
-function _promotePlayerAttributes(player, candidate, turn, logEntries, options = {}) {
+function _promotePlayerAttributes(player, candidate, turn, logEntries) {
   if (!player.attributes) player.attributes = {}; // migration guard: old saves
   const _dupCounts = {};
-  // skipFilter=true for object bucket: item names are concrete nouns, not atmospheric descriptions.
-  const promote = (bucket, items, skipFilter = false) => {
+  const promote = (bucket, items) => {
     for (const item of (items || [])) {
-      if (typeof item !== 'string') {
-        let _safeVal; try { _safeVal = JSON.stringify(item); } catch { _safeVal = String(item); }
-        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: _safeVal, turn, reason: 'type_error:expected_string' });
+      const _check = _isConcreteDetail(item);
+      if (!_check.ok) {
+        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
         continue;
-      }
-      if (!skipFilter) {
-        const _check = _isConcreteDetail(item);
-        if (!_check.ok) {
-          logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
-          continue;
-        }
       }
       const key = `${bucket}:${item}`;
       if (!player.attributes[key]) {
@@ -825,10 +630,7 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries, options =
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  if (!options.suppressPlayerObjectAttributes) {
-    promote('object', candidate.held_objects, true);   // v1.85.28: split from held_or_worn_objects
-    promote('object', candidate.worn_objects, true);   // v1.85.28: worn_objects → same attribute bucket for narrator display
-  }
+  promote('object',   candidate.held_or_worn_objects);
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -893,7 +695,7 @@ function _promoteConditions(conditionEvents, gameState, turn) {
   }
 }
 
-async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, options = {}) {
+async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length + 1;
 
@@ -959,45 +761,9 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     const cleaned = (raw || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
     extracted = JSON.parse(cleaned);
   } catch (parseErr) {
-    // Turn 1 founding extraction is uniquely critical — retry once before giving up
-    if (turn === 1) {
-      const _firstFailedRaw = (raw || '').slice(0, 500);
-      console.warn('[CB] Phase B JSON parse failed on Turn 1 — retrying once...', parseErr.message, '| raw:', _firstFailedRaw.slice(0, 200));
-      let _retryRaw = null;
-      try {
-        const _retryResp = await _makeExtractionCall();
-        _retryRaw = _retryResp?.data?.choices?.[0]?.message?.content || null;
-        const _retryCleaned = (_retryRaw || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-        extracted = JSON.parse(_retryCleaned);
-        console.log('[CB] Phase B Turn 1 retry parse succeeded.');
-      } catch (retryErr) {
-        if (retryErr instanceof SyntaxError) {
-          // Both attempts produced malformed JSON — preserve both raw snippets for diagnosis
-          console.error('[CB] Phase B Turn 1 retry also failed to parse:', retryErr.message);
-          _setDiag({
-            error: 'json_parse_failed_retry_exhausted',
-            raw_attempt_1: _firstFailedRaw,
-            raw_attempt_2: (_retryRaw || '').slice(0, 500),
-            turn
-          });
-        } else {
-          // Retry API call itself threw (network, timeout, etc.)
-          const _retryErrLabel = retryErr.code || retryErr.message;
-          console.error('[CB] Phase B Turn 1 retry API call failed:', _retryErrLabel);
-          _setDiag({
-            error: 'json_parse_failed_retry_api_error',
-            raw_attempt_1: _firstFailedRaw,
-            retry_error: _retryErrLabel,
-            turn
-          });
-        }
-        return null;
-      }
-    } else {
-      console.error('[CB] Phase B JSON parse failed:', parseErr.message, '| raw:', (raw || '').slice(0, 200));
-      _setDiag({ error: 'json_parse_failed', raw: (raw || '').slice(0, 500), turn });
-      return null;
-    }
+    console.error('[CB] Phase B JSON parse failed:', parseErr.message, '| raw:', (raw || '').slice(0, 200));
+    _setDiag({ error: 'json_parse_failed', raw: (raw || '').slice(0, 500), turn });
+    return null;
   }
 
   // Validate top-level keys (watchpoint: do not let a collapsed schema slip through)
@@ -1018,25 +784,9 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     gameState.player.birth_record.form             = fp.form             || null;
     gameState.player.birth_record.location_premise = fp.location_premise || null;
     gameState.player.birth_record.possessions      = Array.isArray(fp.possessions)   ? fp.possessions   : [];
-    gameState.player.birth_record.capabilities     = Array.isArray(fp.capabilities)  ? fp.capabilities  : [];
     gameState.player.birth_record.status_claims    = Array.isArray(fp.status_claims) ? fp.status_claims : [];
     gameState.player.birth_record.scenario_notes   = Array.isArray(fp.scenario_notes)? fp.scenario_notes: [];
-    gameState.player.birth_record.world_notes        = Array.isArray(fp.world_notes)    ? fp.world_notes   : [];
     console.log('[CB] birth_record populated on Turn 1:', JSON.stringify(gameState.player.birth_record).slice(0, 200));
-
-    // v1.85.19: Populate player.identity from founding premise
-    if (!gameState.player.identity) {
-      gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, last_known_form: null, aliases: [], public_identity_known: false };
-    }
-    gameState.player.identity.canonical_name       = fp.canonical_name || null;
-    gameState.player.identity.title_or_role        = fp.title_or_role  || null;
-    gameState.player.identity.current_form         = fp.form           || null;
-    gameState.player.identity.last_known_form      = fp.form           || null; // v1.86.0: mirror current_form at founding
-    gameState.player.identity.public_identity_known = !!(fp.canonical_name || fp.title_or_role);
-    // Also store in birth_record for audit
-    gameState.player.birth_record.canonical_name   = fp.canonical_name || null;
-    gameState.player.birth_record.title_or_role    = fp.title_or_role  || null;
-    console.log('[CB] player.identity populated on Turn 1:', JSON.stringify(gameState.player.identity));
 
     // v1.84.68: Promote status_claims → player.attributes[declared:] — idempotent, Turn 1 only
     // Bridges the gap between birth_record ingestion and narrator TRUTH block.
@@ -1068,37 +818,6 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     if (_possessionsPromoted > 0) {
       console.log(`[CB] birth_record promoted ${_possessionsPromoted} possession(s) to player.attributes`);
     }
-
-    // v1.85.17: Promote capabilities → player.attributes[declared:] — idempotent, Turn 1 only
-    // Capabilities are things the player can DO, distinct from physical items they carry.
-    // CB classifies them into capabilities[] at extraction time; promote as declared: so they
-    // appear in the narrator TRUTH block and trigger DECLARED ABILITIES RULE correctly.
-    let _capabilitiesPromoted = 0;
-    for (const _cap of (gameState.player.birth_record.capabilities || [])) {
-      const _cKey = `declared:${_cap}`;
-      if (!gameState.player.attributes[_cKey]) {
-        gameState.player.attributes[_cKey] = { value: _cap, bucket: 'declared', turn_set: 1, confidence: 'initial' };
-        _capabilitiesPromoted++;
-      }
-    }
-    if (_capabilitiesPromoted > 0) {
-      console.log(`[CB] birth_record promoted ${_capabilitiesPromoted} capabilit${_capabilitiesPromoted === 1 ? 'y' : 'ies'} to player.attributes[declared:]`);
-    }
-
-    // v1.85.84: Promote scenario_notes → player.attributes[declared:] — idempotent, Turn 1 only
-    // scenario_notes are player-linked facts (relationships, personal situation, context).
-    // world_notes are explicitly NOT promoted here — reserved, tested invariant.
-    let _scenarioNotesPromoted = 0;
-    for (const _note of (gameState.player.birth_record.scenario_notes || [])) {
-      const _nKey = `declared:${_note}`;
-      if (!gameState.player.attributes[_nKey]) {
-        gameState.player.attributes[_nKey] = { value: _note, bucket: 'declared', turn_set: 1, confidence: 'initial' };
-        _scenarioNotesPromoted++;
-      }
-    }
-    if (_scenarioNotesPromoted > 0) {
-      console.log(`[CB] birth_record promoted ${_scenarioNotesPromoted} scenario note(s) to player.attributes[declared:]`);
-    }
   }
 
   // ── Association + Promotion ────────────────────────────────────────────────
@@ -1123,7 +842,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     // Player self-ref — always route to player container regardless of layer
     const refLower = ref.toLowerCase();
     if (refLower === 'player' || refLower === 'you') {
-      if (player) _promotePlayerAttributes(player, candidate, turn, logEntries, options);
+      if (player) _promotePlayerAttributes(player, candidate, turn, logEntries);
       continue;
     }
 
@@ -1226,7 +945,6 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     watch_message,          // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
     raw,                    // v1.84.21: raw LLM response string (for payload archive)
     prompt,                 // v1.84.21: extraction prompt string (for payload archive)
-    entity_candidates:         Array.isArray(extracted.entity_candidates)         ? extracted.entity_candidates         : [],
     object_candidates:        Array.isArray(extracted.object_candidates)        ? extracted.object_candidates        : [],
     object_transfers:         Array.isArray(extracted.object_transfers)         ? extracted.object_transfers         : [],
     object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],
@@ -1272,37 +990,15 @@ function assembleContinuityPacket(gameState, turnContext) {
     }
   }
 
-  // v1.85.19: Player identity line
-  gameState._lastIdentityTruthLine = null; // v1.85.21: reset each assembly — null when no identity fields present
-  const _pid = gameState.player?.identity;
-  if (_pid && (_pid.canonical_name || _pid.title_or_role || _pid.current_form || _pid.last_known_form)) {
-    const _pidParts = [];
-    if (_pid.canonical_name) _pidParts.push(`canonical name: ${_pid.canonical_name}`);
-    if (_pid.title_or_role)  _pidParts.push(`title: ${_pid.title_or_role}`);
-    const _activeForm = _pid.current_form || _pid.last_known_form; // v1.86.0: fall back to last_known_form when current_form absent
-    if (_activeForm)         _pidParts.push(`current form: ${_activeForm}`);
-    lines.push(`Player: ${_pidParts.join(' | ')}`);
-    gameState._lastIdentityTruthLine = lines[lines.length - 1]; // v1.85.21: verbatim — exactly what narrator received
-    truthLines++;
-  }
-
   // Entity attributes
   for (const npc of visible) {
     if (!npc.attributes || !Object.keys(npc.attributes).length) continue;
     // v1.84.82: respect is_learned — do not expose npc_name in TRUTH block until the player has learned it
-    // v1.87.1: use learned_name (what player heard) if available, fallback to npc_name
-    const label = (npc.is_learned && npc.npc_name) ? `${npc.learned_name || npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
+    const label = (npc.is_learned && npc.npc_name) ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
     const attrs = Object.values(npc.attributes)
-      .sort((a, b) => (b.turn_set || 0) - (a.turn_set || 0))
-      .slice(0, ENV_ATTR_WINDOW)
       .map(a => a.value)
       .join(' | ');
-    // v1.85.19: append recognition suffix if NPC has recognized the player
-    const _npcRec = npc.player_recognition;
-    const _recSuffix = (_npcRec?.recognizes_player && _npcRec.known_identity)
-      ? ` | recognizes-player: ${_npcRec.known_identity} (since T-${_npcRec.learned_turn})`
-      : '';
-    lines.push(`${label}: ${attrs}${_recSuffix}`);
+    lines.push(`${label}: ${attrs}`);
     truthLines++;
   }
   if (visible.length === 0) {
@@ -1311,44 +1007,10 @@ function assembleContinuityPacket(gameState, turnContext) {
   }
 
   // Location attributes — includes L0 cell attributes via locRecord fallback
-  // v1.5.2: injection-time dedup pass — collapses near-duplicate env phrasings before narrator sees them.
-  // Storage (locRecord.attributes) is untouched; only the narrator-facing view is deduped.
-  // Newest wins by default (sort DESC); exception: if newest is a strict generic substring of an already-kept
-  // older richer fact, the richer one is retained. Both the survivor list AND the seen-map entry are updated
-  // on replacement so the joined output always reflects the winner correctly.
   if (locRecord && locRecord.attributes && Object.keys(locRecord.attributes).length) {
-    const _sorted = Object.values(locRecord.attributes)
-      .sort((a, b) => (b.turn_set || 0) - (a.turn_set || 0))
-      .slice(0, ENV_ATTR_WINDOW);
-
-    const _seenCanonical = new Map(); // canonical key -> index in _survivors
-    const _survivors = [];
-    let _collapsed = 0;
-
-    for (const attr of _sorted) {
-      const _ckey = _toCanonicalEnv(attr.value);
-      if (!_seenCanonical.has(_ckey)) {
-        _seenCanonical.set(_ckey, _survivors.length);
-        _survivors.push(attr.value);
-      } else {
-        // Collision — check exception: if currently kept value is a strict generic substring of incoming
-        // (incoming is longer and contains kept as a substring), replace with the richer incoming value.
-        const _keptIdx = _seenCanonical.get(_ckey);
-        const _keptVal = _survivors[_keptIdx];
-        if (attr.value.length > _keptVal.length && attr.value.includes(_keptVal)) {
-          // Older richer fact wins — replace both the survivor list entry and the seen-map index
-          _survivors[_keptIdx] = attr.value;
-          // seen-map index unchanged (same slot); value in _survivors is now the richer one
-        }
-        _collapsed++;
-      }
-    }
-
-    if (_collapsed > 0) {
-      console.log(`[CB-DEDUP] env_dedup_collapsed location="${locLabel}" turn=${turnContext?.turn ?? '?'} original=${_sorted.length} kept=${_survivors.length} collapsed=${_collapsed}`);
-    }
-
-    const locAttrs = _survivors.join(' | ');
+    const locAttrs = Object.values(locRecord.attributes)
+      .map(a => a.value)
+      .join(' | ');
     lines.push(`[${locLabel}]: ${locAttrs}`);
     truthLines++;
   }
