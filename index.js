@@ -2836,6 +2836,12 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _narActiveSite._visible_npcs = Actions.computeVisibleNpcs(_narActiveSite, gameState.player.position);
     } else if (_narDepth === 3 && gameState?.world?.active_local_space && gameState?.player?.position) {
       gameState.world.active_local_space._visible_npcs = Actions.computeVisibleNpcs(gameState.world.active_local_space, gameState.player.position, gameState.world.active_site?.npcs || []);
+    } else if (_narDepth === 1) {
+      const _l0pos = gameState.world?.position || {};
+      gameState.world._visible_npcs = (gameState.world?.npcs || []).filter(npc =>
+        npc.position?.mx === _l0pos.mx && npc.position?.my === _l0pos.my &&
+        npc.position?.lx === _l0pos.lx && npc.position?.ly === _l0pos.ly
+      );
     }
     const _narLogPos = _narDepth === 1 ? 'L0' : (gameState?.player?.position ?? 'unset');
     console.log('[NARRATE-NPC] depth=%s site=%s pos=%o count=%s', _narDepth, !!_narActiveSite, _narLogPos, _narActiveSite?._visible_npcs?.length ?? 'n/a');
@@ -4461,6 +4467,15 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       }
     }
     
+    // v1.88.1: Refresh L0 _visible_npcs before diagnostics payload — Turn 1 BORN-NPCs are created after the
+    // early computeVisibleNpcs block, so without this refresh visible_npc_count would always be 0 on Turn 1.
+    if (!gameState.world.active_local_space && !gameState.world.active_site) {
+      const _l0diag_pos = gameState.world?.position || {};
+      gameState.world._visible_npcs = (gameState.world?.npcs || []).filter(npc =>
+        npc.position?.mx === _l0diag_pos.mx && npc.position?.my === _l0diag_pos.my &&
+        npc.position?.lx === _l0diag_pos.lx && npc.position?.ly === _l0diag_pos.ly
+      );
+    }
     const authoritativeState = {
       position: currentPosition,
       cell_key: cellKey,
@@ -4479,11 +4494,15 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       local_space_position: gameState.world.active_local_space ? (gameState.player?.position || null) : null,
       visible_npc_count: gameState.world.active_local_space
         ? (gameState.world.active_local_space?._visible_npcs || []).length
-        : (gameState.world.active_site?._visible_npcs || []).length,
+        : gameState.world.active_site
+          ? (gameState.world.active_site?._visible_npcs || []).length
+          : (gameState.world._visible_npcs || []).length,
       visible_npc_names: gameState.world.active_local_space
-        ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.job_category || n.id)
-        : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
-      visible_npcs_snapshot: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || [])
+        ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.npc_name || n.name || n.job_category || n.id)
+        : gameState.world.active_site
+          ? (gameState.world.active_site?._visible_npcs || []).map(n => n.npc_name || n.name || n.job_category || n.id)
+          : (gameState.world._visible_npcs || []).map(n => n.npc_name || n.name || n.job_category || n.id),
+      visible_npcs_snapshot: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || gameState.world._visible_npcs || [])
         .map(n => ({ id: n.id, job_category: n.job_category ?? null, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false, x: n.site_position?.x ?? null, y: n.site_position?.y ?? null })),
       npc_record_count: gameState.world.active_local_space
         ? (gameState.world.active_site?.npcs?.length ?? 0)
