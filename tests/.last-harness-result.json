@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-16T05:39:37.337Z",
-  "scenariosPassed": 0,
-  "scenariosFailed": 1,
+  "timestamp": "2026-05-16T06:14:24.682Z",
+  "scenariosPassed": 1,
+  "scenariosFailed": 0,
   "scenariosSkipped": 0,
-  "turnsPassed": 1,
-  "turnsFailed": 1,
+  "turnsPassed": 2,
+  "turnsFailed": 0,
   "results": [
     {
       "name": "authority_gate_established_trait_bypass",
       "skipped": false,
-      "passed": 1,
-      "failed": 1,
+      "passed": 2,
+      "failed": 0,
       "total": 2,
-      "sessionId": "1778909940168-u4oeco9gm"
+      "sessionId": "1778912031161-lo9ocif56"
     }
   ]
 }
