@@ -2905,8 +2905,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       const _lsNpcNames = _lsNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
       if (_lsNpcs.length > 0) {
         npcsStr = JSON.stringify(_lsNpcs.map(n => {
-          // v1.87.1: narrator sees learned_name (what player heard) not always full canonical npc_name
-          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? (n.learned_name || n.npc_name) : null, is_learned: n.is_learned ?? false };
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
           if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
             const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
             if (_carries.length) _ne.carries = _carries;
@@ -2938,8 +2937,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // Sync npcsStr with visible NPCs — this is the hard authority boundary for narration
       if (_siteNpcs.length > 0) {
         npcsStr = JSON.stringify(_siteNpcs.map(n => {
-          // v1.87.1: narrator sees learned_name (what player heard) not always full canonical npc_name
-          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? (n.learned_name || n.npc_name) : null, is_learned: n.is_learned ?? false };
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
           if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
             const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
             if (_carries.length) _ne.carries = _carries;
@@ -2975,6 +2973,29 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         _siteContextBlock += `\nYour position in site: (${_sp.x},${_sp.y}) — ${_tileDesc}`;
         if (_cellNpcs.length > 0) _siteContextBlock += `\nNPCs at your location: ${_cellNpcs.join(', ')}`;
       }
+    } else {
+      // L0: overworld NPC narrator injection — mirrors L1/L2 serializer shape exactly
+      const _l0Npcs = gameState.world._visible_npcs || [];
+      if (_l0Npcs.length > 0) {
+        npcsStr = JSON.stringify(_l0Npcs.map(n => {
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
+          if (n.role_or_relation) _ne.role_or_relation = n.role_or_relation;
+          if (n.description) _ne.description = n.description;
+          if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
+            const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_carries.length) _ne.carries = _carries;
+          }
+          if (Array.isArray(n.worn_object_ids) && n.worn_object_ids.length > 0) {
+            const _wears = n.worn_object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_wears.length) _ne.wears = _wears;
+          }
+          if (n.narrative_state) Object.assign(_ne, n.narrative_state);
+          return _ne;
+        }));
+      } else {
+        npcsStr = '(None visible)';
+      }
+      // _siteContextBlock intentionally left empty at L0 — overworld has no site context
     }
 
     // Phase 9: Approved additive context — biome/civ/env enrichment only
@@ -4467,7 +4488,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       }
     }
     
-    // v1.88.1: Refresh L0 _visible_npcs before diagnostics payload — Turn 1 BORN-NPCs are created after the
+    // v1.88.2: Refresh L0 _visible_npcs before diagnostics payload — Turn 1 BORN-NPCs are created after the
     // early computeVisibleNpcs block, so without this refresh visible_npc_count would always be 0 on Turn 1.
     if (!gameState.world.active_local_space && !gameState.world.active_site) {
       const _l0diag_pos = gameState.world?.position || {};
