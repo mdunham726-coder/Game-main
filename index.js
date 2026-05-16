@@ -3463,12 +3463,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // v1.51.0: Soliloquy block — fires on Say channel when no NPC is successfully bound.
     // Covers: NPC_NOT_PRESENT degrade, target:null, not_found, not_in_site outcomes.
     // Mutually exclusive with _narratorModeBlock (which requires matched NPC).
-    const _soliloquyBlock = (
+    // v6.0.18: _soliloquyFired flag used downstream to suppress unsupported player-state promotion in CB.
+    const _soliloquyFired = (
       resolvedChannel === 'say' &&
       !_rawNpcTarget &&
       _npcTalkResult?.outcome !== 'matched'
-    )
-      ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nNo specific NPC is being addressed. Narrate the player's words as self-expression — muttering, exclaiming, or speaking into the space. Do not treat this as a failed dialogue attempt.\n`
+    );
+    const _soliloquyBlock = _soliloquyFired
+      ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nThe player speaks without addressing any specific recipient. Narrate the player's words as self-expression. Do not treat unsupported declarations as changes to engine truth.\n`
       : '';
 
     // v1.52.0: Narration Task Override — task-replacement blocks for move/look/exit turns.
