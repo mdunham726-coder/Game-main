@@ -3908,6 +3908,26 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
         _objectRealityDebug.npc_intro_materialized = _npcIntroCaptureCount;
 
+        // v6.0.18: soliloquy gate — drop player-targeted object candidates on soliloquy turns
+        if (_soliloquyFired && Array.isArray(_phaseBResult.object_candidates)) {
+          _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+            if (c.container_type === 'player') {
+              console.warn(`[SOLILOQUY-GATE] player-targeted object_candidate blocked on soliloquy turn: "${c.name}"`);
+              return false;
+            }
+            return true;
+          });
+          if (Array.isArray(_phaseBResult.object_transfers)) {
+            _phaseBResult.object_transfers = _phaseBResult.object_transfers.filter(t => {
+              if (t.to_container_type === 'player') {
+                console.warn(`[SOLILOQUY-GATE] player-targeted object_transfer blocked on soliloquy turn: "${t.object_name || t.object_id}"`);
+                return false;
+              }
+              return true;
+            });
+          }
+        }
+
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
         // v1.85.7: Turn 1 founding premise items are exempt — they are legitimate starting inventory
         if (Array.isArray(_phaseBResult.object_candidates)) {
