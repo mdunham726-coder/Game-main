@@ -4487,7 +4487,9 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         .map(n => ({ id: n.id, job_category: n.job_category ?? null, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false, x: n.site_position?.x ?? null, y: n.site_position?.y ?? null })),
       npc_record_count: gameState.world.active_local_space
         ? (gameState.world.active_site?.npcs?.length ?? 0)
-        : (gameState.world.active_site?.npcs || []).length,
+        : gameState.world.active_site
+          ? (gameState.world.active_site.npcs || []).length
+          : (gameState.world.npcs || []).length,
       start_container: gameState.world.start_container || 'L0',
       start_routing_log: gameState.world._startRoutingLog || null
     };
@@ -5587,7 +5589,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     // L0: use world-level npcs
     if (gameState.world.npcs && gameState.world.npcs.length > 0) {
       gameState.world.npcs.slice(0, 3).forEach(npc => {
-        context += `- ${npc.name || "Unnamed"} (${npc.archetype || "unknown"})\n`;
+        context += `- ${npc.npc_name || npc.name || "Unnamed"} (${npc.job_category || npc.archetype || "unknown"})\n`;
       });
       if (gameState.world.npcs.length > 3) {
         context += `... and ${gameState.world.npcs.length - 3} more\n`;
@@ -8040,6 +8042,19 @@ app.get('/diagnostics/npc', (req, res) => {
     visibleNpcs = Actions.computeVisibleNpcs(activeSite, playerPos);
     locationLabel = `L1:${activeSite.name || activeSite.id || '?'} pos(${playerPos.x ?? '?'},${playerPos.y ?? '?'})`;
     siteNpcCount = (activeSite?.npcs || []).length;
+  } else {
+    // L0: overworld — visible NPCs share the player's exact world tile
+    locationLabel = 'L0:overworld';
+    siteNpcCount = (gs.world?.npcs || []).length;
+    const _worldPos = gs.world?.position || null;
+    if (_worldPos) {
+      visibleNpcs = (gs.world?.npcs || []).filter(npc =>
+        npc.position?.mx === _worldPos.mx &&
+        npc.position?.my === _worldPos.my &&
+        npc.position?.lx === _worldPos.lx &&
+        npc.position?.ly === _worldPos.ly
+      );
+    }
   }
 
   const npcData = visibleNpcs.map(npc => {
@@ -8062,6 +8077,78 @@ app.get('/diagnostics/npc', (req, res) => {
   });
 
   res.json({ location: locationLabel, npcs: npcData, site_npc_count: siteNpcCount });
+});
+
+// NPC bulk enumeration endpoint — authoritative NPC list for Mother Brain diagnostics
+// Returns all world.npcs and active_site.npcs with full diagnostic fields including visible status.
+// Gated by DIAGNOSTICS_KEY (x-diagnostics-key header).
+app.get('/diagnostics/npcs', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'diagnostics_disabled' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+
+  if (!_lastGameState) {
+    return res.json({ layer: 'unknown', world_npcs: [], site_npcs: [], total: 0 });
+  }
+
+  const gs = _lastGameState;
+  const Actions = require('./ActionProcessor.js');
+  const depth = gs.world?.active_local_space ? 3 : gs.world?.active_site ? 2 : 1;
+  const layerLabel = depth === 3 ? 'L2' : depth === 2 ? 'L1' : 'L0';
+  const worldPos  = gs.world?.position || null;
+  const activeSite = gs.world?.active_site || null;
+  const activeLS   = gs.world?.active_local_space || null;
+  const playerPos  = gs.player?.position || null;
+
+  // sameTile: exact 4-field overworld position match
+  function sameTile(a, b) {
+    if (!a || !b) return false;
+    return a.mx === b.mx && a.my === b.my && a.lx === b.lx && a.ly === b.ly;
+  }
+
+  // Compute visible site NPC id set via existing computeVisibleNpcs logic
+  const _visibleSiteIds = new Set();
+  if (depth === 3 && activeLS && playerPos) {
+    const vis = Actions.computeVisibleNpcs(activeLS, playerPos, activeSite?.npcs || []);
+    vis.forEach(n => _visibleSiteIds.add(n.npc_id || n.id));
+  } else if (depth === 2 && activeSite && playerPos) {
+    const vis = Actions.computeVisibleNpcs(activeSite, playerPos);
+    vis.forEach(n => _visibleSiteIds.add(n.npc_id || n.id));
+  }
+
+  function mapNpc(npc, scope, layer) {
+    const npcId = npc.npc_id || npc.id || null;
+    return {
+      id: npcId,
+      npc_name: npc.npc_name || null,
+      is_learned: npc.is_learned ?? false,
+      job_category: npc.job_category || null,
+      role_or_relation: npc.role_or_relation || null,
+      position: npc.position || null,
+      source: npc.source || null,
+      _fill_frozen: npc._fill_frozen ?? false,
+      scope,
+      layer,
+      object_ids: npc.object_ids || [],
+      worn_object_ids: npc.worn_object_ids || [],
+      object_ids_count: (npc.object_ids || []).length,
+      worn_object_ids_count: (npc.worn_object_ids || []).length,
+      visible: scope === 'world'
+        ? sameTile(npc.position, worldPos)
+        : _visibleSiteIds.has(npcId)
+    };
+  }
+
+  const siteLayer = layerLabel === 'L0' ? 'L1' : layerLabel;
+  const world_npcs = (gs.world?.npcs || []).map(n => mapNpc(n, 'world', 'L0'));
+  const site_npcs  = (activeSite?.npcs || []).map(n => mapNpc(n, 'active_site', siteLayer));
+
+  res.json({
+    layer: layerLabel,
+    world_npcs,
+    site_npcs,
+    total: world_npcs.length + site_npcs.length
+  });
 });
 
 // =============================================================================
