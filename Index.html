@@ -1259,7 +1259,7 @@ diagLog.innerHTML = `
     <div><strong>Records&nbsp;:</strong> ${diag.npc_record_count ?? 0}</div>
     <div><strong>Visible&nbsp;:</strong> ${diag.visible_npc_count ?? 0} [${(diag.visible_npc_names || []).length > 0 ? (diag.visible_npc_names || []).join(', ') : 'none'}]</div>
     ${(() => {
-      const _vNpcs = data.state?.world?.active_local_space?._visible_npcs || data.state?.world?.active_site?._visible_npcs || [];
+      const _vNpcs = data.state?.world?.active_local_space?._visible_npcs || data.state?.world?.active_site?._visible_npcs || data.state?.world?._visible_npcs || [];
       if (_vNpcs.length === 0) return '<div style="color:#555;margin-left:8px">(no visible NPCs)</div>';
       return _vNpcs.map(n => {
         const _nameStr = n.npc_name != null ? `<span style="color:#9f9">"${n.npc_name}"</span>` : '<span style="color:#555">null</span>';
