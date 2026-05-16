@@ -851,8 +851,17 @@ function isValidDir(dir){
   return { ok: VALID_DIRS.has(canon), canonical: VALID_DIRS.has(canon) ? canon : null };
 }
 
+// v1.87.7: derive the current L0 (overworld) cell from player position + cells map.
+// Canonical position shape {mx,my,lx,ly} confirmed from AP's ORS grid resolution (~line 920).
+// Returns null if position or cells map is absent. Never throws.
+function getL0Cell(state) {
+  const pos = state?.world?.position;
+  if (!pos || !state?.world?.cells) return null;
+  return state.world.cells[`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`] || null;
+}
+
 function getCellEntities(state){
-  const cell = (((state||{}).world||{}).current_cell)||{};
+  const cell = getL0Cell(state) || {};
   const items = Array.isArray(cell.items) ? cell.items : [];
   // If your schema nests npcs per cell, prefer that. Otherwise fallback to world.npcs array.
   const npcs = Array.isArray((((state||{}).world)||{}).npcs) ? state.world.npcs : (Array.isArray(cell.npcs)?cell.npcs:[]);
@@ -1001,7 +1010,7 @@ function resolveCellItemByName(state, query){
   // strict equality. No fuzzy/levenshtein. Minimum length 3 on both query and token.
   // Prefer false negatives: partial substrings ("stone" in "milestone") must not match.
   if (q && q.length >= 3) {
-    const _envLocRec = (state?.world?.active_local_space) || (state?.world?.active_site) || (state?.world?.current_cell) || null;
+    const _envLocRec = (state?.world?.active_local_space) || (state?.world?.active_site) || getL0Cell(state) || null;
     if (_envLocRec && typeof _envLocRec.attributes === 'object') {
       for (const [_eKey, _eAttr] of Object.entries(_envLocRec.attributes)) {
         if (!_eAttr || _eAttr.bucket !== 'environment') continue;
@@ -1024,7 +1033,7 @@ function resolveCellItemByName(state, query){
 function resolveSiteByName(state, query) {
   const depth = state?.world?.current_depth ?? 1;
   if (depth >= 2) return null; // inside a site — no outer site to examine by name
-  const cell = state?.world?.current_cell || {};
+  const cell = getL0Cell(state) || {};
   const sites = cell.sites ? Object.values(cell.sites) : [];
   if (!sites.length) return null;
   const q = String(query || '').trim().toLowerCase();
