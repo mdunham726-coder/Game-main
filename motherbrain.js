@@ -1228,7 +1228,9 @@ ASSERTION OPERATORS: The following operators are valid in turn assert arrays. Us
   sum_paths                 -- requires paths[] + value. Sum across multiple dot-paths == value.
   no_adjacent_large_sites   -- requires path (to placed_sites array). World-gen invariant.
   narration_includes        -- requires value (string). Case-insensitive substring check on response.narrative. Do NOT use in worldgen_seeded scenarios -- narration text is LLM output and varies across runs. Safe for authority_test and exploratory categories where a specific output signal is expected.
-  no_new_objects            -- no fields required. Reads narration_debug.object_reality.promoted from last turn_history entry. Passes if promoted == 0 (no new ObjectRecords created this turn). Use to verify the ORS did not promote any new items -- e.g. when testing that a state-claim or RC advisory did not instantiate an object. Evidence line shows promoted/transferred/error counts.`;
+  no_new_objects            -- no fields required. Reads narration_debug.object_reality.promoted from last turn_history entry. Passes if promoted == 0 (no new ObjectRecords created this turn). Use to verify the ORS did not promote any new items -- e.g. when testing that a state-claim or RC advisory did not instantiate an object. Evidence line shows promoted/transferred/error counts.
+
+ASSERTION PATH PREFIX: Engine response fields from the /narrate endpoint are nested under the debug key in the response body. All assertion paths that reference engine internals must use the debug. prefix -- e.g. debug.narration_debug.continuity_block_chars, debug.path, debug.narrator_mode_active. Top-level fields (narrative, error) do not need the prefix. The harness will silently retry a missing debug. prefix as a fallback, but always write paths explicitly with the correct prefix.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────

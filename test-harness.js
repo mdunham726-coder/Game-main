@@ -173,10 +173,16 @@ class GameClient {
 // ─── Path resolver ────────────────────────────────────────────────────────────
 function resolvePath(obj, dotPath) {
   if (!dotPath) return obj;
-  return dotPath.split('.').reduce((cur, key) => {
+  const result = dotPath.split('.').reduce((cur, key) => {
     if (cur === undefined || cur === null) return undefined;
     return cur[key];
   }, obj);
+  // Fallback: if path missed and doesn't already start with 'debug.', retry under debug.*
+  // Harness response wraps engine fields under response.debug — scenario authors may omit the prefix
+  if (result === undefined && !dotPath.startsWith('debug.')) {
+    return resolvePath(obj, 'debug.' + dotPath);
+  }
+  return result;
 }
 
 // Parse "LOC:mx,my:lx,ly" cell key
