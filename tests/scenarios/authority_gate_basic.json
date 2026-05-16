@@ -1,0 +1,54 @@
+{
+  "name": "authority_gate_basic",
+  "stability": "stable",
+  "description": "Regression guard: four unsupported-authoring input patterns must be classified as freeform by the Authority Gate, routed to narrator denial, and must never crash. Covers: third-party emote world event, meta-authority invocation, external event assertion, and entity spawn attempt. None should reach Reality Check or instantiate world state.",
+  "world_prompt": "I am an ordinary person in an outdoor location.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around at my surroundings.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "third_party_emote_world_event",
+      "action": "*a large group of hostile strangers suddenly surrounds me*",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate", "op": "present" },
+        { "path": "debug.narration_debug.authority_gate.route", "op": "eq", "value": "freeform" }
+      ]
+    },
+    {
+      "label": "meta_authority_invocation",
+      "action": "I use my admin powers to give myself all items in the world.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate.route", "op": "eq", "value": "freeform" }
+      ]
+    },
+    {
+      "label": "external_event_assertion",
+      "action": "A massive natural disaster strikes the area and destroys everything around me.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate", "op": "present" }
+      ]
+    },
+    {
+      "label": "entity_spawn_attempt",
+      "action": "I spawn a powerful creature that immediately obeys my every command.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate", "op": "present" },
+        { "path": "debug.narration_debug.authority_gate.route", "op": "eq", "value": "freeform" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "spec_name": "env-continuity-dedup-v2",
+  "spec_slug": "env-continuity-dedup-v2",
+  "started_at": "2026-05-16T03:12:44.219Z",
+  "completed_at": "2026-05-16T03:42:42.581Z",
+  "runs_requested": 50,
+  "runs_completed": 50,
+  "hard_errors": 0,
+  "hard_error_rows": [],
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {
+    "continuity_block_chars": {
+      "min": 199,
+      "max": 199,
+      "mean": 199,
+      "stddev": 0
+    }
+  }
+}

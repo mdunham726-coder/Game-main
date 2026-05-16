@@ -1,0 +1,15 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-15_1045_env-continuity-bloat-v2
+[probe-runner] Spec: env-continuity-bloat-v2
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: continuity_block_chars
+
+[RUN 1] seed=-751221014
+
+======================================================================
+AGGREGATE  (1/1 runs succeeded)
+======================================================================
+  continuity_block_chars           min=199.00  max=199.00  mean=199.00  stddev=0.00
+[probe-runner] Results saved: tests/probe-results/2026-05-15_1045_env-continuity-bloat-v2
+
+[probe-runner] No anomalies detected.

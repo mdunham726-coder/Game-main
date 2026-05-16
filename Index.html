@@ -606,12 +606,13 @@
     // Stage definition: key, player-readable label, bar weight (raw).
     // Weights are redistributed at runtime when stages are skipped.
     const _STAGES = [
-      { key: 'parsing',      label: 'Interpreting your action', weight: 12 },
-      { key: 'fill',         label: 'Generating location',      weight:  8 },
-      { key: 'reality_check',label: 'Checking consequences',    weight: 15 },
-      { key: 'narration',    label: 'Writing the scene',        weight: 40 },
-      { key: 'world_update', label: 'Updating world memory',    weight: 15 },
-      { key: 'complete',     label: 'Turn ready',               weight: 10 }
+      { key: 'parsing',        label: 'Interpreting your action', weight: 12 },
+      { key: 'fill',           label: 'Generating location',      weight:  8 },
+      { key: 'authority_gate', label: 'Routing player input',     weight:  5 },
+      { key: 'reality_check',  label: 'Checking consequences',    weight: 15 },
+      { key: 'narration',      label: 'Writing the scene',        weight: 40 },
+      { key: 'world_update',   label: 'Updating world memory',    weight: 15 },
+      { key: 'complete',       label: 'Turn ready',               weight: 10 }
     ];
     // Status for each key: 'pending' | 'active' | 'done' | 'skip' | 'fail'
     let _stageStatus = {};

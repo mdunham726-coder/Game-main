@@ -1,0 +1,47 @@
+{
+  "name": "authority_gate_passthrough",
+  "stability": "stable",
+  "description": "Regression guard: valid inputs must flow through the Authority Gate correctly. A founding-declared ability invocation must route to Reality Check. Pure navigation must skip RC. Low-risk observation must skip RC. Turn 1 founding capture pipeline must be fully preserved (gate skips itself on Turn 1).",
+  "world_prompt": "I am a person with a declared ability to produce and control fire, established from birth.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I stand here, aware of my ability to control fire, which I have always possessed.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate", "op": "present" },
+        { "path": "debug.narration_debug.authority_gate.reason_code", "op": "eq", "value": "turn_1_founding" }
+      ]
+    },
+    {
+      "label": "navigation_turn",
+      "action": "walk north",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate.decision", "op": "eq", "value": "allow_no_rc" },
+        { "path": "debug.narration_debug.authority_gate.route", "op": "eq", "value": "narrator" }
+      ]
+    },
+    {
+      "label": "observation_turn",
+      "action": "look around",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate.decision", "op": "eq", "value": "allow_no_rc" },
+        { "path": "debug.narration_debug.authority_gate.route", "op": "eq", "value": "narrator" }
+      ]
+    },
+    {
+      "label": "declared_ability_use",
+      "action": "I invoke my fire ability.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.authority_gate", "op": "present" }
+      ]
+    }
+  ]
+}
