@@ -843,7 +843,11 @@ app.post('/narrate', async (req, res) => {
   }
   // v1.84.0: Birth record backward compat — old saves won't have this field
   if (gameState.player && !gameState.player.birth_record) {
-    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [], world_notes: [], canonical_name: null, title_or_role: null };
+    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [], world_notes: [], canonical_name: null, title_or_role: null, starting_npc: null };
+  }
+  // starting_npc compat — old saves have birth_record but not this field
+  if (gameState.player?.birth_record && gameState.player.birth_record.starting_npc === undefined) {
+    gameState.player.birth_record.starting_npc = null;
   }
   // v1.84.19: Condition Bot backward compat — old saves won't have these fields
   if (gameState.player && !gameState.player.conditions) {
@@ -2667,6 +2671,88 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       }
     }
 
+    // v1.88.0: BORN-NPC — Turn 1 founded NPC instantiation.
+    // Fires only when the player declared a starting companion in the founding input.
+    // Idempotent: _born_npc_initialized flag prevents duplicate creation on re-entry.
+    if (turnNumber === 1 && gameState.player?.birth_record?.starting_npc && !gameState._born_npc_initialized) {
+      try {
+        let _bnRaw = gameState.player.birth_record.starting_npc;
+        if (Array.isArray(_bnRaw)) {
+          console.warn('[BORN-NPC] starting_npc was array — using first element');
+          _bnRaw = _bnRaw[0];
+        }
+        if (_bnRaw && typeof _bnRaw === 'object') {
+          const _bnSn        = _bnRaw;
+          const _bnSeed      = String(gameState.world?.phase3_seed || gameState.world?.seed || 0);
+          const _bnIdInput   = [_bnSeed, _bnSn.name || '', _bnSn.role_or_relation || '', _bnSn.description || '', 'born_npc'].join(':');
+          const _bnId        = 'player#born_npc_' + require('crypto').createHash('sha256').update(_bnIdInput, 'utf8').digest('hex').slice(0, 12);
+          const _bnNpcName   = _bnSn.name || _bnSn.generated_name || null;
+          const _bnIsLearned = !!(_bnSn.name);
+          const _bnPos       = gameState.world?.position ? { ...gameState.world.position } : {};
+          const _bnAls       = gameState.world?.active_local_space;
+          const _bnNpc = {
+            id:               _bnId,
+            site_id:          gameState.world?.active_site?.site_id || null,
+            npc_name:         _bnNpcName,
+            role_or_relation: _bnSn.role_or_relation || null,
+            description:      _bnSn.description      || null,
+            reputation_player: 50,
+            traits:           [],
+            gender:           _bnSn.gender            || null,
+            age:              (_bnSn.age != null && Number.isFinite(Number(_bnSn.age))) ? Number(_bnSn.age) : null,
+            job_category:     _bnSn.job_category      || null,
+            is_learned:       _bnIsLearned,
+            learned_name:     _bnSn.name              || null,
+            player_recognition: null,
+            object_capture_turn: null,
+            position:         _bnPos,
+            attributes:       {},
+            object_ids:       [],
+            worn_object_ids:  [],
+            source:           'turn_1_declaration',
+            _fill_frozen:     false
+          };
+          if (_bnAls && _bnAls.local_space_id) {
+            _bnNpc.localspace_id = _bnAls.local_space_id;
+          }
+          // Create ORS ObjectRecords for declared carried items
+          if (!gameState.objects || typeof gameState.objects !== 'object') gameState.objects = {};
+          for (const _bnItem of (Array.isArray(_bnSn.inventory_items) ? _bnSn.inventory_items : [])) {
+            const _bnItemName = String(_bnItem || '').trim();
+            if (!_bnItemName) continue;
+            const _bnObjInput = [_bnItemName.toLowerCase(), 'npc', _bnId, 'born_npc_carried'].join('|');
+            const _bnObjId    = 'obj_' + require('crypto').createHash('sha256').update(_bnObjInput, 'utf8').digest('hex').slice(0, 12);
+            if (!gameState.objects[_bnObjId]) {
+              gameState.objects[_bnObjId] = { id: _bnObjId, name: _bnItemName, description: '', created_turn: 1, current_container_type: 'npc', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
+            }
+            if (!_bnNpc.object_ids.includes(_bnObjId)) _bnNpc.object_ids.push(_bnObjId);
+          }
+          // Create ORS ObjectRecords for declared worn items
+          for (const _bnWorn of (Array.isArray(_bnSn.worn_items) ? _bnSn.worn_items : [])) {
+            const _bnWornName = String(_bnWorn || '').trim();
+            if (!_bnWornName) continue;
+            const _bnWornInput = [_bnWornName.toLowerCase(), 'npc_worn', _bnId, 'born_npc_worn'].join('|');
+            const _bnWornId    = 'obj_' + require('crypto').createHash('sha256').update(_bnWornInput, 'utf8').digest('hex').slice(0, 12);
+            if (!gameState.objects[_bnWornId]) {
+              gameState.objects[_bnWornId] = { id: _bnWornId, name: _bnWornName, description: '', created_turn: 1, current_container_type: 'npc_worn', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
+            }
+            if (!_bnNpc.worn_object_ids.includes(_bnWornId)) _bnNpc.worn_object_ids.push(_bnWornId);
+          }
+          // Layer-aware push: L1/L2 → active_site.npcs, L0 → world.npcs
+          if (gameState.world?.active_site && Array.isArray(gameState.world.active_site.npcs)) {
+            gameState.world.active_site.npcs.push(_bnNpc);
+          } else {
+            if (!Array.isArray(gameState.world.npcs)) gameState.world.npcs = [];
+            gameState.world.npcs.push(_bnNpc);
+          }
+          gameState._born_npc_initialized = true;
+          console.log(`[BORN-NPC] Turn 1 NPC instantiated: id=${_bnId} npc_name="${_bnNpcName}" is_learned=${_bnIsLearned} carried=${_bnNpc.object_ids.length} worn=${_bnNpc.worn_object_ids.length}`);
+        }
+      } catch (_bnErr) {
+        console.warn('[BORN-NPC] Turn 1 NPC init error (non-fatal):', _bnErr.message);
+      }
+    }
+
     // v1.84.78: build invStr from ORS (player.object_ids → gameState.objects) — legacy scene.inventory is always []
     const _orsIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : [];
     const _orsObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {};
@@ -2747,7 +2833,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
                 continue;
               }
               // Atomic write: all 4 fields present
-              npc.npc_name     = String(upd.npc_name);
+              // npc_name guard: never overwrite a pre-existing canonical name (declared at founding or learned)
+              if (npc.npc_name == null) npc.npc_name = String(upd.npc_name);
               npc.gender       = String(upd.gender);
               const _parsedAge = Number(upd.age);
               if (!Number.isFinite(_parsedAge)) {

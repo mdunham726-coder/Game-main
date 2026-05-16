@@ -42,7 +42,9 @@ const STATE_ATTR_WINDOW = 5;    // state: bucket decay window — state facts ol
                                 //   into state:ephemeral (window=1-2) and state:persistent (longer/condition-backed)
 const ENV_ATTR_WINDOW   = 20;   // cap on env attributes emitted per entity (NPC or location) in the TRUTH block
                                 // sorted by turn_set desc so the most recent facts survive the cut
-const CB_VERSION        = '1.5.1';
+const CB_VERSION        = '1.5.2';
+// v1.5.2 — founding NPC extraction: starting_npc field added to founding_premise schema and prompt;
+//           Phase B write-back populates birth_record.starting_npc; NPC-FILL npc_name guard added.
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 let _lastRunDiagnostics = null;
@@ -127,7 +129,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
     "location_premise": null,
     "possessions": [],
     "status_claims": [],
-    "scenario_notes": []
+    "scenario_notes": [],
+    "starting_npc": null
   }` : ''}
 }
 
@@ -276,6 +279,18 @@ Fields:
   possessions      — items explicitly named in primary source as owned or carried. Empty array if none stated.
   status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
   scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
+  starting_npc     — a single companion NPC declared by the player in the founding input. null if no NPC is declared.
+    When present, extract as a single object (never an array) with these fields:
+      name            — the name the player explicitly gave this NPC. null if no name was stated. Never infer a name into this field.
+      generated_name  — a canonical name fitting the NPC's role and the world tone. Required only when name is null. Extraction scaffolding — not stored as a separate engine field.
+      role_or_relation — the NPC's relationship to the player or occupational role as stated in the founding input.
+      description     — brief physical description if stated. null if not stated.
+      gender          — infer from role, description, and world tone. null only if genuinely indeterminate.
+      age             — integer, infer from role and description. null if indeterminate.
+      job_category    — occupation or role category fitting the world context. null if indeterminate.
+      inventory_items — array of item strings the NPC is explicitly described as carrying. Empty array if none stated. Never infer.
+      worn_items      — array of item strings the NPC is explicitly described as wearing. Empty array if none stated. Never infer.
+    If multiple NPCs are declared, instantiate only the first. Record additional NPCs in scenario_notes as "DEFERRED_NPC: <description>". Deferred NPCs are not scene truth and must not appear as present entities.
 
 ` : ''}
 
@@ -826,6 +841,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     gameState.player.birth_record.possessions      = Array.isArray(fp.possessions)   ? fp.possessions   : [];
     gameState.player.birth_record.status_claims    = Array.isArray(fp.status_claims) ? fp.status_claims : [];
     gameState.player.birth_record.scenario_notes   = Array.isArray(fp.scenario_notes)? fp.scenario_notes: [];
+    gameState.player.birth_record.starting_npc     = (fp.starting_npc && typeof fp.starting_npc === 'object' && !Array.isArray(fp.starting_npc)) ? fp.starting_npc : (Array.isArray(fp.starting_npc) && fp.starting_npc.length > 0 ? fp.starting_npc[0] : null);
     console.log('[CB] birth_record populated on Turn 1:', JSON.stringify(gameState.player.birth_record).slice(0, 200));
 
     // v1.84.68: Promote status_claims → player.attributes[declared:] — idempotent, Turn 1 only
