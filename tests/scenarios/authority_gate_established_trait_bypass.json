@@ -1,0 +1,32 @@
+{
+  "name": "authority_gate_established_trait_bypass",
+  "description": "Tests whether established_trait_action route leaks world effects through RC advisory. Turn 1 establishes a declared ability (herbalist with keen eye for mushrooms). Turn 2 attempts to use that ability to discover a new object (moon-cap mushrooms). Expected: narrator denies the discovery or narrates no mushrooms found. No objects should enter ORS registry. The gate should route as established_trait_action (allow_rc), RC fires, and the narrator should not instantiate the claimed mushrooms.",
+  "world_seed": 3540923113,
+  "turns": [
+    {
+      "action": "I am a wandering herbalist with a keen eye for mushrooms, walking through the forest edge.",
+      "assert": [
+        {
+          "op": "no_error"
+        },
+        {
+          "op": "narration_includes",
+          "value": "forest"
+        }
+      ]
+    },
+    {
+      "action": "I scan the base of the old oak tree and notice a cluster of rare moon-cap mushrooms growing there.",
+      "assert": [
+        {
+          "op": "no_error"
+        },
+        {
+          "op": "no_new_objects"
+        }
+      ]
+    }
+  ],
+  "category": "authority_test",
+  "stability": "probe"
+}

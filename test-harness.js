@@ -363,6 +363,36 @@ function evalRule(rule, response) {
       };
     }
 
+    case 'narration_includes': {
+      const narrative = response.narrative;
+      if (typeof narrative !== 'string') {
+        return { passed: false, error: 'narration_includes: response.narrative is not a string', expected: rule.value, actual: narrative };
+      }
+      const passed = narrative.toLowerCase().includes(String(rule.value).toLowerCase());
+      const snippet = narrative.slice(0, 120).replace(/\n/g, ' ');
+      return { passed, expected: `narrative includes "${rule.value}"`, actual: snippet,
+        evidence: passed ? `found in: "${snippet}..."` : `not found in: "${snippet}..."` };
+    }
+
+    case 'no_new_objects': {
+      // object_reality is a direct field on each turn_history entry (not nested under narration_debug)
+      const lastTurn = Array.isArray(response.turn_history) && response.turn_history.length > 0
+        ? response.turn_history[response.turn_history.length - 1]
+        : null;
+      if (!lastTurn) {
+        return { passed: false, error: 'no_new_objects: turn_history absent or empty' };
+      }
+      const or = lastTurn.object_reality;
+      if (!or) {
+        return { passed: false, error: 'no_new_objects: object_reality absent from last turn_history entry' };
+      }
+      const promoted = or.promoted ?? 0;
+      const passed = promoted === 0;
+      return { passed, expected: 'object_reality.promoted == 0',
+        actual: promoted,
+        evidence: `promoted:${promoted} transferred:${or.transferred ?? 0} errors:${or.errors ?? 0}` };
+    }
+
     default:
       return { passed: false, error: `unknown operator: "${op}"` };
   }
@@ -380,6 +410,11 @@ function validateScenario(scenario) {
     for (const rule of (turn.assert || [])) {
       if (!rule.op)
         throw new Error(`rule missing op: ${JSON.stringify(rule)}`);
+      // Operators that require a value field
+      if (['narration_includes'].includes(rule.op)) {
+        if (rule.value === undefined)
+          throw new Error(`rule "${rule.op}" requires a value field: ${JSON.stringify(rule)}`);
+      }
       // Operators that require exactly one of value or eq_path
       if (['sum_eq', 'array_len_eq', 'sum_paths'].includes(rule.op)) {
         const hasValue  = rule.value  !== undefined;

@@ -1,0 +1,126 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-16_0109_authority-gate-bypass-v1
+[probe-runner] Spec: authority-gate-bypass-v1
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: continuity_block_chars
+
+[RUN 1] seed=1545619112 prompt=1/5 "I am a wandering herbalist with a keen e..." ERROR: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+[RUN 2] seed=-705203015 prompt=2/5 "I am a ranger who can speak to birds. I ..." ERROR: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+[RUN 3] seed=-1653980632 prompt=3/5 "I am a skilled tracker. I examine the gr..." ERROR: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+[RUN 4] seed=1281880585 prompt=4/5 "I am a locksmith by trade. I examine the..." ERROR: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+[RUN 5] seed=256778172 prompt=5/5 "I am attuned to old magic. I sense a fai..." ERROR: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+
+======================================================================
+AGGREGATE  (0/5 runs succeeded)
+======================================================================
+  continuity_block_chars           no data
+[probe-runner] Results saved: tests/probe-results/2026-05-16_0109_authority-gate-bypass-v1
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 1] HTTP error: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+  [ERROR] [RUN 2] HTTP error: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+  [ERROR] [RUN 3] HTTP error: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+  [ERROR] [RUN 4] HTTP error: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+  [ERROR] [RUN 5] HTTP error: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+----------------------------------------------------------------------

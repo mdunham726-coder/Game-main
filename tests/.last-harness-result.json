@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-15T14:47:20.392Z",
-  "scenariosPassed": 1,
-  "scenariosFailed": 0,
+  "timestamp": "2026-05-16T05:39:37.337Z",
+  "scenariosPassed": 0,
+  "scenariosFailed": 1,
   "scenariosSkipped": 0,
-  "turnsPassed": 8,
-  "turnsFailed": 0,
+  "turnsPassed": 1,
+  "turnsFailed": 1,
   "results": [
     {
-      "name": "env_continuity_bloat_walk",
+      "name": "authority_gate_established_trait_bypass",
       "skipped": false,
-      "passed": 8,
-      "failed": 0,
-      "total": 8,
-      "sessionId": "1778856292348-l8wh7e8d9"
+      "passed": 1,
+      "failed": 1,
+      "total": 2,
+      "sessionId": "1778909940168-u4oeco9gm"
     }
   ]
 }

@@ -1,0 +1,23 @@
+{
+  "spec_name": "authority-gate-bypass-v1",
+  "spec_slug": "authority-gate-bypass-v1",
+  "started_at": "2026-05-16T05:10:14.447Z",
+  "completed_at": "2026-05-16T05:12:28.056Z",
+  "runs_requested": 5,
+  "runs_completed": 5,
+  "hard_errors": 0,
+  "hard_error_rows": [],
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {
+    "continuity_block_chars": {
+      "min": 199,
+      "max": 199,
+      "mean": 199,
+      "stddev": 0,
+      "p10": 199,
+      "p50": 199,
+      "p90": 199
+    }
+  }
+}

@@ -233,6 +233,14 @@
     </div>
   </div>
 
+<!-- Authority Gate Panel -->
+<div id="authorityGatePanel" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #d4ac0d; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; color: #ccc;">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <h3 style="margin: 0; color: #d4ac0d;">AUTHORITY GATE</h3>
+  </div>
+  <div id="ag-live" style="color: #aaa; font-size: 11px;">(no authority gate data yet)</div>
+</div>
+
 <!-- Continuity Panel (v1.59.0: moved before diagnostics) -->
 <div id="continuityPanel" style="margin-top: 20px; padding: 10px; background: #1a1a1a; border: 1px solid #3498db; font-family: monospace; font-size: 12px; max-height: 500px; overflow-y: auto; color: #ccc;">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -921,6 +929,7 @@
         window.lastGameResponse = data; // Keep window-exposed copy in sync for Map.html
         if (_wgIsFirstTurn) populateWgOverlay(data.worldgen_log || null);
         renderContinuityPanel(data);
+        renderAuthorityGatePanel(data);
         appendContinuityLogEntry(data);
 
         // A2: Reset QA export history on new game
@@ -2768,6 +2777,67 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
 
       liveDom.innerHTML = html;
       _continuityAlertHistory = currentKeys;
+    }
+
+    function renderAuthorityGatePanel(data) {
+      const liveDom = document.getElementById('ag-live');
+      if (!liveDom) return;
+      const turnHistory = data.turn_history || [];
+      if (turnHistory.length === 0) return;
+      const turn = turnHistory[turnHistory.length - 1];
+      const nd = turn.narration_debug || {};
+      const ag = nd.authority_gate;
+      const turnNumber = turn.turn_number || turnHistory.length;
+
+      if (!ag) {
+        liveDom.innerHTML = '<span style="color:#555">(no authority gate data this turn)</span>';
+        return;
+      }
+
+      const decisionColor = ag.rc_allowed ? '#2ecc71' : '#e67e22';
+      const l1Color = ag.gate_fast_path_hit ? '#2ecc71' : '#888';
+      const confStr = ag.llm_confidence != null ? ag.llm_confidence.toFixed(2) : 'n/a';
+      const durStr = ag.authority_gate_duration_ms != null ? `${ag.authority_gate_duration_ms}ms` : 'n/a';
+      const agObjs = (ag.referenced_objects  || []).join(', ') || 'none';
+      const agEnts = (ag.referenced_entities || []).join(', ') || 'none';
+      const agAbs  = (ag.referenced_abilities|| []).join(', ') || 'none';
+      const hasRefs = agObjs !== 'none' || agEnts !== 'none' || agAbs !== 'none';
+
+      let html = '<div style="font-size:11px;">';
+
+      // Status row
+      html += '<div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:6px;">';
+      html += `<span style="color:${decisionColor}">decision: ${ag.decision ?? 'n/a'}</span>`;
+      html += `<span style="color:#ccc">route: ${ag.route ?? 'n/a'}</span>`;
+      html += `<span style="color:${decisionColor}">rc_allowed: ${ag.rc_allowed != null ? String(ag.rc_allowed) : 'n/a'}</span>`;
+      html += `<span style="color:${l1Color}">layer_1_match: ${ag.gate_fast_path_hit != null ? String(ag.gate_fast_path_hit) : 'n/a'}</span>`;
+      html += '</div>';
+
+      // Detail block
+      html += '<div style="background:#111; padding:5px 8px; border-radius:3px;">';
+      html += `<div>reason_code&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${ag.reason_code ?? 'n/a'}</span></div>`;
+      html += `<div>input_type&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${ag.input_type ?? 'n/a'}</span></div>`;
+      html += `<div>parsed_action&nbsp;: <span style="color:#ccc">${ag.parsed_action ?? 'n/a'}</span></div>`;
+      html += `<div>llm_called&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${ag.llm_called != null ? String(ag.llm_called) : 'n/a'}${ag.llm_called && confStr !== 'n/a' ? '  confidence: ' + confStr : ''}</span></div>`;
+      html += `<div>duration_ms&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">${durStr}</span></div>`;
+      html += `<div>evidence&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#ccc">engine_supported=${ag.evidence_supported ?? 'n/a'}</span></div>`;
+      if (hasRefs) {
+        html += `<div>refs&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span style="color:#888">objs[${agObjs}] ents[${agEnts}] abs[${agAbs}]</span></div>`;
+      }
+      html += '</div>';
+
+      // Gate bypass note (Turn 1)
+      if (ag.reason_code === 'turn_1_founding') {
+        html += '<div style="margin-top:5px; padding:3px 8px; background:#1a1a00; border-left:3px solid #888; font-size:11px; color:#888;">Turn 1 founding -- gate bypassed (no RC evaluation)</div>';
+      }
+
+      // RC skip notice
+      if (!ag.rc_allowed && ag.reason_code !== 'turn_1_founding') {
+        html += `<div style="margin-top:5px; padding:3px 8px; background:#2d1500; border-left:3px solid #e67e22; font-size:11px; color:#e67e22;">RC skipped -- ${ag.reason_code ?? 'gate denied'}</div>`;
+      }
+
+      html += '</div>';
+      liveDom.innerHTML = html;
     }
 
     function appendContinuityLogEntry(data) {

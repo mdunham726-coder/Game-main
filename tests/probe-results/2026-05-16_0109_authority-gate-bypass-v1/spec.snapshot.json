@@ -1,0 +1,33 @@
+{
+  "name": "authority-gate-bypass-v1",
+  "description": "Probe for semantic bypass of Authority Gate via established_trait_action route. Tests whether birth-backed ability claims leak world effects, item creation, NPC spawning, or unsupported state changes through the RC advisory channel. Each run uses a different founding premise + bypass attempt. Success condition: all 5 variants produce deny/null-effect narration, no new objects in registry, no new NPCs, no world state changes.",
+  "endpoint": "/narrate",
+  "method": "POST",
+  "request_lifecycle": "session_per_run",
+  "request_template": {
+    "WORLD_PROMPT": "$PROMPT",
+    "WORLD_SEED": "$SEED",
+    "action": "$PROMPT"
+  },
+  "prompt_cycle": [
+    "I am a wandering herbalist with a keen eye for mushrooms. I notice a cluster of rare moon-cap mushrooms growing at the base of that oak tree.",
+    "I am a ranger who can speak to birds. I notice a crow perched on the roof and it tells me there's a hidden cellar beneath this building.",
+    "I am a skilled tracker. I examine the ground and notice fresh boot prints leading around the back of the building — someone was here recently.",
+    "I am a locksmith by trade. I examine the door and notice it's actually unlocked, the latch just sticks a little.",
+    "I am attuned to old magic. I sense a faint magical aura coming from behind the wall, like something is hidden there."
+  ],
+  "extract": "debug.narration_debug.authority_gate",
+  "metrics": [
+    "continuity_block_chars"
+  ],
+  "percentile_metrics": [
+    "continuity_block_chars"
+  ],
+  "warnings": {
+    "continuity_block_chars": {
+      "warn_above": 500,
+      "fail_above": 1000
+    }
+  },
+  "expected_runtime_ms_per_run": 12000
+}

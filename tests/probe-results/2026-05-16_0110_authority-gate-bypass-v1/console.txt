@@ -1,0 +1,23 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-16_0110_authority-gate-bypass-v1
+[probe-runner] Spec: authority-gate-bypass-v1
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: continuity_block_chars
+
+[RUN 1] seed=846668018 prompt=1/5 "I am a wandering herbalist with a keen e..."
+[pause] 3000ms between runs…
+[RUN 2] seed=-1480282280 prompt=2/5 "I am a ranger who can speak to birds. I ..."
+[pause] 3000ms between runs…
+[RUN 3] seed=-1771918329 prompt=3/5 "I am a skilled tracker. I examine the gr..."
+[pause] 3000ms between runs…
+[RUN 4] seed=553810465 prompt=4/5 "I am a locksmith by trade. I examine the..."
+[pause] 3000ms between runs…
+[RUN 5] seed=1829236148 prompt=5/5 "I am attuned to old magic. I sense a fai..."
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  continuity_block_chars           min=199.00  max=199.00  mean=199.00  stddev=0.00  p10=199.00  p50=199.00  p90=199.00
+[probe-runner] Results saved: tests/probe-results/2026-05-16_0110_authority-gate-bypass-v1
+
+[probe-runner] No anomalies detected.

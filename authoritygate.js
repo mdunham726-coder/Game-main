@@ -68,6 +68,9 @@ The player controls ONE character. The player does NOT control: the weather, oth
 EMOTE RULE:
 An asterisk-wrapped phrase (*...*) where the grammatical subject is NOT the player character (first person) is unsupported_world_authoring or unsupported_entity_spawn. Phrases where the player IS the subject are player_attempt.
 
+DISCOVERY FRAMING:
+Observational or discovery-framed language that would introduce a new object, fact, or world element not already present in the current scene is NOT valid_low_risk — even when the grammatical subject is the player. Language patterns that signal this include: "I notice...", "I find...", "I sense...", "I spot...", "I see...", "it turns out...", "there is..." — when the thing being noticed or found would not already exist as an established scene feature. If the player invokes a declared ability to justify the discovery, classify as claimed_ability_use. If no declared ability backs the assertion, classify as unsupported_world_authoring. Passive observation of things already established as features of the current scene is valid_low_risk.
+
 THRESHOLD:
 Lean toward player_attempt when genuinely uncertain. Deny only when clearly unsupported. A valid action that happens to be weird or unusual is still player_attempt.
 
