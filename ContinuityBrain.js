@@ -607,10 +607,11 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
   }
 }
 
-// ── Player attribute promotion ──────────────────────────────────────────────────
-// Parallel to _promoteEntityAttributes — targets gameState.player.attributes.
-function _promotePlayerAttributes(player, candidate, turn, logEntries) {
+// v6.0.18: accepts options = { suppressUnsupportedPlayerStatePromotion } to gate
+// player body/equipment state promotion on soliloquy turns.
+function _promotePlayerAttributes(player, candidate, turn, logEntries, options = {}) {
   if (!player.attributes) player.attributes = {}; // migration guard: old saves
+  const _suppress = options.suppressUnsupportedPlayerStatePromotion === true;
   const _dupCounts = {};
   const promote = (bucket, items) => {
     for (const item of (items || [])) {
@@ -628,9 +629,13 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries) {
       }
     }
   };
-  promote('physical', candidate.physical_attributes);
-  promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_or_worn_objects);
+  if (_suppress) {
+    console.warn('[CB] suppressUnsupportedPlayerStatePromotion: physical/state/object buckets skipped (soliloquy turn)');
+  } else {
+    promote('physical', candidate.physical_attributes);
+    promote('state',    candidate.observable_states);
+    promote('object',   candidate.held_or_worn_objects);
+  }
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'player', entity_id: player.id || 'player', entity_name: 'player', count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -652,15 +657,22 @@ function _getL0CellRecord(gameState) {
 
 // ── Condition promotion ───────────────────────────────────────────────────────
 
-function _promoteConditions(conditionEvents, gameState, turn) {
+// v6.0.18: accepts options = { suppressUnsupportedPlayerStatePromotion } to gate
+// new_condition events on soliloquy turns while allowing condition_update/interaction through.
+function _promoteConditions(conditionEvents, gameState, turn, options = {}) {
   if (!Array.isArray(conditionEvents) || conditionEvents.length === 0) return;
   if (!gameState.player) return;
   if (!Array.isArray(gameState.player.conditions)) gameState.player.conditions = [];
+  const _suppress = options.suppressUnsupportedPlayerStatePromotion === true;
 
   for (const event of conditionEvents) {
     if (!event || !event.event_type) continue;
 
     if (event.event_type === 'new_condition') {
+      if (_suppress) {
+        console.warn(`[CB] suppressUnsupportedPlayerStatePromotion: new_condition skipped on soliloquy turn: "${(event.initial_description || '').slice(0, 60)}"`);
+        continue;
+      }
       if (!event.initial_description) continue;
       const condition_id = `cond_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       const firstEntry = `Turn ${turn} [narration]: ${event.evidence || event.initial_description}`;
@@ -695,7 +707,7 @@ function _promoteConditions(conditionEvents, gameState, turn) {
   }
 }
 
-async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
+async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length + 1;
 
@@ -842,7 +854,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
     // Player self-ref — always route to player container regardless of layer
     const refLower = ref.toLowerCase();
     if (refLower === 'player' || refLower === 'you') {
-      if (player) _promotePlayerAttributes(player, candidate, turn, logEntries);
+      if (player) _promotePlayerAttributes(player, candidate, turn, logEntries, options);
       continue;
     }
 
@@ -904,7 +916,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput) {
   gameState.world.promotion_log.push(...logEntries);
 
   // ── Condition events ───────────────────────────────────────────────────────
-  _promoteConditions(extracted.condition_events, gameState, turn);
+  _promoteConditions(extracted.condition_events, gameState, turn, options);
 
   // ── Mood snapshot ──────────────────────────────────────────────────────────
   const moodSnapshot = extracted.mood_snapshot || null;

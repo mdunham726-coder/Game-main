@@ -2358,6 +2358,83 @@ app.post('/narrate', async (req, res) => {
     const _invNames = _orsIds.map(id => _orsObjs[id]?.status === 'active' ? _orsObjs[id].name : null).filter(Boolean);
     let invStr = JSON.stringify(_invNames);
 
+    // v1.85.22: build wornStr from ORS (player.worn_object_ids → gameState.objects)
+    // Baseline items (birth_default / birth_custom) tagged with (baseline) label.
+    const _wornIds = Array.isArray(gameState.player?.worn_object_ids) ? gameState.player.worn_object_ids : [];
+    const _wornNames = _wornIds.map(id => {
+      const _wrec = _orsObjs[id];
+      if (!_wrec || _wrec.status !== 'active') return null;
+      const _baselineTag = (_wrec.source === 'birth_default' || _wrec.source === 'birth_custom') ? ' (baseline)' : '';
+      return _wrec.name + _baselineTag;
+    }).filter(Boolean);
+    let wornStr = _wornNames.length > 0 ? JSON.stringify(_wornNames) : '(none)';
+
+    // [BORN-OUTFIT] v1.85.22: Turn 1 only — DS call generates baseline outfit for humanoid players.
+    // Non-humanoid (animal, creature, entity without clothing) receives empty worn list.
+    // Non-fatal — failure logs a warning and continues with wornStr = '(none)'.
+    if (turnNumber === 1) {
+      try {
+        const _birthAction = (action || '').trim();
+        const _birthWorldTone = gameState.world?.world_tone || 'unknown';
+        const _birthSysMsg = `You are an outfit generator for a text RPG. The player character is being created. Based on the founding premise and world tone, determine if the character is humanoid. If humanoid, generate a starting outfit of up to 5 items covering standard slots (shirt/top, pants/bottom, underwear, socks, shoes — adapt naming and material to the world tone). If the player's founding premise explicitly names worn items, include those as source "birth_custom"; fill remaining slots with source "birth_default". If the character is non-humanoid (animal, creature, energy form, or entity without clothing), return an empty outfit array. Return ONLY valid JSON with no prose outside it:\n{"humanoid":true,"outfit":[{"slot":"shirt","name":"<item name>","description":"<one sentence>","source":"birth_default"}]}\nor for non-humanoid:\n{"humanoid":false,"outfit":[]}`;
+        const _birthResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+          model: 'deepseek-chat',
+          temperature: 0.7,
+          max_tokens: 400,
+          messages: [
+            { role: 'system', content: _birthSysMsg },
+            { role: 'user', content: `World tone: ${_birthWorldTone}. Founding premise: "${_birthAction}"` }
+          ]
+        }, {
+          headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+          httpsAgent: _sharedHttpsAgent,
+          timeout: 15000
+        });
+        const _birthRaw = _birthResp?.data?.choices?.[0]?.message?.content || '';
+        const _birthJsonMatch = _birthRaw.match(/\{[\s\S]*\}/);
+        if (_birthJsonMatch) {
+          const _birthData = JSON.parse(_birthJsonMatch[0]);
+          if (_birthData.humanoid && Array.isArray(_birthData.outfit) && _birthData.outfit.length > 0) {
+            if (!gameState.objects) gameState.objects = {};
+            if (!Array.isArray(gameState.player.worn_object_ids)) gameState.player.worn_object_ids = [];
+            for (const _bItem of _birthData.outfit) {
+              const _bId = 'obj_' + Math.random().toString(16).slice(2, 14);
+              gameState.objects[_bId] = {
+                id: _bId,
+                name: _bItem.name,
+                description: _bItem.description || '',
+                created_turn: 1,
+                current_container_type: 'player_worn',
+                current_container_id: 'player_worn',
+                owner_id: 'player',
+                source: _bItem.source || 'birth_default',
+                status: 'active',
+                conditions: [],
+                events: []
+              };
+              gameState.player.worn_object_ids.push(_bId);
+            }
+            console.log(`[BORN-OUTFIT] Turn 1 baseline outfit created: ${_birthData.outfit.length} items (humanoid)`);
+            // Rebuild wornStr now that worn_object_ids is populated
+            const _wornIds2 = gameState.player.worn_object_ids;
+            const _wornNames2 = _wornIds2.map(id => {
+              const _wrec2 = gameState.objects[id];
+              if (!_wrec2 || _wrec2.status !== 'active') return null;
+              const _btag = (_wrec2.source === 'birth_default' || _wrec2.source === 'birth_custom') ? ' (baseline)' : '';
+              return _wrec2.name + _btag;
+            }).filter(Boolean);
+            wornStr = _wornNames2.length > 0 ? JSON.stringify(_wornNames2) : '(none)';
+          } else {
+            console.log('[BORN-OUTFIT] Turn 1: non-humanoid or empty outfit — skip');
+          }
+        } else {
+          console.warn('[BORN-OUTFIT] Turn 1: parse fail — no JSON in DS response');
+        }
+      } catch (_birthErr) {
+        console.warn('[BORN-OUTFIT] Turn 1: DS call failed —', _birthErr.message);
+      }
+    }
+
     // Phase 5B: Build site context block from current cell's sites (filled only — unfilled slots are engine-internal placeholders, never narrator-visible)
     let _siteContextBlock = '';
     const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites).filter(s => s.is_filled === true) : [];
@@ -2870,12 +2947,14 @@ app.post('/narrate', async (req, res) => {
     // v1.51.0: Soliloquy block — fires on Say channel when no NPC is successfully bound.
     // Covers: NPC_NOT_PRESENT degrade, target:null, not_found, not_in_site outcomes.
     // Mutually exclusive with _narratorModeBlock (which requires matched NPC).
-    const _soliloquyBlock = (
+    // v6.0.18: _soliloquyFired flag used downstream to suppress unsupported player-state promotion in CB.
+    const _soliloquyFired = (
       resolvedChannel === 'say' &&
       !_rawNpcTarget &&
       _npcTalkResult?.outcome !== 'matched'
-    )
-      ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nNo specific NPC is being addressed. Narrate the player's words as self-expression — muttering, exclaiming, or speaking into the space. Do not treat this as a failed dialogue attempt.\n`
+    );
+    const _soliloquyBlock = _soliloquyFired
+      ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nThe player speaks without addressing any specific recipient. Narrate the player's words as self-expression. Do not treat unsupported declarations as changes to engine truth.\n`
       : '';
 
     // v1.52.0: Narration Task Override — task-replacement blocks for move/look/exit turns.
@@ -3010,6 +3089,8 @@ ${_narSceneDesc}
 ${nearbyStr}
 
 INVENTORY: ${invStr}
+WORN: ${wornStr}
+WORN RULE: Items listed in WORN are physically on the player's body right now. Items tagged (baseline) are standard everyday clothing present since game start — do not describe unless damaged, removed, explicitly interacted with, or otherwise scene-relevant. WORN is authoritative physical containment: if a WORN item also appears in ATTRIBUTES as a possession string, WORN entry governs. The player is wearing exactly what is listed. Do not describe the player as bare, shirtless, unclothed, or missing any item that is listed in WORN.
 POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location (in a crevice, on the floor, wedged against the machine, resting on a surface) — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
 The player has already moved. They are now in the location described above.
@@ -3130,7 +3211,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         top_violation:              null,
         channel:                    resolvedChannel || null,
       };
-      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput);
+      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, { suppressUnsupportedPlayerStatePromotion: _soliloquyFired });
       _continuityExtractionSuccess = _phaseBResult !== null;
       // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
       if (!_continuityExtractionSuccess && turnNumber === 1 && gameState.player?.birth_record) {
@@ -3169,6 +3250,25 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         retirement_updates: []
       };
       if (_phaseBResult) {
+        // v6.0.18: soliloquy gate — drop player-targeted object candidates on soliloquy turns
+        if (_soliloquyFired && Array.isArray(_phaseBResult.object_candidates)) {
+          _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+            if (c.container_type === 'player') {
+              console.warn(`[SOLILOQUY-GATE] player-targeted object_candidate blocked on soliloquy turn: "${c.name}"`);
+              return false;
+            }
+            return true;
+          });
+          if (Array.isArray(_phaseBResult.object_transfers)) {
+            _phaseBResult.object_transfers = _phaseBResult.object_transfers.filter(t => {
+              if (t.to_container_type === 'player') {
+                console.warn(`[SOLILOQUY-GATE] player-targeted object_transfer blocked on soliloquy turn: "${t.object_name || t.object_id}"`);
+                return false;
+              }
+              return true;
+            });
+          }
+        }
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
         if (Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
