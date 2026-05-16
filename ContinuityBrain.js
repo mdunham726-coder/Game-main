@@ -676,6 +676,32 @@ function _promoteConditions(conditionEvents, gameState, turn, options = {}) {
         continue;
       }
       if (!event.initial_description) continue;
+      // Dedup guard — Jaccard word-set overlap against existing condition description + last 2 turn_log entries.
+      // Prevents duplicate condition creation when the narrator re-describes the same injury in different words.
+      // Threshold 0.5: score is logged so it can be tuned later from evidence.
+      {
+        const _normDesc = s => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+        const _wordSet  = s => new Set(_normDesc(s).split(' ').filter(Boolean));
+        const _jaccard  = (a, b) => {
+          const shared = [...a].filter(w => b.has(w)).length;
+          const union  = new Set([...a, ...b]).size;
+          return union === 0 ? 0 : shared / union;
+        };
+        const newWords = _wordSet(event.initial_description);
+        let _dupFound = false;
+        for (const existing of gameState.player.conditions) {
+          const lastTwo = (existing.turn_log || []).slice(-2)
+            .map(e => typeof e === 'string' ? e : String(e || '').slice(0, 200));
+          const corpus = [existing.description || '', ...lastTwo].join(' ');
+          const score  = _jaccard(newWords, _wordSet(corpus));
+          if (score >= 0.5) {
+            console.warn(`[CB] Condition skipped — overlap with existing ${existing.condition_id} score=${score.toFixed(2)}: "${event.initial_description.slice(0, 60)}"`);
+            _dupFound = true;
+            break;
+          }
+        }
+        if (_dupFound) continue;
+      }
       const condition_id = `cond_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       const firstEntry = `Turn ${turn} [narration]: ${event.evidence || event.initial_description}`;
       gameState.player.conditions.push({
