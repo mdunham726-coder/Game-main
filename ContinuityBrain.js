@@ -279,7 +279,7 @@ Fields:
   possessions      — items explicitly named in primary source as owned or carried. Empty array if none stated.
   status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
   scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
-  starting_npc     — a single companion NPC declared by the player in the founding input. null if no NPC is declared.
+  starting_npc     — a single NPC declared by the player in the founding input. null if no NPC is declared.
     When present, extract as a single object (never an array) with these fields:
       name            — the name the player explicitly gave this NPC. null if no name was stated. Never infer a name into this field.
       generated_name  — a canonical name fitting the NPC's role and the world tone. Required only when name is null. Extraction scaffolding — not stored as a separate engine field.
