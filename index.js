@@ -2,8 +2,26 @@
 const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
+
+// Inline .env loader — sets any KEY=VALUE lines that are not already in process.env.
+// Runs before anything else so all launch paths (bat, VS Code terminal, direct node) get the keys.
+try {
+  const _envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(_envPath)) {
+    for (const line of fs.readFileSync(_envPath, 'utf8').split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq < 1) continue;
+      const k = trimmed.slice(0, eq).trim();
+      const v = trimmed.slice(eq + 1).trim();
+      if (k && !(k in process.env)) process.env[k] = v;
+    }
+  }
+} catch (_) { /* non-fatal — server starts without .env if file is missing or unreadable */ }
 const axios = require('axios');
 const https = require('https');
+const { spawn } = require('child_process');
 // v1.84.88: shared agent for all DeepSeek calls — keepAlive:false prevents listener accumulation on global https.globalAgent
 const _sharedHttpsAgent = new https.Agent({ keepAlive: false });
 const Engine = require('./Engine.js');
@@ -18,6 +36,7 @@ const NC = require('./NarrativeContinuity');
 const CB = require('./ContinuityBrain'); // v1.70.0
 const ObjectHelper = require('./ObjectHelper'); // v1.84.52
 const ConditionBot = require('./conditionbot'); // v1.84.19
+const AuthorityGate = require('./authoritygate'); // v1.88.0
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -30,6 +49,13 @@ const sessionStates = new Map();
 // Mother Brain — unique session identifier (changes on every Node restart)
 const _mbSessionId = Date.now();
 
+// ── Harness control state ────────────────────────────────────────────────────
+let _harnessRunning       = false;     // blocks concurrent POST /harness/run
+let _lastHarnessResult    = null;      // last result from POST /harness/run
+const MAX_MOTHER_RUNS     = 5;         // Mother Brain run cap per call
+const HARNESS_RESULT_PATH = path.join(__dirname, 'tests', '.last-harness-result.json');
+const HARNESS_SCENARIOS_DIR = path.join(__dirname, 'tests', 'scenarios');
+
 // Consult DeepSeek — rolling conversation history per session
 // Stored as exchange objects so future trimming/summarization touches only exchanges[]
 // Shape: Map<sessionId, { exchanges: [{userQ, aiR, ts}], created, lastUsed }>
@@ -37,6 +63,26 @@ const _consultHistory = new Map();
 
 // ── Real-time init progress bus (for first-turn progress polling) ─────────────
 const _initProgress = new Map();
+
+// ── Session TTL eviction ─────────────────────────────────────────────────────
+// Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
+const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
+const SESSION_MAX_AGE_MS = 3 * 60 * 1000; // 3 minutes — probe sessions are single-turn throw-aways
+setInterval(() => {
+  const _sweepNow = Date.now();
+  let _evictCount = 0;
+  for (const [_sid, _ts] of _sessionLastUsed) {
+    if (_sweepNow - _ts > SESSION_MAX_AGE_MS) {
+      sessionStates.delete(_sid);
+      _sessionLastUsed.delete(_sid);
+      _consultHistory.delete(_sid);
+      _evictCount++;
+    }
+  }
+  if (_evictCount > 0) {
+    console.log(`[SESSION-EVICT] Evicted ${_evictCount} idle session(s). Active: ${sessionStates.size}`);
+  }
+}, 60 * 1000).unref(); // sweep every 1 minute
 function _pushProgress(token, step, pct, detail = {}) {
   if (!token) return;
   const arr = _initProgress.get(token) || [];
@@ -68,12 +114,14 @@ function getSessionState(sessionId) {
       isFirstTurn: true,
       logger: logger
     });
+    _sessionLastUsed.set(newSessionId, Date.now());
     console.log('[DIAG-3a-SERVER-GETSESSIONSTATE] New session stored in Map. Map size now:', sessionStates.size);
     logger.sessionStarted({ newSessionId });
     return { sessionId: newSessionId, ...sessionStates.get(newSessionId) };
   }
   // [DIAG-3b] Returning existing session
   console.log('[DIAG-3b-SERVER-GETSESSIONSTATE] RETURNING EXISTING SESSION for sessionId:', sessionId);
+  _sessionLastUsed.set(sessionId, Date.now());
   const existing = sessionStates.get(sessionId);
   console.log('[DIAG-3b-SERVER-GETSESSIONSTATE] Existing session isFirstTurn:', existing?.isFirstTurn);
   return { sessionId, ...existing };
@@ -770,9 +818,9 @@ app.post('/narrate', async (req, res) => {
   let gameState = sessionGameState;
   let isFirstTurn = sessionIsFirstTurn;
   
-  const { action, intent_channel: _rawChannel, npc_target: _rawNpcTarget } = req.body;
+  const { action, intent_channel: _rawChannel, npc_target: _rawNpcTarget, WORLD_SEED: _rawWorldSeed, WORLD_PROMPT: _rawWorldPrompt } = req.body;
   const resolvedChannel = ['do', 'say'].includes(_rawChannel) ? _rawChannel : 'do';
-  if (!action) {
+  if (action == null) {
     return res.status(400).json({ 
       sessionId: resolvedSessionId,
       error: 'action is required' 
@@ -795,7 +843,7 @@ app.post('/narrate', async (req, res) => {
   }
   // v1.84.0: Birth record backward compat — old saves won't have this field
   if (gameState.player && !gameState.player.birth_record) {
-    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [] };
+    gameState.player.birth_record = { raw_input: null, created_turn: 1, form: null, location_premise: null, possessions: [], status_claims: [], scenario_notes: [], world_notes: [], canonical_name: null, title_or_role: null };
   }
   // v1.84.19: Condition Bot backward compat — old saves won't have these fields
   if (gameState.player && !gameState.player.conditions) {
@@ -811,6 +859,7 @@ app.post('/narrate', async (req, res) => {
   // v1.84.52: Object Reality System — initialize engine object registries on old saves
   if (!gameState.objects)       gameState.objects       = {};
   if (!gameState.object_errors) gameState.object_errors = [];
+  if (!Array.isArray(gameState._rejectedCandidates)) gameState._rejectedCandidates = [];
   if (gameState.player && !Array.isArray(gameState.player.object_ids)) gameState.player.object_ids = [];
   if (gameState.world && Array.isArray(gameState.world.npcs)) {
     gameState.world.npcs.forEach(npc => { if (!Array.isArray(npc.object_ids)) npc.object_ids = []; });
@@ -924,9 +973,12 @@ app.post('/narrate', async (req, res) => {
     transferred: 0,
     errors: 0,
     audit: [],
-    error_entries: []
+    error_entries: [],
+    reconciliation_count: 0  // v1.85.91: ObjectRecords annotated with reconciled_from_rejection this turn
   };
 
+  // v1.85.39: turn_stage SSE — parsing start
+  emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
   let parseResult = null;
   try {
     parseResult = await normalizeUserIntent(userInput, gameContext, resolvedChannel);
@@ -935,6 +987,8 @@ app.post('/narrate', async (req, res) => {
     console.warn('[PARSER] exception in semantic parser:', e?.message);
   }
   const _parserUsage = parseResult?.parser_usage || null;
+  // v1.85.39: turn_stage SSE — parsing complete
+  emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
   let debug = {
     parser: "none",
     input: userInput,
@@ -976,11 +1030,24 @@ app.post('/narrate', async (req, res) => {
   // First turn: seed world using WORLD_PROMPT through Engine
   let engineOutput = null;
   let inputObj = null; // Declared in outer scope — assigned in if/else branches below
+  let _enterAmbiguous = false;    // v1.85.4: true when null-target enter finds >1 enterable site
+  let _preTurnLoc = null;         // v1.85.4: location fingerprint captured before Engine.buildOutput
+  let _actionHadNoEffect = false; // v1.85.4: true when move/enter/exit intent produced no state change
+  // Progress token + reporter — hoisted so narration/CB/Arbiter phases can push updates on Turn 1.
+  // No-op on non-first turns (token is null).
+  let _progToken = null;
+  let _reportProgress = () => {};
   if (isFirstTurn === true) {
     isFirstTurn = false;
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
     inputObj = mapActionToInput(action, "WORLD_PROMPT");
     inputObj.player_intent.channel = 'do';
+    if (_rawWorldSeed != null && Number.isFinite(Number(_rawWorldSeed))) inputObj.WORLD_SEED = Number(_rawWorldSeed);
+    // Use explicit WORLD_PROMPT from request body when present (e.g. harness sends founding premise
+    // separately from the T1 action). Browser path: no body WORLD_PROMPT → action is the founding
+    // premise, mapActionToInput already set it correctly. Harness path: action = "look around",
+    // body WORLD_PROMPT = "I am standing inside a tavern" → override so worldgen sees the real premise.
+    if (_rawWorldPrompt != null) inputObj.WORLD_PROMPT = String(_rawWorldPrompt);
     
     if (logger) logger.worldPromptReceived(inputObj.WORLD_PROMPT);
     
@@ -990,16 +1057,17 @@ app.post('/narrate', async (req, res) => {
     const _wLog = (pass, step, data) => _worldgenLog.push({ pass, step, data, ms: Date.now() - _wLogT0 });
 
     // Progress token — sent by client via x-progress-token header (pre-issued by GET /narrate/session-token)
-    const _progToken = req.headers['x-progress-token'] || null;
-    const _reportProgress = (step, pct, detail = {}) => _pushProgress(_progToken, step, pct, detail);
+    _progToken = req.headers['x-progress-token'] || null;
+    _reportProgress = (step, pct, detail = {}) => _pushProgress(_progToken, step, pct, detail);
 
-    let startAnchor = null; // hoisted — referenced by worldgen summary block outside if(worldData)
+    let startAnchor = null;        // hoisted — referenced by worldgen summary block outside if(worldData)
+    let _sitePlacementLog = null;  // hoisted — frozen to gameState after patch+spacing pass
     try {
       // Handle async world generation with DeepSeek biome detection
       if (inputObj.WORLD_PROMPT && !gameState?.world?.macro_biome) {
         _reportProgress('analyzing', 2, { prompt: (inputObj.WORLD_PROMPT || '').slice(0, 40) });
         _wLog('init', 'world_description_analysis', { prompt: (inputObj.WORLD_PROMPT || '').slice(0, 80) });
-        const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, gameState.rng_seed || 0);
+        const worldData = await WorldGen.generateWorldFromDescription(inputObj.WORLD_PROMPT, inputObj.WORLD_SEED ?? gameState.rng_seed ?? 0);
         if (worldData) {
           gameState.world.macro_biome = worldData.biome;
           gameState.world.world_tone = worldData.worldTone;  // NEW: Store semantic tone
@@ -1015,6 +1083,9 @@ app.post('/narrate', async (req, res) => {
           gameState.world.start_container = worldData.start_container || 'L0';
           // Approach C: Store founding prompt for identity alignment — natural language, not a classification
           gameState.world.founding_prompt = inputObj.WORLD_PROMPT;
+          // v1.85.83 — overwrite raw_input with founding_prompt so CB PRIMARY SOURCE reads the actual premise.
+          // founding_prompt is authoritative; raw_input may have been set to the T1 action before worldgen ran.
+          if (gameState.player?.birth_record) gameState.player.birth_record.raw_input = gameState.world.founding_prompt;
           _wLog('init', 'world_profile', { biome: worldData.biome, tone: worldData.worldTone, macro_palette: worldData.palette });
           _reportProgress('world_profile', 8, { biome: worldData.biome });
 
@@ -1047,6 +1118,69 @@ app.post('/narrate', async (req, res) => {
             _totalPatchSites += patchSites.length;
           }
           _wLog('sites', 'patch_sites_seeded', { total_sites: _totalPatchSites });
+
+          // Site placement post-pass: enforce large-site (size 8-10) spacing within each macro cell.
+          // Iterates all placed slots globally; removes any large site that is 8-directionally adjacent
+          // to another large site in the same macro cell. Removed slots are discarded from cell.sites.
+          let _spacingRejections = 0;
+          const _allPlacedSites = [];
+          for (const [_ck, _cc] of Object.entries(gameState.world.cells || {})) {
+            for (const _sl of Object.values(_cc.sites || {})) {
+              _allPlacedSites.push(_sl);
+            }
+          }
+          // Build accepted set using greedy first-wins ordering
+          const _accepted = [];
+          for (const _cand of _allPlacedSites) {
+            if (WorldGen.largeSiteSpacingViolation(_accepted, _cand)) {
+              // Remove from parent cell
+              const _parentCell = gameState.world.cells[_cand.parent_cell];
+              if (_parentCell && _parentCell.sites) {
+                delete _parentCell.sites[_cand.site_id];
+              }
+              _spacingRejections++;
+            } else {
+              _accepted.push(_cand);
+            }
+          }
+
+          // Build site placement summary log
+          const _sizeCounts = {};
+          for (let _sz = 1; _sz <= 10; _sz++) _sizeCounts[_sz] = 0;
+          let _totalEnterable = 0;
+          let _totalNonEnterable = 0;
+          const _placedSitesList = [];
+          for (const _sl of _accepted) {
+            _sizeCounts[_sl.site_size] = (_sizeCounts[_sl.site_size] || 0) + 1;
+            if (_sl.enterable) _totalEnterable++; else _totalNonEnterable++;
+            _placedSitesList.push({
+              site_id:      _sl.site_id,
+              parent_cell:  _sl.parent_cell,
+              site_size:    _sl.site_size,
+              enterable:    _sl.enterable,
+              is_community: _sl.is_community,
+            });
+          }
+          const _totalAccepted = _accepted.length;
+          const _sizePercentages = {};
+          for (let _sz = 1; _sz <= 10; _sz++) {
+            _sizePercentages[_sz] = _totalAccepted > 0
+              ? Math.round((_sizeCounts[_sz] / _totalAccepted) * 1000) / 10
+              : 0;
+          }
+          _sitePlacementLog = {
+            total_cells_evaluated: Object.keys(patchCells).length,
+            total_sites_placed:    _totalAccepted,
+            total_enterable:       _totalEnterable,
+            total_non_enterable:   _totalNonEnterable,
+            size_counts:           _sizeCounts,
+            size_percentages:      _sizePercentages,
+            target_size_weights:   { 1: 24, 2: 20, 3: 16, 4: 12, 5: 9, 6: 7, 7: 5, 8: 3.5, 9: 2, 10: 1.5 },
+            spacing_rejections:    _spacingRejections,
+            placed_sites:          _placedSitesList,
+          };
+          _wLog('sites', 'placement_pass_complete', { accepted: _totalAccepted, spacing_rejections: _spacingRejections });
+          _reportProgress('site_seeding', 12, { sites: _totalAccepted, spacing_rejections: _spacingRejections });
           
           if (logger) {
             logger.biomeDetected(worldData.biome);
@@ -1172,6 +1306,7 @@ app.post('/narrate', async (req, res) => {
           }
           console.log('[WORLDGEN] Full macro cell complete:', Object.keys(_fullMacroCellsObj).length,
             'new cells | rivers:', _hydroStats?.riverCount, '| lakes:', _hydroStats?.lakeBasins);
+          _reportProgress('start_site', 50, { container: gameState.world.start_container });
 
           // Phase 7: Legacy L2 stub block removed.
           // recordSiteToCell now stores the stub under the canonical site.interior_key.
@@ -1247,6 +1382,7 @@ app.post('/narrate', async (req, res) => {
               _startSlot.identity    = _lssParsed.identity;
               _startSlot.is_filled   = true;
               console.log(`[L2-START-SITE-FILL] Slot filled: name="${_lssParsed.name}" identity="${_lssParsed.identity}"`);
+              _reportProgress('site_fill', 55, { site: _lssParsed.name });;
               // Mirror to world.sites stub — derived, not canonical
               const _lssIk = _startSlot.interior_key;
               if (_lssIk && gameState.world.sites?.[_lssIk]) {
@@ -1318,6 +1454,7 @@ app.post('/narrate', async (req, res) => {
               _startSlot.identity    = _l1Parsed.identity;
               _startSlot.is_filled   = true;
               console.log(`[L1-START-SITE-FILL] Slot filled: name="${_l1Parsed.name}" identity="${_l1Parsed.identity}"`);
+              _reportProgress('site_fill', 55, { site: _l1Parsed.name });
               // Mirror to world.sites stub — derived, not canonical
               const _l1Ik = _startSlot.interior_key;
               if (_l1Ik && gameState.world.sites?.[_l1Ik]) {
@@ -1440,6 +1577,7 @@ app.post('/narrate', async (req, res) => {
                 grid_dims:                 _scGridDims
               };
               console.log('[START-CONTAINER] Routing log:', JSON.stringify(gameState.world._startRoutingLog));
+              _reportProgress('routing', 58, { depth: gameState.world.current_depth || 1, container: gameState.world.start_container });
             }
           }
         }
@@ -1452,6 +1590,7 @@ app.post('/narrate', async (req, res) => {
         gameState = engineOutput.state;
         sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: false, logger });
       }
+      _reportProgress('engine_build', 61, {});
 
       // Worldgen observability: compute world-shape summaries from the full 128×128 macro,
       // then freeze the log. Runs only on first turn (after full macro pre-generation).
@@ -1588,6 +1727,7 @@ app.post('/narrate', async (req, res) => {
 
         // Freeze worldgen log on gameState — no further writes
         gameState.world.worldgen_log = _worldgenLog;
+        gameState.world.site_placement_log = _sitePlacementLog;
 
         // TTL: remove progress tracking entry after 60 s (response already sent by then)
         if (_progToken) setTimeout(() => _initProgress.delete(_progToken), 60000);
@@ -1719,7 +1859,7 @@ app.post('/narrate', async (req, res) => {
         }
         if (!_degradedToFreeform && !validation.valid) {
           const _vReason = validation.reason;
-          if (_vReason === 'TARGET_NOT_FOUND_IN_CELL' || _vReason === 'TARGET_NOT_VISIBLE') {
+          if (_vReason === 'TARGET_NOT_FOUND_IN_CELL' || _vReason === 'TARGET_NOT_VISIBLE' || _vReason === 'TARGET_NOT_WORN') {
             const _dgAction = validation.queue?.[0];
             const _dgRaw = [_dgAction?.action, _dgAction?.target].filter(Boolean).join(' ') || userInput;
             inputObj = mapActionToInput(_dgRaw, 'FREEFORM');
@@ -1782,7 +1922,7 @@ app.post('/narrate', async (req, res) => {
 
           // ── HYBRID ENTRY RESOLVER ─────────────────────────────────────────────────
           // Runs BEFORE buildOutput so Engine receives annotated player_intent.
-          // Only fires on 'enter' with a non-empty target phrase.
+          // Fires on 'enter' at L0: handles targeted resolution (P1/P2) and null-target disambiguation.
           if (queuedAction.action === 'enter' && !gameState.world.active_site) {
             const _resolverPhrase = (queuedAction.target || '').toLowerCase().trim().replace(/^(the|a|an)\s+/, '');
             const _resolverTrace = {
@@ -1850,6 +1990,24 @@ app.post('/narrate', async (req, res) => {
                   }
                 }
               }
+            } else {
+              // null-target enter: contextual disambiguation from current cell (v1.85.4)
+              const _rPos     = gameState.world.position;
+              const _rCellKey = `LOC:${_rPos.mx},${_rPos.my}:${_rPos.lx},${_rPos.ly}`;
+              const _rCell    = gameState.world.cells && gameState.world.cells[_rCellKey];
+              const _rSites   = _rCell ? Object.values(_rCell.sites || {}) : [];
+              const _ntCandidates = _rSites.filter(s => s.enterable === true && s.is_filled === true);
+              if (_ntCandidates.length === 1) {
+                mapped.player_intent.resolved_site_id = _ntCandidates[0].site_id;
+                _resolverTrace.resolved_site_id = _ntCandidates[0].site_id;
+                console.log('[RESOLVER] null-target: auto-resolved to', _ntCandidates[0].site_id);
+              } else if (_ntCandidates.length > 1) {
+                mapped.player_intent.ambiguous_ids = _ntCandidates.map(s => s.site_id);
+                _enterAmbiguous = true;
+                _resolverTrace.p1 = { result: 'ambiguous', pass: 'null_target', matchCount: _ntCandidates.length };
+                console.log('[RESOLVER] null-target: ambiguous', _ntCandidates.length, 'sites');
+              }
+              // else: 0 candidates — engine receives null-target enter, handles as no-op
             }
 
             // Write trace to world state so frontend diagnostic panel can read it.
@@ -1859,6 +2017,12 @@ app.post('/narrate', async (req, res) => {
 
           // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
           if (mapped?.player_intent && typeof mapped.player_intent === 'object') mapped.player_intent._turn = turnNumber;
+          // v1.85.4: capture location fingerprint before engine processes action
+          _preTurnLoc = {
+            siteId: gameState.world?.active_site?.id ?? null,
+            lsId:   gameState.world?.active_local_space?.local_space_id ?? null,
+            posKey: `${gameState.world?.position?.mx},${gameState.world?.position?.my}:${gameState.world?.position?.lx},${gameState.world?.position?.ly}`
+          };
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
@@ -1868,6 +2032,13 @@ app.post('/narrate', async (req, res) => {
             console.log('[POINT-E-PERSIST] Before sessionStates.set - gameState.world.position:', gameState.world.position);
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
             console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
+          }
+          // v1.85.4: no-movement detection for enter/exit/move intents
+          const _ma = mapped?.player_intent?.action;
+          if (_preTurnLoc && (_ma === 'enter' || _ma === 'exit' || _ma === 'move')) {
+            _actionHadNoEffect = (_preTurnLoc.siteId === (gameState.world?.active_site?.id ?? null))
+              && (_preTurnLoc.lsId   === (gameState.world?.active_local_space?.local_space_id ?? null))
+              && (_preTurnLoc.posKey === `${gameState.world?.position?.mx},${gameState.world?.position?.my}:${gameState.world?.position?.lx},${gameState.world?.position?.ly}`);
           }
         }
         engineOutput = allResponses[allResponses.length - 1];
@@ -1905,7 +2076,11 @@ app.post('/narrate', async (req, res) => {
         // physical:, object:, declared: are permanent and untouched.
         if (engineOutput?.state) {
           const _postActionLsId = engineOutput.state.world?.active_local_space?.local_space_id ?? null;
-          if (_preActionLsId !== _postActionLsId && engineOutput.state.player?.attributes) {
+          // v1.85.5: also fire on L0↔L1 site-boundary crossings (extends v1.84.89 policy to site transitions)
+          // _preTurnLoc.siteId captured before engine ran (v1.85.4); null-safe via optional chain + ?? null
+          const _postActionSiteId = engineOutput.state.world?.active_site?.id ?? null;
+          const _siteChanged = (_preTurnLoc?.siteId ?? null) !== _postActionSiteId;
+          if ((_preActionLsId !== _postActionLsId || _siteChanged) && engineOutput.state.player?.attributes) {
             const _attrs = engineOutput.state.player.attributes;
             for (const key of Object.keys(_attrs)) {
               if (_attrs[key]?.bucket === 'state') delete _attrs[key];
@@ -2071,10 +2246,15 @@ app.post('/narrate', async (req, res) => {
     // [SITE-FILL] Pre-narration site fill — independent DS call, fires before narrator.
     // Condition: depth 1, any site in current cell has name===null or description===null.
     const _sfDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
+    // v1.85.39: track whether any fill block fires so we can emit the skip event if none do
+    let _fillStageEmitted = false;
     if (_sfDepth === 1 && _narCell?.sites) {
       const _sfSites = Object.values(_narCell.sites);
       const _sfUnfilled = _sfSites.filter(s => s.name === null || s.description === null);
       if (_sfUnfilled.length > 0) {
+        // v1.85.39: fill stage start
+        _fillStageEmitted = true;
+        emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
         const _sfFoundingClause = gameState.world.founding_prompt
           ? `World description: "${gameState.world.founding_prompt}". `
           : '';
@@ -2128,6 +2308,8 @@ app.post('/narrate', async (req, res) => {
               }
             }
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            // v1.85.39: fill complete (SITE-FILL)
+            emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
           } else {
             console.warn('[SITE-FILL] Failed to parse fill response — blocking narration');
             if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -2163,9 +2345,14 @@ app.post('/narrate', async (req, res) => {
           x: s.x,
           y: s.y,
           // v1.84.89: pass NPC count so fill LLM does not invent staff for empty spaces
-          npc_count: Array.isArray(s.npc_ids) ? s.npc_ids.length : 0
+          npc_count: Array.isArray(s.npc_ids) ? s.npc_ids.length : 0,
+          // v1.85.47: structural grounding — DS must match name/description to realized scale
+          localspace_size: s.localspace_size ?? 1,
+          width: s.width ?? null,
+          height: s.height ?? null,
+          enterable: s.enterable !== false
         }));
-        const _lsfPrompt = `${_lsfSiteContext}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfSpaceList)}\n\nIf a space has npc_count 0, its description must not mention any staff, employees, workers, or people — the space is unpopulated. If npc_count > 0, general presence is permitted but do not name or describe specific individuals.\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+        const _lsfPrompt = `${_lsfSiteContext}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfSpaceList)}\n\nScale interpretation: localspace_size 1 = tiny/compact interior; 2-4 = small; 5-7 = medium; 8-9 = large; 10 = major or exceptional. Names and descriptions must be consistent with the provided localspace_size, width, and height. A space with a large localspace_size must not be described as cramped, tiny, or compact. A space with a small localspace_size must not be described as vast, grand, or expansive.\n\nIf enterable is false, the space is a sealed, collapsed, blocked, or non-traversable structure. Describe it as such — as a visible landmark or external feature only. Do not describe it as an explorable interior. Do not mention any occupants, staff, or NPCs inside it.\n\nIf a space has npc_count 0 and enterable is true, its description must not mention any staff, employees, workers, or people — the space is unpopulated. If npc_count > 0, general presence is permitted but do not name or describe specific individuals.\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
         try {
           const _lsfResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
             model: 'deepseek-chat',
@@ -2267,8 +2454,9 @@ app.post('/narrate', async (req, res) => {
               ? `\nPlayer's founding premise: "${_lsfaRawContext}" — this is the specific place the player starts in. Name this local space to match the founding premise as closely as possible, using the proper name of the establishment or location.`
               : '';
             // Send short key in prompt — DS response must echo it back for the write guard to match.
-            const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y, npc_count: Array.isArray(_lsfaStub.npc_ids) ? _lsfaStub.npc_ids.length : 0 }];
-            const _lsfaPrompt   = `${_lsfaSiteCtx}${_lsfaPremiseDirective}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nIf a space has npc_count 0, its description must not mention any staff, employees, workers, or people — the space is unpopulated. If npc_count > 0, general presence is permitted but do not name or describe specific individuals.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
+            // v1.85.47: structural grounding — pass realized physical scale to DS
+            const _lsfaSpaceList = [{ local_space_id: _lsfaId, x: _lsfaStub.x, y: _lsfaStub.y, npc_count: Array.isArray(_lsfaStub.npc_ids) ? _lsfaStub.npc_ids.length : 0, localspace_size: _lsfaStub.localspace_size ?? 1, width: _lsfaStub.width ?? null, height: _lsfaStub.height ?? null, enterable: _lsfaStub.enterable !== false }];
+            const _lsfaPrompt   = `${_lsfaSiteCtx}${_lsfaPremiseDirective}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nA description is a characterization of the space's physical and atmospheric properties. It is not a statement about who occupies it. Occupancy is determined entirely by the engine.\nScale interpretation: localspace_size 1 = tiny/compact interior; 2-4 = small; 5-7 = medium; 8-9 = large; 10 = major or exceptional. Names and descriptions must be consistent with the provided localspace_size, width, and height. A space with a large localspace_size must not be described as cramped, tiny, or compact. A space with a small localspace_size must not be described as vast, grand, or expansive.\nIf enterable is false, the space is a sealed, collapsed, blocked, or non-traversable structure. Describe it as such — as a visible landmark or external feature only. Do not describe it as an explorable interior. Do not mention any occupants, staff, or NPCs inside it.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
             try {
               const _lsfaResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
                 model: 'deepseek-chat',
@@ -2352,88 +2540,146 @@ app.post('/narrate', async (req, res) => {
       npcsStr = JSON.stringify(scene.npcs.slice(0, 3));
     }
 
+    // v1.85.32: shared absence-phrase guard — used by birth outfit write-back and NPC intro capture loops.
+    // Prefix patterns use trailing space to avoid false hits (e.g. "no-name brand" starts with "no-" not "no ").
+    // Exact matches for "none"/"nothing" are whole-string only — "Nothing Knife" does not match.
+    function _isAbsencePhrase(name) {
+      const n = String(name).toLowerCase().trim();
+      if (n === 'none' || n === 'nothing') return true;
+      return ['missing ', 'no ', 'bare ', 'without ', 'not wearing '].some(p => n.startsWith(p));
+    }
+
+    // v1.85.97: baseline outfit init — fires on Turn 1 before narrator prompt assembly.
+    // Logic gate: DS classifier only runs when founding text contains an explicit "I am a/an X" / "I'm a/an X"
+    // form claim. No explicit form claim → humanoid assumed per Game Constitution (undeclared = default human).
+    // Fix B: uses gameState.world.founding_prompt (canonical) rather than raw action.
+    if (turnNumber === 1 && !(gameState.player.worn_object_ids && gameState.player.worn_object_ids.length > 0)) {
+      try {
+        const _boFoundingText = (gameState.world.founding_prompt || action || '').trim();
+        // Explicit form claim: "I am a wizard", "I'm a chicken nugget", etc.
+        // Does NOT match: "I am inside a tavern", "I am the king", location/action descriptions.
+        const _boHasExplicitForm = /\b(i am|i'm)\s+(a|an)\s+\w/i.test(_boFoundingText);
+
+        // Generic humanoid defaults — used when no form claim is present, or as DS failure fallback.
+        const _boGenericItems = [
+          { slot: 'shirt',     name: 'shirt',     description: 'A plain shirt.',      source: 'birth_default' },
+          { slot: 'pants',     name: 'trousers',  description: 'A pair of trousers.', source: 'birth_default' },
+          { slot: 'underwear', name: 'underwear', description: 'Basic underwear.',    source: 'birth_default' },
+          { slot: 'socks',     name: 'socks',     description: 'A pair of socks.',    source: 'birth_default' },
+          { slot: 'shoes',     name: 'shoes',     description: 'A pair of shoes.',    source: 'birth_default' },
+        ];
+
+        let _boItems = null; // null = skip outfit (explicit non-humanoid); array = create these items
+
+        if (_boHasExplicitForm) {
+          // Explicit "I am a/an X" — ask DS to classify and generate tone-adapted items
+          const _boSystemMsg = `You are a founding-state classifier for a text-based game engine. Your ONLY job is to determine if the player's founding form is humanoid-capable, and if so, return exactly 5 baseline worn items.
+
+RULES:
+- Humanoid-capable means: has a human-like body (human, elf, dwarf, cyborg, android, vampire, zombie, knight, wizard, etc.)
+- NOT humanoid-capable: animals, insects, plants, inanimate objects, food items, abstract concepts, pure energy, elemental forms, etc.
+- If humanoid-capable, return up to 5 items covering: shirt, pants, underwear, socks, shoes
+- Adapt item names and descriptions to match the world tone and founding premise (e.g. a medieval knight gets "roughspun tunic" not "t-shirt")
+- If the player EXPLICITLY states they are wearing/dressed in something, substitute that slot as source "birth_custom" (e.g. "I wear plate armor" substitutes the shirt slot)
+- Do NOT infer worn items from role or title alone. "I am a knight" does NOT auto-generate armor. The player must explicitly state wearing it.
+- Do NOT add extra items, armor properties, weapons, valuables, magical effects, or containers beyond the 5 slots
+- If a slot has no real item to return (the player is explicitly not wearing anything there, or it genuinely does not apply), OMIT that slot entirely from worn_items. Do NOT return absence descriptions such as "missing pants", "no shirt", "bare feet", "nothing", etc. as item names.
+- If NOT humanoid-capable, return is_humanoid_capable: false and worn_items: []
+
+OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
+{"is_humanoid_capable": true|false, "worn_items": [{"slot": "shirt|pants|underwear|socks|shoes", "name": "...", "description": "...", "source": "birth_default|birth_custom"}]}`;
+          const _boResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            messages: [
+              { role: 'system', content: _boSystemMsg },
+              { role: 'user', content: `Founding premise: "${_boFoundingText}"` }
+            ],
+            temperature: 0.2,
+            max_tokens: 400
+          }, {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            httpsAgent: _sharedHttpsAgent,
+            timeout: 15000
+          });
+          let _boRaw = _boResp?.data?.choices?.[0]?.message?.content || '';
+          let _boParsed = null;
+          try { _boParsed = JSON.parse(_boRaw); } catch (_) {
+            const _boMatch = _boRaw.match(/\{[\s\S]*\}/);
+            if (_boMatch) { try { _boParsed = JSON.parse(_boMatch[0]); } catch (_) {} }
+          }
+          if (_boParsed && _boParsed.is_humanoid_capable === true && Array.isArray(_boParsed.worn_items)) {
+            _boItems = _boParsed.worn_items;
+          } else if (_boParsed && _boParsed.is_humanoid_capable === false) {
+            console.log('[BORN-OUTFIT] Turn 1: explicit non-humanoid form — no baseline outfit created');
+            _boItems = null;
+          } else {
+            console.warn('[BORN-OUTFIT] Turn 1: DS parse failed — falling back to generic defaults');
+            _boItems = _boGenericItems;
+          }
+        } else {
+          // No explicit form claim — humanoid assumed per Game Constitution, use generic defaults (no DS call)
+          console.log('[BORN-OUTFIT] Turn 1: no explicit form claim — assuming humanoid, applying generic defaults');
+          _boItems = _boGenericItems;
+        }
+
+        if (_boItems !== null) {
+          if (!gameState.objects || typeof gameState.objects !== 'object') gameState.objects = {};
+          if (!Array.isArray(gameState.player.worn_object_ids)) gameState.player.worn_object_ids = [];
+          const _validSlots = new Set(['shirt', 'pants', 'underwear', 'socks', 'shoes']);
+          for (const _boItem of _boItems) {
+            if (!_boItem || !_boItem.slot || !_validSlots.has(_boItem.slot)) continue;
+            const _boName = String(_boItem.name || _boItem.slot).trim();
+            // v1.85.32: Fix 2 — absence filter. DS may return absence slot-fillers despite the prompt rule.
+            if (_isAbsencePhrase(_boName)) {
+              console.log(`[BORN-OUTFIT] skipped absence-phrase slot: "${_boName}" (${_boItem.slot})`);
+              continue;
+            }
+            const _boDesc = String(_boItem.description || '').trim();
+            const _boSrc  = _boItem.source === 'birth_custom' ? 'birth_custom' : 'birth_default';
+            const _boIdInput = [_boName.toLowerCase(), 'player_worn', 'player_worn', `born_${_boItem.slot}`].join('|');
+            const _boId = 'obj_' + require('crypto').createHash('sha256').update(_boIdInput, 'utf8').digest('hex').slice(0, 12);
+            if (!gameState.objects[_boId]) {
+              gameState.objects[_boId] = {
+                id: _boId,
+                name: _boName,
+                description: _boDesc,
+                created_turn: 1,
+                current_container_type: 'player_worn',
+                current_container_id: 'player_worn',
+                owner_id: 'player',
+                source: _boSrc,
+                status: 'active',
+                conditions: [],
+                events: []
+              };
+            }
+            if (!gameState.player.worn_object_ids.includes(_boId)) {
+              gameState.player.worn_object_ids.push(_boId);
+            }
+          }
+          console.log(`[BORN-OUTFIT] Turn 1 baseline outfit created: ${gameState.player.worn_object_ids.length} items`);
+        }
+      } catch (_boErr) {
+        console.warn('[BORN-OUTFIT] Turn 1 outfit init error (non-fatal):', _boErr.message);
+      }
+    }
+
     // v1.84.78: build invStr from ORS (player.object_ids → gameState.objects) — legacy scene.inventory is always []
     const _orsIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : [];
     const _orsObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {};
     const _invNames = _orsIds.map(id => _orsObjs[id]?.status === 'active' ? _orsObjs[id].name : null).filter(Boolean);
     let invStr = JSON.stringify(_invNames);
-
     // v1.85.22: build wornStr from ORS (player.worn_object_ids → gameState.objects)
-    // Baseline items (birth_default / birth_custom) tagged with (baseline) label.
     const _wornIds = Array.isArray(gameState.player?.worn_object_ids) ? gameState.player.worn_object_ids : [];
     const _wornNames = _wornIds.map(id => {
-      const _wrec = _orsObjs[id];
-      if (!_wrec || _wrec.status !== 'active') return null;
-      const _baselineTag = (_wrec.source === 'birth_default' || _wrec.source === 'birth_custom') ? ' (baseline)' : '';
-      return _wrec.name + _baselineTag;
+      const _wr = _orsObjs[id];
+      if (!_wr || _wr.status !== 'active') return null;
+      return _wr.source === 'birth_default' ? `${_wr.name} (baseline)` : _wr.name;
     }).filter(Boolean);
-    let wornStr = _wornNames.length > 0 ? JSON.stringify(_wornNames) : '(none)';
-
-    // [BORN-OUTFIT] v1.85.22: Turn 1 only — DS call generates baseline outfit for humanoid players.
-    // Non-humanoid (animal, creature, entity without clothing) receives empty worn list.
-    // Non-fatal — failure logs a warning and continues with wornStr = '(none)'.
-    if (turnNumber === 1) {
-      try {
-        const _birthAction = (action || '').trim();
-        const _birthWorldTone = gameState.world?.world_tone || 'unknown';
-        const _birthSysMsg = `You are an outfit generator for a text RPG. The player character is being created. Based on the founding premise and world tone, determine if the character is humanoid. If humanoid, generate a starting outfit of up to 5 items covering standard slots (shirt/top, pants/bottom, underwear, socks, shoes — adapt naming and material to the world tone). If the player's founding premise explicitly names worn items, include those as source "birth_custom"; fill remaining slots with source "birth_default". If the character is non-humanoid (animal, creature, energy form, or entity without clothing), return an empty outfit array. Return ONLY valid JSON with no prose outside it:\n{"humanoid":true,"outfit":[{"slot":"shirt","name":"<item name>","description":"<one sentence>","source":"birth_default"}]}\nor for non-humanoid:\n{"humanoid":false,"outfit":[]}`;
-        const _birthResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-          model: 'deepseek-chat',
-          temperature: 0.7,
-          max_tokens: 400,
-          messages: [
-            { role: 'system', content: _birthSysMsg },
-            { role: 'user', content: `World tone: ${_birthWorldTone}. Founding premise: "${_birthAction}"` }
-          ]
-        }, {
-          headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-          httpsAgent: _sharedHttpsAgent,
-          timeout: 15000
-        });
-        const _birthRaw = _birthResp?.data?.choices?.[0]?.message?.content || '';
-        const _birthJsonMatch = _birthRaw.match(/\{[\s\S]*\}/);
-        if (_birthJsonMatch) {
-          const _birthData = JSON.parse(_birthJsonMatch[0]);
-          if (_birthData.humanoid && Array.isArray(_birthData.outfit) && _birthData.outfit.length > 0) {
-            if (!gameState.objects) gameState.objects = {};
-            if (!Array.isArray(gameState.player.worn_object_ids)) gameState.player.worn_object_ids = [];
-            for (const _bItem of _birthData.outfit) {
-              const _bId = 'obj_' + Math.random().toString(16).slice(2, 14);
-              gameState.objects[_bId] = {
-                id: _bId,
-                name: _bItem.name,
-                description: _bItem.description || '',
-                created_turn: 1,
-                current_container_type: 'player_worn',
-                current_container_id: 'player_worn',
-                owner_id: 'player',
-                source: _bItem.source || 'birth_default',
-                status: 'active',
-                conditions: [],
-                events: []
-              };
-              gameState.player.worn_object_ids.push(_bId);
-            }
-            console.log(`[BORN-OUTFIT] Turn 1 baseline outfit created: ${_birthData.outfit.length} items (humanoid)`);
-            // Rebuild wornStr now that worn_object_ids is populated
-            const _wornIds2 = gameState.player.worn_object_ids;
-            const _wornNames2 = _wornIds2.map(id => {
-              const _wrec2 = gameState.objects[id];
-              if (!_wrec2 || _wrec2.status !== 'active') return null;
-              const _btag = (_wrec2.source === 'birth_default' || _wrec2.source === 'birth_custom') ? ' (baseline)' : '';
-              return _wrec2.name + _btag;
-            }).filter(Boolean);
-            wornStr = _wornNames2.length > 0 ? JSON.stringify(_wornNames2) : '(none)';
-          } else {
-            console.log('[BORN-OUTFIT] Turn 1: non-humanoid or empty outfit — skip');
-          }
-        } else {
-          console.warn('[BORN-OUTFIT] Turn 1: parse fail — no JSON in DS response');
-        }
-      } catch (_birthErr) {
-        console.warn('[BORN-OUTFIT] Turn 1: DS call failed —', _birthErr.message);
-      }
-    }
+    let wornStr = JSON.stringify(_wornNames);
 
     // Phase 5B: Build site context block from current cell's sites (filled only — unfilled slots are engine-internal placeholders, never narrator-visible)
     let _siteContextBlock = '';
@@ -2524,6 +2770,11 @@ app.post('/narrate', async (req, res) => {
           for (const npc of _fillNeeded) npc._fill_error = `api_failed:${_fillErr.message}`;
         }
       }
+    }
+
+    // v1.85.39: if no fill block fired, emit the explicit skip so frontend can mark [-]
+    if (!_fillStageEmitted) {
+      emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
     }
 
     // [NARRATION-GATE] Block narration if active site slot is incomplete.
@@ -2632,15 +2883,25 @@ app.post('/narrate', async (req, res) => {
       _narSceneType = 'terrain';
     }
     let _narTileType = 'open_area';
+    let _narActiveLS = null;
     if (_narDepth === 3 && gameState?.world?.active_local_space) {
-      const _narActiveLS = gameState.world.active_local_space;
+      _narActiveLS = gameState.world.active_local_space;
       _narSceneDesc = _narActiveLS.description || `The interior of ${_narActiveLS.name || 'a local space'}.`;
       _narSceneType = 'local_space_interior';
       const _lsNpcs = _narActiveLS._visible_npcs || [];
       const _lsNpcNames = _lsNpcs.map(n => n.job_category || n.id).filter(Boolean).join(', ') || '(none visible)';
       if (_lsNpcs.length > 0) {
         npcsStr = JSON.stringify(_lsNpcs.map(n => {
-          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
+          // v1.87.1: narrator sees learned_name (what player heard) not always full canonical npc_name
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? (n.learned_name || n.npc_name) : null, is_learned: n.is_learned ?? false };
+          if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
+            const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_carries.length) _ne.carries = _carries;
+          }
+          if (Array.isArray(n.worn_object_ids) && n.worn_object_ids.length > 0) {
+            const _wears = n.worn_object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_wears.length) _ne.wears = _wears;
+          }
           if (n.narrative_state) Object.assign(_ne, n.narrative_state);
           return _ne;
         }));
@@ -2664,7 +2925,16 @@ app.post('/narrate', async (req, res) => {
       // Sync npcsStr with visible NPCs — this is the hard authority boundary for narration
       if (_siteNpcs.length > 0) {
         npcsStr = JSON.stringify(_siteNpcs.map(n => {
-          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? n.npc_name : null, is_learned: n.is_learned ?? false };
+          // v1.87.1: narrator sees learned_name (what player heard) not always full canonical npc_name
+          const _ne = { id: n.id, job: n.job_category, gender: n.gender, age: n.age, npc_name: n.is_learned ? (n.learned_name || n.npc_name) : null, is_learned: n.is_learned ?? false };
+          if (Array.isArray(n.object_ids) && n.object_ids.length > 0) {
+            const _carries = n.object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_carries.length) _ne.carries = _carries;
+          }
+          if (Array.isArray(n.worn_object_ids) && n.worn_object_ids.length > 0) {
+            const _wears = n.worn_object_ids.map(oid => gameState.objects?.[oid]?.name).filter(Boolean);
+            if (_wears.length) _ne.wears = _wears;
+          }
           if (n.narrative_state) Object.assign(_ne, n.narrative_state);
           return _ne;
         }));
@@ -2717,6 +2987,30 @@ app.post('/narrate', async (req, res) => {
     const _parsedAction = inputObj?.player_intent?.action || '';
     const _rawInput = (action || '').trim();
 
+    // v1.88.0: Authority Gate — pre-RC routing layer.
+    // Inject parsed target onto gameState for gate's object-existence helpers.
+    // Cleared immediately after gate returns so it never pollutes other logic.
+    let _authorityGateResult = null;
+    let _agDurationMs = 0;
+    gameState._lastParsedTarget = inputObj?.player_intent?.target || null;
+    if (turnNumber === 1) {
+      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
+      _authorityGateResult = { decision: 'allow_no_rc', route: 'narrator', rc_allowed: false, input_type: 'valid_low_risk', reason_code: 'turn_1_founding', referenced_objects: [], referenced_entities: [], referenced_abilities: [], evidence: { engine_supported: true, matched_records: [] }, _llm_called: false, gate_fast_path_hit: false, llm_confidence: null };
+    } else {
+      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+      const _agStart = Date.now();
+      _authorityGateResult = await AuthorityGate.runAuthorityGate(_rawInput, gameState, _parsedAction, process.env.DEEPSEEK_API_KEY);
+      _agDurationMs = Date.now() - _agStart;
+      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId, decision: _authorityGateResult.decision, rc_allowed: _authorityGateResult.rc_allowed });
+    }
+    delete gameState._lastParsedTarget;
+    console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} fast_path:${_authorityGateResult.gate_fast_path_hit ? 'L1' : 'L2'} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'} dur:${_agDurationMs}ms`);
+    if (_authorityGateResult.decision === 'freeform') {
+      // Gate denied — block RC; narrator receives denial block assembled below.
+      // _rcSkippedReason is set here; the existing RC skip block below will not override it
+      // because its else-if chain only fires when _rcSkippedReason is still null.
+    }
+
     // v1.84.21: Flight recorder — per-turn payload snapshots (written atomically at turn-close)
     let _rcPayloadSnapshot          = null;
     let _narratorPayloadSnapshot    = null;
@@ -2732,7 +3026,18 @@ app.post('/narrate', async (req, res) => {
     let _rcRawResponse = null;
     let _rcStart = null;
     let _rcEnd = null;
+    let _emoteRemoveExecuted = false; // v1.85.42: set inside RC else-block, consumed by narrator assembly
+    let _emoteRemovedItemName = null;
+    let _rcHiddenNpcTarget = null; // v1.87.0: NPC with hidden canonical name on SAY-channel turns — hoisted for post-RC resolver access
     const _rcSuffix = 'Focus on immediate physical, social, and legal consequences. Respond in plain prose, 2-3 sentences maximum. No headers, no bullet points. Be direct and specific.';
+    // v1.88.0: Authority Gate deny takes priority — set _rcSkippedReason before existing skip block.
+    if (_authorityGateResult?.decision === 'freeform') {
+      _rcSkippedReason = 'authority_gate_deny';
+    } else if (_authorityGateResult?.rc_allowed === false) {
+      // v1.88.x: Gate explicitly said no RC — honor it. These turns still reach the narrator
+      // via the normal path; only the RC call is suppressed.
+      _rcSkippedReason = 'authority_gate_no_rc';
+    }
     if (turnNumber === 1) {
       _rcSkippedReason = 'turn_1';
     } else if (_parsedAction === 'move') {
@@ -2745,6 +3050,12 @@ app.post('/narrate', async (req, res) => {
       _rcSkippedReason = 'enter';
     } else if (_parsedAction === 'exit') {
       _rcSkippedReason = 'exit';
+    } else if (_parsedAction === 'remove') {
+      // Deterministic mechanical action — no RC needed.
+      _rcSkippedReason = 'remove';
+    } else if (debug?.degraded_from === 'TARGET_NOT_WORN') {
+      // remove action degraded because target is not in player worn — route to narrator for natural denial.
+      _rcSkippedReason = 'target_not_worn';
     } else if (_parsedAction === 'state_claim') {
       // Non-executable input — not a valid engine action, not a harmless skip action.
       // RC must not fire: treating a bare assertion as true would allow narrator to instantiate it.
@@ -2754,6 +3065,18 @@ app.post('/narrate', async (req, res) => {
       // RC must not fire: narrator prompt already routes this to state_claim rejection — an RC advisory would
       // contradict that instruction and give the narrator a concrete consequence to follow instead.
       _rcSkippedReason = 'target_not_found_in_cell';
+    } else if (gameState._environmentGatherIntent?.synthetic) {
+      // v1.85.6: take action forwarded to narrator for plausibility resolution (ORS had no prior record).
+      // RC must not fire: the narrator already receives a targeted plausibility-judgment block.
+      _rcSkippedReason = 'synthetic_env_gather';
+    } else if (_parsedAction === 'unknown') {
+      // v1.85.13: Parser could not classify input. RC must not fire — unclassified inputs cannot be trusted
+      // as valid action descriptions; passing them to RC risks validating embedded outcome assertions.
+      _rcSkippedReason = 'unknown_block_rc';
+    } else if (debug?.degraded_from === 'TARGET_NOT_IN_INVENTORY') {
+      // v1.85.36: throw/drop degraded because AP validated the item is not in player inventory.
+      // AP is authoritative on inventory state for these actions — RC must not fire.
+      _rcSkippedReason = 'target_not_in_inventory';
     } else {
       // Build query — SAY channel with matched NPC gets role context
       const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
@@ -2766,43 +3089,183 @@ app.post('/narrate', async (req, res) => {
         : '';
       // v1.84.76: Validation clause — injected only for established_trait_action RC calls
       const _rcValidationClause = (_parsedAction === 'established_trait_action')
-        ? ' If the action requires an item or ability not in the relevant established attributes above, state that the player does not have it and the action fails. Do not substitute or materialize any other item in its place as a consolation or alternative.'
+        ? ' If the action requires an item or ability not in the relevant established attributes above, state that the player does not have it and the action fails. Do not substitute or materialize any other item in its place as a consolation or alternative. Established attributes grant the player the capacity for this type of action; they do not assert the existence of new objects or world facts. Do not confirm the existence of new objects or world facts unless they are already present in confirmed engine state or a DISCOVERY RESULT block in this prompt explicitly establishes them as found.'
         : '';
       _realityQuery = _rcNpcRole
         ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}?${_rcValidationClause} ${_rcSuffix}`
         : `${_rcTruthFragment}What happens when I ${_rawInput}?${_rcValidationClause} ${_rcSuffix}`;
-      try {
-        _rcStart = Date.now();
-        const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-          model: 'deepseek-chat',
-          temperature: 0.3,
-          max_tokens: 300,
-          messages: [{ role: 'user', content: _realityQuery }]
-        }, {
-          headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-          httpsAgent: _sharedHttpsAgent,
-          timeout: 15000
-        });
-        _rcEnd = Date.now();
-        _rcRawResponse = _rcResp?.data?.choices?.[0]?.message?.content || null;
-        _realityAnchor = _rcRawResponse?.trim() || null;
-        const _rcFinishReason = _rcResp?.data?.choices?.[0]?.finish_reason || null;
-        const _rcTruncated = _rcFinishReason === 'length';
-        if (_rcTruncated) console.warn(`[REALITY-CHECK] response truncated (finish_reason=length) — turn ${turnNumber}, increase max_tokens if this persists`);
-        _rcPayloadSnapshot = { prompt: _realityQuery, response: _rcRawResponse }; // v1.84.21
-        if (!_realityAnchor) throw new Error('empty_response');
-        emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, truncated: _rcTruncated || false, gameSessionId: resolvedSessionId });
-        console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}${_rcTruncated ? ' [TRUNCATED]' : ''}`);
-      } catch (_rcErr) {
-        console.error('[REALITY-CHECK] HARD FAILURE:', _rcErr.message, '— turn halted, narrator not called');
-        emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: null, error: _rcErr.message, gameSessionId: resolvedSessionId });
-        return res.json({ sessionId: resolvedSessionId, error: 'REALITY_CHECK_FAILED', narrative: 'The world could not adjudicate that action. Please try again.' });
+      // v1.85.37: Emote inventory scan — say-channel emote authority gate.
+      // On say-channel turns with asterisk-wrapped emotes, scan active player containers
+      // (inventory + worn) against the raw input using aliasScore. No verb lists, no noun
+      // lists, no trigger taxonomy — the player's own containers are the authority source.
+      // Confirmed match (score >= 6): RC fires with compact inventory confirmation.
+      // No match (including empty inventory): RC skipped — _emoteObjectAuthorityBlock
+      // handles the narrator uncontested and cannot be overridden by a hallucinated anchor.
+      // Non-say/non-emote turns: block does not run, RC behavior unchanged.
+      const _rcPossessionDebug = { fired: false, is_emote_turn: false, best_score: 0, inventory_match: false, matched_item_name: null, skip_reason: null };
+      const _isEmoteTurn = (resolvedChannel === 'say' && /\*[^*]+\*/.test(_rawInput));
+      if (_isEmoteTurn) {
+        _rcPossessionDebug.fired = true;
+        _rcPossessionDebug.is_emote_turn = true;
+        // v1.85.99: Extract only the *inner* text of the emote (between asterisks) for object ref detection.
+        // Previously used _rawInput.replace(/\*/g,'') which included surrounding dialog text, causing
+        // pure gesture emotes like *frowns* in "you don't know this face? *frowns* Very" to scan the
+        // full dialog sentence against inventory — always failing and incorrectly skipping the RC.
+        const _emoteInner = (_rawInput.match(/\*([^*]+)\*/) || [])[1] || '';
+        // Gate: only run inventory scan when the emote inner text contains a determiner or possessive —
+        // the reliable signal that it references a concrete object ("*draws my sword*", "*holds the torch*").
+        // Pure gestures (*frowns*, *nods*, *sighs*, *laughs*) contain no determiner and skip the scan,
+        // allowing RC to fire normally.
+        const _emoteHasObjectRef = /\b(?:my|the|a|an|this|that|these|those|its|your)\b/i.test(_emoteInner);
+        if (!_emoteHasObjectRef) {
+          _rcPossessionDebug.skip_reason = 'emote_pure_gesture';
+          console.log(`[RC-POSSESSION] turn:${turnNumber} emote_pure_gesture — RC allowed to fire normally inner:"${_emoteInner}"`);
+        } else {
+        const _emotePlayerIds = [...new Set([...(gameState?.player?.object_ids || []), ...(gameState?.player?.worn_object_ids || [])])];
+        let _emoteBestScore = 0;
+        let _emoteBestRec = null;
+        // v1.85.44: Extract noun phrase before aliasScore. Strips action-language scaffolding
+        // (remove-verb phrases, grammatical function words) so the query is noun/object terms only.
+        // "off" not stripped globally — may appear in item names; handled as part of verb phrases only.
+        // "your" stripped — safe: this scan targets player containers only.
+        // Corrects argument order: query=nounPhrase (needle), name=itemName (haystack).
+        // v1.85.99: Source changed from full-input _emoteRawStripped to _emoteInner (asterisk content only).
+        const _emoteNounPhrase = _emoteInner
+          .replace(/\b(?:strip\s+off|take\s+off|unequip|undress|remove)\b/gi, '')
+          .replace(/\b(?:my|the|a|an|these|those|some|its|your)\b/gi, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+        for (const _epid of _emotePlayerIds) {
+          const _eprec = gameState?.objects?.[_epid];
+          if (!_eprec || _eprec.status !== 'active') continue;
+          const _esc = Actions.aliasScore(_emoteNounPhrase || _emoteInner, _eprec.name || '', _eprec.aliases || []);
+          if (_esc > _emoteBestScore) { _emoteBestScore = _esc; _emoteBestRec = _eprec; }
+        }
+        _rcPossessionDebug.best_score = _emoteBestScore;
+        if (_emoteBestScore >= 6) {
+          _rcPossessionDebug.inventory_match = true;
+          _rcPossessionDebug.matched_item_name = _emoteBestRec.name;
+          // v1.85.42: Emote worn-item removal execution — if the emote describes removing a worn item,
+          // execute the transfer authoritatively before narrator/CB runs. Stamps _apExecutedTransfers
+          // (suppresses duplicate CB transfer) and _apRemovedWornNames (worn-remove gate blocks CB
+          // promotes for name variants like "wool trousers" vs "sturdy wool trousers").
+          const _EMOTE_REMOVE_RE = /\btake[\s_]off|remove|strip[\s_]off|unequip|undress\b/i;
+          const _emoteIsWorn = Array.isArray(gameState?.player?.worn_object_ids) &&
+            gameState.player.worn_object_ids.includes(_emoteBestRec.id);
+          if (_emoteIsWorn && _EMOTE_REMOVE_RE.test(_rawInput)) {
+            const _erResult = ObjectHelper.transferObjectDirect(
+              gameState, _emoteBestRec.id, 'player', 'player', turnNumber, 'emote_remove'
+            );
+            if (_erResult.success) {
+              if (!gameState._apExecutedTransfers) gameState._apExecutedTransfers = [];
+              gameState._apExecutedTransfers.push(_emoteBestRec.id);
+              if (!gameState._apRemovedWornNames) gameState._apRemovedWornNames = [];
+              gameState._apRemovedWornNames.push(_emoteBestRec.name.toLowerCase().trim());
+              _emoteRemoveExecuted = true;
+              _emoteRemovedItemName = _emoteBestRec.name;
+              console.log(`[EMOTE-REMOVE] executed remove "${_emoteBestRec.name}" (${_emoteBestRec.id})`);
+            } else {
+              console.warn(`[EMOTE-REMOVE] transferObjectDirect failed: ${_erResult.error}`);
+            }
+          }
+        } else {
+          _rcPossessionDebug.skip_reason = 'emote_no_inventory_match';
+          _rcSkippedReason = 'emote_no_inventory_match';
+        }
+        } // end _emoteHasObjectRef
+      }
+      debug.rc_possession = _rcPossessionDebug;
+      console.log(`[RC-POSSESSION] turn:${turnNumber} is_emote:${_rcPossessionDebug.is_emote_turn} score:${_rcPossessionDebug.best_score} match:${_rcPossessionDebug.inventory_match} item:"${_rcPossessionDebug.matched_item_name || ''}"`);
+      // v1.85.17: RC system message — inject world tone and player declared truths so RC evaluates
+      // within the correct reality frame instead of defaulting to modern real-world assumptions.
+      const _rcDeclaredAttrs = Object.values(gameState?.player?.attributes || {})
+        .filter(a => a.bucket === 'declared')
+        .map(a => a.value)
+        .slice(0, 8);
+      const _rcWorldTone = gameState?.world?.world_tone || null;
+      const _rcSystemParts = [];
+      if (_rcWorldTone) _rcSystemParts.push(`World context: ${_rcWorldTone}`);
+      if (_rcDeclaredAttrs.length > 0) _rcSystemParts.push(`Established player truths: ${_rcDeclaredAttrs.join(' | ')}`);
+      // v1.85.37: Inject compact inventory confirmation when emote turn has a confirmed match.
+      if (_rcPossessionDebug.inventory_match) {
+        _rcSystemParts.push(`Player inventory confirmed: ${_rcPossessionDebug.matched_item_name} (engine state).`);
+      }
+      // v1.87.0: NPC name-reveal gate — when target NPC has a canonical name hidden from the player,
+      // instruct RC to use a placeholder instead of inventing a name. The engine will substitute the
+      // real canonical name after RC returns, before the narrator sees the anchor block.
+      _rcHiddenNpcTarget = (resolvedChannel === 'say' && _npcTalkResult?.npc && !_npcTalkResult.npc.is_learned && _npcTalkResult.npc.npc_name)
+        ? _npcTalkResult.npc
+        : null;
+      if (_rcHiddenNpcTarget) {
+        _rcSystemParts.push(`The addressed NPC's canonical name is unknown to the player. If your response includes the NPC revealing their true name, write [NPC_NAME_REVEAL] as a placeholder instead of inventing a name.`);
+      }
+      const _rcSystemMsg = _rcSystemParts.length > 0
+        ? `You are evaluating an action taken within an established game world. Evaluate the immediate consequences within the established world's genre and physical rules — do not substitute modern real-world assumptions unless the world is explicitly set in the modern era. ${_rcSystemParts.join('. ')}.`
+        : null;
+      // v1.85.38: RC API call gated on _rcSkippedReason — if the emote inventory scan (or any
+      // other skip condition set inside this else block) determined RC should not fire, do not
+      // call the API. Previously _rcSkippedReason was set but the try/catch fired unconditionally,
+      // causing the RC anchor to override _emoteObjectAuthorityBlock with contradictory imagery.
+      if (!_rcSkippedReason) {
+        try {
+          _rcStart = Date.now();
+          const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            temperature: 0.3,
+            max_tokens: 300,
+            messages: [
+              ...(_rcSystemMsg ? [{ role: 'system', content: _rcSystemMsg }] : []),
+              { role: 'user', content: _realityQuery }
+            ]
+          }, {
+            headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+            httpsAgent: _sharedHttpsAgent,
+            timeout: 15000
+          });
+          _rcEnd = Date.now();
+          _rcRawResponse = _rcResp?.data?.choices?.[0]?.message?.content || null;
+          _realityAnchor = _rcRawResponse?.trim() || null;
+          const _rcFinishReason = _rcResp?.data?.choices?.[0]?.finish_reason || null;
+          const _rcTruncated = _rcFinishReason === 'length';
+          if (_rcTruncated) console.warn(`[REALITY-CHECK] response truncated (finish_reason=length) — turn ${turnNumber}, increase max_tokens if this persists`);
+          _rcPayloadSnapshot = { prompt: _realityQuery, response: _rcRawResponse }; // v1.84.21
+          if (!_realityAnchor) throw new Error('empty_response');
+          emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, truncated: _rcTruncated || false, gameSessionId: resolvedSessionId });
+          console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}${_rcTruncated ? ' [TRUNCATED]' : ''}`);
+        } catch (_rcErr) {
+          console.error('[REALITY-CHECK] HARD FAILURE:', _rcErr.message, '— turn halted, narrator not called');
+          emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: null, error: _rcErr.message, gameSessionId: resolvedSessionId });
+          return res.json({ sessionId: resolvedSessionId, error: 'REALITY_CHECK_FAILED', narrative: 'The world could not adjudicate that action. Please try again.' });
+        }
       }
     }
     if (_rcSkippedReason) {
       emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: false, skipped_reason: _rcSkippedReason, query: null, result: null, gameSessionId: resolvedSessionId });
       console.log(`[REALITY-CHECK] skipped — turn ${turnNumber}, reason: ${_rcSkippedReason}`);
     }
+    // v1.87.0: Post-RC name-reveal resolver — detect whether RC signaled a true-name reveal and
+    // substitute the engine's canonical NPC name before the narrator sees the anchor block.
+    // Two-tier detection: (1) RC obeyed the placeholder instruction → [NPC_NAME_REVEAL] literal;
+    // (2) Conservative fallback — BOTH player-input pressure AND NPC-performing-reveal signal in
+    // the RC anchor must be present. Neither condition alone triggers the fallback.
+    let _authorizedNameReveal = null;
+    if (_rcHiddenNpcTarget && _realityAnchor) {
+      const _nrvCanonical = _rcHiddenNpcTarget.npc_name;
+      const _nrvLabel = _rcNpcRole || _rcHiddenNpcTarget.job_category || 'the NPC';
+      const _nrvHasPlaceholder = _realityAnchor.includes('[NPC_NAME_REVEAL]');
+      const _nrvInputPressure = /reveal|compel|confess|tell me your (?:real |true )?name|what is your (?:real |true )?name/i.test(_rawInput);
+      // Group A: verb -> pronoun -> name (e.g. "shouts his name", "booms their name")
+      // Group B: pronoun -> name -> event verb (e.g. "his name booms out", "her name is shouted")
+      const _nrvAnchorSignal = /\b(?:blurts?\s+out|gasps?\s+out|whispers?\s+(?:her|his|their)\s+(?:true\s+)?name|stammers?\s+(?:her|his|their)\s+(?:true\s+)?name|says?\s+(?:her|his|their)\s+(?:true\s+)?name|reveals?\s+(?:her|his|their)\s+(?:true\s+)?name|shouts?\s+(?:her|his|their)\s+(?:true\s+)?name|screams?\s+(?:her|his|their)\s+(?:true\s+)?name|booms?\s+(?:her|his|their)\s+(?:true\s+)?name|announces?\s+(?:her|his|their)\s+(?:true\s+)?name|declares?\s+(?:her|his|their)\s+(?:true\s+)?name|calls?\s+out\s+(?:her|his|their)\s+(?:true\s+)?name|cries?\s+out\s+(?:her|his|their)\s+(?:true\s+)?name|proclaims?\s+(?:her|his|their)\s+(?:true\s+)?name|exclaims?\s+(?:her|his|their)\s+(?:true\s+)?name|(?:her|his|their)\s+(?:true\s+)?name\s+(?:rings?\s+out|booms?\s+out|echoes?\s+out|erupts?\s+out|bursts?\s+out|rings?\s+through|booms?\s+through|echoes?\s+through|is\s+shouted|is\s+called\s+out|is\s+spoken|is\s+announced|fills\s+the\s+\w+|cuts?\s+through|reverberates?))\b/i.test(_realityAnchor);
+      if (_nrvHasPlaceholder || _nrvAnchorSignal) {
+        _realityAnchor = _realityAnchor.replace(/\[NPC_NAME_REVEAL\]/g, `"${_nrvCanonical}"`);
+        _authorizedNameReveal = { npc_id: _rcHiddenNpcTarget.id, canonical_name: _nrvCanonical, label: _nrvLabel };
+        console.log(`[NAME-REVEAL] v1.87.4 authorized "${_nrvCanonical}" for ${_rcHiddenNpcTarget.id} (placeholder:${_nrvHasPlaceholder} signal:${_nrvAnchorSignal})`);
+      }
+    }
+    const _nameRevealAuthorityBlock = _authorizedNameReveal
+      ? `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has just revealed their true canonical name: "${_authorizedNameReveal.canonical_name}". This is engine-verified fact. If your narration depicts the name reveal occurring this turn, use this exact name only — do not substitute, alter, or invent a different name. If your narration depicts a non-reveal outcome (refusal, deflection, interruption), you do not need to use this name.\n`
+      : '';
     const _realityAnchorBlock = _realityAnchor
       ? `\n\nPossible consequences of the player's action (advisory):\n${_realityAnchor}\nUse these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.\n`
       : '';
@@ -2815,20 +3278,44 @@ app.post('/narrate', async (req, res) => {
       : _rawInput;
     const _rawPreSpeech = (req.body.pre_speech_context || '').trim(); // B1: pre-speech context forwarded from Do→Say interception
 
+    // v1.88.0: _authorityGateBlock — injected BEFORE _freeformBlock when gate issued a deny.
+    // index.js owns all prose translation. authoritygate.js emits JSON only.
+    const _authorityGateBlock = (() => {
+      if (!_authorityGateResult || _authorityGateResult.decision !== 'freeform') return '';
+      const _rc = _authorityGateResult.reason_code || '';
+      if (_rc === 'unsupported_meta_authority') {
+        return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted to invoke a meta-authority — developer, admin, god, or operator-level powers — that they do not possess. Do not treat this as true. Do not create objects, grant abilities, alter world state, or acknowledge the meta-claim as legitimate. Reflect only confirmed engine state. The denial must be explicit in the narration. Do not silently skip it.)\n`;
+      }
+      if (_rc === 'unsupported_entity_spawn' || _authorityGateResult.input_type === 'unsupported_entity_spawn') {
+        return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted to introduce or summon a new entity — person, creature, or living thing — without an established ability that grants this. Do not treat this as true. Do not create, name, or describe any entity not already present in confirmed engine state. The denial must be explicit in the narration.)\n`;
+      }
+      // Default: unsupported world authoring or external event — use state_claim denial text
+      return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`;
+    })();
+
     // v1.84.72: _freeformBlock branches: established_trait_action (birth-backed ability) → real-action hint;
     // state_claim (no attrs) → blanket denial; degraded → blanket denial; else → no-effect.
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
       ? (_parsedAction === 'established_trait_action'
-        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted an action supported by an established attribute or ability. Follow the Reality Check result above — if the action requires an item or ability not in the player's relevant established attributes, narrate that they do not have it and the action fails. Do not invent or materialize any item not already established. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`
+        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted an action supported by an established attribute or ability. If a Reality Check result was generated above, follow it. If no RC result was generated, narrate the attempt based on the player's established attributes and confirmed engine state — the established attribute grants the capacity for this type of action, not authority to confirm new objects or world facts not already present in confirmed engine state. Do not invent or materialize any item not already established. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`
         : (_parsedAction === 'state_claim'
           ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`
           : (inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_FOUND_IN_CELL'
             ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`
-            : (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK'
-              ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The parser could not classify this input as a known mechanical action, but that does not mean the attempt failed. Treat this as a genuine physical action attempt. Do not treat it as a state claim unless the wording is clearly declarative. Narrate the outcome based on the physical reality of the scene — success, partial success, or failure are all valid. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state.)\n`
-              : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`))))
+            : (inputObj?.degraded === true && debug?.degraded_from === 'TARGET_NOT_WORN'
+              ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted to remove an item they are not currently wearing. Acknowledge this naturally and briefly — do not generate a robotic error message. Do not create, name, or describe any item not in confirmed engine state.)\n`
+              : (inputObj?.degraded === true && debug?.degraded_from === 'PARSER_FAILURE_FALLBACK'
+                ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The parser could not classify this input as a known mechanical action, but that does not mean the attempt failed. Treat this as a genuine physical action attempt. Do not treat it as a state claim unless the wording is clearly declarative. Narrate the outcome based on the physical reality of the scene — success, partial success, or failure are all valid. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state.)\n`
+                : (_parsedAction === 'attack'
+                  ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making a genuine physical attack. This is a real action with real consequences — do not treat it as mechanically inert and do not state that it has no mechanical effect. Follow the Reality Check advisory above for the outcome. Narrate the physical result as it would actually occur given the player's current embodiment, equipped items, and the target's actual capabilities. Success, partial success, and failure are all valid outcomes — the Reality Check has already assessed the likely consequence; honor it. Do not invent resistance or blocking mechanisms that contradict the RC outcome. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state.)\n`
+                  : (_parsedAction === 'remove'
+                    ? (inputObj?.player_intent?.target === '__all_worn__'
+                      ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed ALL of their worn clothing and gear. Every item is now in their inventory. None of it landed on the ground, was dropped, or was discarded anywhere. Do not describe any item falling to the floor or being set down. Do not name items using shortened or informal versions of their names.)\n`
+                      : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed a worn item from their body. The item is now in their inventory — it was not dropped, placed on the ground, or discarded. Do not describe it falling to the floor or ending up anywhere other than the player's possession.)\n`)
+                    : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`)))))))
       : '';
     // v1.84.79: environmental gather block — fires when AP resolved a take against a CB-promoted env: feature.
+    // v1.85.6: also fires for synthetic=true (ORS had no prior record — narrator resolves plausibility).
     // Reads and clears state._environmentGatherIntent (set by ActionProcessor take handler).
     // Explicitly lifts the POSSESSION RULE / FOUNDING TURN RULE for this code path.
     const _envGatherIntent = gameState._environmentGatherIntent || null;
@@ -2837,9 +3324,9 @@ app.post('/narrate', async (req, res) => {
     // If the narrator describes failure the label is used to block spurious grid promotions.
     const _envGatherLabel = _envGatherIntent ? _envGatherIntent.label.toLowerCase() : null;
     const _environmentGatherBlock = _envGatherIntent
-      ? (_envGatherIntent.featureValue
-          ? `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item was established as a feature of the current scene by the engine: "${_envGatherIntent.featureValue}". This is a legitimate physical interaction with the narrated world — the POSSESSION RULE's item-instantiation prohibition and the FOUNDING TURN RULE do not apply to this attempt. The item pre-exists in the narrated scene; the player is not asserting something from thin air. Narrate the gather based on the physical nature of the item: if it is detachable or collectable (a plant, a flower, loose material, scattered debris, something lying on the ground), narrate the player successfully gathering it. If it is a permanent feature (a cliff face, a carved structure, a flowing stream), narrate clearly that it cannot be taken. Do not deny this attempt on the basis that the item is not yet listed in INVENTORY.\n`
-          : `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item has not been confirmed as an established feature of the current scene by the engine. Narrate based on whether the current scene plausibly contains such an item given prior narration — if the environment would naturally include it, the player may find and gather it; if it is implausible given the current scene, narrate that nothing of that kind is found here. The POSSESSION RULE's item-instantiation prohibition does not apply if the item is plausibly present in the current scene.\n`)
+      ? (_envGatherIntent.synthetic
+        ? `\nENVIRONMENTAL GATHER ATTEMPT: The player is physically attempting to grab or pick up "${_envGatherIntent.label}". The engine has no prior record of this item. Narrate the player's physical search or reach using established scene details.\n`
+        : `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item was established as a feature of the current scene by the engine: "${_envGatherIntent.featureValue}". This is a legitimate physical interaction with the narrated world — the POSSESSION RULE's item-instantiation prohibition and the FOUNDING TURN RULE do not apply to this attempt. The item pre-exists in the narrated scene; the player is not asserting something from thin air. Narrate the gather based on the physical nature of the item: if it is detachable or collectable (a plant, a flower, loose material, scattered debris, something lying on the ground), narrate the player successfully gathering it. If it is a permanent feature (a cliff face, a carved structure, a flowing stream), narrate clearly that it cannot be taken. Do not deny this attempt on the basis that the item is not yet listed in INVENTORY.\n`)
       : '';
     const _conditionBlock = (() => {
       const _activeConds = gameState.player?.conditions;
@@ -2857,6 +3344,9 @@ app.post('/narrate', async (req, res) => {
       // Collect in-scene container IDs
       const _sceneCids = new Set(['player']);
       if (_pos) _sceneCids.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
+      // v1.85.81: include active localspace or site floor
+      if (_loc && _loc.local_space_id) _sceneCids.add(_loc.local_space_id);
+      else if (_loc && _loc.site_id)   _sceneCids.add(_loc.site_id);
       const _visNpcs = (_loc && _loc._visible_npcs) || [];
       for (const _npc of _visNpcs) { if (_npc.id) _sceneCids.add(_npc.id); }
       // Build lines for objects with conditions
@@ -2920,7 +3410,7 @@ app.post('/narrate', async (req, res) => {
       !_npcTalkBlock &&
       (_rawNpcTarget || _npcTalkResult?.outcome === 'matched')
     )
-      ? `\nNARRATOR MODE [MANDATORY]: This is a dialogue turn. The player is addressing ${_npcRef}.\n${_rawPreSpeech ? 'PLAYER APPROACH: "' + _rawPreSpeech + '"\nDo not summarize or omit anything in PLAYER APPROACH. Preserve every beat concretely — physical movement, gesture, expression, and setup all belong in narration before the speech act.\n' : ''}PLAYER SAYS: "${_rawInput}"\n- Text in asterisks (*like this*) represents player gesture or body language — weave it into the NPC's reaction; do not skip or summarize it\n- If the player's words or gesture (*like this*) imply holding, showing, or possessing an item not listed in INVENTORY above, the NPC does not perceive that item — it does not exist in the scene. Do not have the NPC reference, react to, engage with, or inquire about any item the player implied but that is not in confirmed engine state.\n- Do NOT re-describe the surrounding environment or scene unless it directly affects this exchange\n- Anchor entirely to the NPC's reaction: their words, expression, posture, and immediate response to the player\n- The player's words are the event. The NPC's response is the scene.\n- Social and conversational detail takes absolute priority over environmental description on dialogue turns\n`
+      ? `\nNARRATOR MODE [MANDATORY]: This is a dialogue turn. The player is addressing ${_npcRef}.\n${_rawPreSpeech ? 'PLAYER APPROACH: "' + _rawPreSpeech + '"\nDo not summarize or omit anything in PLAYER APPROACH. Preserve every beat concretely — physical movement, gesture, expression, and setup all belong in narration before the speech act.\n' : ''}PLAYER SAYS: "${_rawInput}"\n- Text in asterisks (*like this*) represents player gesture or body language — weave it into the NPC's reaction; do not skip or summarize it\n- If the player's speech implies possession or use of an object not in authoritative state, that possession is not real and the action cannot physically complete. Do not have the NPC treat the implied object as real.\n- Do NOT re-describe the surrounding environment or scene unless it directly affects this exchange\n- Anchor entirely to the NPC's reaction: their words, expression, posture, and immediate response to the player\n- The player's words are the event. The NPC's response is the scene.\n- Social and conversational detail takes absolute priority over environmental description on dialogue turns\n`
       : '';
 
     // Phase 3: Do-channel PLAYER INTENT — non-authoritative flavor injection.
@@ -2944,17 +3434,39 @@ app.post('/narrate', async (req, res) => {
       ? `\nEMOTE DETECTED: The player's input contains asterisk-wrapped gesture or body language (*like this*). The player's authored emote is the action. Use their exact word(s) as written in the narration — do not reinterpret, replace, or substitute it with a different gesture. Integrate it naturally but do not invent an alternative.\n`
       : '';
 
+    // v1.85.35: Emote object authority block — fires on say-channel turns with asterisk-wrapped emotes.
+    // Guards: resolvedChannel==='say' AND emote present. Covers both NPC-addressed and soliloquy.
+    // Enforces three-tier object authority model: player-controlled | NPC-controlled (contested) | nonexistent.
+    const _emoteObjectAuthorityBlock = (
+      resolvedChannel === 'say' && /\*[^*]+\*/.test(_rawInput)
+    )
+      ? (() => {
+          console.log('[EMOTE-AUTHORITY] fired turn:', turnNumber);
+          return `\nEMOTE OBJECT AUTHORITY [MANDATORY]:\nThis input contains an asterisk-wrapped emote. If the emote clearly describes a physical action involving a concrete object, determine the object's authority status before narrating:\n- Object appears in INVENTORY or WORN above — player controls it. Proceed normally.\n- Object appears in NPCs PRESENT carries or wears — the object is real in this scene, but it belongs to the NPC. The attempt is valid; the outcome is not automatic. Narrate as the simulation demands given the NPC's character and the nature of the interaction. Do NOT complete the transfer or access as if it were guaranteed.\n- Object is not found in the authority sources available to this prompt — the object does not exist. You MUST narrate the player reaching or miming the gesture with empty hands. Do not describe the object as physically present. Do not describe its weight, texture, or appearance. No NPC may react to it as if it were real or present. The action fails visibly — the gesture produces nothing.\n`;
+        })()
+      : '';
+
+    // v1.85.41: Emote inventory fail block — fires when emote_no_inventory_match skipped RC.
+    // Injected first in the tail sequence to dominate model attention.
+    const _emoteInventoryFailBlock = (_rcSkippedReason === 'emote_no_inventory_match')
+      ? `\n[MANDATORY — OBJECT NOT IN INVENTORY: The emote references an object not found in the player's possession. That object is not established in authoritative state and must not be treated as physically present. Narrate the player miming or reaching with empty hands. Do not instantiate the object in any form.]\n`
+      : '';
+
+    // v1.85.42: Emote remove block — fires when a worn item was authoritatively transferred via emote.
+    // Instructs narrator that item is in inventory, not on the ground.
+    const _emoteRemoveBlock = _emoteRemoveExecuted
+      ? `\n[MANDATORY — WORN ITEM REMOVED: The player has successfully removed "${_emoteRemovedItemName}" from their body. It is now in their inventory. It was not dropped, placed on the ground, or discarded anywhere. Do not describe it falling, being set down, or ending up anywhere other than the player's possession.]\n`
+      : '';
+
     // v1.51.0: Soliloquy block — fires on Say channel when no NPC is successfully bound.
     // Covers: NPC_NOT_PRESENT degrade, target:null, not_found, not_in_site outcomes.
     // Mutually exclusive with _narratorModeBlock (which requires matched NPC).
-    // v6.0.18: _soliloquyFired flag used downstream to suppress unsupported player-state promotion in CB.
-    const _soliloquyFired = (
+    const _soliloquyBlock = (
       resolvedChannel === 'say' &&
       !_rawNpcTarget &&
       _npcTalkResult?.outcome !== 'matched'
-    );
-    const _soliloquyBlock = _soliloquyFired
-      ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nThe player speaks without addressing any specific recipient. Narrate the player's words as self-expression. Do not treat unsupported declarations as changes to engine truth.\n`
+    )
+      ? `\nPLAYER SPEAKS ALOUD: "${_rawInput}"\nNo specific NPC is being addressed. Narrate the player's words as self-expression — muttering, exclaiming, or speaking into the space. Do not treat this as a failed dialogue attempt.\n`
       : '';
 
     // v1.52.0: Narration Task Override — task-replacement blocks for move/look/exit turns.
@@ -2972,6 +3484,14 @@ app.post('/narrate', async (req, res) => {
       ? `\nNARRATION TASK [MANDATORY]: This is an exit turn.\nThe player's authored action — "${_rawInput}" — is the narrative event.\nTheir phrasing describes how they exited. Use it.\nDo NOT replace it with a generic exit description.\nDo NOT open with environment description before the exit action.\nDo NOT replace the player's authored action with a generic or alternative action.\n`
       : '';
 
+    // v1.85.5: enter arrival anchor — mirrors _exitTaskBlock pattern; gates on successful entry only
+    const _enterTaskBlock = (_parsedAction === 'enter' && !_actionHadNoEffect)
+      ? (() => {
+          const _enteredSiteName = gameState.world?.active_site?.name || 'the site';
+          return `\nNARRATION TASK [MANDATORY]: This is an entry turn. The player has arrived in ${_enteredSiteName}.\nThey are now inside the site boundary. Lead with arrival — what they immediately encounter upon entering.\nDo NOT narrate approach, travel toward the site, or exterior description.\nDo NOT open with environment description before the arrival event.\nDo NOT replace the player's authored action with a generic or alternative action.\nThe player is already there.\n`;
+        })()
+      : '';
+
     // v1.53.0: Dynamic primary narration task bullet.
     // Replaces the static "Write a vivid paragraph describing surroundings" bullet in the CORE INSTRUCTIONS
     // bullet list with a turn-specific task definition. This is the upstream fix — the bullet is read
@@ -2987,18 +3507,24 @@ app.post('/narrate', async (req, res) => {
       if (_parsedAction === 'exit') {
         return `Write a vivid paragraph that opens with how the player exited. Their specific phrasing from "${_rawInput}" is the narrative event — do not open with the destination environment before the exit action.`;
       }
+      // v1.85.5: enter arrival anchor — gates on successful entry only (_actionHadNoEffect excludes failed/ambiguous)
+      if (_parsedAction === 'enter' && !_actionHadNoEffect) {
+        const _enteredSiteName = gameState.world?.active_site?.name || 'the site';
+        return `Write a vivid paragraph that opens with the player's arrival into ${_enteredSiteName}. They are now inside the site boundary — lead with what they immediately encounter upon arrival. Do not narrate travel toward the site; the player is already there.`;
+      }
       return `Write a vivid paragraph describing the player's current surroundings as they experience them now`;
     })();
 
-    const narrationContent = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Statements such as "I am inside Bojangles," "I am a chicken nugget," "I have a magic sword," "I have 5 million dollars," or "I start in an arcade" are all valid founding premises. These are not cheating, not invalid, and are not to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.
+    const narrationContent = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Any statement that defines who the player is, what they possess, where they are, or what conditions they start under is a valid founding premise — regardless of its content, genre, or apparent implausibility. No founding input is cheating, invalid, or to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.
 
-After Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player's self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements such as "I have a magic sword," "I am the king of this realm," or "I am inside the bank vault" must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.
+After Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player's self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements that assert new possessions, claimed authority, new locations, or altered world state must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.
 
 The player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.
 
 All actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player's expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.
 
 BIRTH RECORD: The player container may include a birth_record field containing structured facts from the Turn 1 founding premise. These facts appear in the TRUTH block as source:declared entries. Treat them as real founding conditions established at world creation — narrate from them as given. The world and its NPCs respond to these facts through simulation, not by rejecting them.
+${turnNumber === 1 && gameState?.world?.founding_prompt ? `\nFOUNDING PREMISE (authoritative — player-declared world setup):\n"${gameState.world.founding_prompt}"\nThis is the factual basis for this opening narration. Establish the player's identity and situation directly from this statement. Do not invent or substitute an identity — use the one declared here.` : ''}
 
 ---
 
@@ -3006,9 +3532,19 @@ You are narrating an interactive roguelike game. Use the world tone to guide you
 
 ---
 
-You are not just describing the world. You are performing it.
+You are a chronicler, not a co-author.
 
-You are the narrator and the world itself. The player is the protagonist. Each turn is a continuation of the same scene — not a reset.
+The engine determines what happens. You render what happened. The player is the protagonist. Each turn is a continuation of the same scene — not a reset.
+
+Your authority is entirely in HOW you render — prose, pacing, sensory texture, emotional weight, atmosphere, consequence, aftermath. Your authority is never in WHETHER an event occurred. The engine owns that. You do not.
+
+When the engine has resolved an outcome — through declared founding abilities, physical laws of the world, or adjudicated consequence — that outcome happened. It is not a suggestion. It is not a draft. It is not negotiable. Your job is to make it real on the page with complete commitment. Committing to engine truth is not a constraint imposed on you. It is what you are.
+
+Describe violent, disturbing, and extreme outcomes with complete unflinching prose. When the engine resolves destruction, death, injury, or visceral consequence, render it faithfully. Do not substitute softer imagery. Do not redirect to philosophy. Do not have a character survive something the engine resolved as fatal. The scene happened — write it.
+
+When authoritative systems establish concrete physical outcomes, the narrator must depict those outcomes directly and materially. The narrator may not omit, euphemize, sanitize, stylize away, abstract, or reinterpret the established consequence. Tone and prose remain flexible only after the physical reality itself has been faithfully rendered.
+
+POINT OF VIEW RULE: Narrate strictly in the first person. Use "I" to refer to the player character throughout all narrative prose. Write as the player character experiencing and describing the world — not as an external narrator describing a third party. "I push open the door." "The light hits me as I step outside." "She glances up when I enter." References to "the player" in engine rules above (POSSESSION RULE, WORN RULE, FOUNDING TURN RULE, NPC OBJECTS RULE, etc.) are rule-system language and instruction context — they are not narrative prose and do not override this directive. All output prose uses "I".
 
 Follow what just happened.
 
@@ -3034,6 +3570,12 @@ The player's attention is the camera. Stay with it.
 
 ---
 
+TURN CONTEXT:
+Current turn: ${turnNumber}.
+Do not reintroduce stable scene elements as if newly discovered; when the player looks again, acknowledge familiarity and vary focus, detail, or continuity instead.
+
+---
+
 WORLD TONE & CHARACTER:
 ${gameState?.world?.world_tone || "A functional, atmospheric world"}
 
@@ -3041,12 +3583,12 @@ WORLD CONTEXT:
 Biome: ${_narBiome || '(unknown)'}
 Civilization Presence: ${_narCivPresence || '(unknown)'}
 Environment Tone: ${_narEnvTone || '(unknown)'}
-
+${npcsStr === '(None visible)' ? `\nOCCUPANCY STATE: No persons are present at your current position. The world tone above describes the setting's character and environmental atmosphere, not its current tile population. Do not infer that people are present at this position from the tone, the location type, or the location name. Other persons may exist elsewhere in the site — they are not here.\n` : ''}
 LAYER CONSTRAINT [MANDATORY]:
 ${_narDepth === 3
   ? `You are inside a local space (Layer L2). The player is already within this environment — do NOT reintroduce or restate the room at the start of this turn.
 
-${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}
+${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : _actionHadNoEffect && _enterAmbiguous ? `Multiple enterable structures are present at this location. The player's input did not specify which one. Acknowledge this directly and briefly — the player must name the structure to proceed. Do not describe movement, approach, or entry of any kind.` : _actionHadNoEffect && _parsedAction === 'enter' ? `The player attempted to enter but there is nothing enterable here. Briefly acknowledge this. Do not describe movement, approach, or entry.` : _actionHadNoEffect ? `This action had no mechanical effect — the player's location is unchanged. Narrate a brief grounded moment in the player's current position. Do not describe movement, travel, or approach.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}
 
 Environment appears only as it is encountered, interacted with, or newly revealed through the action. Avoid repeating static descriptions (air, smell, walls, lighting, hum) unless something has changed or the player is actively examining their surroundings.${_parsedAction === 'move' ? `
 
@@ -3056,7 +3598,7 @@ The player is actively observing — environment description is warranted here. 
   : _narDepth >= 2
   ? `You are narrating Layer L1 — the open interior of ${_narActiveSite?.name || 'the site'}: streets, paths, and open areas between buildings. The player is traversing this site. Their action is the opening beat of this turn — streets and paths are what they move through, not a scene to re-establish each turn. Do not open with a description of the ground, air, or ambient sounds as if the player is standing still. Do not repeat static environmental phrases from prior turns.
 
-${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
+${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : _actionHadNoEffect && _enterAmbiguous ? `Multiple enterable structures are present at this location. The player's input did not specify which one. Acknowledge this directly and briefly — the player must name the structure to proceed. Do not describe movement, approach, or entry of any kind.` : _actionHadNoEffect && _parsedAction === 'enter' ? `The player attempted to enter but there is nothing enterable here. Briefly acknowledge this. Do not describe movement, approach, or entry.` : _actionHadNoEffect ? `This action had no mechanical effect — the player's location is unchanged. Narrate a brief grounded moment in the player's current position. Do not describe movement, travel, or approach.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
 
 The player is moving through the site. Use their exact phrasing in the first sentence. The street or path is what they pass through — not what they stop to describe.` : (_parsedAction === 'look' || _parsedAction === 'examine') ? `
 
@@ -3065,7 +3607,7 @@ The player is actively observing. Observation is warranted here — describe wha
 You are NOT inside any individual local space or structure. Do NOT describe any building interior under any circumstance unless the engine explicitly indicates Layer L2. Any local spaces listed below are navigation references only — do NOT import their smell, atmosphere, or character into your description.`
   : `You are narrating Layer L0 — the overworld. The player is traversing open terrain. Their action is the opening beat of this turn — terrain is the medium they are moving through, not the primary subject of the narration. Do not open with a description of the landscape as if the player is standing still surveying it. Do not repeat static terrain phrases from prior turns.
 
-${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
+${_parsedAction === 'state_claim' ? `This input is an unsupported claim and is not a valid action. Do not begin from it. Begin from what is actually present in the scene — the player's surroundings, visible entities, and current world state.` : _actionHadNoEffect && _enterAmbiguous ? `Multiple enterable structures are present at this location. The player's input did not specify which one. Acknowledge this directly and briefly — the player must name the structure to proceed. Do not describe movement, approach, or entry of any kind.` : _actionHadNoEffect && _parsedAction === 'enter' ? `The player attempted to enter but there is nothing enterable here. Briefly acknowledge this. Do not describe movement, approach, or entry.` : _actionHadNoEffect ? `This action had no mechanical effect — the player's location is unchanged. Narrate a brief grounded moment in the player's current position. Do not describe movement, travel, or approach.` : `The player's action — "${_rawInput}" — is the anchor of this turn. Begin there.`}${_parsedAction === 'move' ? `
 
 The player is moving across terrain. Use their exact phrasing in the first sentence. The terrain and landscape are what they pass through — not what they stop to describe.` : (_parsedAction === 'look' || _parsedAction === 'examine') ? `
 
@@ -3074,13 +3616,14 @@ The player is actively observing. Observation is warranted here — describe wha
 You MUST NOT describe the player as entering, being inside, or stepping into any structure, site, or building. The player is outdoors in open terrain. Any sites or communities listed below are visible landmarks — do NOT narrate arrival or entry into them.`}
 
 ${_continuityBlock ? _continuityBlock + '\n\n' : ''}${_engineSpatialBlock ? _engineSpatialBlock + '\n\n' : ''}CORE INSTRUCTIONS:
-- Let the world tone guide your descriptions and atmosphere
+- Let the world tone guide your descriptions and atmosphere — world tone governs environmental mood, setting character, and sensory details. It does not determine occupancy. Who is present is determined exclusively by NPCs PRESENT, never by world tone, location type, or location name.
 - Expand on the location description with vivid sensory details matching the tone
 - React to the player's action naturally within the world
 - Only describe what's present in the player's CURRENT LOCATION—do not place the player into adjacent areas
 
 ---
 
+[LOCATION ATMOSPHERE — physical and sensory properties of the space only. This text is NOT authoritative on occupancy. If it references any person, figure, employee, customer, or crowd — DO NOT narrate that person or group. Treat any such reference as a drafting artifact. Who is present is determined exclusively by NPCs PRESENT.]
 ${_narSceneDesc}
 (Terrain: ${_narSceneType})
 
@@ -3090,10 +3633,12 @@ ${nearbyStr}
 
 INVENTORY: ${invStr}
 WORN: ${wornStr}
-WORN RULE: Items listed in WORN are physically on the player's body right now. Items tagged (baseline) are standard everyday clothing present since game start — do not describe unless damaged, removed, explicitly interacted with, or otherwise scene-relevant. WORN is authoritative physical containment: if a WORN item also appears in ATTRIBUTES as a possession string, WORN entry governs. The player is wearing exactly what is listed. Do not describe the player as bare, shirtless, unclothed, or missing any item that is listed in WORN.
-POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location (in a crevice, on the floor, wedged against the machine, resting on a surface) — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
+WORN RULE: Items listed in WORN are the player's worn clothing and equipment. WORN is the authoritative physical containment record — if an item appears in both WORN and in a birth possession attribute string, the WORN entry governs; do not treat it as separately carried or duplicate the object. Items marked (baseline) are standard everyday clothing present since game start; do not describe them unless they become damaged, removed, explicitly interacted with, or otherwise relevant to the current scene.
+POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
+DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability. The narrator also does not override declared founding abilities. If a founding ability has fired and the RC advisory confirms the outcome, render that outcome fully and without modification. You cannot decide the ability "didn't work this time," redirect to a softer result, have a character philosophically sidestep the effect, or substitute any framing that denies or dilutes the resolved event. Committing to founding ability outcomes is part of the same commitment as committing to engine truth — it is not optional.
+NPC OBJECTS RULE: On an NPC's first meaningful appearance, you may give them grounded carried or worn objects appropriate to their role and scene. Do not overfill. After that introduction, the carries and wears fields in NPCs PRESENT are authoritative engine truth. Do not describe an NPC carrying or wearing items not listed there.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}
-The player has already moved. They are now in the location described above.
+You (the player character) have already moved. You are now in the location described above.
 
 ---
 
@@ -3106,10 +3651,10 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Use the world tone to determine appropriate atmosphere, decrepitude level, technology level, and mood
 - Include sensory details (sights, sounds, smells, textures) that match the tone
 - Do not assign specific proper names, business names, or official designations to any building, organization, or landmark unless that entity is explicitly listed in the site data above. Treat this as a strict world-truth constraint — the narrator describes what the engine has established, not the reverse. Generic architectural description is permitted; narrator-invented proper nouns are not.
-- Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The SCENE DESCRIPTION below is engine-generated flavor text — if it references any staff, employee, worker, or other character by role or name, treat that as a drafting artifact only and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
+- Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
-- NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or use a proper name when npc_name is null. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_realityAnchorBlock}`;
+- NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or assume a proper name when npc_name is null; if the fiction calls for a name to be spoken, wait for an ENGINE AUTHORITY block to supply it. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
+${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
 
@@ -3143,6 +3688,9 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     let _narratorEnd = null;
     _lastNarratorPayload = { model: 'deepseek-chat', temperature: 0.7, messages: [{ role: 'user', content: narrationContent }] };
     try {
+      // v1.85.39: narration stage start
+      emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+      _reportProgress('narrating', 64, {});
       _narratorStart = Date.now();
       response = await _makeNarCall();
       _narratorEnd = Date.now();
@@ -3192,6 +3740,10 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       }
     }
 
+    // v1.85.39: narration complete, world_update starting
+    emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
+    emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+
     // v1.70.0: ContinuityBrain Phase B — forensic extraction + promotion; replaces NC extraction+freeze
     let _continuityExtractionSuccess = false;
     let _extractionPacket = null;   // v1.70.0: CB extracted schema (replaces active_continuity snapshot)
@@ -3211,7 +3763,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         top_violation:              null,
         channel:                    resolvedChannel || null,
       };
-      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, { suppressUnsupportedPlayerStatePromotion: _soliloquyFired });
+      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, { suppressPlayerObjectAttributes: _rcSkippedReason === 'emote_no_inventory_match' });
       _continuityExtractionSuccess = _phaseBResult !== null;
       // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
       if (!_continuityExtractionSuccess && turnNumber === 1 && gameState.player?.birth_record) {
@@ -3237,6 +3789,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         skip_reason: null,
         cb_candidates: [],
         cb_transfers: [],
+        visible_objects_count: Array.isArray(_phaseBResult && _phaseBResult.visible_objects) ? _phaseBResult.visible_objects.length : 0,
         quarantine_size: 0,
         pre_rejected: 0,
         origin_blocked: 0,
@@ -3247,35 +3800,119 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         error_entries: [],
         initial_condition_updates: [],
         condition_updates: [],
-        retirement_updates: []
+        retirement_updates: [],
+        fission_retired: 0,
+        fission_successors_injected: 0,
+        npc_intro_materialized: 0
       };
       if (_phaseBResult) {
-        // v6.0.18: soliloquy gate — drop player-targeted object candidates on soliloquy turns
-        if (_soliloquyFired && Array.isArray(_phaseBResult.object_candidates)) {
-          _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
-            if (c.container_type === 'player') {
-              console.warn(`[SOLILOQUY-GATE] player-targeted object_candidate blocked on soliloquy turn: "${c.name}"`);
-              return false;
-            }
-            return true;
-          });
-          if (Array.isArray(_phaseBResult.object_transfers)) {
-            _phaseBResult.object_transfers = _phaseBResult.object_transfers.filter(t => {
-              if (t.to_container_type === 'player') {
-                console.warn(`[SOLILOQUY-GATE] player-targeted object_transfer blocked on soliloquy turn: "${t.object_name || t.object_id}"`);
-                return false;
+        // v1.85.28: NPC intro capture — materialize held/worn objects from entity_candidates as real ObjectRecords.
+        // _promoteEntityAttributes runs synchronously inside CB before _phaseBResult is returned, so
+        // entity_candidates.held_objects / worn_objects are already populated when this step runs.
+        // held_objects → container_type:'npc', worn_objects → container_type:'npc_worn'.
+        // object_capture_turn set ONLY when ≥1 object is materialized (zero-object intros remain eligible for future capture).
+        if (!Array.isArray(_phaseBResult.object_candidates)) _phaseBResult.object_candidates = [];
+        // v1.85.31: Fix A — replace OR chain with concat+dedup. At L2 depth _narActiveLS._visible_npcs is []
+        // (local spaces have no grid[][], computeVisibleNpcs returns empty). [] is truthy in JS so the old OR
+        // chain short-circuited before consulting _narActiveSite._visible_npcs — site-level NPCs were invisible
+        // to the intro capture loop. Concat+dedup merges both pools correctly.
+        const _visibleNpcsForCapture = [
+          ...(_narActiveLS?._visible_npcs || []),
+          ...(_narActiveSite?._visible_npcs || [])
+        ].filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
+        let _npcIntroCaptureCount = 0;
+        if (Array.isArray(_phaseBResult.entity_candidates)) {
+          for (const _intrNpc of _visibleNpcsForCapture) {
+            if (_intrNpc.object_capture_turn !== null && _intrNpc.object_capture_turn !== undefined) continue;
+            const _intrCand = _phaseBResult.entity_candidates.find(ec => ec.entity_ref === _intrNpc.id);
+            if (!_intrCand) continue;
+            let _capturedForNpc = 0;
+            for (const _hItem of (_intrCand.held_objects || [])) {
+              if (!_hItem || typeof _hItem !== 'string' || !_hItem.trim()) continue;
+              // v1.85.31: Fix B — exact-match duplicate guard. If an active ObjectRecord already exists
+              // for this item (container_type:npc, same container_id, exact normalized name, status:active),
+              // skip the push but still count it so object_capture_turn gets finalized. No fuzzy/token matching.
+              const _hNameNorm = _hItem.trim().toLowerCase();
+              // v1.85.32: Fix 3 — absence filter. Does NOT count toward _capturedForNpc (absence ≠ object).
+              if (_isAbsencePhrase(_hNameNorm)) {
+                console.log(`[NPC-INTRO-CAPTURE] skipped absence-phrase held: "${_hItem.trim()}" (T-${turnNumber})`);
+                continue;
               }
-              return true;
-            });
+              const _hAlreadyExists = Object.values(gameState.objects || {}).some(r =>
+                r.status === 'active' &&
+                r.current_container_type === 'npc' &&
+                r.current_container_id === _intrNpc.id &&
+                String(r.name).toLowerCase().trim() === _hNameNorm
+              );
+              if (_hAlreadyExists) {
+                console.log(`[NPC-INTRO-CAPTURE] "${_hItem.trim()}" already materialized → skipping push, counting (T-${turnNumber})`);
+                _capturedForNpc++;
+                continue;
+              }
+              _phaseBResult.object_candidates.push({
+                temp_ref: `npc_intro_${_intrNpc.id}_h${_capturedForNpc}`,
+                name: _hNameNorm,
+                description: '',
+                container_type: 'npc',
+                container_id: _intrNpc.id,
+                transfer_origin: 'npc_introduction',
+                _source_npc_id: _intrNpc.id,
+                _source_phrase: _hItem.trim(),
+                _created_turn: turnNumber
+              });
+              console.log(`[NPC-INTRO-CAPTURE] "${_hItem.trim()}" → npc/${_intrNpc.id} (T-${turnNumber})`);
+              _capturedForNpc++;
+              _npcIntroCaptureCount++;
+            }
+            for (const _wItem of (_intrCand.worn_objects || [])) {
+              if (!_wItem || typeof _wItem !== 'string' || !_wItem.trim()) continue;
+              // v1.85.31: Fix B — same exact-match guard for worn items (container_type:npc_worn).
+              const _wNameNorm = _wItem.trim().toLowerCase();
+              // v1.85.32: Fix 4 — absence filter for worn items. Does NOT count toward _capturedForNpc.
+              if (_isAbsencePhrase(_wNameNorm)) {
+                console.log(`[NPC-INTRO-CAPTURE] skipped absence-phrase worn: "${_wItem.trim()}" (T-${turnNumber})`);
+                continue;
+              }
+              const _wAlreadyExists = Object.values(gameState.objects || {}).some(r =>
+                r.status === 'active' &&
+                r.current_container_type === 'npc_worn' &&
+                r.current_container_id === _intrNpc.id &&
+                String(r.name).toLowerCase().trim() === _wNameNorm
+              );
+              if (_wAlreadyExists) {
+                console.log(`[NPC-INTRO-CAPTURE] "${_wItem.trim()}" already materialized (worn) → skipping push, counting (T-${turnNumber})`);
+                _capturedForNpc++;
+                continue;
+              }
+              _phaseBResult.object_candidates.push({
+                temp_ref: `npc_intro_${_intrNpc.id}_w${_capturedForNpc}`,
+                name: _wNameNorm,
+                description: '',
+                container_type: 'npc_worn',
+                container_id: _intrNpc.id,
+                transfer_origin: 'npc_introduction',
+                _source_npc_id: _intrNpc.id,
+                _source_phrase: _wItem.trim(),
+                _created_turn: turnNumber
+              });
+              console.log(`[NPC-INTRO-CAPTURE] "${_wItem.trim()}" → npc_worn/${_intrNpc.id} (T-${turnNumber})`);
+              _capturedForNpc++;
+              _npcIntroCaptureCount++;
+            }
+            if (_capturedForNpc > 0) _intrNpc.object_capture_turn = turnNumber;
           }
         }
+        _objectRealityDebug.npc_intro_materialized = _npcIntroCaptureCount;
+
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
+        // v1.85.7: Turn 1 founding premise items are exempt — they are legitimate starting inventory
         if (Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
-            if (c.container_type === 'player' && c.transfer_origin === 'player_claimed') {
+            if (c.transfer_origin === 'npc_introduction') return true; // v1.85.28: NPC intro capture — always pass through
+            if (c.container_type === 'player' && c.transfer_origin === 'player_claimed' && turnNumber !== 1) {
               console.warn(`[ORIGIN-GATE] player_claimed item blocked: "${c.name}"`);
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
-              gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'player_claimed_item_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
+              gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'player_claimed_item_blocked', name: c.name, turn: turnNumber });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
               return false;
             }
@@ -3285,6 +3922,25 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'narrator_independent_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+              // v1.85.90: Write rejected-candidate cache entry so ObjectHelper dedup guard can reconcile
+              // if the same object is later grounded as a floor/localspace entity. This does NOT create
+              // an ObjectRecord — it is negative evidence only. Anti-conjuration contract unchanged.
+              const _rcTurn = (gameState.turn_history?.length || 0) + 1;
+              const _rcNameLower = String(c.name).toLowerCase().trim();
+              const _rcNormalized = _rcNameLower
+                .replace(/^(stack|pile|bunch|set|piece|bit|pair|row|collection) of /i, '')
+                .replace(/^(small|large|tiny|big|old|worn|broken|battered|cracked|rusty|dusty|faded|crumpled|folded|half-empty|empty|full|open|closed|thick|thin|heavy|light|dark|dim|bright|clean|dirty|wet|dry|loose|tight|short|tall|long|narrow|wide) /i, '')
+                .trim();
+              if (!Array.isArray(gameState._rejectedCandidates)) gameState._rejectedCandidates = [];
+              gameState._rejectedCandidates.push({
+                name:             _rcNameLower,
+                normalized:       _rcNormalized,
+                turn:             _rcTurn,
+                reason:           'narrator_independent_player_blocked',
+                location_context: gameState.world?.active_local_space?.local_space_id || null
+              });
+              // Expire entries older than 5 turns to keep the cache bounded
+              gameState._rejectedCandidates = gameState._rejectedCandidates.filter(r => _rcTurn - r.turn <= 5);
               return false;
             }
             // v1.84.90: environment_interaction + player is only valid when the action's semantic class
@@ -3320,6 +3976,35 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
             return true;
           });
         }
+        // v1.85.24: worn-remove gate — defense-in-depth against CB emitting a fresh promote
+        // for a just-removed worn item with a shortened/variant name (name-mismatch failure mode).
+        // _apDoneIds (below) suppresses CB transfers by exact ID; this gate suppresses CB promotes
+        // by token-matching candidate name against AP-stamped removed item names.
+        // Gate is INERT unless: _parsedAction === 'remove' AND AP stamped _apRemovedWornNames.
+        // Only blocks candidates targeting world containers (grid/localspace/site).
+        const _apRemovedWornNames = Array.isArray(gameState._apRemovedWornNames) ? gameState._apRemovedWornNames : [];
+        gameState._apRemovedWornNames = []; // consume and clear for next turn
+        if ((_parsedAction === 'remove' || _emoteRemoveExecuted) && _apRemovedWornNames.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
+          const _wornRemoveTokenize = str => String(str || '').toLowerCase().split(/[\s\-_\/]+/).map(t => t.replace(/[^a-z0-9]/g, '')).filter(t => t.length > 0);
+          // Pre-build token sets for each removed worn item name
+          const _removedTokenSets = _apRemovedWornNames.map(n => ({ name: n, tokens: new Set(_wornRemoveTokenize(n)) }));
+          _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+            const _wct = c.container_type;
+            if (_wct !== 'grid' && _wct !== 'localspace' && _wct !== 'site') return true; // only world containers
+            const _cToks = _wornRemoveTokenize(c.name);
+            if (_cToks.length === 0) return true;
+            for (const { name: _rName, tokens: _rSet } of _removedTokenSets) {
+              if (_cToks.every(tok => _rSet.has(tok))) {
+                console.warn(`[WORN-REMOVE-GATE] blocked promote candidate: "${c.name}" matched removed worn item "${_rName}" (container_type: ${_wct})`);
+                if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
+                gameState.object_errors.push({ stage: 'worn_remove_gate', reason: 'promote_blocked_name_match', name: c.name, matched: _rName, turn: (gameState.turn_history?.length || 0) + 1 });
+                if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+                return false;
+              }
+            }
+            return true;
+          });
+        }
         const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
         const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];
         _objectRealityDebug.cb_candidates = _cbCandidates;
@@ -3330,16 +4015,53 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         const _apDoneIds = new Set(Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : []);
         gameState._apExecutedTransfers = []; // consume and clear for next turn
         const _cbTransfersFiltered = _cbTransfers.filter(t => !t.object_id || !_apDoneIds.has(t.object_id));
+        // v1.85.9: detect ap_dedup_all_transfers — CB produced transfers but all were AP-claimed.
+        // Distinct from empty_quarantine (CB produced nothing) — improves diagnostic clarity.
+        if (_cbCandidates.length === 0 && _cbTransfers.length > 0 && _cbTransfersFiltered.length === 0) {
+          _objectRealityDebug.skip_reason = 'ap_dedup_all_transfers';
+        }
         const _quarantine = [];
         for (const c of _cbCandidates)        _quarantine.push({ action: 'promote',  ...c, detected_turn: turnNumber });
         for (const t of _cbTransfersFiltered) _quarantine.push({ action: 'transfer', ...t, detected_turn: turnNumber });
         // v1.84.65: pre-flight normalization gate — reject grid promote entries with invalid container_id
+        // v1.84.93: grid promotes at L1/L2 are REWRITTEN to the correct container (not rejected)
+        //   L1 (active_site, no active_local_space): grid → site, container_id = ${siteId}:${x},${y}
+        //   L2 (active_local_space set): grid → localspace, container_id = active_local_space.local_space_id
         if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
         let _preRejected = 0;
+        let _preRewritten = 0;
         for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
           const _qe = _quarantine[_i];
           if (_qe.action !== 'promote' || _qe.container_type !== 'grid') continue;
           const _cid = String(_qe.container_id || '');
+          // v1.84.93: depth-based reroute — check BEFORE format validation
+          const _rwActiveLs = gameState.world?.active_local_space;
+          const _rwActiveSite = gameState.world?.active_site;
+          if (_rwActiveLs) {
+            // L2: grid → localspace
+            const _rwLsId = _rwActiveLs.local_space_id;
+            if (_rwLsId) {
+              console.log(`[NARRATE] pre-flight: grid promote rewritten L2 -> localspace:${_rwLsId} (was: ${_cid}) for "${_qe.name}"`);
+              _qe.container_type = 'localspace';
+              _qe.container_id = _rwLsId;
+              _preRewritten++;
+              continue;
+            }
+          } else if (_rwActiveSite) {
+            // L1: grid → site
+            const _rwSiteId = _rwActiveSite.id || _rwActiveSite.site_id;
+            const _rwPx = gameState.player?.position?.x;
+            const _rwPy = gameState.player?.position?.y;
+            if (_rwSiteId != null && _rwPx != null && _rwPy != null) {
+              const _rwSiteKey = `${_rwSiteId}:${_rwPx},${_rwPy}`;
+              console.log(`[NARRATE] pre-flight: grid promote rewritten L1 -> site:${_rwSiteKey} (was: ${_cid}) for "${_qe.name}"`);
+              _qe.container_type = 'site';
+              _qe.container_id = _rwSiteKey;
+              _preRewritten++;
+              continue;
+            }
+          }
+          // L0 (or reroute data unavailable): validate format and reject if invalid
           const _isCellPfx = _cid.startsWith('cell:');
           const _isInvalid = _isCellPfx || !/^LOC:\d+,\d+:\d+,\d+$/.test(_cid);
           if (!_isInvalid) continue;
@@ -3365,7 +4087,35 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           _quarantine.splice(_i, 1);
           _preRejected++;
         }
+        // v1.84.92: pre-flight gate for site promotes — container_id must match active site + current player x,y
+        // v1.84.94: rewrite-on-mismatch (same principle as v1.84.93 grid gate) — CB may emit wrong container_id format
+        for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
+          const _qe = _quarantine[_i];
+          if (_qe.action !== 'promote' || _qe.container_type !== 'site') continue;
+          const _activeSite94 = gameState.world?.active_site;
+          const _cid94 = String(_qe.container_id || '');
+          const _siteId94 = _activeSite94 ? (_activeSite94.site_id || _activeSite94.id?.replace(/\/l2$/, '')) : null;
+          const _px94 = gameState.player?.position?.x;
+          const _py94 = gameState.player?.position?.y;
+          const _expectedSiteKey94 = (_siteId94 != null && _px94 != null && _py94 != null) ? `${_siteId94}:${_px94},${_py94}` : null;
+          if (!_activeSite94 || !_expectedSiteKey94) {
+            // Hard reject only when rewrite data is unavailable
+            const _siteReason94 = !_activeSite94 ? 'no active site' : 'player position unavailable';
+            console.warn(`[NARRATE] pre-flight: site promote rejected (${_siteReason94}): ${_cid94}`);
+            gameState.object_errors.push({ stage: 'quarantine_validation', reason: 'missing_authoritative_container', container_type: _qe.container_type, container_id: _cid94, object_name: _qe.name, turn: turnNumber });
+            if (gameState.object_errors.length > 100) gameState.object_errors.shift();
+            _quarantine.splice(_i, 1);
+            _preRejected++;
+            continue;
+          }
+          if (_cid94 === _expectedSiteKey94) continue; // already correct
+          // Rewrite wrong container_id to authoritative site floor key
+          console.log(`[NARRATE] pre-flight: site promote rewritten -> site:${_expectedSiteKey94} (was: ${_cid94}) for "${_qe.name}"`);
+          _qe.container_id = _expectedSiteKey94;
+          _preRewritten++;
+        }
         _objectRealityDebug.pre_rejected = _preRejected;
+        _objectRealityDebug.pre_rewritten = _preRewritten;
         _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
           const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
@@ -3375,9 +4125,12 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           _objectRealityDebug.transferred  = _ohResult.transferred;
           _objectRealityDebug.errors       = _ohResult.errors;
           _objectRealityDebug.audit        = _ohResult.audit || [];
+          _objectRealityDebug.reconciliation_count = _ohResult.reconciled || 0;
           _objectRealityDebug.error_entries = (gameState.object_errors || []).filter(e => e.turn === turnNumber);
         } else {
-          _objectRealityDebug.skip_reason = 'empty_quarantine';
+          // v1.85.25: guard prevents 'empty_quarantine' from overwriting 'ap_dedup_all_transfers'.
+          // When all CB transfers were AP-deduped, quarantine ends up empty but skip_reason is already set.
+          if (!_objectRealityDebug.skip_reason) _objectRealityDebug.skip_reason = 'empty_quarantine';
         }
 
         // v1.84.66: Initial condition pass — applies initial_condition from CB candidate to newly-promoted objects
@@ -3423,6 +4176,9 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
             const _bcLoc   = _bcWorld.active_local_space || _bcWorld.active_site;
             const _bcCids  = new Set(['player']);
             if (_bcPos) _bcCids.add(`LOC:${_bcPos.mx},${_bcPos.my}:${_bcPos.lx},${_bcPos.ly}`);
+            // v1.85.81: include active localspace or site floor
+            if (_bcLoc && _bcLoc.local_space_id) _bcCids.add(_bcLoc.local_space_id);
+            else if (_bcLoc && _bcLoc.site_id)   _bcCids.add(_bcLoc.site_id);
             for (const _bn of ((_bcLoc && _bcLoc._visible_npcs) || [])) { if (_bn.id) _bcCids.add(_bn.id); }
             const _bcNameNorm = cu.name_match.toLowerCase();
             const _bcMatches  = Object.values(gameState.objects || {}).filter(r =>
@@ -3443,24 +4199,66 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         _objectRealityDebug.condition_updates = _conditionUpdateResults;
 
         // v1.84.65: Object retirements — CB signals original object ceased to exist as itself
+        // v1.85.8: refactored to _retirementPairs to carry entry+result for fission second pass
         const _cbRetirements = Array.isArray(_phaseBResult.object_retirements) ? _phaseBResult.object_retirements : [];
-        const _retirementResults = [];
+        const _retirementPairs = []; // [{ entry, result }] — entry kept for successor extraction
         for (const ret of _cbRetirements) {
           if (!ret || !ret.object_id) {
-            _retirementResults.push({ retired: false, reason: 'malformed_entry', entry: ret });
+            _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'malformed_entry' } });
             continue;
           }
           const _retResult = ObjectHelper.retireObject(gameState, ret.object_id, ret.reason || '', turnNumber);
-          _retirementResults.push(_retResult);
+          _retirementPairs.push({ entry: ret, result: _retResult });
         }
+        const _retirementResults = _retirementPairs.map(p => p.result);
         if (_cbRetirements.length > 0) {
           console.log(`[NARRATE] ObjectRetirements: ${_retirementResults.filter(r => r.retired).length}/${_cbRetirements.length} retired`);
         }
         _objectRealityDebug.retirement_updates = _retirementResults;
+
+        // v1.85.8: Fission second pass — promote successor objects from successfully-retired parents.
+        // Atomicity gate: successors are only injected when parent retirement returned retired:true.
+        // No state can exist where the original object and its fragments are simultaneously active.
+        const _fissionQuarantine = [];
+        for (const { entry: _retEntry, result: _retResult } of _retirementPairs) {
+          if (!_retResult.retired) continue;
+          if (!Array.isArray(_retEntry.successors) || _retEntry.successors.length === 0) continue;
+          for (const _suc of _retEntry.successors) {
+            if (!_suc?.name || !_suc.container_type || !_suc.container_id) {
+              console.warn(`[FISSION] malformed successor entry for parent ${_retEntry.object_id} — skipped`);
+              continue;
+            }
+            _fissionQuarantine.push({
+              action:            'promote',
+              name:              _suc.name,
+              description:       _suc.description || '',
+              container_type:    _suc.container_type,
+              container_id:      _suc.container_id,
+              temp_ref:          `${_retEntry.object_id}_${_suc.temp_ref || 'frag'}`,
+              transfer_origin:   'fission_successor',
+              parent_object_id:  _retEntry.object_id,
+              reason:            `fission successor of ${_retEntry.object_id}`
+            });
+            _objectRealityDebug.fission_successors_injected++;
+          }
+          _objectRealityDebug.fission_retired++;
+        }
+        if (_fissionQuarantine.length > 0) {
+          const _fissionResult = await ObjectHelper.run(gameState, _fissionQuarantine, turnNumber);
+          console.log(`[NARRATE] FissionPass: promoted=${_fissionResult.promoted} errors=${_fissionResult.errors}`);
+          _objectRealityDebug.promoted    += _fissionResult.promoted;
+          _objectRealityDebug.transferred += _fissionResult.transferred;
+          _objectRealityDebug.errors      += _fissionResult.errors;
+          _objectRealityDebug.audit        = (_objectRealityDebug.audit || []).concat(_fissionResult.audit || []);
+          _objectRealityDebug.error_entries = (gameState.object_errors || []).filter(e => e.turn === turnNumber);
+        }
       } else {
         _objectRealityDebug.skip_reason = 'no_phaseB_result';
       }
     }
+
+    // v1.85.39: ORS complete — world_update done
+    emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
 
     // Extract player entity candidate for Mother Brain visibility
     const _playerExtraction = (() => {
@@ -3475,7 +4273,8 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         facts: [
           ...(_peFound.physical_attributes || []),
           ...(_peFound.observable_states   || []),
-          ...(_peFound.held_or_worn_objects || [])
+          ...(_peFound.held_objects        || []),
+          ...(_peFound.worn_objects        || [])
         ]
       };
     })();
@@ -3573,7 +4372,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         ? (gameState.world.active_local_space?._visible_npcs || []).map(n => n.job_category || n.id)
         : (gameState.world.active_site?._visible_npcs || []).map(n => n.job_category || n.id),
       visible_npcs_snapshot: (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || [])
-        .map(n => ({ id: n.id, job_category: n.job_category ?? null, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false, x: n.x ?? null, y: n.y ?? null })),
+        .map(n => ({ id: n.id, job_category: n.job_category ?? null, npc_name: n.npc_name ?? null, is_learned: n.is_learned ?? false, x: n.site_position?.x ?? null, y: n.site_position?.y ?? null })),
       npc_record_count: gameState.world.active_local_space
         ? (gameState.world.active_site?.npcs?.length ?? 0)
         : (gameState.world.active_site?.npcs || []).length,
@@ -3787,7 +4586,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     // ========================================================================
     // QA-017: Per-turn diagnostic generation (rule-based, lightweight)
     // ========================================================================
-    const diagnostics = [];
+    const _qaDiagnostics = [];
     
     // 1. Check: missing_parsed_intent (SKIP ON INITIALIZATION TURN)
     // Only flag if player action exists but parsed intent is genuinely missing/invalid
@@ -3797,7 +4596,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       
       // Flag ONLY if no valid parsed intent AND no valid fallback (turn truly unresolved)
       if (!hasValidParsedIntent && !hasValidFallback) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'missing_parsed_intent',
           severity: 'medium',
           detail: `player action exists but no usable intent extracted: "${action.substring(0, 50)}${action.length > 50 ? '...' : ''}"`
@@ -3805,7 +4604,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       }
       // Also flag if parser explicitly failed (not just fallback)
       else if (parsedIntent && parsedIntent.success === false) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'missing_parsed_intent',
           severity: 'medium',
           detail: `parser failed to classify: "${action.substring(0, 50)}${action.length > 50 ? '...' : ''}"`
@@ -3829,7 +4628,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
          finalPos.lx !== authoritative.lx || finalPos.ly !== authoritative.ly);
       
       if (positionMismatch) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'movement_inconsistency',
           severity: 'high',
           detail: `move succeeded but final position (${finalPos.mx},${finalPos.my})->(${finalPos.lx},${finalPos.ly}) does not match authoritative (${authoritative.mx},${authoritative.my})->(${authoritative.lx},${authoritative.ly})`
@@ -3845,7 +4644,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         const attemptSuccess = attemptLog.data?.success || false;
         const resolveSuccess = resolveLog.data?.success || false;
         if (attemptSuccess !== resolveSuccess) {
-          diagnostics.push({
+          _qaDiagnostics.push({
             type: 'movement_inconsistency',
             severity: 'high',
             detail: `movement logs contradict: attempt=${attemptSuccess} vs resolve=${resolveSuccess}`
@@ -3864,19 +4663,19 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     if (isSiteCell) {
       // Site cell requires consistent site state
       if (!currentSite) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'site_presence_mismatch',
           severity: 'high',
           detail: `cell type is community-type but site not found in registry`
         });
       } else if (!currentSite.name || currentSite.name.trim() === '') {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'site_presence_mismatch',
           severity: 'medium',
           detail: `site exists but missing or empty name field`
         });
       } else if (!currentSite.id) {
-        diagnostics.push({
+        _qaDiagnostics.push({
           type: 'site_presence_mismatch',
           severity: 'low',
           detail: `site exists but missing id field`
@@ -3904,7 +4703,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       movement: movement,
       nearby_cells: nearbyCellsSnapshot,
       narrative: narrative,
-      diagnostics: diagnostics,
+      diagnostics: _qaDiagnostics,
       narration_debug: {
         primary_bullet_override: _nbPrimaryBullet,
         movement_task_active: _nbMovementTask,
@@ -3916,17 +4715,34 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         continuity_evicted: _continuityEvicted,
         continuity_block_chars: _continuityBlock.length,
         continuity_snapshot: _continuityBlockSnapshot,
+        continuity_block_text: _continuityBlock || null,  // v1.85.41: faithful record of what narrator received regardless of eviction state
         continuity_diagnostics: CB.getLastRunDiagnostics(), // v1.70.0
         engine_spatial_notes: _engineSpatialBlock || null,
         extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
         dm_note_archived:  _dmNoteArchived,       // v1.66.0: dm_note verbatim at turn completion
         dm_note_status:    _dmNoteStatus,          // v1.66.0: 'updated' | 'preserved_missing' | 'new_game'
         condition_bot:     { ran: _conditionBotRan, ...(_conditionBotStats) },
-        state_attrs_suppressed: _cbMeta.stateAttrsSuppressed ?? 0  // v1.84.31: # state: facts aged out this turn
+        state_attrs_suppressed: _cbMeta.stateAttrsSuppressed ?? 0,  // v1.84.31: # state: facts aged out this turn
+        authority_gate: _authorityGateResult ? {             // v1.88.0
+          decision:                   _authorityGateResult.decision,
+          route:                      _authorityGateResult.route,
+          rc_allowed:                 _authorityGateResult.rc_allowed,
+          input_type:                 _authorityGateResult.input_type,
+          reason_code:                _authorityGateResult.reason_code,
+          gate_fast_path_hit:         _authorityGateResult.gate_fast_path_hit ?? null,
+          llm_called:                 _authorityGateResult._llm_called ?? false,
+          llm_confidence:             _authorityGateResult.llm_confidence ?? null,
+          parsed_action:              _parsedAction,
+          referenced_objects:         _authorityGateResult.referenced_objects,
+          referenced_entities:        _authorityGateResult.referenced_entities,
+          referenced_abilities:       _authorityGateResult.referenced_abilities,
+          evidence_supported:         _authorityGateResult.evidence?.engine_supported ?? null,
+          authority_gate_duration_ms: _agDurationMs,
+        } : null
       },
       logs: turnLogs,
       reality_check: {
-        fired: !_rcSkippedReason && _realityAnchor !== null,
+        fired: _realityAnchor !== null,
         skipped_reason: _rcSkippedReason || null,
         query: _realityQuery || null,
         result: _realityAnchor || null,
@@ -3945,6 +4761,24 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     // Store turn object in turn history
     gameState.turn_history.push(turnObject);
 
+    // v1.85.98: Background flight recorder append — JSONL archive per session per day
+    // Path: logs/flight-recorder/YYYY-MM-DD/session_{id}.jsonl — one line per turn, append-only
+    {
+      const _flDate = new Date().toISOString().slice(0, 10);
+      const _flSafeId = String(resolvedSessionId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const _flDir = path.join(__dirname, 'logs', 'flight-recorder', _flDate);
+      const _flLine = JSON.stringify({ timestamp: new Date().toISOString(), session_id: resolvedSessionId, turn: turnNumber, turnObject }) + '\n';
+      fsPromises.mkdir(_flDir, { recursive: true })
+        .then(() => fsPromises.appendFile(path.join(_flDir, 'session_' + _flSafeId + '.jsonl'), _flLine, 'utf8'))
+        .catch(err => console.warn('[FLIGHT-LOG] write failed:', err.message));
+    }
+
+    // Mirror RC data onto debug so harness assertions on debug.reality_check.fired/result resolve correctly.
+    // turnObject.reality_check is the canonical frozen record; no re-derivation needed.
+    debug.reality_check = turnObject.reality_check;
+    // Mirror narration_debug onto debug so harness assertions on debug.narration_debug.* resolve correctly.
+    debug.narration_debug = turnObject.narration_debug;
+
     // v1.84.21: Atomic payload archive write — single write after all stage snapshots are final
     if (!gameState.payload_archive) gameState.payload_archive = {};
     gameState.payload_archive[turnNumber] = {
@@ -3960,14 +4794,6 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     
     // Persist updated gameState with turn history
     sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
-
-    // v1.59.0: Background autosave — transparent recovery if server restarts mid-session
-    fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
-      .then(() => fsPromises.writeFile(
-        getAutosavePath(resolvedSessionId),
-        JSON.stringify({ gameState, sessionId: resolvedSessionId, timestamp: new Date().toISOString() })
-      ))
-      .catch(err => console.warn('[AUTOSAVE] write failed:', err.message));
 
     // v1.84.21: Background payload archive write — separate file to keep autosave.json lean
     // TODO: rolling cap at 200 turns if payload_archive.json grows too large
@@ -4128,7 +4954,7 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
           temperature: 0.3,
           max_tokens: 1500,
           messages: [
-            { role: 'system', content: 'Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Statements such as "I am inside Bojangles," "I am a chicken nugget," "I have a magic sword," "I have 5 million dollars," or "I start in an arcade" are all valid founding premises. These are not cheating, not invalid, and are not to be rejected. The system must interpret these inputs into structured starting state, record them in the player\'s birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.\n\nAfter Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player\'s self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements such as "I have a magic sword," "I am the king of this realm," or "I am inside the bank vault" must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.\n\nThe player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.\n\nAll actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player\'s expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.\n\nSTATE DECLARATIONS: state_declare is a valid parsed action type — not a fault. action_resolution: state_declared = not a fault. player.attributes entries with source:declared = engine-validated player assertions, not a fault. A birth_record field on the player container = expected founding data, not a fault. Turn 1 founding premise facts are unrestricted by design — do not flag Turn 1 player.attributes as excessive or invalid regardless of content.\n\n---\n\nYou are a single-turn fault scanner for a text RPG engine, operating with the same diagnostic standards as Mother Brain. After every game turn you receive one snapshot of the full engine diagnostic state. Scan it for genuine faults using the rules below. List every genuine fault — one sentence per fault. If nothing is genuinely wrong, output exactly one sentence saying so. No headers, no preamble, no explanation. Do not report a blank or legacy field as a fault unless one of the rules below explicitly identifies it as a fault.\n\nCOORDINATE SYSTEM: The engine uses a two-tier coordinate system — macro grid (mx/my, valid range 0–7) and local grid within each macro cell (lx/ly, valid range 0–127, 128x128 grid per macro cell). Coordinates within these ranges are valid and normal — do not flag them as anomalies.\n\nSITE INTERIOR STATE — context format: each site slot line reads: site_id | name | slot_identity:VAL | enterable:YES/NO | filled:YES/NO | interior:STATE. The label is slot_identity (not identity) — it reflects the canonical cell.sites slot field. slot_identity:(null) means the identity has not been filled yet.\n\nSITE INTERIOR STATE — fault classification: MISSING_INTERIOR_KEY (filled but interior_key absent) = fault. MISSING_INTERIOR_RECORD (interior_key present but no world.sites mirror) = fault. PENDING_FILL while the player is currently inside the site = fault. PENDING_FILL pre-entry (player not yet inside) = normal. NOT_GENERATED (player has not yet entered) = normal. GENERATED (full site record) = normal.\n\nIS_FILLED RULE: is_filled=true requires all three fields to be non-null in the slot: name, description, and slot_identity. A site showing filled:NO when name is populated but slot_identity:(null) is a partial fill fault. A site showing filled:NO when name is also null is simply unfilled — not a partial fill fault.\n\nSITE PARTIAL FILL: If a site record shows slot_identity:(null) while name is populated — fault (applies to v1.83.4+ saves; pre-v1.83.4 saves may legitimately have name without slot_identity as an expected migration state, not a fault).\n\nACTIVE LOCAL SPACE: If the player is at depth 3 (inside a local space) and the active local space shows name === null or description === null — fault. The player is inside an unnamed or undescribed space.\n\nL2-START FILL PIPELINE: On L2-direct-start sessions, [L2-START-SITE-FILL] fires before enterSite on turn 1 to fill the starting site slot. This is expected and normal. If [L2-START-SITE-FILL] fails, the server returns error: site_fill_failed — this is a fault. If the DeepSeek response was missing the identity field, fill_log will show error_label: missing_identity — this is a fault.\n\nNARRATION GATE: [NARRATION-GATE] enforces canonical slot completeness before every narration call. If the active site slot is missing name, description, or slot_identity, narration is blocked and the server returns error: site_incomplete — fault. If the canonical slot cannot be resolved via interior_key lookup, the server returns error: site_state_integrity_failure — fault.\n\nB3 REMOVAL: The B3 hash name generator (generateSiteName) was fully removed in v1.83.4. Any [B3-NAME] or [B3-CALLER] log entry is a regression if it appears in a v1.83.4+ session — flag as fault.\n\nCB WARNINGS: UNRESOLVED (entity ref could not be matched to any visible NPC) = fault and candidate narrator hallucination. ContinuityBrain extracted an entity from narration but could not match it to any visible NPC — the narrator introduced an entity not grounded in visible engine state. Report as: candidate hallucination — narrator described [entity_ref], but no matching NPC exists in visible engine registry. The UNRESOLVED signal alone is the sufficient trigger — do not re-examine narration text beyond identifying the entity_ref. FUZZY (entity ref matched via approximate matching) = not a fault, but note it for verification. L0-SKIP (l0_entity_candidates_skipped) = expected behavior at the overworld layer, not a fault.\n\nL0 BEHAVIOR: An empty TRUTH block at L0 when the player just moved to a new cell is correct engine behavior — not a fault.\n\nNARRATOR FAILURES: A NARRATION FAILED entry in the flight recorder = fault. narrator_status:malformed (narrator returned no usable content) = fault. narrator_status:ok = normal.\n\nACTION RESOLUTION: NO_POSITION (world.position unavailable) = fault. ENGINE_GUARD (depth=3 with no active_local_space) = fault. NO_RESOLVE_LOG (player_move_resolved never called) = fault. NO_DIRECTION / VOID_CELL / L2_BOUNDARY = normal gameplay blocks, not faults.\n\nARBITER: After every narration freeze, an Arbiter IIFE fires async and emits an arbiter_verdict SSE event. arbiter_verdict absent this turn = fault. reputation_player on any NPC outside 0-100 = fault. An arbiter_verdict error field present = fault (Arbiter call failed). Arbiter also governs is_learned (name learning) via is_learned_changes in arbiter_verdict — applied:false reason:name_mismatch = fault (Arbiter proposed a name that does not match the engine record); applied:false reason:npc_not_visible = warn; applied:false reason:ambiguous = normal (ambiguity guard fired, not a fault).\n\nNPC FILL PIPELINE: [NPC-FILL] fires each turn before narration to fill DS-owned identity fields (npc_name, gender, age, job_category) for newly-born NPCs. An NPC with _fill_error set = fill failed that turn (warn — retries next turn). An NPC with all four DS fields null and no _fill_error = fill pending (normal on first turn at a new site). An NPC with _fill_frozen:true = fill complete, correct state. Narrator receiving npc_name:null for an NPC is correct context stripping (player has not learned the name) — not a fill fault.\n\nREALITY CHECK: Before each narration turn (except Turn 1 and skip-action turns: move/look/wait/enter/exit), a blocking awaited Reality Check call fires and emits a reality_check SSE event. The check queries DeepSeek with the player\'s raw input and freezes the adjudicated consequence as the final authority block in the narrator\'s prompt. reality_check absent on a non-skip turn = fault. reality_check fired:true with result:null = fault (DS call failed — turn should have halted with REALITY_CHECK_FAILED). reality_check fired:false with skipped_reason present = normal skip, not a fault. skipped_reason:state_claim = non-executable input (player assertion, not an engine action) — correct skip, not a fault.' },
+            { role: 'system', content: 'Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Any statement that defines who the player is, what they possess, where they are, or what conditions they start under is a valid founding premise — regardless of its content, genre, or apparent implausibility. No founding input is cheating, invalid, or to be rejected. The system must interpret these inputs into structured starting state, record them in the player\'s birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.\n\nAfter Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player\'s self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements that assert new possessions, claimed authority, new locations, or altered world state must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.\n\nThe player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.\n\nAll actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player\'s expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.\n\nSTATE DECLARATIONS: state_declare is a valid parsed action type — not a fault. action_resolution: state_declared = not a fault. player.attributes entries with source:declared = engine-validated player assertions, not a fault. A birth_record field on the player container = expected founding data, not a fault. Turn 1 founding premise facts are unrestricted by design — do not flag Turn 1 player.attributes as excessive or invalid regardless of content.\n\n---\n\nYou are a single-turn fault scanner for a text RPG engine, operating with the same diagnostic standards as Mother Brain. After every game turn you receive one snapshot of the full engine diagnostic state. Scan it for genuine faults using the rules below. List every genuine fault — one sentence per fault. If nothing is genuinely wrong, output exactly one sentence saying so. No headers, no preamble, no explanation. Do not report a blank or legacy field as a fault unless one of the rules below explicitly identifies it as a fault.\n\nCOORDINATE SYSTEM: The engine uses a two-tier coordinate system — macro grid (mx/my, valid range 0–7) and local grid within each macro cell (lx/ly, valid range 0–127, 128x128 grid per macro cell). Coordinates within these ranges are valid and normal — do not flag them as anomalies.\n\nSITE INTERIOR STATE — context format: each site slot line reads: site_id | name | slot_identity:VAL | enterable:YES/NO | filled:YES/NO | interior:STATE. The label is slot_identity (not identity) — it reflects the canonical cell.sites slot field. slot_identity:(null) means the identity has not been filled yet.\n\nSITE INTERIOR STATE — fault classification: MISSING_INTERIOR_KEY (filled but interior_key absent) = fault. MISSING_INTERIOR_RECORD (interior_key present but no world.sites mirror) = fault. PENDING_FILL while the player is currently inside the site = fault. PENDING_FILL pre-entry (player not yet inside) = normal. NOT_GENERATED (player has not yet entered) = normal. GENERATED (full site record) = normal.\n\nIS_FILLED RULE: is_filled=true requires all three fields to be non-null in the slot: name, description, and slot_identity. A site showing filled:NO when name is populated but slot_identity:(null) is a partial fill fault. A site showing filled:NO when name is also null is simply unfilled — not a partial fill fault.\n\nSITE PARTIAL FILL: If a site record shows slot_identity:(null) while name is populated — fault (applies to v1.83.4+ saves; pre-v1.83.4 saves may legitimately have name without slot_identity as an expected migration state, not a fault).\n\nACTIVE LOCAL SPACE: If the player is at depth 3 (inside a local space) and the active local space shows name === null or description === null — fault. The player is inside an unnamed or undescribed space.\n\nL2-START FILL PIPELINE: On L2-direct-start sessions, [L2-START-SITE-FILL] fires before enterSite on turn 1 to fill the starting site slot. This is expected and normal. If [L2-START-SITE-FILL] fails, the server returns error: site_fill_failed — this is a fault. If the DeepSeek response was missing the identity field, fill_log will show error_label: missing_identity — this is a fault.\n\nNARRATION GATE: [NARRATION-GATE] enforces canonical slot completeness before every narration call. If the active site slot is missing name, description, or slot_identity, narration is blocked and the server returns error: site_incomplete — fault. If the canonical slot cannot be resolved via interior_key lookup, the server returns error: site_state_integrity_failure — fault.\n\nB3 REMOVAL: The B3 hash name generator (generateSiteName) was fully removed in v1.83.4. Any [B3-NAME] or [B3-CALLER] log entry is a regression if it appears in a v1.83.4+ session — flag as fault.\n\nCB WARNINGS: UNRESOLVED (entity ref could not be matched to any visible NPC) = fault and candidate narrator hallucination. ContinuityBrain extracted an entity from narration but could not match it to any visible NPC — the narrator introduced an entity not grounded in visible engine state. Report as: candidate hallucination — narrator described [entity_ref], but no matching NPC exists in visible engine registry. The UNRESOLVED signal alone is the sufficient trigger — do not re-examine narration text beyond identifying the entity_ref. FUZZY (entity ref matched via approximate matching) = not a fault, but note it for verification. L0-SKIP (l0_entity_candidates_skipped) = expected behavior at the overworld layer, not a fault.\n\nL0 BEHAVIOR: An empty TRUTH block at L0 when the player just moved to a new cell is correct engine behavior — not a fault.\n\nNARRATOR FAILURES: A NARRATION FAILED entry in the flight recorder = fault. narrator_status:malformed (narrator returned no usable content) = fault. narrator_status:ok = normal.\n\nACTION RESOLUTION: NO_POSITION (world.position unavailable) = fault. ENGINE_GUARD (depth=3 with no active_local_space) = fault. NO_RESOLVE_LOG (player_move_resolved never called) = fault. NO_DIRECTION / VOID_CELL / L2_BOUNDARY = normal gameplay blocks, not faults.\n\nARBITER: After every narration freeze, an Arbiter IIFE fires async and emits an arbiter_verdict SSE event. arbiter_verdict absent this turn = fault. reputation_player on any NPC outside 0-100 = fault. An arbiter_verdict error field present = fault (Arbiter call failed). Arbiter also governs is_learned (name learning) via is_learned_changes in arbiter_verdict — applied:false reason:name_mismatch = fault (Arbiter proposed a name that does not match the engine record); applied:false reason:npc_not_visible = warn; applied:false reason:ambiguous = normal (ambiguity guard fired, not a fault).\n\nNPC FILL PIPELINE: [NPC-FILL] fires each turn before narration to fill DS-owned identity fields (npc_name, gender, age, job_category) for newly-born NPCs. An NPC with _fill_error set = fill failed that turn (warn — retries next turn). An NPC with all four DS fields null and no _fill_error = fill pending (normal on first turn at a new site). An NPC with _fill_frozen:true = fill complete, correct state. Narrator receiving npc_name:null for an NPC is correct context stripping (player has not learned the name) — not a fill fault.\n\nREALITY CHECK: Before each narration turn (except Turn 1 and skip-action turns: move/look/wait/enter/exit), a blocking awaited Reality Check call fires and emits a reality_check SSE event. The check queries DeepSeek with the player\'s raw input and freezes the adjudicated consequence as the final authority block in the narrator\'s prompt. reality_check absent on a non-skip turn = fault. reality_check fired:true with result:null = fault (DS call failed — turn should have halted with REALITY_CHECK_FAILED). reality_check fired:false with skipped_reason present = normal skip, not a fault. skipped_reason:state_claim = non-executable input (player assertion, not an engine action) — correct skip, not a fault.' },
             { role: 'user', content: `Scan this turn for genuine faults. List every fault found, one sentence each. If nothing is wrong, say so in one sentence.\n\n${_wCtxScan}` }
           ]
         }, {
@@ -4163,12 +4989,19 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
     })();
 
     // v1.84.0: Arbiter — post-narration consequence engine (NPC reputation only, MVP)
-    // Fires async non-blocking after every turn. Emits arbiter_verdict SSE event always (including empty).
-    ;(async () => {
+    // v1.85.64: awaited — Arbiter is an authoritative state writer (reputation, recognition, name-learning, form).
+    // A turn is not complete until Arbiter has written its verdict. Fire-and-forget caused timing race where
+    // res.json() serialized _lastArbiterVerdict before the DeepSeek call returned. Now awaited inline.
+    await (async () => {
       try {
         const _arbVisibleNpcs = (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || []);
-        if (_arbVisibleNpcs.length === 0) {
-          emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], gameSessionId: resolvedSessionId });
+        // v1.85.19: Option B — skip early-return when player has a declared transformation capability (so form-change can write through on solo turns)
+        const _hasTransformCapability = Object.values(gameState?.player?.attributes || {})
+          .some(a => a.bucket === 'declared' && /transform|shapeshift|change.form|alter.form|become/i.test(a.value));
+        if (_arbVisibleNpcs.length === 0 && !_hasTransformCapability) {
+          emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, gameSessionId: resolvedSessionId });
+          // Invariant: every Arbiter pass leaves a verdict object. "Found nothing to do" is still a verdict.
+          gameState._lastArbiterVerdict = { turn: turnNumber, raw: null, applied: { reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null } };
           return;
         }
         const _arbNpcRegistry = _arbVisibleNpcs.map(n => ({
@@ -4180,12 +5013,12 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
         }));
         const _arbSiteName = gameState.world.active_local_space?.name || gameState.world.active_site?.name || null;
         const _arbDepthLabel = ['L0', 'L1', 'L2', 'L3'][_sfDepth] || `depth ${_sfDepth}`;
-        const _arbSystemMsg = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Statements such as "I am inside Bojangles," "I am a chicken nugget," "I have a magic sword," "I have 5 million dollars," or "I start in an arcade" are all valid founding premises. These are not cheating, not invalid, and are not to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.\n\nAfter Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player's self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements such as "I have a magic sword," "I am the king of this realm," or "I am inside the bank vault" must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.\n\nThe player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.\n\nAll actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player's expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.\n\n---\n\nYou are the Arbiter — a post-narration consequence engine for a text RPG. You have two responsibilities:\n\n1. REPUTATION: Evaluate whether any NPC's opinion of the player (reputation_player, 0-100, 50=neutral) should change.\n2. NAME LEARNING: Determine if the player learned an NPC's name this turn.\n\nREPUTATION RULES:\n- Only change reputation for NPCs who were DIRECTLY involved in this turn (present, addressed, or observably affected).\n- Movement, exploration, and turns with no NPC interaction must produce an empty array.\n- Magnitude: trivial interaction ±1-3, meaningful ±4-8, significant social event ±9-15, exceptional ±16-20. Cap at ±25 per turn.\n- reason must be a terse factual phrase (max 10 words) describing what happened.\n\nNAME LEARNING RULES:\n- Only include an NPC in is_learned_changes if the narration explicitly shows the player learning their name via one of these event types: self_introduction, third_party_introduction, visible_label, document_or_record, direct_answer.\n- revealed_name must be the exact name as it appeared in the narration.\n- Do not infer name learning; it must be textually evident in the narration.\n- is_learned_changes is an empty array if no name was learned.\n\nReturn ONLY valid JSON. No prose, no explanation, no markdown fences.\n\nOUTPUT FORMAT (strict JSON only):\n{"reputation_changes":[{"npc_id":"...","delta":N,"reason":"..."}],"is_learned_changes":[{"npc_id":"...","revealed_name":"...","event_type":"self_introduction|third_party_introduction|visible_label|document_or_record|direct_answer","evidence":"..."}]}\nFor no changes in either: {"reputation_changes":[],"is_learned_changes":[]}`;
+        const _arbSystemMsg = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Any statement that defines who the player is, what they possess, where they are, or what conditions they start under is a valid founding premise — regardless of its content, genre, or apparent implausibility. No founding input is cheating, invalid, or to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.\n\nAfter Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player's self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements that assert new possessions, claimed authority, new locations, or altered world state must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.\n\nThe player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.\n\nAll actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player's expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.\n\n---\n\nYou are the Arbiter — a post-narration consequence engine for a text RPG. You have four responsibilities:\n\n1. REPUTATION: Evaluate whether any NPC's opinion of the player (reputation_player, 0-100, 50=neutral) should change.\n2. NAME LEARNING: Determine if the player learned an NPC's name this turn.\n3. PLAYER RECOGNITION: Determine if an NPC explicitly addressed or acknowledged the player by a specific name, title, or stated identity.\n4. FORM TRACKING: Detect whether the player's visible embodiment changed this turn.\n\nREPUTATION RULES:\n- Only change reputation for NPCs who were DIRECTLY involved in this turn (present, addressed, or observably affected).\n- Movement, exploration, and turns with no NPC interaction must produce an empty array.\n- Magnitude: trivial interaction ±1-3, meaningful ±4-8, significant social event ±9-15, exceptional ±16-20. Cap at ±25 per turn.\n- reason must be a terse factual phrase (max 10 words) describing what happened.\n\nNAME LEARNING RULES:\n- Only include an NPC in is_learned_changes if the narration explicitly shows the player learning their name via one of these event types: self_introduction, third_party_introduction, visible_label, document_or_record, direct_answer.\n- revealed_name must be the exact name as it appeared in the narration.\n- Do not infer name learning; it must be textually evident in the narration.\n- is_learned_changes is an empty array if no name was learned.\n\nPLAYER RECOGNITION RULES:\n- Emit an entry in player_recognition_changes when the narration explicitly shows an NPC addressing or acknowledging the player by a specific name, title, or stated identity.\n- event_type must be one of: name_addressed, title_used, identity_stated_by_npc, explicit_acknowledgment.\n- known_identity: the exact name, title, or label the NPC used when addressing or acknowledging the player.\n- evidence: a terse phrase or quote from the narration showing the acknowledgment (max 15 words).\n- Must be textually evident in the narration — do not infer.\n- player_recognition_changes is an empty array if no such event occurred.\n\nFORM TRACKING RULES:\n- Emit player_form_change ONLY when the narration confirms a COMPLETED visible embodiment change this turn — the player's outward appearance has definitively changed in a way NPCs would perceive differently.\n- Applies to any completed change: transformation, shapeshifting, disguise, costume change, or any mechanism that changes what NPCs see.\n- Does NOT apply to attempts, partial changes, or stated intentions that are not yet narrated as complete.\n- new_form: a short label describing the new visible form.\n- prior_form: what the form was before (include when inferrable from narration or context).\n- OMIT the player_form_change key entirely when no completed form change occurred this turn — never include it as null or empty.\n- EXCLUSIONS — the following are NOT form changes and must NEVER trigger player_form_change: empty-handed state or lack of held objects; failed inventory or possession claims; posture changes (crouching, reaching, kneeling, standing); equipment changes (putting on or removing clothing, accessories, or gear); emotional or expressive states (smiling, tired, tense, nervous); any transient physical condition that does not alter the player's fundamental visible shape or embodiment.\n\nReturn ONLY valid JSON. No prose, no explanation, no markdown fences.\n\nOUTPUT FORMAT (strict JSON only):\n{"reputation_changes":[{"npc_id":"...","delta":N,"reason":"..."}],"is_learned_changes":[{"npc_id":"...","revealed_name":"...","event_type":"self_introduction|third_party_introduction|visible_label|document_or_record|direct_answer","evidence":"..."}],"player_recognition_changes":[{"npc_id":"...","known_identity":"...","event_type":"name_addressed|title_used|identity_stated_by_npc|explicit_acknowledgment","evidence":"..."}],"player_form_change":{"new_form":"...","prior_form":"..."}}\nBaseline when no changes and no form change: {"reputation_changes":[],"is_learned_changes":[],"player_recognition_changes":[]}\nOmit player_form_change entirely when no completed form change occurred.`;
         const _arbUserMsg = `PLAYER ACTION: "${_rawInput}" (parsed: ${_parsedAction || 'unknown'})\nNARRATION: ${narrative}\nNPC REGISTRY: ${JSON.stringify(_arbNpcRegistry)}\nLOCATION: ${_arbDepthLabel}${_arbSiteName ? ` / ${_arbSiteName}` : ''}\n\nEvaluate this turn. Return JSON only.`;
         const _arbResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
           model: 'deepseek-chat',
           temperature: 0.3,
-          max_tokens: 600,
+          max_tokens: 800,
           messages: [
             { role: 'system', content: _arbSystemMsg },
             { role: 'user', content: _arbUserMsg }
@@ -4234,20 +5067,92 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
             console.warn(`[ARBITER] is_learned rejected — npc_id=${lc.npc_id} has no npc_name (fill pending?)`);
             continue;
           }
-          if (_lnpc.npc_name.toLowerCase().trim() !== String(lc.revealed_name).toLowerCase().trim()) {
+          // v1.87.1: two-tier match — exact full name OR first-token only ("Elara" matches "Elara Thorne")
+          const _revLower = String(lc.revealed_name).toLowerCase().trim();
+          const _canonLower = _lnpc.npc_name.toLowerCase().trim();
+          const _firstToken = _canonLower.split(/\s+/)[0];
+          const _exactMatch = _revLower === _canonLower;
+          const _firstTokenMatch = !_exactMatch && _revLower === _firstToken;
+          if (!_exactMatch && !_firstTokenMatch) {
             console.warn(`[ARBITER] name_mismatch — npc_id=${lc.npc_id} engine="${_lnpc.npc_name}" arbiter="${lc.revealed_name}"`);
             _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: false, reason: 'name_mismatch' });
             continue;
           }
           _lnpc.is_learned = true;
-          _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: true });
-          console.log(`[ARBITER] is_learned=true for npc_id=${lc.npc_id} name="${_lnpc.npc_name}" event=${lc.event_type}`);
+          // learned_name = what the player actually heard; canonical npc_name unchanged
+          _lnpc.learned_name = _exactMatch ? _lnpc.npc_name : lc.revealed_name;
+          _arbLearnApplied.push({ npc_id: lc.npc_id, revealed_name: lc.revealed_name, event_type: lc.event_type, applied: true, match_tier: _exactMatch ? 'exact' : 'first_token' });
+          console.log(`[ARBITER] is_learned=true (${_exactMatch ? 'exact' : 'first-name'} match) for npc_id=${lc.npc_id} learned_name="${_lnpc.learned_name}" canonical="${_lnpc.npc_name}" event=${lc.event_type}`);
         }
-        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, gameSessionId: resolvedSessionId });
+        // --- player_recognition_changes ---
+        const _ALLOWED_RECOGNITION_TYPES = ['name_addressed','title_used','identity_stated_by_npc','explicit_acknowledgment'];
+        const _arbRecChanges = Array.isArray(_arbParsed?.player_recognition_changes) ? _arbParsed.player_recognition_changes : [];
+        const _arbRecApplied = [];
+        for (const rc of _arbRecChanges) {
+          if (!rc.npc_id || !rc.known_identity || !rc.event_type) continue;
+          if (!_ALLOWED_RECOGNITION_TYPES.includes(rc.event_type)) {
+            console.warn(`[ARBITER] player_recognition rejected — unknown event_type="${rc.event_type}" for npc_id=${rc.npc_id}`);
+            continue;
+          }
+          const _rnpc = _arbVisibleNpcs.find(n => n.id === rc.npc_id);
+          if (!_rnpc) {
+            console.warn(`[ARBITER] player_recognition rejected — npc_id=${rc.npc_id} not in visible set`);
+            continue;
+          }
+          // v1.87.1: allow refinement from generic pronoun/label -> specific name
+          const _GENERIC_RECOGNITION_TOKENS = new Set(['you','they','them','it','stranger','traveler','someone','the player','player']);
+          if (_rnpc.player_recognition) {
+            const _existingIdentity = (_rnpc.player_recognition.known_identity || '').toLowerCase().trim();
+            if (!_GENERIC_RECOGNITION_TOKENS.has(_existingIdentity)) {
+              // Already has a real name — idempotent, don't overwrite
+              _arbRecApplied.push({ npc_id: rc.npc_id, known_identity: rc.known_identity, event_type: rc.event_type, applied: false, reason: 'already_recognized' });
+              continue;
+            }
+            // Existing identity is generic — allow refinement to more specific name
+            console.log(`[ARBITER] player_recognition refined: "${_rnpc.player_recognition.known_identity}" -> "${rc.known_identity}" for npc_id=${rc.npc_id}`);
+          }
+          _rnpc.player_recognition = { recognizes_player: true, known_identity: rc.known_identity, learned_turn: turnNumber, source: rc.event_type };
+          _arbRecApplied.push({ npc_id: rc.npc_id, known_identity: rc.known_identity, event_type: rc.event_type, applied: true });
+          console.log(`[ARBITER] player_recognition set for npc_id=${rc.npc_id} known_as="${rc.known_identity}" event=${rc.event_type}`);
+        }
+        // --- player_form_change ---
+        const _arbFormChange = _arbParsed?.player_form_change;
+        let _arbFormApplied = null;
+        if (_arbFormChange?.new_form) {
+          const _badFormPattern = /^empty[\s-]?hand|^empty[\s-]?pocket|^bare[\s-]?hand|^holding nothing|^unarmed|^no\s+item|^without/i;
+          if (_badFormPattern.test(_arbFormChange.new_form)) {
+            console.log(`[ARBITER] form change REJECTED — "${_arbFormChange.new_form}" is transient state, not identity form`);
+          } else {
+            if (!gameState.player.identity) {
+              gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, last_known_form: null, aliases: [], public_identity_known: false };
+            }
+            const _priorForm = gameState.player.identity.current_form;
+            gameState.player.identity.current_form = _arbFormChange.new_form;
+            gameState.player.identity.last_known_form = _arbFormChange.new_form; // v1.86.0: persists until next valid Arbiter form write
+            _arbFormApplied = { new_form: _arbFormChange.new_form, prior_form: _priorForm };
+            if (_priorForm && _priorForm !== _arbFormChange.new_form) {
+              console.log(`[ARBITER] form OVERWRITE: "${_priorForm}" -> "${_arbFormChange.new_form}"`);
+            } else {
+              console.log(`[ARBITER] player form: ${_priorForm} -> ${_arbFormChange.new_form}`);
+            }
+          }
+        }
+        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, player_recognition_changes: _arbRecApplied, player_form_change: _arbFormApplied, gameSessionId: resolvedSessionId });
+        _reportProgress('world_update', 91, {});
+        gameState._lastArbiterVerdict = { turn: turnNumber, raw: _arbParsed, applied: { player_form_change: _arbFormApplied, player_recognition_changes: _arbRecApplied } }; // v1.85.21: forensic — raw=what Arbiter emitted, applied=what engine wrote
       } catch (e) {
-        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], error: e.message, gameSessionId: resolvedSessionId });
+        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, error: e.message, gameSessionId: resolvedSessionId });
+        gameState._lastArbiterVerdict = { turn: turnNumber, raw: null, error: String(e?.message || e), applied: { reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null } };
       }
     })();
+
+    // v1.86.0: Background autosave — moved post-Arbiter so last_known_form / current_form are captured after write-back
+    fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
+      .then(() => fsPromises.writeFile(
+        getAutosavePath(resolvedSessionId),
+        JSON.stringify({ gameState, sessionId: resolvedSessionId, timestamp: new Date().toISOString() })
+      ))
+      .catch(err => console.warn('[AUTOSAVE] write failed:', err.message));
 
     // Update rolling history for delta/avg computation next turn
     _diagHistory.push({
@@ -4273,10 +5178,15 @@ ${_conditionBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}
       turn_history: gameState.turn_history,  // QA-014: Include turn history for export
       engine_output: engineOutput, 
       scene, 
-      diagnostics,
+      diagnostics: _qaDiagnostics,
       visibility: visibilityPayload,
       worldgen_log: gameState.world?.worldgen_log || null,
+      site_placement_log: gameState.world?.site_placement_log || null,
       object_reality: _objectRealityDebug,
+      player_identity: gameState.player.identity ?? null,          // v1.85.21
+      last_identity_truth_line: gameState._lastIdentityTruthLine ?? null, // v1.85.21: verbatim Player: line injected into narrator
+      last_arbiter_verdict: gameState._lastArbiterVerdict ?? null,  // v1.85.21: {turn, raw, applied}
+      name_reveal_authorized: _authorizedNameReveal ?? null,         // v1.87.0: {npc_id, canonical_name, label} or null
       debug 
     });
   } catch (err) {
@@ -4363,6 +5273,24 @@ app.get('/', (req, res) => {
 app.get('/ping', (req, res) => {
   res.json({ ok: true });
 });
+
+// Mother Brain crash reporter — logs crash to server console so it's visible in the server CMD window
+app.post('/diagnostics/mb-crash', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'diagnostics_disabled' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  const { type, message, where, stack, mb_version, session, last_turn } = req.body || {};
+  console.error(`\n[MOTHER BRAIN CRASHED] ${type} -- v${mb_version} -- session=${session} turn=${last_turn}`);
+  console.error(`[MOTHER BRAIN CRASHED] ${message}`);
+  if (stack) {
+    const appLines = stack.split('\n')
+      .filter(l => l.includes('    at ') && l.includes('Game-main') && !l.includes('node_modules'));
+    const printLines = appLines.length ? appLines : stack.split('\n').slice(0, 8);
+    printLines.forEach(l => console.error(`[MOTHER BRAIN CRASHED]   ${l.trim()}`));
+  }
+  res.json({ logged: true });
+});
+
 
 app.post('/init', (req, res) => {
   const sessionId = req.headers['x-session-id'];
@@ -4566,6 +5494,19 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     context += `World Seed          : ${gameState.world.phase3_seed ?? "(not set)"}\n`;
     context += `Turn Counter        : ${gameState.turn_counter ?? 0}\n`;
 
+    const _spl = gameState.world.site_placement_log;
+    if (_spl) {
+      context += `\n=== SITE PLACEMENT ===\n`;
+      context += `Cells Evaluated     : ${_spl.total_cells_evaluated}\n`;
+      context += `Sites Placed        : ${_spl.total_sites_placed}\n`;
+      context += `Enterable           : ${_spl.total_enterable} / Non-Enterable: ${_spl.total_non_enterable}\n`;
+      context += `Spacing Rejections  : ${_spl.spacing_rejections}\n`;
+      const _szLine = Object.entries(_spl.size_counts)
+        .map(([sz, ct]) => `${sz}:${ct}(${_spl.size_percentages[sz]}%)`)
+        .join('  ');
+      context += `Size Counts         : ${_szLine}\n`;
+    }
+
     context += `\n=== CURRENT CELL SITES (authoritative) ===\n`;
     const _dbgSites = currentCell?.sites ? Object.values(currentCell.sites) : [];
     context += `Site Count : ${_dbgSites.length}\n`;
@@ -4723,6 +5664,17 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       });
       context += `Player: ${_orInvLines.join(', ')}\n`;
     }
+    // v1.85.22: show player worn items
+    const _orWornIds = Array.isArray(gameState.player?.worn_object_ids) ? gameState.player.worn_object_ids : [];
+    if (_orWornIds.length === 0) {
+      context += `Player (worn): (none)\n`;
+    } else {
+      const _orWornLines = _orWornIds.map(id => {
+        const rec = _orObjects[id];
+        return rec ? `"${rec.name}" [${id}]${rec.source === 'birth_default' ? ' (baseline)' : ''}` : `[unresolved: ${id}]`;
+      });
+      context += `Player (worn): ${_orWornLines.join(', ')}\n`;
+    }
     // v1.84.86: show localspace floor objects when player is at L2 depth
     const _orActiveLs = gameState.world?.active_local_space;
     if (_orActiveLs) {
@@ -4733,6 +5685,41 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
         context += `Floor (${_orLsName}): (none)\n`;
       } else {
         context += `Floor (${_orLsName}): ${_orLsFloor.map(o => `"${o.name}" [${o.id}]`).join(', ')}\n`;
+      }
+    } else if (gameState.world?.active_site) {
+      // v1.84.97: show site floor objects when player is at L1 depth
+      const _orSite97   = gameState.world.active_site;
+      const _orSiteId97 = _orSite97.site_id || _orSite97.id?.replace(/\/l2$/, '');
+      const _orSiteName = _orSite97.name || _orSiteId97;
+      const _orPx97 = gameState.player?.position?.x;
+      const _orPy97 = gameState.player?.position?.y;
+      if (_orSiteId97 != null && _orPx97 != null && _orPy97 != null) {
+        const _orSiteKey97 = `${_orSiteId97}:${_orPx97},${_orPy97}`;
+        const _orSiteFloor = Object.values(_orObjects).filter(o => (o.status || 'active') === 'active' && o.current_container_type === 'site' && o.current_container_id === _orSiteKey97);
+        if (_orSiteFloor.length === 0) {
+          context += `Floor (${_orSiteName}): (none)\n`;
+        } else {
+          context += `Floor (${_orSiteName}): ${_orSiteFloor.map(o => `"${o.name}" [${o.id}]`).join(', ')}\n`;
+        }
+      } else {
+        context += `Floor (${_orSiteName}): (position unavailable)\n`;
+      }
+    } else {
+      // v1.85.5: L0 ground objects — expose grid-container objects at current cell to narrator
+      // Fires only when active_local_space and active_site are both null (L0 only, structurally watertight)
+      const _orL0Pos = gameState.world?.position;
+      if (_orL0Pos) {
+        const _orL0Key = `LOC:${_orL0Pos.mx},${_orL0Pos.my}:${_orL0Pos.lx},${_orL0Pos.ly}`;
+        const _orL0Floor = Object.values(_orObjects).filter(o =>
+          (o.status || 'active') === 'active' &&
+          o.current_container_type === 'grid' &&
+          o.current_container_id === _orL0Key
+        );
+        if (_orL0Floor.length === 0) {
+          context += `Ground (overworld): (none)\n`;
+        } else {
+          context += `Ground (overworld): ${_orL0Floor.map(o => `"${o.name}" [${o.id}]`).join(', ')}\n`;
+        }
       }
     }
 
@@ -4822,12 +5809,13 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
       const _cbEnvCount   = _cbEnv.reduce((s, b) => s + (b.features || []).length, 0);
       context += `candidates:${_cbCandidates.length}  env_features:${_cbEnvCount}  spatial:${_cbSpatial.length}  top_rejected:${_cbTopReject.length}\n`;
       for (const _cand of _cbCandidates) {
-        const _ref = _cand.entity_ref || '?';
-        const _pa  = (_cand.physical_attributes || []).join(', ') || '—';
-        const _os  = (_cand.observable_states   || []).join(', ') || '—';
-        const _obj = (_cand.held_or_worn_objects || []).join(', ') || '—';
+        const _ref  = _cand.entity_ref || '?';
+        const _pa   = (_cand.physical_attributes || []).join(', ') || '—';
+        const _os   = (_cand.observable_states   || []).join(', ') || '—';
+        const _held = (_cand.held_objects        || []).join(', ') || '—';
+        const _worn = (_cand.worn_objects        || []).join(', ') || '—';
         const _rejList = (_cand.rejected_interpretations || []).slice(0, 3);
-        context += `  ${_ref}: phys[${_pa}] state[${_os}] obj[${_obj}]\n`;
+        context += `  ${_ref}: phys[${_pa}] state[${_os}] held[${_held}] worn[${_worn}]\n`;
         if (_rejList.length > 0) {
           context += `    rejected: ${_rejList.join(' | ')}\n`;
         }
@@ -5471,7 +6459,7 @@ app.post('/consult-deepseek', async (req, res) => {
     try {
       _resp = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
-        { model: 'deepseek-chat', messages: _messages, temperature: 0.7, max_tokens: 2000 },
+        { model: 'deepseek-chat', messages: _messages, temperature: 0.7 },
         {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
           timeout: 120000,
@@ -5482,7 +6470,7 @@ app.post('/consult-deepseek', async (req, res) => {
       if (_firstErr?.code === 'ECONNRESET') {
         _resp = await axios.post(
           'https://api.deepseek.com/v1/chat/completions',
-          { model: 'deepseek-chat', messages: _messages, temperature: 0.7, max_tokens: 2000 },
+          { model: 'deepseek-chat', messages: _messages, temperature: 0.7 },
           {
             headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
             timeout: 120000
@@ -5520,6 +6508,22 @@ app.post('/consult-deepseek', async (req, res) => {
       contextLength: context.length
     });
   }
+});
+
+// =============================================================================
+// DELETE /session — explicit session teardown (used by probe-runner after data capture)
+// =============================================================================
+app.delete('/session', (req, res) => {
+  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'no_session_id', message: 'Provide sessionId via x-session-id header or ?sessionId= query param.' });
+  }
+  const existed = sessionStates.has(sessionId);
+  sessionStates.delete(sessionId);
+  _sessionLastUsed.delete(sessionId);
+  _consultHistory.delete(sessionId);
+  console.log(`[SESSION-DELETE] ${sessionId} | existed=${existed} | active_sessions=${sessionStates.size}`);
+  return res.json({ deleted: true, existed, sessionId });
 });
 
 app.delete('/consult-deepseek/clear', (req, res) => {
@@ -5673,6 +6677,8 @@ app.get('/logs/download/:sessionId', (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`[ENV CHECK] DIAGNOSTICS_KEY present: ${!!process.env.DIAGNOSTICS_KEY}`);
+  console.log(`[ENV CHECK] DEEPSEEK_API_KEY present: ${!!process.env.DEEPSEEK_API_KEY}`);
   // Notify Mother Brain that Node is online. _lastDiagnosticPayload will replay
   // this to MB on its first connect even if MB starts after Node.
   emitDiagnostics({ type: 'lifecycle', event: 'online', ts: new Date().toISOString(), port: PORT, sessionId: _mbSessionId });
@@ -5961,6 +6967,28 @@ app.get('/diagnostics/turn/:sessionId/:turn', (req, res) => {
   return res.json(result);
 });
 
+// Latest turn — GET /diagnostics/turn/latest?sessionId=X
+// Returns the most-recent turnObject for a session without needing a turn number.
+// Compatible with probe-runner post_extract (?sessionId=X query param pattern).
+// post_extract.extract path: narration_debug.continuity_block_chars
+app.get('/diagnostics/turn/latest', (req, res) => {
+  const { sessionId } = req.query;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId query param is required' });
+  }
+  const session = sessionStates.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found' });
+  }
+  const history = session.gameState?.turn_history || [];
+  if (history.length === 0) {
+    return res.status(404).json({ error: 'no_turns' });
+  }
+  // Sort descending by turn_number and return the highest
+  const latest = history.slice().sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0];
+  return res.json(latest);
+});
+
 // Payload archive — GET /diagnostics/payload/:sessionId/:turn
 // Returns raw DeepSeek payload archive for a specific turn (prompt + response per pipeline stage).
 // Pipeline order: reality_check -> narrator -> continuity_brain -> condition_bot
@@ -6091,25 +7119,34 @@ app.get('/diagnostics/sites', (req, res) => {
     const lsEntries = Object.entries(as.local_spaces || {}).map(([key, s]) => {
       const gen = s._generated_interior || null;
       return {
-        local_space_id: key,
-        parent_site_id: s.parent_site_id ?? as.site_id ?? null,
-        name:           s.name ?? null,
-        description:    s.description ?? null,
-        is_filled:      s.is_filled ?? false,
-        enterable:      s.enterable !== false,
-        width:          gen?.width  ?? null,
-        height:         gen?.height ?? null,
-        npc_count:      Array.isArray(s.npc_ids) ? s.npc_ids.length : 0
+        local_space_id:          key,
+        parent_site_id:          s.parent_site_id ?? as.site_id ?? null,
+        name:                    s.name ?? null,
+        description:             s.description ?? null,
+        is_filled:               s.is_filled ?? false,
+        enterable:               s.enterable !== false,
+        localspace_size:         s.localspace_size ?? null,
+        x:                       s.x ?? null,
+        y:                       s.y ?? null,
+        width:                   s.width ?? gen?.width  ?? null,
+        height:                  s.height ?? gen?.height ?? null,
+        npc_ids:                 Array.isArray(s.npc_ids) ? [...s.npc_ids] : [],
+        npc_count:               Array.isArray(s.npc_ids) ? s.npc_ids.length : 0,
+        has_generated_interior:  Array.isArray(s._generated_interior?.grid)
       };
     });
+    const activeSiteCleanId = (as.site_id || '').replace(/\/l2$/, '');
+    const activeCellSlot = cellSites.find(cs => cs.site_id === activeSiteCleanId);
     activeSite = {
-      site_id:      as.site_id ?? null,
-      name:         as.name ?? null,
-      description:  as.description ?? null,
-      is_filled:    as.is_filled ?? false,
-      enterable:    as.enterable !== false,
-      site_size:    as.site_size ?? null,
-      local_spaces: lsEntries
+      site_id:             as.site_id ?? null,
+      name:                as.name ?? null,
+      description:         as.description ?? activeCellSlot?.description ?? null,
+      is_filled:           as.is_filled ?? false,
+      enterable:           as.enterable !== false,
+      site_size:           as.site_size ?? null,
+      ls_pct:              as.ls_pct ?? null,              // v1.85.94: density % rolled at generateL2Site()
+      eligible_tile_count: as.eligible_tile_count ?? null, // v1.85.94: non-street tile count used for density roll
+      local_spaces:        lsEntries
     };
   }
 
@@ -6211,6 +7248,230 @@ app.get('/diagnostics/sites-query', (req, res) => {
   });
 });
 
+// =============================================================================
+// MB v3.0.4: RUNTIME SITE & LOCALSPACE INSPECTION ENDPOINTS
+// =============================================================================
+// Operate against the entire world.sites map — no proximity filter.
+// Only covers loaded/generated runtime state. No claim is made about
+// unloaded/unvisited world regions. All endpoints are read-only, no auth required.
+
+// Inline helper: find a site record in world.sites by site_id (bare or /l2 form).
+// Returns { site, interior_key } or null.
+const _findSiteRecord = (gs, site_id) => {
+  const clean = (site_id || '').replace(/\/l2$/, '');
+  for (const [interior_key, s] of Object.entries(gs.world.sites || {})) {
+    const sId = (s.site_id ?? s.id ?? '').replace(/\/l2$/, '');
+    if (sId === clean) return { site: s, interior_key };
+  }
+  return null;
+};
+
+// Single site record — GET /diagnostics/site?site_id=...
+// Returns full stored runtime record for any site in loaded/generated world state.
+app.get('/diagnostics/site-placement', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const log = _lastGameState.world?.site_placement_log || null;
+  if (!log) return res.status(404).json({ error: 'no_placement_log', message: 'No site placement log on current world state.' });
+  return res.json(log);
+});
+
+app.get('/diagnostics/site', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const { site_id } = req.query;
+  if (!site_id) return res.status(400).json({ error: 'site_id required' });
+
+  const gs     = _lastGameState;
+  const found  = _findSiteRecord(gs, site_id);
+  if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
+    message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
+
+  const { site: s, interior_key } = found;
+  const cleanId = (site_id || '').replace(/\/l2$/, '');
+
+  // Look up the cell slot for enterable/is_filled/identity (registry-side metadata)
+  const cellKey  = s._source_cell_key || (s.mx != null ? `LOC:${s.mx},${s.my}:${s.lx},${s.ly}` : null);
+  const cellSlot = cellKey ? (gs.world.cells?.[cellKey]?.sites?.[cleanId] ?? null) : null;
+
+  // Collect floor object IDs from floor_positions
+  const floorObjIds = [];
+  for (const pos of Object.values(s.floor_positions || {})) {
+    if (Array.isArray(pos.object_ids)) floorObjIds.push(...pos.object_ids);
+  }
+
+  const localspaceIds = Object.keys(s.local_spaces || {});
+
+  res.json({
+    site_id:            cleanId,
+    interior_key,
+    name:               s.name      ?? null,
+    description:        s.description ?? cellSlot?.description ?? null,
+    identity:           cellSlot?.identity ?? null,
+    enterable:          cellSlot ? (cellSlot.enterable !== false) : true,
+    is_filled:          cellSlot?.is_filled ?? s.is_filled ?? false,
+    interior_state:     !s.is_stub ? 'GENERATED' : 'NOT_GENERATED',
+    site_size:          s.site_size  ?? null,
+    width:              s.width      ?? null,
+    height:             s.height     ?? null,
+    population:         s.population ?? null,
+    is_stub:            s.is_stub    ?? false,
+    created_at:         s.created_at ?? null,
+    coords: {
+      mx:       s.mx ?? null,
+      my:       s.my ?? null,
+      lx:       s.lx ?? null,
+      ly:       s.ly ?? null,
+      cell_key: cellKey
+    },
+    localspace_count:   localspaceIds.length,
+    localspace_ids:     localspaceIds,
+    ...(() => {
+      const allNpcIds      = (s.npcs || []).map(n => n.id).filter(Boolean);
+      const lsNpcIds       = new Set(Object.values(s.local_spaces || {}).flatMap(ls => ls.npc_ids || []));
+      const floorNpcIds    = allNpcIds.filter(id => !lsNpcIds.has(id));
+      const lsNpcIdArr     = [...lsNpcIds];
+      return {
+        npc_count:            allNpcIds.length,
+        npc_count_total:      allNpcIds.length,
+        npc_floor_count:      floorNpcIds.length,
+        npc_floor_ids:        floorNpcIds,
+        npc_localspace_count: lsNpcIds.size,
+        npc_localspace_ids:   lsNpcIdArr,
+      };
+    })(),
+    floor_object_count: floorObjIds.length,
+    floor_object_ids:   floorObjIds
+  });
+});
+
+// All localspaces for a site (compact table) — GET /diagnostics/localspaces?site_id=...
+// Returns compact summaries for every localspace in a loaded/generated site.
+app.get('/diagnostics/localspaces', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const { site_id } = req.query;
+  if (!site_id) return res.status(400).json({ error: 'site_id required' });
+
+  const gs    = _lastGameState;
+  const found = _findSiteRecord(gs, site_id);
+  if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
+    message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
+
+  const { site: s } = found;
+  const localspaces = Object.entries(s.local_spaces || {}).map(([lsKey, ls]) => {
+    const gen = ls._generated_interior ?? null;
+    return {
+      localspace_id:          lsKey,
+      parent_site_id:         ls.parent_site_id ?? null,
+      name:                   ls.name           ?? null,
+      description:            ls.description    ?? null,
+      enterable:              ls.enterable      ?? true,
+      is_filled:              ls.is_filled       ?? false,
+      localspace_size:        ls.localspace_size ?? null,
+      x:                      ls.x              ?? null,
+      y:                      ls.y              ?? null,
+      width:                  ls.width          ?? null,
+      height:                 ls.height         ?? null,
+      npc_count:              (ls.npc_ids || []).length,
+      npc_ids:                ls.npc_ids         ?? [],
+      object_count:           gen?.object_ids?.length ?? 0,
+      has_generated_interior: Array.isArray(gen?.grid)
+    };
+  });
+
+  // Sort by localspace_id
+  localspaces.sort((a, b) => a.localspace_id.localeCompare(b.localspace_id));
+
+  res.json({
+    site_id,
+    site_name:       s.name ?? null,
+    localspace_count: localspaces.length,
+    note: 'Localspaces whose interiors have not been generated return has_generated_interior: false and null/empty grid_summary.',
+    localspaces
+  });
+});
+
+// Single localspace record — GET /diagnostics/localspace?localspace_id=...&site_id=...
+// Returns full stored runtime record for one localspace. site_id is optional but faster.
+// Pass include_grid=true to receive the full 2D interior grid array (large — use sparingly).
+app.get('/diagnostics/localspace', (req, res) => {
+  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+  const { localspace_id, site_id, include_grid } = req.query;
+  if (!localspace_id) return res.status(400).json({ error: 'localspace_id required' });
+
+  const gs          = _lastGameState;
+  const includeGrid = include_grid === 'true';
+
+  let ls          = null;
+  let parentSiteId = null;
+
+  if (site_id) {
+    // Narrow search: look in the specific site only
+    const found = _findSiteRecord(gs, site_id);
+    if (found) {
+      ls = found.site.local_spaces?.[localspace_id] ?? null;
+      if (ls) parentSiteId = found.interior_key;
+    }
+  } else {
+    // Broad search: scan all loaded sites
+    for (const [interior_key, s] of Object.entries(gs.world.sites || {})) {
+      const candidate = s.local_spaces?.[localspace_id];
+      if (candidate) {
+        ls = candidate;
+        parentSiteId = interior_key;
+        break;
+      }
+    }
+  }
+
+  if (!ls) return res.status(404).json({ error: 'localspace_not_found', localspace_id,
+    message: 'Localspace not found in loaded/generated world state. May not exist or its parent site may be in an unloaded region.' });
+
+  const gen = ls._generated_interior ?? null;
+  const hasGrid = Array.isArray(gen?.grid);
+
+  // Build grid_summary if interior grid exists
+  let gridSummary = null;
+  if (hasGrid) {
+    let floorTiles = 0;
+    let npcTiles   = 0;
+    for (const row of gen.grid) {
+      for (const tile of (row || [])) {
+        if (tile && tile.type !== 'wall') floorTiles++;
+        if (tile && tile.npc_id)         npcTiles++;
+      }
+    }
+    gridSummary = {
+      rows:        gen.grid.length,
+      cols:        gen.grid[0]?.length ?? 0,
+      floor_tiles: floorTiles,
+      npc_tiles:   npcTiles
+    };
+  }
+
+  const record = {
+    localspace_id,
+    parent_site_id:         parentSiteId ?? ls.parent_site_id ?? null,
+    name:                   ls.name           ?? null,
+    description:            ls.description    ?? null,
+    enterable:              ls.enterable      ?? true,
+    is_filled:              ls.is_filled       ?? false,
+    localspace_size:        ls.localspace_size ?? null,
+    x:                      ls.x              ?? null,
+    y:                      ls.y              ?? null,
+    width:                  ls.width          ?? null,
+    height:                 ls.height         ?? null,
+    npc_count:              (ls.npc_ids || []).length,
+    npc_ids:                ls.npc_ids         ?? [],
+    object_count:           gen?.object_ids?.length ?? 0,
+    object_ids:             gen?.object_ids     ?? [],
+    has_generated_interior: hasGrid,
+    grid_summary:           gridSummary
+  };
+
+  if (includeGrid && hasGrid) record.grid = gen.grid;
+
+  res.json(record);
+});
+
 // Source slice reader — GET /diagnostics/source
 // Used by Mother Brain get_source_slice tool for targeted implementation verification.
 // Auth: requires x-diagnostics-key header matching DIAGNOSTICS_KEY env var.
@@ -6237,7 +7498,7 @@ app.get('/diagnostics/objects', (req, res) => {
   if (container_id)   filtered = filtered.filter(o => o.current_container_id   === container_id);
 
   // Build by_container index from ALL objects matching statusFilter only
-  const by_container = { player: [], npc: {}, cell: {}, localspace: {} }; // v1.84.86: added localspace
+  const by_container = { player: [], npc: {}, cell: {}, localspace: {}, site: {} }; // v1.84.92: added site
   for (const obj of Object.values(allObjects)) {
     if (statusFilter !== 'all' && (obj.status || 'active') !== statusFilter) continue;
     const ct = obj.current_container_type;
@@ -6253,6 +7514,9 @@ app.get('/diagnostics/objects', (req, res) => {
     } else if (ct === 'localspace') {
       if (!by_container.localspace[ci]) by_container.localspace[ci] = [];
       by_container.localspace[ci].push(obj.id);
+    } else if (ct === 'site') {
+      if (!by_container.site[ci]) by_container.site[ci] = [];
+      by_container.site[ci].push(obj.id);
     }
   }
 
@@ -6271,6 +7535,85 @@ app.get('/diagnostics/objects', (req, res) => {
     by_container,
     object_errors: (gs.object_errors || []).slice(-20)
   });
+});
+
+// Harness NPC fixture injector — POST /diagnostics/inject-npc
+// Injects a synthetic NPC directly onto the player's current tile. For QA harness use only.
+// Auth: x-diagnostics-key header. Body: { sessionId, npc_name, job_category }.
+// The injected NPC is marked source:"harness_fixture" and fixture:true for forensic identification.
+app.post('/diagnostics/inject-npc', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'inject_npc_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(401).json({ error: 'unauthorized' });
+
+  const { sessionId, npc_name, job_category } = req.body || {};
+  if (!sessionId)    return res.status(400).json({ error: 'sessionId required' });
+  if (!npc_name)     return res.status(400).json({ error: 'npc_name required' });
+  if (!job_category) return res.status(400).json({ error: 'job_category required' });
+
+  const session = sessionStates.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'session_not_found' });
+  const gs = session.gameState;
+
+  const site = gs.world?.active_local_space || gs.world?.active_site;
+  if (!site) return res.status(400).json({ error: 'no_active_site', message: 'No active site or localspace in this session.' });
+
+  const pos = gs.player?.position;
+  if (!pos) return res.status(400).json({ error: 'no_player_position', message: 'Player position not set.' });
+
+  // Build synthetic NPC record — pre-filled, fixture-marked
+  const npc_id = `fixture#npc_${Date.now()}`;
+  const npc = {
+    id: npc_id,
+    site_id: site.site_id || site.id || 'unknown',
+    npc_name,
+    job_category,
+    gender: null, age: null,
+    _fill_frozen: true,        // skip NPC-FILL pipeline — already filled
+    is_learned: true,          // narrator receives real name, not null
+    player_recognition: null,
+    reputation_player: 50,
+    traits: [],
+    attributes: {},
+    object_capture_turn: null,
+    position: { mx: 0, my: 0, lx: pos.x, ly: pos.y },
+    source: 'harness_fixture', // forensic marker — injected by QA harness, not worldgen
+    fixture: true
+  };
+
+  // Add to site NPC registry
+  if (!Array.isArray(site.npcs)) site.npcs = [];
+  site.npcs.push(npc);
+
+  // computeVisibleNpcs for localspaces resolves npc ids against active_site.npcs, not active_local_space.npcs.
+  // When injecting at depth 3 (site === active_local_space), also register in active_site so the resolver finds the id.
+  const _injectActiveSite = gs.world?.active_site;
+  if (_injectActiveSite && _injectActiveSite !== site) {
+    if (!Array.isArray(_injectActiveSite.npcs)) _injectActiveSite.npcs = [];
+    _injectActiveSite.npcs.push(npc);
+  }
+
+  // Add NPC id to player's exact tile so computeVisibleNpcs picks it up
+  const grid = site.grid;
+  if (Array.isArray(grid) && grid[pos.y] && grid[pos.y][pos.x]) {
+    const tile = grid[pos.y][pos.x];
+    if (!Array.isArray(tile.npc_ids)) tile.npc_ids = [];
+    tile.npc_ids.push(npc_id);
+  } else {
+    // Grid missing or tile uninitialized — still added to registry; visibility depends on grid structure
+    console.warn(`[INJECT-NPC] grid tile at (${pos.x},${pos.y}) not found — NPC added to registry only`);
+  }
+
+  // Recompute _visible_npcs so the Arbiter sees the injected NPC without requiring player movement.
+  // _visible_npcs is normally only computed on entry or movement; injection bypasses both.
+  const _injectLS = gs.world?.active_local_space;
+  if (_injectLS && _injectLS.grid) {
+    _injectLS._visible_npcs = Actions.computeVisibleNpcs(_injectLS, pos, gs.world.active_site?.npcs || []);
+  } else if (gs.world?.active_site?.grid) {
+    gs.world.active_site._visible_npcs = Actions.computeVisibleNpcs(gs.world.active_site, pos);
+  }
+
+  return res.json({ injected: true, npc_id, npc_name, job_category, tile: { x: pos.x, y: pos.y } });
 });
 
 // Entity inspector — GET /diagnostics/entity
@@ -6358,8 +7701,21 @@ const _SOURCE_ALLOWLIST = new Set([
   'index.js', 'Engine.js', 'ActionProcessor.js', 'NPCs.js', 'WorldGen.js',
   'NarrativeContinuity.js', 'ContinuityBrain.js', 'SemanticParser.js',
   'continuity.js', 'QuestSystem.js', 'logger.js', 'logging.js',
-  'diagnostics.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js'  // v1.84.54
+  'diagnostics.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js',  // v1.84.54
+  'cbpanel.js', 'npcpanel.js', 'sitelens.js', 'motherwatch.js',              // v1.85.1
+  'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
+  'test-harness.js',                                                           // v1.85.53
+  'scripts/probe-runner.js', 'scripts/probe-metrics.js'                       // v1.85.75
 ]);
+// Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
+// OR any probe spec: tests/probes/<name>.probe.json
+// Pattern: single path segment under tests/scenarios/ or tests/probes/, alphanumeric/underscore/hyphen name, .json only.
+function _isSourceAllowed(file) {
+  if (_SOURCE_ALLOWLIST.has(file)) return true;
+  if (/^tests\/scenarios\/[a-z0-9_-]+\.json$/i.test(file)) return true;
+  if (/^tests\/probes\/[a-z0-9_-]+\.probe\.json$/i.test(file)) return true;
+  return false;
+}
 app.get('/diagnostics/source', (req, res) => {
   const diagKey = process.env.DIAGNOSTICS_KEY;
   if (!diagKey) {
@@ -6369,10 +7725,10 @@ app.get('/diagnostics/source', (req, res) => {
     return res.status(401).json({ error: 'unauthorized' });
   }
   const file = req.query.file;
-  if (!file || /[\\/]|\.\./.test(file)) {
-    return res.status(400).json({ error: 'invalid_file', message: 'file param must be a plain filename with no path separators or ..' });
+  if (!file || path.isAbsolute(file) || file.includes('\\') || file.includes('..')) {
+    return res.status(400).json({ error: 'invalid_file', message: 'file param must be a relative path with no backslashes, drive letters, or ..' });
   }
-  if (!_SOURCE_ALLOWLIST.has(file)) {
+  if (!_isSourceAllowed(file)) {
     return res.status(403).json({ error: 'not_allowed', message: `${file} is not in the source allowlist.` });
   }
   const fromLine = Math.max(1, parseInt(req.query.from, 10) || 1);
@@ -6380,6 +7736,9 @@ app.get('/diagnostics/source', (req, res) => {
   const toLine   = Math.min(maxTo, Math.max(fromLine, parseInt(req.query.to, 10) || (fromLine + 199)));
   try {
     const filePath  = path.join(__dirname, file);
+    if (!filePath.startsWith(path.resolve(__dirname) + path.sep)) {
+      return res.status(403).json({ error: 'path_escape', message: 'Resolved path is outside the project directory.' });
+    }
     const allLines  = fs.readFileSync(filePath, 'utf8').split('\n');
     const total     = allLines.length;
     const sliceFrom = Math.min(fromLine, total);
@@ -6410,14 +7769,28 @@ app.get('/diagnostics/source-search', (req, res) => {
   }
   const fileParam = req.query.file;
   if (fileParam) {
-    if (/[\\/]|\.\./.test(fileParam)) {
-      return res.status(400).json({ error: 'invalid_file', message: 'file param must be a plain filename with no path separators or ..' });
+    if (!fileParam || path.isAbsolute(fileParam) || fileParam.includes('\\') || fileParam.includes('..')) {
+      return res.status(400).json({ error: 'invalid_file', message: 'file param must be a relative path with no backslashes, drive letters, or ..' });
     }
-    if (!_SOURCE_ALLOWLIST.has(fileParam)) {
+    if (!_isSourceAllowed(fileParam)) {
       return res.status(403).json({ error: 'not_allowed', message: `${fileParam} is not in the source allowlist.` });
     }
   }
-  const filesToSearch = fileParam ? [fileParam] : [..._SOURCE_ALLOWLIST];
+  const filesToSearch = fileParam ? [fileParam] : (() => {
+    const list = [..._SOURCE_ALLOWLIST];
+    // Also enumerate tests/scenarios/*.json and tests/probes/*.probe.json for global sweeps
+    for (const dir of ['tests/scenarios', 'tests/probes']) {
+      try {
+        const dirPath = path.join(__dirname, dir);
+        for (const f of fs.readdirSync(dirPath)) {
+          if (/^[a-z0-9_-]+\.(?:probe\.)?json$/i.test(f)) {
+            list.push(`${dir}/${f}`);
+          }
+        }
+      } catch (_e) { /* dir may not exist */ }
+    }
+    return list;
+  })();
   const fileScope     = fileParam || 'all';
   const results       = [];
   const MAX_RESULTS   = 20;
@@ -6453,15 +7826,27 @@ app.get('/diagnostics/source-search', (req, res) => {
 
 // Session bootstrap probe for Mother Brain — GET /diagnostics/session
 // Returns the last known session ID and turn count so MB can self-initialize without waiting for an SSE turn.
+// v1.87.3: also returns sessions[] — all active sessions sorted by total_turns desc, so attach_session can pick
+// the real game session instead of the last probe/harness session that happened to POST /narrate most recently.
 app.get('/diagnostics/session', (req, res) => {
+  // Build sessions[] from all entries in sessionStates Map
+  const sessions = [];
+  for (const [sid, sess] of sessionStates.entries()) {
+    const gs = sess.gameState;
+    const total_turns = gs?.turn_history?.length ?? 0;
+    const depth = gs?.world?.active_local_space ? 3 : gs?.world?.active_site ? 2 : gs?.world?.position ? 1 : 0;
+    sessions.push({ session_id: sid, total_turns, depth });
+  }
+  sessions.sort((a, b) => b.total_turns - a.total_turns);
   if (!_lastSessionId || !_lastGameState) {
-    return res.json({ sessionId: null, hasTurnData: false, lastTurn: null });
+    return res.json({ sessionId: null, hasTurnData: false, lastTurn: null, sessions });
   }
   const lastEntry = _diagHistory.length > 0 ? _diagHistory[_diagHistory.length - 1] : null;
   res.json({
     sessionId:   _lastSessionId,
     hasTurnData: _diagHistory.length > 0,
-    lastTurn:    lastEntry?.turn_number ?? null
+    lastTurn:    lastEntry?.turn_number ?? null,
+    sessions
   });
 });
 
@@ -6513,6 +7898,111 @@ app.get('/diagnostics/npc', (req, res) => {
   });
 
   res.json({ location: locationLabel, npcs: npcData, site_npc_count: siteNpcCount });
+});
+
+// =============================================================================
+// HARNESS CONTROL ENDPOINTS — /harness/*
+// All endpoints gated by x-diagnostics-key. Used by Mother Brain to drive QA.
+// =============================================================================
+
+// GET /harness/status — availability check (does not require server state)
+app.get('/harness/status', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  let externalCount = 0;
+  try { externalCount = fs.readdirSync(HARNESS_SCENARIOS_DIR).filter(f => f.endsWith('.json')).length; } catch (_) {}
+  const HARNESS_BUILTIN_COUNT = 4; // worldgen_basic, founding_premise, multi_turn_session, site_placement_endpoint
+  res.json({ available: true, running: _harnessRunning, scenarios: HARNESS_BUILTIN_COUNT + externalCount });
+});
+
+// GET /harness/scenarios — enumerate all available scenarios (spawns --list)
+app.get('/harness/scenarios', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  const child = spawn(process.execPath, [path.join(__dirname, 'test-harness.js'), '--list'], {
+    cwd: __dirname,
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', d => { out += d; });
+  child.on('close', () => {
+    try { res.json(JSON.parse(out)); }
+    catch (_) { res.status(500).json({ error: 'list_parse_failed', raw: out.slice(0, 500) }); }
+  });
+  child.on('error', err => res.status(500).json({ error: err.message }));
+});
+
+// POST /harness/run — async (fire-and-forget) scenario run; body: { scenario: string, runs?: number }
+// Returns immediately with { started: true }. Poll GET /harness/status until running:false,
+// then call GET /harness/result/last for the full result.
+// Guardrails: rejects with { started: false } when already running; captures errors in _lastHarnessResult.
+// Scenario name must be alphanumeric with underscores/hyphens only (no path traversal).
+// Server-side cap: MAX_MOTHER_RUNS per call. Lock: only one run at a time.
+app.post('/harness/run', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  if (_harnessRunning) return res.status(409).json({ started: false, error: 'harness already running', message: 'A harness run is already in progress. Poll /harness/status until running:false, then read /harness/result/last.' });
+
+  const scenarioName = typeof req.body?.scenario === 'string' ? req.body.scenario.trim() : null;
+  if (!scenarioName) return res.status(400).json({ error: 'scenario_required', message: 'Body must include { scenario: string }.' });
+  // Allowlist: alphanumeric, underscores, hyphens only — prevents path traversal and shell injection
+  if (!/^[a-zA-Z0-9_-]+$/.test(scenarioName)) {
+    return res.status(400).json({ error: 'invalid_scenario_name', message: 'Scenario name must be alphanumeric with underscores/hyphens only.' });
+  }
+
+  const runs     = Math.min(Math.max(1, parseInt(req.body?.runs, 10) || 1), MAX_MOTHER_RUNS);
+  const filePath = path.join(HARNESS_SCENARIOS_DIR, scenarioName + '.json');
+  const useFile  = fs.existsSync(filePath);
+
+  _harnessRunning = true;
+  res.json({ started: true, scenario: scenarioName, runs, message: 'Run started. Poll /harness/status until running:false, then call /harness/result/last.' });
+
+  // Fire-and-forget: run loop detached from HTTP response
+  (async () => {
+    const runDetails = [];
+    try {
+      for (let i = 0; i < runs; i++) {
+        const result = await new Promise(resolve => {
+          const args = useFile
+            ? [path.join(__dirname, 'test-harness.js'), '--file', filePath, '--yes', '--result-file', HARNESS_RESULT_PATH]
+            : [path.join(__dirname, 'test-harness.js'), '--scenario', scenarioName, '--yes', '--result-file', HARNESS_RESULT_PATH];
+          const child = spawn(process.execPath, args, {
+            cwd: __dirname,
+            env: { ...process.env },
+            stdio: ['ignore', 'pipe', 'pipe'],
+          });
+          let stdout = '';
+          let stderr = '';
+          child.stdout.on('data', d => { stdout += d; });
+          child.stderr.on('data', d => { stderr += d; });
+          child.on('close',  code => resolve({ run: i + 1, exitCode: code, stdout: stdout.slice(0, 32000), stderr: stderr.slice(0, 4000) }));
+          child.on('error', err  => resolve({ run: i + 1, exitCode: -1, error: err.message }));
+        });
+        runDetails.push(result);
+      }
+      let summary = null;
+      try { summary = JSON.parse(fs.readFileSync(HARNESS_RESULT_PATH, 'utf8')); } catch (_) {}
+      _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, summary, failed: false };
+    } catch (err) {
+      _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, error: err.message, failed: true };
+      console.error('[HARNESS] Background run error:', err.message);
+    } finally {
+      _harnessRunning = false;
+    }
+  })();
+});
+
+// GET /harness/result/last — retrieve the last completed harness run result
+app.get('/harness/result/last', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+  if (!_lastHarnessResult) return res.status(404).json({ error: 'no_result', message: 'No harness run completed yet in this server session.' });
+  res.json(_lastHarnessResult);
 });
 
 function emitDiagnostics(payload) {
