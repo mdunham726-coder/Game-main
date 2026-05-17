@@ -457,8 +457,8 @@ function _describeLocation(gameState) {
 function _describeVisibleEntities(gameState) {
   const w   = gameState.world || {};
   const loc = w.active_local_space || w.active_site;
-  if (!loc) return '(none)';
-  const visible = loc._visible_npcs || [];
+  // v1.88.8: L0 fallback — use world._visible_npcs when no active site/local_space
+  const visible = loc ? (loc._visible_npcs || []) : (w._visible_npcs || []);
   if (!visible.length) return '(none)';
   return visible.map(n => {
     // v1.84.82: respect is_learned — do not expose npc_name to CB context until the player has learned it
@@ -487,7 +487,8 @@ function _describeTrackedObjects(gameState) {
 
   const validContainers = new Set(['player']);
   if (pos) validContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
-  const visible = (loc && loc._visible_npcs) || [];
+  // v1.88.8: L0 fallback — include world._visible_npcs NPC IDs as valid containers
+  const visible = loc ? (loc._visible_npcs || []) : (w._visible_npcs || []);
   for (const npc of visible) { if (npc.id) validContainers.add(npc.id); }
 
   const tracked = Object.values(objects).filter(r =>

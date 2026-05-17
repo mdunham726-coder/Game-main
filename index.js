@@ -3952,7 +3952,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // to the intro capture loop. Concat+dedup merges both pools correctly.
         const _visibleNpcsForCapture = [
           ...(_narActiveLS?._visible_npcs || []),
-          ...(_narActiveSite?._visible_npcs || [])
+          ...(_narActiveSite?._visible_npcs || []),
+          ...(gameState.world?._visible_npcs || [])  // v1.88.8: L0 fallback — include founded NPCs at overworld depth
         ].filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
         let _npcIntroCaptureCount = 0;
         if (Array.isArray(_phaseBResult.entity_candidates)) {
