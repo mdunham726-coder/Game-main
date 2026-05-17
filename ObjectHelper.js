@@ -67,8 +67,27 @@ function _resolveContainerIds(gameState, containerType, containerId) {
   if (containerType === 'npc') {
     const _worldNpcs = (gameState.world && Array.isArray(gameState.world.npcs)) ? gameState.world.npcs : [];
     const _siteNpcs  = (gameState.world?.active_site && Array.isArray(gameState.world.active_site.npcs)) ? gameState.world.active_site.npcs : [];
-    const npc = _worldNpcs.find(n => n.id === containerId || n._id === containerId)
-             || _siteNpcs.find(n => n.id === containerId || n._id === containerId);
+    let npc = _worldNpcs.find(n => n.id === containerId || n._id === containerId)
+           || _siteNpcs.find(n => n.id === containerId || n._id === containerId);
+    if (!npc) {
+      // v1.88.15 Patch 1J: prose container_id fallback — exact, unambiguous only.
+      // Tier 1: npc_name case-insensitive exact match. Unique hit required.
+      const _ncLower = containerId.toLowerCase();
+      const _allNpcs = [..._worldNpcs, ..._siteNpcs];
+      const _byName = _allNpcs.filter(n => (n.npc_name || '').toLowerCase() === _ncLower);
+      if (_byName.length === 1) npc = _byName[0];
+      if (!npc) {
+        // Tier 2: founded-entity registry exact label match. One registry hit required,
+        // and that hit must resolve to one real NPC in world.npcs. Ambiguous = reject.
+        const _registry = (gameState.world && Array.isArray(gameState.world._turn1_founded_entities))
+          ? gameState.world._turn1_founded_entities : [];
+        const _regHits = _registry.filter(fe => Array.isArray(fe.labels) && fe.labels.includes(_ncLower));
+        if (_regHits.length === 1) {
+          const _regNpc = _allNpcs.find(n => n.id === _regHits[0].entity_id);
+          if (_regNpc) npc = _regNpc;
+        }
+      }
+    }
     if (!npc) return null;
     if (!Array.isArray(npc.object_ids)) npc.object_ids = [];
     return npc.object_ids;
@@ -113,8 +132,27 @@ function _resolveContainerIds(gameState, containerType, containerId) {
   if (containerType === 'npc_worn') {
     const _worldNpcsW = (gameState.world && Array.isArray(gameState.world.npcs)) ? gameState.world.npcs : [];
     const _siteNpcsW  = (gameState.world?.active_site && Array.isArray(gameState.world.active_site.npcs)) ? gameState.world.active_site.npcs : [];
-    const _npcW = _worldNpcsW.find(n => n.id === containerId || n._id === containerId)
-               || _siteNpcsW.find(n => n.id === containerId || n._id === containerId);
+    let _npcW = _worldNpcsW.find(n => n.id === containerId || n._id === containerId)
+             || _siteNpcsW.find(n => n.id === containerId || n._id === containerId);
+    if (!_npcW) {
+      // v1.88.15 Patch 1J: prose container_id fallback — exact, unambiguous only.
+      // Tier 1: npc_name case-insensitive exact match. Unique hit required.
+      const _nwLower = containerId.toLowerCase();
+      const _allNpcsW = [..._worldNpcsW, ..._siteNpcsW];
+      const _byNameW = _allNpcsW.filter(n => (n.npc_name || '').toLowerCase() === _nwLower);
+      if (_byNameW.length === 1) _npcW = _byNameW[0];
+      if (!_npcW) {
+        // Tier 2: founded-entity registry exact label match. One registry hit required,
+        // and that hit must resolve to one real NPC in world.npcs. Ambiguous = reject.
+        const _registryW = (gameState.world && Array.isArray(gameState.world._turn1_founded_entities))
+          ? gameState.world._turn1_founded_entities : [];
+        const _regHitsW = _registryW.filter(fe => Array.isArray(fe.labels) && fe.labels.includes(_nwLower));
+        if (_regHitsW.length === 1) {
+          const _regNpcW = _allNpcsW.find(n => n.id === _regHitsW[0].entity_id);
+          if (_regNpcW) _npcW = _regNpcW;
+        }
+      }
+    }
     if (!_npcW) return null;
     if (!Array.isArray(_npcW.worn_object_ids)) _npcW.worn_object_ids = [];
     return _npcW.worn_object_ids;

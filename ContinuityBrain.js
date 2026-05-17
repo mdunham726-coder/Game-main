@@ -531,11 +531,12 @@ function _describeApActionsThisTurn(gameState) {
 
 // ── NPC id resolution ─────────────────────────────────────────────────────────
 
+// v1.88.15 Patch 1J: L0 fallback — when no active_local_space or active_site, resolve against
+// world._visible_npcs (populated since Patch 1D). All three resolution tiers work at L0.
 function _resolveEntityRef(entityRef, gameState) {
   const w   = gameState.world || {};
   const loc = w.active_local_space || w.active_site;
-  if (!loc) return null;
-  const visible = loc._visible_npcs || [];
+  const visible = loc ? (loc._visible_npcs || []) : (w._visible_npcs || []);
 
   // Exact npc_id match
   const exact = visible.find(n => n.id === entityRef);
@@ -901,8 +902,8 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
   const player = gameState.player;
 
   // Route entity candidates: player self-refs first (any layer), then NPC resolution.
-  // At L0, non-player candidates collapse into a single warning (no NPC registry).
-  const l0NonPlayerCandidates = [];
+  // v1.88.15 Patch 1J: _resolveEntityRef now handles L0 via world._visible_npcs fallback —
+  // no special-case bail-out required here.
   for (const candidate of (extracted.entity_candidates || [])) {
     const ref = candidate.entity_ref;
     if (!ref) continue;
@@ -914,13 +915,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
       continue;
     }
 
-    // At L0: no NPC registry — collect for warning
-    if (!loc) {
-      l0NonPlayerCandidates.push(candidate);
-      continue;
-    }
-
-    // L1/L2: resolve and promote
+    // Resolve entity ref — falls back to world._visible_npcs at L0
     const resolved = _resolveEntityRef(ref, gameState);
     if (!resolved) {
       warnings.push({ type: 'unresolved_entity_ref', entity_ref: ref, turn });
@@ -934,18 +929,6 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     }
 
     _promoteEntityAttributes(resolved, candidate, turn, logEntries);
-  }
-
-  // Fire L0 warning for non-player entity candidates that could not be resolved
-  if (!loc && l0NonPlayerCandidates.length > 0) {
-    warnings.push({
-      type: 'l0_entity_candidates_skipped',
-      reason: 'no_npc_registry',
-      count: l0NonPlayerCandidates.length,
-      entities: l0NonPlayerCandidates.map(c => c.entity_ref),
-      turn,
-    });
-    console.warn(`[CB] L0: ${l0NonPlayerCandidates.length} entity candidate(s) skipped — no NPC registry at overworld (L0)`);
   }
 
   // Promote environmental features to location record
