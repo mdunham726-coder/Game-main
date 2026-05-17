@@ -299,8 +299,8 @@ Fields:
       gender          — infer from role, description, and world tone. null only if genuinely indeterminate.
       age             — integer, infer from role and description. null if indeterminate.
       job_category    — occupation or role category fitting the world context. null if indeterminate.
-      inventory_items — array of item strings the NPC is explicitly described as carrying. Empty array if none stated. Never infer.
-      worn_items      — array of item strings the NPC is explicitly described as wearing. Empty array if none stated. Never infer.
+      inventory_items — array of objects for items the NPC is explicitly described as carrying. Each entry: { "name": "<item name, lowercase specific>", "description": "<brief physical description of the item — no lore, no ownership claims, no history, no implied additional objects>" }. Empty array if none stated. Never add items not stated. Description is inferred from the item and world tone, but only for items already stated.
+      worn_items      — array of objects for items the NPC is explicitly described as wearing. Same object shape as inventory_items: { "name": "<item name, lowercase specific>", "description": "<brief physical description of the item — no lore, no ownership claims, no history, no implied additional objects>" }. Empty array if none stated. Never add items not stated. Description is inferred from the item and world tone, but only for items already stated.
     If multiple NPCs are declared, instantiate only the first. Record additional NPCs in scenario_notes as "DEFERRED_NPC: <description>". Deferred NPCs are not scene truth and must not appear as present entities.
 
 ` : ''}

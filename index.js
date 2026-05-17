@@ -3881,23 +3881,45 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             // Create ORS ObjectRecords for declared carried items
             if (!gameState.objects || typeof gameState.objects !== 'object') gameState.objects = {};
             for (const _bnItem of (Array.isArray(_bnSn.inventory_items) ? _bnSn.inventory_items : [])) {
-              const _bnItemName = String(_bnItem || '').trim();
+              const _bnItemName = (_bnItem && typeof _bnItem === 'object') ? String(_bnItem.name || '').trim() : String(_bnItem || '').trim();
               if (!_bnItemName) continue;
+              let _bnItemDesc;
+              if (_bnItem && typeof _bnItem === 'object') {
+                if (_bnItem.description) {
+                  _bnItemDesc = String(_bnItem.description).trim();
+                } else {
+                  console.warn(`[BORN-NPC] born_npc_item_description_missing: carried item "${_bnItemName}" has no description — falling back to name`);
+                  _bnItemDesc = _bnItemName;
+                }
+              } else {
+                _bnItemDesc = _bnItemName;
+              }
               const _bnObjInput = [_bnItemName.toLowerCase(), 'npc', _bnId, 'born_npc_carried'].join('|');
               const _bnObjId    = 'obj_' + require('crypto').createHash('sha256').update(_bnObjInput, 'utf8').digest('hex').slice(0, 12);
               if (!gameState.objects[_bnObjId]) {
-                gameState.objects[_bnObjId] = { id: _bnObjId, name: _bnItemName, description: '', created_turn: 1, current_container_type: 'npc', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
+                gameState.objects[_bnObjId] = { id: _bnObjId, name: _bnItemName, description: _bnItemDesc, created_turn: 1, current_container_type: 'npc', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
               }
               if (!_bnNpc.object_ids.includes(_bnObjId)) _bnNpc.object_ids.push(_bnObjId);
             }
             // Create ORS ObjectRecords for declared worn items
             for (const _bnWorn of (Array.isArray(_bnSn.worn_items) ? _bnSn.worn_items : [])) {
-              const _bnWornName = String(_bnWorn || '').trim();
+              const _bnWornName = (_bnWorn && typeof _bnWorn === 'object') ? String(_bnWorn.name || '').trim() : String(_bnWorn || '').trim();
               if (!_bnWornName) continue;
+              let _bnWornDesc;
+              if (_bnWorn && typeof _bnWorn === 'object') {
+                if (_bnWorn.description) {
+                  _bnWornDesc = String(_bnWorn.description).trim();
+                } else {
+                  console.warn(`[BORN-NPC] born_npc_item_description_missing: worn item "${_bnWornName}" has no description — falling back to name`);
+                  _bnWornDesc = _bnWornName;
+                }
+              } else {
+                _bnWornDesc = _bnWornName;
+              }
               const _bnWornInput = [_bnWornName.toLowerCase(), 'npc_worn', _bnId, 'born_npc_worn'].join('|');
               const _bnWornId    = 'obj_' + require('crypto').createHash('sha256').update(_bnWornInput, 'utf8').digest('hex').slice(0, 12);
               if (!gameState.objects[_bnWornId]) {
-                gameState.objects[_bnWornId] = { id: _bnWornId, name: _bnWornName, description: '', created_turn: 1, current_container_type: 'npc_worn', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
+                gameState.objects[_bnWornId] = { id: _bnWornId, name: _bnWornName, description: _bnWornDesc, created_turn: 1, current_container_type: 'npc_worn', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
               }
               if (!_bnNpc.worn_object_ids.includes(_bnWornId)) _bnNpc.worn_object_ids.push(_bnWornId);
             }
