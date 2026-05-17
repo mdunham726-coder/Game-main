@@ -1079,7 +1079,14 @@ function isNPCPresent(state, nameOrRole){
     return (_container?.npcs || []).length > 0;
   }
   const { npcs } = getCellEntities(state);
-  return !!findByNameCaseInsensitive(npcs, 'name', nameOrRole);
+  if (!npcs.length) return false;
+  const _q = String(nameOrRole || '').trim().toLowerCase();
+  return npcs.some(n =>
+    String(n?.name             || '').toLowerCase() === _q ||
+    String(n?.npc_name         || '').toLowerCase() === _q ||
+    String(n?.job_category     || '').toLowerCase() === _q ||
+    String(n?.role_or_relation || '').toLowerCase() === _q
+  ) || npcs.length === 1; // v1.88.6: singleton fallback for conversational targeting only — validates presence, not name truth
 }
 
 /**
