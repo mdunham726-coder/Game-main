@@ -918,8 +918,18 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     // Resolve entity ref — falls back to world._visible_npcs at L0
     const resolved = _resolveEntityRef(ref, gameState);
     if (!resolved) {
-      warnings.push({ type: 'unresolved_entity_ref', entity_ref: ref, turn });
-      console.warn(`[CB] entity_ref "${ref}" could not be resolved to any visible NPC — promotion skipped`);
+      // v1.88.16 Patch 1K: Reclassify founded-NPC refs on Turn 1 as a timing diagnostic, not a
+      // resolution failure. CB runs before BORN-NPC materializes, so the ref is valid but the NPC
+      // does not yet exist in engine state. Check the founding registry for an exact label match.
+      const _normRef        = String(ref || '').trim().toLowerCase();
+      const _foundedEntries = Array.isArray(w._turn1_founded_entities) ? w._turn1_founded_entities : [];
+      if (turn === 1 && _foundedEntries.some(fe => Array.isArray(fe.labels) && fe.labels.includes(_normRef))) {
+        warnings.push({ type: 'founding_npc_pre_materialize', entity_ref: ref, turn });
+        console.log(`[CB] entity_ref "${ref}" is a founded NPC not yet materialized — expected Turn 1 pipeline timing, promotion deferred`);
+      } else {
+        warnings.push({ type: 'unresolved_entity_ref', entity_ref: ref, turn });
+        console.warn(`[CB] entity_ref "${ref}" could not be resolved to any visible NPC — promotion skipped`);
+      }
       continue;
     }
 
