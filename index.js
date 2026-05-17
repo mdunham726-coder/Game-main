@@ -5148,7 +5148,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     // res.json() serialized _lastArbiterVerdict before the DeepSeek call returned. Now awaited inline.
     await (async () => {
       try {
-        const _arbVisibleNpcs = (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || []);
+        const _arbVisibleNpcs = (gameState.world.active_local_space?._visible_npcs || gameState.world.active_site?._visible_npcs || gameState.world._visible_npcs || []); // v1.88.4: L0 fallback — BORN-NPC at overworld depth now visible to Arbiter
         // v1.85.19: Option B — skip early-return when player has a declared transformation capability (so form-change can write through on solo turns)
         const _hasTransformCapability = Object.values(gameState?.player?.attributes || {})
           .some(a => a.bucket === 'declared' && /transform|shapeshift|change.form|alter.form|become/i.test(a.value));
