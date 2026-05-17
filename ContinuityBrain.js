@@ -76,7 +76,9 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   if (_vcPos && !(_vcLoc && _vcLoc.local_space_id)) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
   // v1.84.85: add localspace floor when player is at L2 depth
   if (_vcLoc && _vcLoc.local_space_id) _vcLines.push(`- ${_vcLoc.local_space_id}  (localspace floor: ${_vcLoc.name || _vcLoc.local_space_id})`);;
-  for (const _vn of ((_vcLoc && _vcLoc._visible_npcs) || [])) { if (_vn.id) _vcLines.push(`- ${_vn.id}  (NPC: ${_vn.npc_name || _vn.id})`); }
+  // v1.88.11: L0 fallback — when active_local_space and active_site are both null, fall back to world._visible_npcs so BORN-NPCs at L0 appear as valid containers
+  const _vcVisNpcs = (_vcLoc && _vcLoc._visible_npcs) || (gameState.world || {})._visible_npcs || [];
+  for (const _vn of _vcVisNpcs) { if (_vn.id) _vcLines.push(`- ${_vn.id}  (NPC: ${_vn.npc_name || _vn.id})`); }
   const _validContainersList = _vcLines.join('\n');
 
   return `EXTRACTION TASK — TURN ${(gameState.turn_history || []).length}
@@ -138,7 +140,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
 
 ENTITY REFERENCE RULE:
 Check the Visible entities list above before writing any entity_ref.
-If the entity matches a known entry, use the EXACT npc_id (e.g. "npc_barkeep_01").
+If the entity matches a known entry, use the EXACT npc_id as shown (e.g. "player#born_npc_example").
+NPC IDs may contain namespace prefixes separated by "#" (e.g. "player#born_npc_...") — copy the FULL ID exactly as shown, including any prefix before "#". Never truncate or reformat.
 Only use a descriptive label ("man near hearth") if no match exists in the list.
 A descriptive label that should have been an npc_id is a silent continuity break.
 "player" is always a valid entity_ref — use it when the narration describes the player character's appearance, clothing, equipment, or current physical state.
