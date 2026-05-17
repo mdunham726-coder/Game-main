@@ -3938,6 +3938,13 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                 npc.position?.lx === _bnL0pos.lx && npc.position?.ly === _bnL0pos.ly
               );
             }
+            // v1.88.14 Patch 1I: stamp object_capture_turn so intro capture skips this NPC on future turns.
+            // birth_custom objects are already embodied — null capture_turn would leave the NPC permanently
+            // eligible for intro capture even though it is already fully stamped.
+            // Gate: gearless born NPCs (no objects) stay null so narration-based intro capture can still fire.
+            if (_bnNpc.object_ids.length > 0 || _bnNpc.worn_object_ids.length > 0) {
+              _bnNpc.object_capture_turn = turnNumber;
+            }
             gameState._born_npc_initialized = true;
             console.log(`[BORN-NPC] Turn 1 NPC instantiated: id=${_bnId} npc_name="${_bnNpcName}" is_learned=${_bnIsLearned} carried=${_bnNpc.object_ids.length} worn=${_bnNpc.worn_object_ids.length}`);
           }
