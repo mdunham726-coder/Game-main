@@ -3929,6 +3929,15 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                .map(l => l.toLowerCase().trim())
                .filter((l, i, a) => a.indexOf(l) === i)
             });
+            // v1.88.10 Patch 1D: refresh world._visible_npcs after BORN-NPC push so the intro capture loop
+            // (below) sees the NPC. The earlier _visibleNpcs pass (above) ran before BORN-NPC existed.
+            if (_narDepth === 1) {
+              const _bnL0pos = gameState.world?.position || {};
+              gameState.world._visible_npcs = (gameState.world?.npcs || []).filter(npc =>
+                npc.position?.mx === _bnL0pos.mx && npc.position?.my === _bnL0pos.my &&
+                npc.position?.lx === _bnL0pos.lx && npc.position?.ly === _bnL0pos.ly
+              );
+            }
             gameState._born_npc_initialized = true;
             console.log(`[BORN-NPC] Turn 1 NPC instantiated: id=${_bnId} npc_name="${_bnNpcName}" is_learned=${_bnIsLearned} carried=${_bnNpc.object_ids.length} worn=${_bnNpc.worn_object_ids.length}`);
           }
