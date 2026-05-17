@@ -156,7 +156,8 @@ For each named or identifiable entity in the narration, produce one entry:
   "entity_ref": "<npc_id from engine state, or descriptive label ONLY if no match>",
   "physical_attributes": [],
   "observable_states": [],
-  "held_or_worn_objects": [],
+  "held_objects": [],
+  "worn_objects": [],
   "rejected_interpretations": []
 }
 
@@ -170,10 +171,17 @@ observable_states
   Test: "Can I confirm this by looking, without guessing why?"
   Include only states that are directly visible — posture, position, and physical indicators confirmable on sight without knowing the reason. Exclude intent, emotion, and states that require inference to identify. When an observable state is a visible sign of bodily harm to the player, the underlying injury must also be emitted as a condition_event. An observable state does not absorb a condition.
 
-held_or_worn_objects
-  Items visibly on or in the hands/body of THIS entity specifically.
-  Test: "Is this object attached to or held by this entity right now?"
-  Include only objects that are explicitly named and confirmed as held or worn by this entity. Exclude category labels, vague collective nouns, and metaphors. Exclude absence descriptions — they are not held or worn objects.
+held_objects
+  Items carried, held, slung, packed, or hanging at the hip of THIS entity.
+  Route here: rifle slung over shoulder, pack on back, satchel at hip, item in hand, anything loaded or stowed as cargo.
+  Test: "Is this something they are carrying or transporting — not wearing as attire?"
+  Include only explicitly named items. Exclude category labels, vague collective nouns, and absence descriptions.
+
+worn_objects
+  Items worn, equipped, or fitted to the body of THIS entity as clothing or gear.
+  Route here: boots, belt, hat, jacket, armor, cloak, gloves, scabbard, holster, any clothing or body-fitted equipment.
+  Test: "Is this on their body as attire or fitted gear — not cargo?"
+  Include only explicitly named items. Exclude category labels and absence descriptions.
 
 rejected_interpretations (per-entity)
   REQUIRED. Items you considered but rejected. Format: "phrase → reason"
@@ -599,7 +607,7 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   candidate.held_or_worn_objects);
+  promote('object',   [...(candidate.held_objects || []), ...(candidate.worn_objects || [])]);  // v1.88.12: split fields
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'npc', entity_id: npc.id, entity_name: npc.npc_name || npc.id, count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -655,7 +663,7 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries, options =
   } else {
     promote('physical', candidate.physical_attributes);
     promote('state',    candidate.observable_states);
-    promote('object',   candidate.held_or_worn_objects);
+    promote('object',   [...(candidate.held_objects || []), ...(candidate.worn_objects || [])]);  // v1.88.12: split fields
   }
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
