@@ -3982,6 +3982,27 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                   gameState.world.active_site, gameState.player.position
                 );
               }
+            } else if (_narDepth === 3 && gameState.world?.active_local_space) {
+              // v1.88.24 Patch 1N: place BORN-NPC on local space grid tile so computeVisibleNpcs finds it at L2.
+              // Mirrors Patch 1M (L1 site tile placement) one layer deeper. active_local_space.grid uses the
+              // same npc_ids tile pattern; NPC registry is active_site.npcs (BORN-NPC lives there, not in
+              // active_local_space.npcs). Canonical L2 computeVisibleNpcs call shape: index.js ~L2838.
+              const _bnLsX = gameState.player?.position?.x;
+              const _bnLsY = gameState.player?.position?.y;
+              if (typeof _bnLsX === 'number' && typeof _bnLsY === 'number') {
+                const _bnLsGrid = gameState.world.active_local_space.grid;
+                if (Array.isArray(_bnLsGrid)) {
+                  const _bnLsTile = _bnLsGrid[_bnLsY]?.[_bnLsX];
+                  if (_bnLsTile) {
+                    if (!Array.isArray(_bnLsTile.npc_ids)) _bnLsTile.npc_ids = [];
+                    if (!_bnLsTile.npc_ids.includes(_bnNpc.id)) _bnLsTile.npc_ids.push(_bnNpc.id);
+                  }
+                  _bnNpc.local_space_position = { x: _bnLsX, y: _bnLsY };
+                }
+                gameState.world.active_local_space._visible_npcs = Actions.computeVisibleNpcs(
+                  gameState.world.active_local_space, gameState.player.position, gameState.world.active_site?.npcs || []
+                );
+              }
             }
             // v1.88.14 Patch 1I: stamp object_capture_turn so intro capture skips this NPC on future turns.
             // birth_custom objects are already embodied — null capture_turn would leave the NPC permanently
