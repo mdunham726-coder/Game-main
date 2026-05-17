@@ -1024,7 +1024,7 @@ function assembleContinuityPacket(gameState, turnContext) {
   lines.push('CONTINUITY — TRUTH');
   lines.push('═══════════════════════════════════════════');
 
-  const visible = (loc && loc._visible_npcs) || [];
+  const visible = (loc && loc._visible_npcs) || w._visible_npcs || []; // v1.88.5: L0 fallback — BORN-NPC visible to TRUTH block
   let truthLines = 0;
 
   // Player attributes — always first in TRUTH block (layer-agnostic)
