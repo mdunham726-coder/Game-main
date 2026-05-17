@@ -3908,6 +3908,27 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               if (!Array.isArray(gameState.world.npcs)) gameState.world.npcs = [];
               gameState.world.npcs.push(_bnNpc);
             }
+            // v1.88.9 Patch 1C: Turn 1 Founding Registry — authority bridge from founding prose labels → engine ID.
+            // Phase B extracted starting_npc before the engine ID existed; BORN-NPC now has an ID; registry
+            // reconciles the same founding entity for remaining Turn 1 downstream systems (intro capture).
+            if (!Array.isArray(gameState.world._turn1_founded_entities)) gameState.world._turn1_founded_entities = [];
+            gameState.world._turn1_founded_entities.push({
+              turn: 1,
+              source: 'turn_1_founding',
+              type: 'npc',
+              entity_id: _bnNpc.id,
+              npc_name: _bnNpc.npc_name,
+              description: _bnNpc.description || null,
+              labels: [
+                _bnSn.name,
+                _bnSn.generated_name,
+                _bnSn.role_or_relation,
+                _bnSn.job_category,
+                _bnNpc.npc_name
+              ].filter(Boolean)
+               .map(l => l.toLowerCase().trim())
+               .filter((l, i, a) => a.indexOf(l) === i)
+            });
             gameState._born_npc_initialized = true;
             console.log(`[BORN-NPC] Turn 1 NPC instantiated: id=${_bnId} npc_name="${_bnNpcName}" is_learned=${_bnIsLearned} carried=${_bnNpc.object_ids.length} worn=${_bnNpc.worn_object_ids.length}`);
           }
@@ -3956,10 +3977,21 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           ...(gameState.world?._visible_npcs || [])  // v1.88.8: L0 fallback — include founded NPCs at overworld depth
         ].filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
         let _npcIntroCaptureCount = 0;
+        const _t1Registry = gameState.world?._turn1_founded_entities || [];  // v1.88.9: Turn 1 Founding Registry
         if (Array.isArray(_phaseBResult.entity_candidates)) {
           for (const _intrNpc of _visibleNpcsForCapture) {
             if (_intrNpc.object_capture_turn !== null && _intrNpc.object_capture_turn !== undefined) continue;
-            const _intrCand = _phaseBResult.entity_candidates.find(ec => ec.entity_ref === _intrNpc.id);
+            const _intrCand = _phaseBResult.entity_candidates.find(ec => {
+              if (ec.entity_ref === _intrNpc.id) return true;
+              // v1.88.9 Patch 1C: Turn 1 only — resolve prose founding labels via registry
+              if (turnNumber === 1 && _t1Registry.length) {
+                const _ref = String(ec?.entity_ref || '').toLowerCase().trim();
+                if (!_ref || _ref === 'player') return false;
+                const _fe = _t1Registry.find(fe => fe.entity_id === _intrNpc.id);
+                if (_fe && _fe.labels.includes(_ref)) return true;
+              }
+              return false;
+            });
             if (!_intrCand) continue;
             let _capturedForNpc = 0;
             for (const _hItem of (_intrCand.held_objects || [])) {
