@@ -7285,7 +7285,8 @@ app.get('/diagnostics/turn/:sessionId/:turn', async (req, res) => {
     reality_check:       'reality_check',
     narration_debug:     'narration_debug',
     logs:                'logs',
-    object_reality:      'object_reality'   // v1.84.54
+    object_reality:      'object_reality',   // v1.84.54
+    arbiter_verdict:     'arbiter_verdict'   // v1.88.23
   };
   const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
   const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };
