@@ -5431,6 +5431,9 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       }
     })();
 
+    // v1.88.22: persist Arbiter verdict into turn archive for forensic tooling
+    if (gameState.turn_history?.length) gameState.turn_history[gameState.turn_history.length - 1].arbiter_verdict = gameState._lastArbiterVerdict ?? null;
+
     // v1.86.0: Background autosave — moved post-Arbiter so last_known_form / current_form are captured after write-back
     fsPromises.mkdir(path.join(__dirname, 'saves', resolvedSessionId), { recursive: true })
       .then(() => fsPromises.writeFile(
