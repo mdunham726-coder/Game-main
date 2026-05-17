@@ -430,6 +430,43 @@ async function run(gameState, quarantine, turnNumber) {
       continue;
     }
 
+    // v1.88.19 Patch 1L: Post-resolution name dedup. Now that the container resolved,
+    // scan the resolved container's object_ids[] for an active object with the same name.
+    // Catches cross-provenance duplicates where a birth_custom ObjectRecord stores the engine
+    // container ID while the CB candidate carries a prose label — the pre-resolution dedup
+    // (promote_skipped_name_match etc.) compares raw container_id strings and misses this case.
+    // Only fires when resolution succeeded; scoped to the resolved container only.
+    let _resolvedOwnerId = null;
+    if (container_type === 'npc' || container_type === 'npc_worn') {
+      const _auditNpcs = [
+        ...(Array.isArray(gameState.world?.npcs) ? gameState.world.npcs : []),
+        ...(Array.isArray(gameState.world?.active_site?.npcs) ? gameState.world.active_site.npcs : [])
+      ];
+      const _ownerNpc = _auditNpcs.find(n =>
+        (container_type === 'npc' ? n.object_ids : n.worn_object_ids) === containerIds
+      );
+      if (_ownerNpc) _resolvedOwnerId = _ownerNpc.id;
+    }
+    const _resolvedDupEid = containerIds.find(eid => {
+      const _rdo = gameState.objects[eid];
+      return _rdo && _rdo.status === 'active' && String(_rdo.name || '').toLowerCase().trim() === _nameLower;
+    });
+    if (_resolvedDupEid) {
+      const _resolvedDupObj = gameState.objects[_resolvedDupEid];
+      tempRefMap[temp_ref] = _resolvedDupEid;
+      _claimedObjectIds.add(_resolvedDupEid);
+      audit.push({
+        turn: turnNumber, action: 'promote_skipped_resolved_name_match',
+        reason: 'resolved_name_match',
+        raw_container_id: container_id,
+        resolved_owner_id: _resolvedOwnerId,
+        existing_object_id: _resolvedDupEid,
+        existing_object_name: _resolvedDupObj?.name || null,
+        temp_ref, ts
+      });
+      continue;
+    }
+
     // v1.85.90: Check rejected-candidate cache. If this grounded promotion matches an object that was
     // previously blocked by the origin gate (narrator tried to give it to the player before it was
     // grounded), annotate the new record with reconciliation provenance. The promotion is NOT suppressed
