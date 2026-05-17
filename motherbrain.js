@@ -724,7 +724,7 @@ const MB_TOOLS = [
           intent_channel: {
             type: 'string',
             enum: ['do', 'say', 'ask'],
-            description: 'Optional intent channel. Default: do.'
+            description: "Optional intent channel. Default: do. Use 'say' when the player speaks aloud to an NPC — dialogue, questions, greetings. Use 'do' for all physical actions (look, move, examine, pick up, etc.)."
           }
         },
         required: ['action']
