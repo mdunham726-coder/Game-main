@@ -3961,6 +3961,27 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                 npc.position?.mx === _bnL0pos.mx && npc.position?.my === _bnL0pos.my &&
                 npc.position?.lx === _bnL0pos.lx && npc.position?.ly === _bnL0pos.ly
               );
+            } else if (_narDepth === 2 && gameState.world?.active_site) {
+              // v1.88.21 Patch 1M: place BORN-NPC on site grid tile so computeVisibleNpcs finds it at L1.
+              // Mirrors WorldGen cell.npc_ids.push + npc.site_position (WorldGen.js ~L2334) and the
+              // inject-npc harness tile-placement pattern (index.js ~L7919-7929). world.position only
+              // holds L0 coords (mx,my,lx,ly); player.position adds site-local x,y on enterSite.
+              const _bnSiteX = gameState.player?.position?.x;
+              const _bnSiteY = gameState.player?.position?.y;
+              if (typeof _bnSiteX === 'number' && typeof _bnSiteY === 'number') {
+                const _bnSiteGrid = gameState.world.active_site.grid;
+                if (Array.isArray(_bnSiteGrid)) {
+                  const _bnTile = _bnSiteGrid[_bnSiteY]?.[_bnSiteX];
+                  if (_bnTile) {
+                    if (!Array.isArray(_bnTile.npc_ids)) _bnTile.npc_ids = [];
+                    if (!_bnTile.npc_ids.includes(_bnNpc.id)) _bnTile.npc_ids.push(_bnNpc.id);
+                  }
+                  _bnNpc.site_position = { x: _bnSiteX, y: _bnSiteY };
+                }
+                gameState.world.active_site._visible_npcs = Actions.computeVisibleNpcs(
+                  gameState.world.active_site, gameState.player.position
+                );
+              }
             }
             // v1.88.14 Patch 1I: stamp object_capture_turn so intro capture skips this NPC on future turns.
             // birth_custom objects are already embodied — null capture_turn would leave the NPC permanently
