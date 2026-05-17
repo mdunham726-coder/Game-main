@@ -3974,6 +3974,28 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           console.warn('[BORN-NPC] Turn 1 NPC init error (non-fatal):', _bnErr.message);
         }
       }
+      // v1.88.18 Patch 1K-fix: Reclassify unresolved_entity_ref → founding_npc_pre_materialize for
+      // founded NPCs. CB emits unresolved_entity_ref because it runs before BORN-NPC writes the
+      // registry. Now that BORN-NPC has run (and _turn1_founded_entities is populated), retroactively
+      // fix any warnings whose entity_ref matches a registry label.
+      if (turnNumber === 1 && Array.isArray(gameState.world?._turn1_founded_entities) && gameState.world._turn1_founded_entities.length > 0) {
+        const _reclass = _phaseBResult?.continuity_diagnostics?.warnings;
+        if (Array.isArray(_reclass)) {
+          for (let _ri = 0; _ri < _reclass.length; _ri++) {
+            const _rw = _reclass[_ri];
+            if (_rw.type === 'unresolved_entity_ref') {
+              const _rLower = String(_rw.entity_ref || '').trim().toLowerCase();
+              const _rHit = gameState.world._turn1_founded_entities.some(
+                fe => Array.isArray(fe.labels) && fe.labels.includes(_rLower)
+              );
+              if (_rHit) {
+                _reclass[_ri] = { type: 'founding_npc_pre_materialize', entity_ref: _rw.entity_ref, turn: _rw.turn };
+                console.log(`[CB-INDEX] entity_ref "${_rw.entity_ref}" reclassified to founding_npc_pre_materialize — born NPC materialized, registry matched`);
+              }
+            }
+          }
+        }
+      }
       // v1.84.52: Object Reality System — build local quarantine from CB output, then process
       // index.js owns the quarantine write; CB is a pure interpreter; quarantine is never on gameState
       // _objectRealityDebug is hoisted above try/catch so catch can include it in error responses
