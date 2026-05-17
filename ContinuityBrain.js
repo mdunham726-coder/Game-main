@@ -794,7 +794,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
       model: 'deepseek-chat',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1,  // low temperature — forensic, not creative
-      max_tokens: 1600
+      max_tokens: 2800
     },
     {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -829,7 +829,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     extracted = JSON.parse(cleaned);
   } catch (parseErr) {
     console.error('[CB] Phase B JSON parse failed:', parseErr.message, '| raw:', (raw || '').slice(0, 200));
-    _setDiag({ error: 'json_parse_failed', raw: (raw || '').slice(0, 500), turn });
+    _setDiag({ error: 'json_parse_failed', raw: (raw || '').slice(0, 3000), turn });
     return null;
   }
 
