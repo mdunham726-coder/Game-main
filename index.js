@@ -3946,7 +3946,9 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                 _bnSn.generated_name,
                 _bnSn.role_or_relation,
                 _bnSn.job_category,
-                _bnNpc.npc_name
+                _bnNpc.npc_name,
+                (_bnSn.role_or_relation && _bnSn.name)      ? (_bnSn.role_or_relation + ' ' + _bnSn.name)      : null,
+                (_bnSn.role_or_relation && _bnNpc.npc_name) ? (_bnSn.role_or_relation + ' ' + _bnNpc.npc_name) : null
               ].filter(Boolean)
                .map(l => l.toLowerCase().trim())
                .filter((l, i, a) => a.indexOf(l) === i)
