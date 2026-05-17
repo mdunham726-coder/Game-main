@@ -569,14 +569,39 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         if (logger) logger.action_resolved('talk', false, `ambiguous: ${matches.length} NPCs match "${target}"`);
         console.log(`[ACTIONS] talk: ambiguous — ${matches.length} NPCs match "${target}"`);
       } else {
-        state.world._npcTalkResult = { outcome: 'matched', npc: { id: matches[0].id, job: matches[0].job_category } };
+        state.world._npcTalkResult = { outcome: 'matched', npc: { id: matches[0].id, job: matches[0].job_category, npc_name: matches[0].npc_name || null, is_learned: !!matches[0].is_learned } }; // v1.88.7: add npc_name + is_learned for _rcHiddenNpcTarget
         if (logger) logger.action_resolved('talk', true, `talking to ${matches[0].id} (${matches[0].job_category})`);
         console.log(`[ACTIONS] talk: matched ${matches[0].id} (${matches[0].job_category})`);
       }
     } else {
-      state.world._npcTalkResult = { outcome: 'not_in_site' };
-      if (logger) logger.action_resolved('talk', false, `not inside a site (depth ${depth})`);
-      console.log(`[ACTIONS] talk: player not inside a site (depth ${depth})`);
+      // v1.88.7: L0 overworld talk resolution — resolve NPC from _visible_npcs or world.npcs
+      const _l0Npcs = (Array.isArray(state.world._visible_npcs) && state.world._visible_npcs.length > 0)
+        ? state.world._visible_npcs
+        : (Array.isArray(state.world.npcs) ? state.world.npcs : []);
+      if (_l0Npcs.length === 0) {
+        state.world._npcTalkResult = { outcome: 'not_found', target };
+        if (logger) logger.action_resolved('talk', false, `L0: no NPCs present`);
+        console.log(`[ACTIONS] talk: L0 no NPCs present`);
+      } else {
+        const _q = target.toLowerCase();
+        const _l0Match = _q
+          ? (_l0Npcs.find(n =>
+              String(n?.name             || '').toLowerCase() === _q ||
+              String(n?.npc_name         || '').toLowerCase() === _q ||
+              String(n?.job_category     || '').toLowerCase() === _q ||
+              String(n?.role_or_relation || '').toLowerCase() === _q
+            ) || (_l0Npcs.length === 1 ? _l0Npcs[0] : null))
+          : (_l0Npcs.length === 1 ? _l0Npcs[0] : null);
+        if (_l0Match) {
+          state.world._npcTalkResult = { outcome: 'matched', npc: { id: _l0Match.id, job: _l0Match.job_category, npc_name: _l0Match.npc_name || null, is_learned: !!_l0Match.is_learned } };
+          if (logger) logger.action_resolved('talk', true, `L0 talk: matched ${_l0Match.id} (${_l0Match.job_category})`);
+          console.log(`[ACTIONS] talk: L0 matched ${_l0Match.id} (${_l0Match.job_category})`);
+        } else {
+          state.world._npcTalkResult = { outcome: 'not_found', target };
+          if (logger) logger.action_resolved('talk', false, `L0: no NPC match for "${target}"`);
+          console.log(`[ACTIONS] talk: L0 no match for "${target}"`);
+        }
+      }
     }
     return;
   }

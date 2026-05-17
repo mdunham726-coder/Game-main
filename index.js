@@ -3297,8 +3297,23 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         console.log(`[NAME-REVEAL] v1.87.4 authorized "${_nrvCanonical}" for ${_rcHiddenNpcTarget.id} (placeholder:${_nrvHasPlaceholder} signal:${_nrvAnchorSignal})`);
       }
     }
+    // v1.88.7: RC-independent fallback — build _authorizedNameReveal directly when RC was skipped
+    // and all conditions for a valid hidden-name conversation are met. Name reveal is an
+    // engine-authorized identity disclosure, not a reality-check event.
+    if (!_authorizedNameReveal &&
+        _rcHiddenNpcTarget &&
+        resolvedChannel === 'say' &&
+        _npcTalkResult?.outcome === 'matched' &&
+        _rcHiddenNpcTarget.npc_name &&
+        _rcHiddenNpcTarget.is_learned === false) {
+      const _nrvLabel2 = _rcHiddenNpcTarget.job_category || _rawNpcTarget || 'the NPC';
+      _authorizedNameReveal = { npc_id: _rcHiddenNpcTarget.id, canonical_name: _rcHiddenNpcTarget.npc_name, label: _nrvLabel2, rc_independent: true };
+      console.log(`[NAME-REVEAL] v1.88.7 RC-independent authorized "${_rcHiddenNpcTarget.npc_name}" for ${_rcHiddenNpcTarget.id}`);
+    }
     const _nameRevealAuthorityBlock = _authorizedNameReveal
-      ? `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has just revealed their true canonical name: "${_authorizedNameReveal.canonical_name}". This is engine-verified fact. If your narration depicts the name reveal occurring this turn, use this exact name only — do not substitute, alter, or invent a different name. If your narration depicts a non-reveal outcome (refusal, deflection, interruption), you do not need to use this name.\n`
+      ? (_authorizedNameReveal.rc_independent
+        ? `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has a canonical engine identity. If this NPC chooses to reveal their name in this response, the only valid name to reveal is "${_authorizedNameReveal.canonical_name}". Do not invent an alternate proper name or nickname as the answer to a name request. The NPC may still refuse, deflect, delay, or answer indirectly if that fits the scene.\n`
+        : `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has just revealed their true canonical name: "${_authorizedNameReveal.canonical_name}". This is engine-verified fact. If your narration depicts the name reveal occurring this turn, use this exact name only — do not substitute, alter, or invent a different name. If your narration depicts a non-reveal outcome (refusal, deflection, interruption), you do not need to use this name.\n`)
       : '';
     const _realityAnchorBlock = _realityAnchor
       ? `\n\nPossible consequences of the player's action (advisory):\n${_realityAnchor}\nUse these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.\n`
