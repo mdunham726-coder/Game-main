@@ -3828,10 +3828,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         const _preSn    = Array.isArray(_preSnRaw) ? _preSnRaw[0] : _preSnRaw;
         if (_preSn && typeof _preSn === 'object') {
           const _preSeed = String(gameState.world?.phase3_seed || gameState.world?.seed || 0);
-          const _preId   = _bornNpcId(_preSeed, _preSn);
-          if (!Array.isArray(gameState.world._visible_npcs)) gameState.world._visible_npcs = [];
-          if (!gameState.world._visible_npcs.some(n => n.id === _preId)) {
-            gameState.world._visible_npcs.push({ id: _preId, npc_name: _preSn.name || _preSn.generated_name || null });
+          const _preId       = _bornNpcId(_preSeed, _preSn);
+          const _preVcTarget = gameState.world?.active_local_space || gameState.world?.active_site || gameState.world;
+          if (!Array.isArray(_preVcTarget._visible_npcs)) _preVcTarget._visible_npcs = [];
+          if (!_preVcTarget._visible_npcs.some(n => n.id === _preId)) {
+            _preVcTarget._visible_npcs.push({ id: _preId, npc_name: _preSn.name || _preSn.generated_name || null });
           }
         }
       }
