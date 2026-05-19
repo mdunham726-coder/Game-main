@@ -75,7 +75,7 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   // not the parent outdoor tile. Emitting both caused CB to pick the cell key (prior training bias).
   if (_vcPos && !(_vcLoc && _vcLoc.local_space_id)) _vcLines.push(`- LOC:${_vcPos.mx},${_vcPos.my}:${_vcPos.lx},${_vcPos.ly}  (current cell)`);
   // v1.84.85: add localspace floor when player is at L2 depth
-  if (_vcLoc && _vcLoc.local_space_id) _vcLines.push(`- ${_vcLoc.local_space_id}  (localspace floor: ${_vcLoc.name || _vcLoc.local_space_id})`);;
+  if (_vcLoc && _vcLoc.local_space_id) _vcLines.push(`- ${_vcLoc.local_space_id}  (localspace floor — container_type: localspace)`);;
   // v1.88.11: L0 fallback — when active_local_space and active_site are both null, fall back to world._visible_npcs so BORN-NPCs at L0 appear as valid containers
   const _vcVisNpcs = (_vcLoc && _vcLoc._visible_npcs) || (gameState.world || {})._visible_npcs || [];
   for (const _vn of _vcVisNpcs) { if (_vn.id) _vcLines.push(`- ${_vn.id}  (NPC: ${_vn.npc_name || _vn.id})`); }
