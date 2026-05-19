@@ -17,6 +17,14 @@ const { spawn } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 
+// Inline .env loader — sets any KEY=VALUE lines from .env that are not already in process.env.
+try {
+  fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n').forEach(line => {
+    const m = line.match(/^([^#=\s][^=]*?)=(.*)$/);
+    if (m) { const k = m[1].trim(), v = m[2].trim(); if (k && !(k in process.env)) process.env[k] = v; }
+  });
+} catch (_) {}
+
 // Dedicated HTTP agent for executeToolCall — keepAlive:false so each localhost
 // diagnostic request closes its socket immediately, preventing listener accumulation
 // on http.globalAgent across multi-call tool chains.
@@ -33,7 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '6.0.38';
+const MB_VERSION = '6.1.0';
+// MB v6.1.0 (May 2026): Minor — GitHub read-only integration. Five SESSION_FREE tools added to MB_TOOLS: github_list_commits, github_get_commit, github_get_file, github_compare, github_search_code. All call the GitHub REST API (https://api.github.com/repos/mdunham726-coder/Game-main) with a PAT loaded from .env (GITHUB_PAT). Inline .env loader added to motherbrain.js startup (same pattern as index.js). GITHUB_PAT constant added after DEEPSEEK_KEY. _githubApiError() helper maps Axios HTTP errors to structured JSON (github_not_found, github_auth_failed, github_rate_limited, github_unprocessable, github_unreachable) — each tool has its own try/catch calling this helper. diff endpoints use Accept: application/vnd.github.v3.diff; search uses text-match+json for fragments. All responses truncated at 32000 chars. GITHUB TOOLS paragraph added to SYSTEM_PROMPT. No index.js changes, no server routes, no write-capable tools. MB_VERSION 6.0.38 -> 6.1.0.
 // MB v6.0.16 (May 2026): Patch -- Fix dead world.current_cell at L0. (1) ActionProcessor.js: added getL0Cell(state) helper (3-line, module-internal) that derives the current L0 cell from state.world.position + state.world.cells map using the canonical LOC:\,\:\,\ key formula already used by ORS grid resolution (~line 920). (2) getCellEntities: replaced (state.world.current_cell)||{} with getL0Cell(state)|{}. (3) resolveCellItemByName env feature resolution (_envLocRec fallback chain): replaced state.world.current_cell with getL0Cell(state) -- L0 environment feature gathers now resolve correctly; prior L2/L1 fallbacks (active_local_space/active_site) unchanged. (4) resolveSiteByName: replaced state.world.current_cell with getL0Cell(state) -- examine [site name] at L0 no longer returns TARGET_NOT_VISIBLE. (5) index.js _environmentGatherBlock: branched on featureValue -- when populated uses existing engine-established text (POSSESSION RULE lifted); when null (synthetic path) uses new text stating item not confirmed as scene feature, narrate by plausibility -- narrator never again receives 'engine: null'. node --check clean on both files. Package v1.87.7. MB_VERSION 6.0.15 -> 6.0.16.
 // MB v6.0.15 (May 2026): Patch -- Authority Gate / RC split-brain bypass closed (Phase A + B). Phase A: (1) _rcValidationClause escape hatch reanchored to 'a DISCOVERY RESULT block in this prompt explicitly establishes them as found' -- structurally inert until engine emits the block, mechanic concept preserved. (2) test-harness.js no_new_objects op path corrected from narration_debug?.object_reality to top-level turn_history[last].object_reality; evidence field corrected from or.error_entries.length to or.errors. Phase B MVP: (1) _discoveryResultBlock IIFE declared after _rcSuffix -- fires on established_trait_action turns, MVP always emits not_found verdict; _discoveryResultDebug tracks fired+outcome. (2) _discoveryResultBlock injected into RC query before question text. (3) _freeformBlock for established_trait_action updated: DISCOVERY RESULT block is the authoritative engine verdict -- follow it; do not narrate discoveries beyond what it confirms. (4) _discoveryResultBlock injected into narrator prompt concat before _realityAnchorBlock. (5) narration_debug.discovery_result added: fired + outcome fields. Regression scenario authority_gate_established_trait_bypass: T1 PASS + T2 PASS (promoted:0 transferred:0 errors:0). MB_VERSION 6.0.14 -> 6.0.15.
 // MB v6.0.14 (May 2026): Patch -- Authority Gate / RC split-brain fix. (1) index.js RC skip chain: added else-if for _authorityGateResult?.rc_allowed===false -> _rcSkippedReason='authority_gate_no_rc'; gate's allow_no_rc verdict now honored by the RC pipeline (previously only freeform was checked). (2) _rcValidationClause strengthened: added second sentence blocking world-fact/object confirmation even when the relevant ability IS present in established attrs (leaves room for future allowed discovery mechanics). (3) _freeformBlock for established_trait_action: replaced unconditional 'Follow the Reality Check result above' with conditional -- if RC was generated follow it; if not, narrate attempt from engine state without confirming new objects or world facts. (4) authoritygate.js SYSTEM_PROMPT: added DISCOVERY FRAMING rule (with pattern phrases, no object examples) -- discovery-framed language asserting new scene elements is claimed_ability_use or unsupported_world_authoring, not valid_low_risk. (5) tests/probes/authority-gate-bypass-v1.probe.json deleted -- misdesigned (sent combined founding+bypass as single Turn-1 input; Turn-1 is founding phase, always accepted; probe was not testing post-founding bypass). Regression test: authority_gate_established_trait_bypass scenario. MB_VERSION 6.0.13 -> 6.0.14.
@@ -764,6 +773,99 @@ const MB_TOOLS = [
         required: []
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_list_commits',
+      description: 'List recent commits from the Game-main GitHub repository. Returns SHA, short SHA, message, author, and date for each commit. Use to inspect patch history, find a specific commit SHA, or verify the most recent push.',
+      parameters: {
+        type: 'object',
+        properties: {
+          count: {
+            type: 'integer',
+            description: 'Number of commits to return (1–50). Defaults to 10.'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_commit',
+      description: 'Fetch the unified diff and metadata for a specific commit by SHA. Returns exactly what changed in that patch. Use to verify a patch was applied correctly, review a regression-introducing change, or inspect any historical commit.',
+      parameters: {
+        type: 'object',
+        properties: {
+          sha: {
+            type: 'string',
+            description: 'Full or abbreviated (7+ char) commit SHA to inspect.'
+          }
+        },
+        required: ['sha']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_get_file',
+      description: 'Read the content of a file in the Game-main GitHub repository at HEAD or a specific ref. Use to verify a patched file on GitHub matches the expected state, or to inspect a historical file version.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'Repository-relative path to the file, e.g. "ObjectHelper.js" or "scripts/probe-runner.js".'
+          },
+          ref: {
+            type: 'string',
+            description: 'Branch, tag, or commit SHA to read from. Defaults to "main".'
+          }
+        },
+        required: ['path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_compare',
+      description: 'Compare two commits, branches, or tags and return the unified diff between them. Use to see exactly what changed between two versions of the codebase, e.g. between the last two version tags.',
+      parameters: {
+        type: 'object',
+        properties: {
+          base: {
+            type: 'string',
+            description: 'The base ref (older commit SHA, branch, or tag).'
+          },
+          head: {
+            type: 'string',
+            description: 'The head ref (newer commit SHA, branch, or tag).'
+          }
+        },
+        required: ['base', 'head']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'github_search_code',
+      description: 'Search for code within the Game-main GitHub repository. Returns file paths, URLs, and text fragments for each match. Use to locate where a function, pattern, or string exists across the codebase on GitHub.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query string. Supports GitHub code search syntax, e.g. "_resolveContainerIds" or "player#born_npc_".'
+          }
+        },
+        required: ['query']
+      }
+    }
   }
 ];
 
@@ -776,6 +878,7 @@ const RECONNECT_MS = 1000;
 const TURN_BUFFER  = 20;   // rolling turns kept for flight recorder history
 const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
 const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY || '';
+const GITHUB_PAT   = process.env.GITHUB_PAT || '';
 
 // ── ANSI ───────────────────────────────────────────────────────────────────────
 const R   = '\x1b[0m';
@@ -1240,7 +1343,21 @@ ASSERTION OPERATORS: The following operators are valid in turn assert arrays. Us
   narration_includes        -- requires value (string). Case-insensitive substring check on response.narrative. Do NOT use in worldgen_seeded scenarios -- narration text is LLM output and varies across runs. Safe for authority_test and exploratory categories where a specific output signal is expected.
   no_new_objects            -- no fields required. Reads narration_debug.object_reality.promoted from last turn_history entry. Passes if promoted == 0 (no new ObjectRecords created this turn). Use to verify the ORS did not promote any new items -- e.g. when testing that a state-claim or RC advisory did not instantiate an object. Evidence line shows promoted/transferred/error counts.
 
-ASSERTION PATH PREFIX: Engine response fields from the /narrate endpoint are nested under the debug key in the response body. All assertion paths that reference engine internals must use the debug. prefix -- e.g. debug.narration_debug.continuity_block_chars, debug.path, debug.narrator_mode_active. Top-level fields (narrative, error) do not need the prefix. The harness will silently retry a missing debug. prefix as a fallback, but always write paths explicitly with the correct prefix.`;
+ASSERTION PATH PREFIX: Engine response fields from the /narrate endpoint are nested under the debug key in the response body. All assertion paths that reference engine internals must use the debug. prefix -- e.g. debug.narration_debug.continuity_block_chars, debug.path, debug.narrator_mode_active. Top-level fields (narrative, error) do not need the prefix. The harness will silently retry a missing debug. prefix as a fallback, but always write paths explicitly with the correct prefix.
+
+GITHUB TOOLS: Five read-only tools give you direct access to the Game-main GitHub repository for patch inspection and verification. These tools are SESSION_FREE and work at any time. All are strictly read-only -- no write, commit, push, or admin operations exist. The PAT is stored externally in .env and is never visible in logs, prompts, or diagnostics.
+
+github_list_commits -- List recent commits (SHA, short SHA, message, author, date). Use to find a specific SHA or verify the most recent push reached GitHub. Default count is 10; max 50.
+
+github_get_commit -- Fetch the full unified diff for a specific commit SHA. Use to verify a patch landed correctly or inspect what changed in a regression-introducing commit. Diffs are truncated at 32000 chars.
+
+github_get_file -- Read a file's content from the repository at HEAD or any ref (branch, tag, or SHA). Use to confirm a patched file on GitHub matches the expected state. Content is truncated at 32000 chars. Returns an error if the path resolves to a directory.
+
+github_compare -- Return the unified diff between two refs (commit SHAs, branches, or tags). Use to see exactly what changed between two named versions. Diffs are truncated at 32000 chars.
+
+github_search_code -- Search for a string or pattern across all files in the repository. Returns file paths, URLs, and text fragments for each match (up to 20 results). Uses GitHub code search syntax.
+
+Error handling: all GitHub tools return structured JSON errors rather than throwing. Error shapes: {error:"github_pat_not_configured"} if PAT is missing; {error:"github_not_found", hint:...} on 404 (wrong SHA, path, or ref); {error:"github_auth_failed", hint:...} on 401/403; {error:"github_rate_limited", reset_at:<epoch>} on rate limit; {error:"github_unreachable", detail:...} on network failure. Check the error field before interpreting any response.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -1367,11 +1484,26 @@ function _extractDiagSummary(turnData) {
   }
 }
 
+// ── GitHub API error translator — maps Axios errors from GitHub REST calls to structured responses ──
+function _githubApiError(err) {
+  const s = err.response?.status;
+  const h = err.response?.headers || {};
+  if (!s)                                                    return { error: 'github_unreachable', detail: err.message };
+  if (s === 401 || s === 403)                                return { error: 'github_auth_failed',   hint: 'Check GITHUB_PAT in .env' };
+  if (s === 404)                                             return { error: 'github_not_found',     hint: 'SHA, path, or ref may be wrong or not yet pushed' };
+  if (s === 422)                                             return { error: 'github_unprocessable', hint: 'Likely a malformed SHA or invalid ref' };
+  if (s === 429 || h['x-ratelimit-remaining'] === '0') {
+    const resetAt = h['x-ratelimit-reset'] ? parseInt(h['x-ratelimit-reset']) : null;
+    return { error: 'github_rate_limited', reset_at: resetAt };
+  }
+  return { error: err.message, status: s, body: err.response?.data ?? null };
+}
+
 // ── Tool executor — called by Mother Brain during function-calling loop ────────
 async function executeToolCall(name, args) {
   const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
-  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file', 'start_game', 'end_game', 'update_investigation', 'attach_session'];
+  const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file', 'start_game', 'end_game', 'update_investigation', 'attach_session', 'github_list_commits', 'github_get_commit', 'github_get_file', 'github_compare', 'github_search_code'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
     return JSON.stringify({ error: 'no_session_active' });
   }
@@ -1972,6 +2104,77 @@ async function executeToolCall(name, args) {
         return listRaw.slice(0, 16000) + '\n[TRUNCATED]';
       }
       return listRaw;
+    } else if (name === 'github_list_commits') {
+      if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
+      const _ghCount = Math.min(Math.max(parseInt(args.count) || 10, 1), 50);
+      const _ghUrl   = `https://api.github.com/repos/mdunham726-coder/Game-main/commits?per_page=${_ghCount}`;
+      try {
+        const _ghResp = await axios.get(_ghUrl, {
+          timeout: 30000,
+          headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'MotherBrain/6.1.0' }
+        });
+        const _ghData = _ghResp.data.map(c => ({
+          sha:     c.sha,
+          short:   c.sha.slice(0, 7),
+          message: c.commit.message.split('\n')[0],
+          author:  c.commit.author.name,
+          date:    c.commit.author.date
+        }));
+        return JSON.stringify(_ghData);
+      } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
+    } else if (name === 'github_get_commit') {
+      if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
+      const _ghUrl = `https://api.github.com/repos/mdunham726-coder/Game-main/commits/${encodeURIComponent(args.sha)}`;
+      try {
+        const _ghResp = await axios.get(_ghUrl, {
+          timeout: 30000,
+          headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github.v3.diff', 'User-Agent': 'MotherBrain/6.1.0' }
+        });
+        const _ghRaw = typeof _ghResp.data === 'string' ? _ghResp.data : JSON.stringify(_ghResp.data);
+        return _ghRaw.length > 32000 ? _ghRaw.slice(0, 32000) + '\n[TRUNCATED — diff exceeds 32000 chars]' : _ghRaw;
+      } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
+    } else if (name === 'github_get_file') {
+      if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
+      const _ghRef = args.ref || 'main';
+      const _ghUrl = `https://api.github.com/repos/mdunham726-coder/Game-main/contents/${encodeURIComponent(args.path)}?ref=${encodeURIComponent(_ghRef)}`;
+      try {
+        const _ghResp = await axios.get(_ghUrl, {
+          timeout: 30000,
+          headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'MotherBrain/6.1.0' }
+        });
+        if (Array.isArray(_ghResp.data)) return JSON.stringify({ error: 'github_path_is_directory', hint: 'Provide a file path, not a directory.' });
+        const _ghContent = Buffer.from(_ghResp.data.content, 'base64').toString('utf8');
+        const _ghResult  = `// ${args.path} @ ${_ghRef} (sha: ${_ghResp.data.sha})\n${_ghContent}`;
+        return _ghResult.length > 32000 ? _ghResult.slice(0, 32000) + '\n[TRUNCATED]' : _ghResult;
+      } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
+    } else if (name === 'github_compare') {
+      if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
+      const _ghUrl = `https://api.github.com/repos/mdunham726-coder/Game-main/compare/${encodeURIComponent(args.base)}...${encodeURIComponent(args.head)}`;
+      try {
+        const _ghResp = await axios.get(_ghUrl, {
+          timeout: 30000,
+          headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github.v3.diff', 'User-Agent': 'MotherBrain/6.1.0' }
+        });
+        const _ghRaw = typeof _ghResp.data === 'string' ? _ghResp.data : JSON.stringify(_ghResp.data);
+        return _ghRaw.length > 32000 ? _ghRaw.slice(0, 32000) + '\n[TRUNCATED — diff exceeds 32000 chars]' : _ghRaw;
+      } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
+    } else if (name === 'github_search_code') {
+      if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
+      const _ghQ   = `${encodeURIComponent(args.query)}+repo:mdunham726-coder/Game-main`;
+      const _ghUrl = `https://api.github.com/search/code?q=${_ghQ}&per_page=20`;
+      try {
+        const _ghResp = await axios.get(_ghUrl, {
+          timeout: 30000,
+          headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github.v3.text-match+json', 'User-Agent': 'MotherBrain/6.1.0' }
+        });
+        const _ghItems = (_ghResp.data.items || []).map(item => ({
+          path:      item.path,
+          sha:       item.sha,
+          url:       item.html_url,
+          fragments: (item.text_matches || []).map(m => m.fragment)
+        }));
+        return JSON.stringify({ total_count: _ghResp.data.total_count, results: _ghItems });
+      } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }
