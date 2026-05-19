@@ -9,7 +9,7 @@ Do NOT wait for the user to ask — execute automatically after every commit.
 3. **Commit** — `git commit -m "vX.XX.XX: brief description"`
 4. **Push** — `git push origin main` immediately; no batching, no exceptions
 5. **Update CHANGELOG** — `c:\Users\daddy\Desktop\CHANGELOG.md`
-6. **Update Documentation** — `c:\Users\daddy\Desktop\ULTIMATE_DUNGEON_MASTER_GAME_DOCUMENTATION.md`
+6. **Update Documentation** — `c:\Users\daddy\Desktop\ULTIMATE_DUNGEON_MASTER_GAME_DOCUMENTATION_PART2.md`
 
 Steps 5 and 6 are NOT optional. They are part of the patch workflow, not a separate request.
 
@@ -35,7 +35,7 @@ If it does not exist, prepend it below the top `---` separator line.
 
 ---
 
-## DOCUMENTATION FORMAT (`c:\Users\daddy\Desktop\ULTIMATE_DUNGEON_MASTER_GAME_DOCUMENTATION.md`)
+## DOCUMENTATION FORMAT (`c:\Users\daddy\Desktop\ULTIMATE_DUNGEON_MASTER_GAME_DOCUMENTATION_PART2.md`)
 
 The `**Development Status**` line contains a chain of compact one-sentence version entries separated by ` -- `.
 
