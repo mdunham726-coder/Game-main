@@ -368,13 +368,13 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'query_objects',
-      description: 'Query the live object registry. Use when: inventory UI vs engine state diverges; investigating object_errors; confirming an object\'s current container; listing all objects held by an NPC, player, or in a grid cell. Returns all matching object records plus a by_container index and last 20 object_errors. Objects that have been transferred to different containers persist with their current_container_type/current_container_id updated. NOTE: the container_type value for world cells is grid (not cell) — use container_type=grid when filtering for cell-held objects.',
+      description: 'Query the live object registry. Use when: inventory UI vs engine state diverges; investigating object_errors; confirming an object\'s current container; listing all objects held by an NPC, player, in a grid cell, or on a localspace floor. Returns all matching object records plus a by_container index and last 20 object_errors. Objects that have been transferred to different containers persist with their current_container_type/current_container_id updated.',
       parameters: {
         type: 'object',
         properties: {
           container_type: {
             type: 'string',
-            description: 'Optional: filter by container type. One of: player, npc, cell. Omit to return all.'
+            description: 'Optional: filter by container type. Valid values: player (player inventory), npc (held by an NPC), grid (object in a world cell — cell keys are LOC:mx,my:lx,ly format), localspace (object on a localspace interior floor — IDs are site_.../l2_ls_... format), site (object on a site floor), npc_worn (worn by an NPC), player_worn (worn by the player). Omit to return all. Do NOT use \'cell\' — use \'grid\' for cell-held objects.'
           },
           container_id: {
             type: 'string',

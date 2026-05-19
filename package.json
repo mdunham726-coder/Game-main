@@ -1,6 +1,6 @@
 ﻿{
   "name": "roguelike-engine",
-  "version": "1.88.34",
+  "version": "1.88.35",
   "main": "index.js",
   "scripts": {
     "start": "node --max-old-space-size=4096 index.js"
