@@ -2135,8 +2135,9 @@ async function executeToolCall(name, args) {
       } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
     } else if (name === 'github_get_file') {
       if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
-      const _ghRef = args.ref || 'main';
-      const _ghUrl = `https://api.github.com/repos/mdunham726-coder/Game-main/contents/${encodeURIComponent(args.path)}?ref=${encodeURIComponent(_ghRef)}`;
+      const _ghRef     = args.ref || 'main';
+      const _ghFilePath = (args.path || '').split('/').map(s => encodeURIComponent(s)).join('/');
+      const _ghUrl = `https://api.github.com/repos/mdunham726-coder/Game-main/contents/${_ghFilePath}?ref=${encodeURIComponent(_ghRef)}`;
       try {
         const _ghResp = await axios.get(_ghUrl, {
           timeout: 30000,
@@ -2149,7 +2150,7 @@ async function executeToolCall(name, args) {
       } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
     } else if (name === 'github_compare') {
       if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
-      const _ghUrl = `https://api.github.com/repos/mdunham726-coder/Game-main/compare/${encodeURIComponent(args.base)}...${encodeURIComponent(args.head)}`;
+      const _ghUrl = `https://api.github.com/repos/mdunham726-coder/Game-main/compare/${args.base}...${args.head}`;
       try {
         const _ghResp = await axios.get(_ghUrl, {
           timeout: 30000,
