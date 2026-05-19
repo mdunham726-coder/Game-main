@@ -43,6 +43,12 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(__dirname));
 
+// v1.88.29: deterministic born-NPC ID — single formula used at both pre-seed and materialization
+function _bornNpcId(seed, sn) {
+  const input = [String(seed), sn.name || '', sn.role_or_relation || '', sn.description || '', 'born_npc'].join(':');
+  return 'player#born_npc_' + crypto.createHash('sha256').update(input, 'utf8').digest('hex').slice(0, 12);
+}
+
 // Session state management
 const sessionStates = new Map();
 
@@ -3816,6 +3822,19 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         top_violation:              null,
         channel:                    resolvedChannel || null,
       };
+      // v1.88.29: pre-seed born NPC into _visible_npcs before CB so Phase B sees the canonical container ID
+      if (turnNumber === 1 && gameState.player?.birth_record?.starting_npc && !gameState._born_npc_initialized) {
+        const _preSnRaw = gameState.player.birth_record.starting_npc;
+        const _preSn    = Array.isArray(_preSnRaw) ? _preSnRaw[0] : _preSnRaw;
+        if (_preSn && typeof _preSn === 'object') {
+          const _preSeed = String(gameState.world?.phase3_seed || gameState.world?.seed || 0);
+          const _preId   = _bornNpcId(_preSeed, _preSn);
+          if (!Array.isArray(gameState.world._visible_npcs)) gameState.world._visible_npcs = [];
+          if (!gameState.world._visible_npcs.some(n => n.id === _preId)) {
+            gameState.world._visible_npcs.push({ id: _preId, npc_name: _preSn.name || _preSn.generated_name || null });
+          }
+        }
+      }
       const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, { suppressUnsupportedPlayerStatePromotion: _soliloquyFired });
       _continuityExtractionSuccess = _phaseBResult !== null;
       // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
@@ -3847,8 +3866,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           if (_bnRaw && typeof _bnRaw === 'object') {
             const _bnSn        = _bnRaw;
             const _bnSeed      = String(gameState.world?.phase3_seed || gameState.world?.seed || 0);
-            const _bnIdInput   = [_bnSeed, _bnSn.name || '', _bnSn.role_or_relation || '', _bnSn.description || '', 'born_npc'].join(':');
-            const _bnId        = 'player#born_npc_' + require('crypto').createHash('sha256').update(_bnIdInput, 'utf8').digest('hex').slice(0, 12);
+            const _bnId        = _bornNpcId(_bnSeed, _bnSn);
             const _bnNpcName   = _bnSn.name || _bnSn.generated_name || null;
             const _bnIsLearned = !!(_bnSn.name);
             const _bnPos       = gameState.world?.position ? { ...gameState.world.position } : {};
