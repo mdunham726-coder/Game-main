@@ -429,41 +429,34 @@
       });
 
       // v1.85.15: Android reload reconnect — sessionStorage is cleared on background reload;
-      // if localStorage has a persisted session ID, skip the intro and restore UI.
-      // v1.88.25: modal hide depends only on _persistedId — saved state is best-effort.
+      // if localStorage has a persisted session ID and game state, skip the intro and restore UI.
       try {
         if (!currentSessionId) {
           const _persistedId = localStorage.getItem('gameSessionId_persist');
           if (_persistedId) {
-            // Restore session ID so all future requests send x-session-id
-            currentSessionId = _persistedId;
-            sessionStorage.setItem('gameSessionId', currentSessionId);
-            // Hide intro — no dependency on saved state, narrative, panels, or parse success
-            document.getElementById('world-prompt-modal').style.display = 'none';
-            // Restore last narrative (blank fallback is fine)
-            const _persistedNarrative = localStorage.getItem('gameNarrative_' + _persistedId) || '';
-            document.getElementById('narrative').innerHTML = _persistedNarrative
-              ? renderNarrative(_persistedNarrative)
-              : '<p style="margin:0 0 0.9em 0; color:#888;">[Session restored. Continue your adventure.]</p>';
-            // Best-effort panel restore — missing or corrupt state is non-fatal, does not affect modal or session
             const _persistedStateRaw = localStorage.getItem('gameState_' + _persistedId);
             if (_persistedStateRaw) {
-              try {
-                const _persistedState = JSON.parse(_persistedStateRaw);
-                const _fakeData = { state: _persistedState };
-                updateWornBox(_fakeData);
-                updateInventoryBox(_fakeData);
-                updateCellObjectsBox(_fakeData);
-                updateConditionsBox(_fakeData);
-              } catch (_stateParseErr) {
-                console.warn('[SESSION] Panel restore failed:', _stateParseErr);
-              }
-            } else {
-              console.warn('[SESSION] No cached state for panels — panels will populate on next turn');
+              const _persistedState = JSON.parse(_persistedStateRaw);
+              // Restore session ID so all future requests send x-session-id
+              currentSessionId = _persistedId;
+              sessionStorage.setItem('gameSessionId', currentSessionId);
+              // Hide intro, show game UI
+              document.getElementById('world-prompt-modal').style.display = 'none';
+              // Restore last narrative (blank is fine if missing)
+              const _persistedNarrative = localStorage.getItem('gameNarrative_' + _persistedId) || '';
+              document.getElementById('narrative').innerHTML = _persistedNarrative
+                ? renderNarrative(_persistedNarrative)
+                : '<p style="margin:0 0 0.9em 0; color:#888;">[Session restored. Continue your adventure.]</p>';
+              // Restore panels using the same functions normal turns use
+              const _fakeData = { state: _persistedState };
+              updateWornBox(_fakeData);
+              updateInventoryBox(_fakeData);
+              updateCellObjectsBox(_fakeData);
+              updateConditionsBox(_fakeData);
+              // Focus DO input — player is in active game mode
+              document.getElementById('actionInput').focus();
+              console.log('[SESSION] Reconnected from localStorage:', currentSessionId);
             }
-            // Focus DO input — player is in active game mode
-            document.getElementById('actionInput').focus();
-            console.log('[SESSION] Reconnected from localStorage:', currentSessionId);
           }
         }
       } catch(_reconnectErr) {
