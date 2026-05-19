@@ -399,9 +399,9 @@ For objects already listed in TRACKED OBJECTS, always use the exact object_id fi
 {
   "temp_ref": "<if the object was promoted this turn — must match an entry in object_candidates>",
   "object_id": "<if the object already exists from a prior turn>",
-  "from_container_type": "grid" | "npc" | "player",
+  "from_container_type": "grid" | "npc" | "player" | "localspace",
   "from_container_id": "<exact value from valid containers list above>",
-  "to_container_type": "grid" | "npc" | "player",
+  "to_container_type": "grid" | "npc" | "player" | "localspace",
   "to_container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this transfer>"
 }
