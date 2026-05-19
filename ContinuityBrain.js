@@ -1137,6 +1137,79 @@ function assembleContinuityPacket(gameState, turnContext) {
   return lines.join('\n');
 }
 
+// ── v1.88.31: Founding NPC identity pre-pass ──────────────────────────────────
+// Extracts ONLY the NPC identity fields needed to compute the born-NPC hash ID
+// before Phase B runs. No objects, no continuity, no scene details.
+// Called from index.js on Turn 1 only, before the pre-seed block and runPhaseB().
+// Two internal guards prevent any execution on Turn 2+.
+async function extractFoundingNpc(gameState) {
+  if (!gameState.world?.founding_prompt) return null;
+  if (gameState._born_npc_initialized)   return null;
+
+  const apiKey = process.env.DEEPSEEK_API_KEY || '';
+  if (!apiKey) {
+    console.warn('[CB-PRENPC] DEEPSEEK_API_KEY not set — pre-pass skipped');
+    return null;
+  }
+
+  const premise = gameState.world.founding_prompt;
+  const prompt = [
+    'You are a data-extraction assistant. Read the founding premise below and extract ONLY the identity of the named companion or NPC.',
+    'Return a single JSON object with ONLY this structure:',
+    '{ "starting_npc": { "name": string|null, "generated_name": string|null, "role_or_relation": string|null, "description": string|null, "gender": string|null, "age": string|null, "job_category": string|null } }',
+    'If the premise does not mention a companion or NPC, return: { "starting_npc": null }',
+    'IMPORTANT: Do NOT extract objects, inventory items, worn items, conditions, scene details, world facts, or any other information.',
+    'Do NOT include any keys other than "starting_npc" in your response.',
+    '',
+    'FOUNDING PREMISE:',
+    premise,
+  ].join('\n');
+
+  let raw = null;
+  try {
+    const resp = await axios.post(
+      DEEPSEEK_URL,
+      {
+        model: 'deepseek-chat',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 300,
+      },
+      {
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        timeout: 15000,
+      }
+    );
+    raw = resp?.data?.choices?.[0]?.message?.content || null;
+  } catch (err) {
+    console.warn('[CB-PRENPC] LLM call failed:', err.message);
+    return null;
+  }
+
+  let parsed = null;
+  try {
+    const cleaned = (raw || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    parsed = JSON.parse(cleaned);
+  } catch (parseErr) {
+    console.warn('[CB-PRENPC] JSON parse failed:', parseErr.message);
+    return null;
+  }
+
+  // Discard any extra keys — only starting_npc is permitted
+  const sn = parsed?.starting_npc;
+  if (!sn || typeof sn !== 'object') {
+    console.log('[CB-PRENPC] No founding NPC detected in premise — pre-pass returns null');
+    return null;
+  }
+
+  // Narrow write-back: ONLY starting_npc — never touch any other birth_record field
+  if (gameState.player?.birth_record) {
+    gameState.player.birth_record.starting_npc = sn;
+  }
+  console.log(`[CB-PRENPC] Founding NPC extracted: name="${sn.name || sn.generated_name || '(unnamed)'}"`);
+  return { starting_npc: sn };
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -1144,4 +1217,5 @@ module.exports = {
   runPhaseB,
   assembleContinuityPacket,
   getLastRunDiagnostics,
+  extractFoundingNpc,
 };

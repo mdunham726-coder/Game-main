@@ -3822,6 +3822,15 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         top_violation:              null,
         channel:                    resolvedChannel || null,
       };
+      // v1.88.31: pre-pass — extract founding NPC identity before Phase B so the pre-seed guard fires.
+      // Turn 1 only. Internal guards in extractFoundingNpc() are a secondary backstop.
+      if (turnNumber === 1 && gameState.world?.founding_prompt && !gameState._born_npc_initialized) {
+        const _fnResult = await CB.extractFoundingNpc(gameState);
+        if (_fnResult?.starting_npc) {
+          const _fnSeed = String(gameState.world?.phase3_seed || gameState.world?.seed || 0);
+          gameState._born_npc_preid = _bornNpcId(_fnSeed, _fnResult.starting_npc);
+        }
+      }
       // v1.88.29: pre-seed born NPC into _visible_npcs before CB so Phase B sees the canonical container ID
       if (turnNumber === 1 && gameState.player?.birth_record?.starting_npc && !gameState._born_npc_initialized) {
         const _preSnRaw = gameState.player.birth_record.starting_npc;
@@ -3867,7 +3876,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           if (_bnRaw && typeof _bnRaw === 'object') {
             const _bnSn        = _bnRaw;
             const _bnSeed      = String(gameState.world?.phase3_seed || gameState.world?.seed || 0);
-            const _bnId        = _bornNpcId(_bnSeed, _bnSn);
+            const _bnId        = gameState._born_npc_preid || _bornNpcId(_bnSeed, _bnSn);
+            delete gameState._born_npc_preid; // v1.88.31: clear pre-pass ID after use
             const _bnNpcName   = _bnSn.name || _bnSn.generated_name || null;
             const _bnIsLearned = !!(_bnSn.name);
             const _bnPos       = gameState.world?.position ? { ...gameState.world.position } : {};
