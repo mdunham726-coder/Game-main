@@ -98,7 +98,7 @@ CURRENT ENGINE STATE:
 Active location: ${location}
 Valid containers for object placement this turn:
 ${_validContainersList}
-Grid container_id MUST be an exact LOC:... value from this list. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
+Grid container_id MUST be an exact LOC:... value from this list. NPC container_id MUST be copied exactly from the ID shown in this list — do not construct or derive it from the NPC's name or any other string. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
 Current player input (this turn): "${rawInput || ''}"
 Confirmed player inventory (pre-turn): ${(() => { const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : []; const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {}; const _cbNames = _cbIds.map(id => _cbObjs[id]?.status === 'active' ? _cbObjs[id].name : null).filter(Boolean); return _cbNames.length ? _cbNames.join(', ') : '(empty)'; })()}
 Visible entities: ${entities}

@@ -86,6 +86,17 @@ function _resolveContainerIds(gameState, containerType, containerId) {
           const _regNpc = _allNpcs.find(n => n.id === _regHits[0].entity_id);
           if (_regNpc) npc = _regNpc;
         }
+        // v1.88.26 Tier 3: born-NPC slug normalization.
+        // CB emits 'player#born_npc_<slug>' instead of the canonical hash ID.
+        // Strip prefix and re-run registry label match on the slug. Uniqueness required.
+        if (!npc && _ncLower.startsWith('player#born_npc_')) {
+          const _slug = _ncLower.slice('player#born_npc_'.length);
+          const _regHitsSlug = _registry.filter(fe => Array.isArray(fe.labels) && fe.labels.includes(_slug));
+          if (_regHitsSlug.length === 1) {
+            const _regNpcSlug = _allNpcs.find(n => n.id === _regHitsSlug[0].entity_id);
+            if (_regNpcSlug) npc = _regNpcSlug;
+          }
+        }
       }
     }
     if (!npc) return null;
@@ -150,6 +161,15 @@ function _resolveContainerIds(gameState, containerType, containerId) {
         if (_regHitsW.length === 1) {
           const _regNpcW = _allNpcsW.find(n => n.id === _regHitsW[0].entity_id);
           if (_regNpcW) _npcW = _regNpcW;
+        }
+        // v1.88.26 Tier 3: born-NPC slug normalization — mirrors 'npc' branch.
+        if (!_npcW && _nwLower.startsWith('player#born_npc_')) {
+          const _slugW = _nwLower.slice('player#born_npc_'.length);
+          const _regHitsSlugW = _registryW.filter(fe => Array.isArray(fe.labels) && fe.labels.includes(_slugW));
+          if (_regHitsSlugW.length === 1) {
+            const _regNpcSlugW = _allNpcsW.find(n => n.id === _regHitsSlugW[0].entity_id);
+            if (_regNpcSlugW) _npcW = _regNpcSlugW;
+          }
         }
       }
     }
