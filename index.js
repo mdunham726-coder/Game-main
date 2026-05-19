@@ -4457,10 +4457,34 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           if (!_objectRealityDebug.skip_reason) _objectRealityDebug.skip_reason = 'empty_quarantine';
         }
 
+        // v1.88.37: build normalized candidate snapshot — mirrors pre-write normalization onto shallow
+        // copies so the initial-condition pass sees post-rewrite container types while preserving
+        // original CB output in _objectRealityDebug.cb_candidates
+        const _icNormLs   = gameState.world?.active_local_space;
+        const _icNormSite = gameState.world?.active_site;
+        const _cbCandidatesNormalized = _cbCandidates.map(_icc => {
+          if (_icc.container_type !== 'grid') return _icc;
+          const _copy = { ..._icc };
+          if (_icNormLs) {
+            const _iclsId = _icNormLs.local_space_id;
+            if (_iclsId) { _copy.container_type = 'localspace'; _copy.container_id = _iclsId; }
+          } else if (_icNormSite) {
+            const _icSiteId = _icNormSite.id || _icNormSite.site_id;
+            const _icPx     = gameState.player?.position?.x;
+            const _icPy     = gameState.player?.position?.y;
+            if (_icSiteId != null && _icPx != null && _icPy != null) {
+              _copy.container_type = 'site';
+              _copy.container_id   = `${_icSiteId}:${_icPx},${_icPy}`;
+            }
+          }
+          return _copy;
+        });
+        _objectRealityDebug.cb_candidates_normalized = _cbCandidatesNormalized;
+
         // v1.84.66: Initial condition pass — applies initial_condition from CB candidate to newly-promoted objects
         // Runs before object_condition_updates so initial state is first in the conditions[] chain
         const _icResults = [];
-        for (const _cand of _cbCandidates) {
+        for (const _cand of _cbCandidatesNormalized) {
           if (!_cand || !_cand.initial_condition || !_cand.name) continue;
           const _icNameNorm = _cand.name.toLowerCase();
           const _icCtype    = _cand.container_type;
