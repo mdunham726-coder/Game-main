@@ -3841,7 +3841,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           const _preVcTarget = gameState.world?.active_local_space || gameState.world?.active_site || gameState.world;
           if (!Array.isArray(_preVcTarget._visible_npcs)) _preVcTarget._visible_npcs = [];
           if (!_preVcTarget._visible_npcs.some(n => n.id === _preId)) {
-            _preVcTarget._visible_npcs.push({ id: _preId, npc_name: _preSn.name || _preSn.generated_name || null });
+            // v1.88.32: attributes:{} required — CB._promoteEntityAttributes expects a valid NPC shape
+            _preVcTarget._visible_npcs.push({ id: _preId, npc_name: _preSn.name || _preSn.generated_name || null, attributes: {} });
           }
         }
       }
