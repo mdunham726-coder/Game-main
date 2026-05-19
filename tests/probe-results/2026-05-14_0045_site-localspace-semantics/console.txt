@@ -1,0 +1,25 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-14_0045_site-localspace-semantics
+[probe-runner] Spec: site-localspace-semantics
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_fill_rate, ls_unique_name_rate, localspace_count, ls_size_spread, ls_mean_size
+
+[RUN 1] seed=1291903302 random "I step into the boathouse interior" ls_count=14 [WARN]
+
+======================================================================
+AGGREGATE  (1/1 runs succeeded)
+======================================================================
+  ls_fill_rate                     min=0.07  max=0.07  mean=0.07  stddev=0.00 [WARN]
+  ls_unique_name_rate              min=0.07  max=0.07  mean=0.07  stddev=0.00  p10=0.07  p50=0.07  p90=0.07 [WARN]
+  localspace_count                 min=14.00  max=14.00  mean=14.00  stddev=0.00  p10=14.00  p50=14.00  p90=14.00
+  ls_size_spread                   min=8.00  max=8.00  mean=8.00  stddev=0.00  p10=8.00  p50=8.00  p90=8.00
+  ls_mean_size                     min=3.64  max=3.64  mean=3.64  stddev=0.00
+[probe-runner] Results saved: tests/probe-results/2026-05-14_0045_site-localspace-semantics
+
+----------------------------------------------------------------------
+SOFT WARNINGS:
+  [WARN] [RUN 1] ls_fill_rate = 0.07 below min 1
+  [WARN] [RUN 1] ls_unique_name_rate = 0.07 below min 0.9
+  [WARN] [AGGREGATE] ls_fill_rate = 0.07 below min 1 (mean)
+  [WARN] [AGGREGATE] ls_unique_name_rate = 0.07 below min 0.9 (mean)
+----------------------------------------------------------------------

@@ -1,0 +1,35 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-14_0251_localspace-semantics-v2
+[probe-runner] Spec: localspace-semantics-v2
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_fill_rate, ls_unique_name_rate, localspace_count, ls_size_spread, ls_mean_size
+
+[RUN 1] seed=839590488 random "I arrive at an underground fighting pit" ls_count=48 [WARN]
+[pause] 5000ms between runs…
+[RUN 2] seed=-409819040 random "I approach the castle gatehouse" ls_count=30
+[pause] 5000ms between runs…
+[RUN 3] seed=640581412 random "I arrive at a shipwright's hall" ls_count=17 [WARN]
+[pause] 5000ms between runs…
+[RUN 4] seed=-2093654463 random "I approach a druidic grove hall" ls_count=24
+[pause] 5000ms between runs…
+[RUN 5] seed=2080550761 random "I stand before a printmaker's hall" ls_count=25
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  ls_fill_rate                     min=0.02  max=1.00  mean=0.62  stddev=0.47 [WARN]
+  ls_unique_name_rate              min=0.02  max=1.00  mean=0.62  stddev=0.47  p10=0.04  p50=1.00  p90=1.00 [WARN]
+  localspace_count                 min=17.00  max=48.00  mean=28.80  stddev=10.46  p10=19.80  p50=25.00  p90=40.80
+  ls_size_spread                   min=5.00  max=7.00  mean=6.40  stddev=0.80  p10=5.40  p50=7.00  p90=7.00
+  ls_mean_size                     min=2.50  max=3.40  mean=3.12  stddev=0.33
+[probe-runner] Results saved: tests/probe-results/2026-05-14_0251_localspace-semantics-v2
+
+----------------------------------------------------------------------
+SOFT WARNINGS:
+  [WARN] [RUN 1] ls_fill_rate = 0.02 below min 0.9
+  [WARN] [RUN 1] ls_unique_name_rate = 0.02 below min 0.9
+  [WARN] [RUN 3] ls_fill_rate = 0.06 below min 0.9
+  [WARN] [RUN 3] ls_unique_name_rate = 0.06 below min 0.9
+  [WARN] [AGGREGATE] ls_fill_rate = 0.62 below min 0.9 (mean)
+  [WARN] [AGGREGATE] ls_unique_name_rate = 0.62 below min 0.9 (mean)
+----------------------------------------------------------------------

@@ -1,0 +1,29 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-14_0346_site-l1-semantics
+[probe-runner] Spec: site-l1-semantics
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_fill_rate, ls_unique_name_rate, localspace_count, ls_size_spread, ls_mean_size, site_size, site_size_stddev
+
+[RUN 1] seed=-1747313100 prompt=1/154 "i am in a town" ls_count=22
+[pause] 5000ms between runs…
+[RUN 2] seed=1054834391 prompt=2/154 "walking around the city" ls_count=22
+[pause] 5000ms between runs…
+[RUN 3] seed=-990091045 prompt=3/154 "standing in the hamlet" ls_count=27
+[pause] 5000ms between runs…
+[RUN 4] seed=627520958 prompt=4/154 "hanging out here in the village" ls_count=11
+[pause] 5000ms between runs…
+[RUN 5] seed=1326244188 prompt=5/154 "i am wandering through the town" ls_count=39
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  ls_fill_rate                     min=1.00  max=1.00  mean=1.00  stddev=0.00
+  ls_unique_name_rate              min=1.00  max=1.00  mean=1.00  stddev=0.00  p10=1.00  p50=1.00  p90=1.00
+  localspace_count                 min=11.00  max=39.00  mean=24.20  stddev=9.06  p10=15.40  p50=22.00  p90=34.20
+  ls_size_spread                   min=7.00  max=9.00  mean=7.40  stddev=0.80  p10=7.00  p50=7.00  p90=8.20
+  ls_mean_size                     min=2.68  max=4.18  mean=3.21  stddev=0.55
+  site_size                        min=2.00  max=7.00  mean=5.00  stddev=1.90  p10=2.80  p50=5.00  p90=7.00
+  site_size_stddev                 min=2.14  max=2.46  mean=2.27  stddev=0.11
+[probe-runner] Results saved: tests/probe-results/2026-05-14_0346_site-l1-semantics
+
+[probe-runner] No anomalies detected.

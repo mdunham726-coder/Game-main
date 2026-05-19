@@ -1,0 +1,131 @@
+{
+  "spec_name": "localspace-distribution",
+  "spec_slug": "localspace-distribution",
+  "started_at": "2026-05-14T03:49:21.226Z",
+  "completed_at": "2026-05-14T04:35:39.430Z",
+  "runs_requested": 100,
+  "runs_completed": 93,
+  "hard_errors": 7,
+  "hard_error_rows": [
+    {
+      "run": 20,
+      "seed": -2064387673,
+      "prompt_text": "I am inside a riverside grain mill",
+      "prompt_label": "random \"I am inside a riverside grain mill\"",
+      "session_id": "1778731134528-8624ck0ww",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "missing extract path \"site_placement_log\""
+    },
+    {
+      "run": 29,
+      "seed": -507662918,
+      "prompt_text": "I am inside a water treatment facility",
+      "prompt_label": "random \"I am inside a water treatment facility\"",
+      "session_id": "1778731389891-p9lfc8xt7",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "missing extract path \"site_placement_log\""
+    },
+    {
+      "run": 38,
+      "seed": 749775915,
+      "prompt_text": "I am in a Cold War spy safe house in Berlin",
+      "prompt_label": "random \"I am in a Cold War spy safe house in Ber...\"",
+      "session_id": "1778731660167-5o0gn9lhd",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "missing extract path \"site_placement_log\""
+    },
+    {
+      "run": 41,
+      "seed": 164654066,
+      "prompt_text": "I am inside an elven tree-city dwelling",
+      "prompt_label": "random \"I am inside an elven tree-city dwelling\"",
+      "session_id": "1778731720996-9wa9vr3qo",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "missing extract path \"site_placement_log\""
+    },
+    {
+      "run": 64,
+      "seed": -823414881,
+      "prompt_text": "I am inside an urban commune greenhouse",
+      "prompt_label": "random \"I am inside an urban commune greenhouse\"",
+      "session_id": "1778732366085-y65mnzc86",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "missing extract path \"site_placement_log\""
+    },
+    {
+      "run": 67,
+      "seed": 2128738517,
+      "prompt_text": "I am inside a riverside grain mill",
+      "prompt_label": "random \"I am inside a riverside grain mill\"",
+      "session_id": "1778732425302-eu6eue4kr",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "missing extract path \"site_placement_log\""
+    },
+    {
+      "run": 95,
+      "seed": 349366234,
+      "prompt_text": "I am inside a water treatment facility",
+      "prompt_label": "random \"I am inside a water treatment facility\"",
+      "session_id": "1778733194739-ewr94qpch",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "missing extract path \"site_placement_log\""
+    }
+  ],
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {
+    "ls_pct": {
+      "min": 32,
+      "max": 75,
+      "mean": 54.193548387096776,
+      "stddev": 13.39576089625349,
+      "p10": 34,
+      "p50": 57,
+      "p90": 69
+    },
+    "eligible_tile_count": {
+      "min": 16,
+      "max": 144,
+      "mean": 43.784946236559136,
+      "stddev": 27.118953203369994
+    },
+    "localspace_count": {
+      "min": 5,
+      "max": 102,
+      "mean": 23.881720430107528,
+      "stddev": 18.86730657129348,
+      "p10": 9,
+      "p50": 21,
+      "p90": 40
+    },
+    "enterable_localspace_ratio": {
+      "min": 0,
+      "max": 1,
+      "mean": 0.8811405129114221,
+      "stddev": 0.19859739222906558,
+      "p10": 0.6263157894736842,
+      "p50": 1,
+      "p90": 1
+    },
+    "site_size": {
+      "min": 1,
+      "max": 10,
+      "mean": 3.5806451612903225,
+      "stddev": 2.356973549904561
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "spec_name": "site-localspace-semantics-v3",
+  "spec_slug": "site-localspace-semantics-v3",
+  "started_at": "2026-05-14T07:01:38.306Z",
+  "completed_at": "2026-05-14T07:04:14.915Z",
+  "runs_requested": 5,
+  "runs_completed": 4,
+  "hard_errors": 1,
+  "hard_error_rows": [
+    {
+      "run": 2,
+      "seed": 555551003,
+      "prompt_text": "I arrive at a monastery",
+      "prompt_label": "random \"I arrive at a monastery\"",
+      "session_id": "1778742143312-w43o7htw3",
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "post_extract: extract path \"active_site\" returned null"
+    }
+  ],
+  "soft_warnings_total": 8,
+  "aggregate_warnings": [
+    "[AGGREGATE] ls_fill_rate = 0.34 below min 1 (mean)",
+    "[AGGREGATE] ls_unique_name_rate = 0.34 below min 0.9 (mean)"
+  ],
+  "metrics": {
+    "ls_fill_rate": {
+      "min": 0.058823529411764705,
+      "max": 1,
+      "mean": 0.34191176470588236,
+      "stddev": 0.3878807148621051
+    },
+    "ls_unique_name_rate": {
+      "min": 0.058823529411764705,
+      "max": 1,
+      "mean": 0.34191176470588236,
+      "stddev": 0.3878807148621051,
+      "p10": 0.058823529411764705,
+      "p50": 0.15441176470588236,
+      "p90": 0.7750000000000001
+    },
+    "localspace_count": {
+      "min": 4,
+      "max": 17,
+      "mean": 13.25,
+      "stddev": 5.402545696243577,
+      "p10": 7.300000000000001,
+      "p50": 16,
+      "p90": 17
+    },
+    "ls_size_spread": {
+      "min": 2,
+      "max": 8,
+      "mean": 5.5,
+      "stddev": 2.179449471770337,
+      "p10": 3.2,
+      "p50": 6,
+      "p90": 7.4
+    },
+    "ls_mean_size": {
+      "min": 2.25,
+      "max": 4.4,
+      "mean": 3.1919117647058823,
+      "stddev": 0.7717026489352635
+    }
+  }
+}

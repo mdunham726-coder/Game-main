@@ -1,0 +1,27 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-14_0307_site-localspace-semantics-v2
+[probe-runner] Spec: site-localspace-semantics-v2
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_fill_rate, ls_unique_name_rate, localspace_count, ls_size_spread, ls_mean_size
+
+[RUN 1] seed=-350219036 random "Standing in a tropical island port" ls_count=18
+[pause] 5000ms between runs…
+[RUN 2] seed=-1849627571 random "Walking through a Viking settlement" ls_count=39
+[pause] 5000ms between runs…
+[RUN 3] seed=-1822265633 random "Standing in a tropical island port" ls_count=18
+[pause] 5000ms between runs…
+[RUN 4] seed=1748121909 random "Here I am in a fortified border town" ls_count=28
+[pause] 5000ms between runs…
+[RUN 5] seed=1929789441 random "Standing at the crossroads of a frontier..." ls_count=15
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  ls_fill_rate                     min=1.00  max=1.00  mean=1.00  stddev=0.00
+  ls_unique_name_rate              min=1.00  max=1.00  mean=1.00  stddev=0.00  p10=1.00  p50=1.00  p90=1.00
+  localspace_count                 min=15.00  max=39.00  mean=23.60  stddev=8.87  p10=16.20  p50=18.00  p90=34.60
+  ls_size_spread                   min=7.00  max=9.00  mean=8.00  stddev=0.89  p10=7.00  p50=8.00  p90=9.00
+  ls_mean_size                     min=3.00  max=3.56  mean=3.35  stddev=0.23
+[probe-runner] Results saved: tests/probe-results/2026-05-14_0307_site-localspace-semantics-v2
+
+[probe-runner] No anomalies detected.

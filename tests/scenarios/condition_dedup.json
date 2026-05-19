@@ -1,0 +1,33 @@
+{
+  "name": "condition_dedup",
+  "description": "Tests whether CB creates duplicate conditions when the narrator describes the same injury across consecutive turns. Turn 1: founding premise establishes injury. Turn 2: player reaffirms the same injury. Asserts no duplicate condition was created.",
+  "category": "narrative_continuity",
+  "world_prompt": "A dense, overgrown forest path choked with brambles and thorny vines. The air is humid and still.",
+  "turns": [
+    {
+      "action": "I am a wanderer who just pushed through a thorny thicket. My forearms are covered in deep scratches that sting and bleed.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "I look at my scratched and bleeding forearms, wincing at the stinging pain.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "I examine the scratches on my arms more closely. They still sting and there's dried blood along the cuts.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    }
+  ],
+  "stability": "probe"
+}

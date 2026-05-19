@@ -1,0 +1,25 @@
+{
+  "spec_name": "env-accumulation-v1",
+  "spec_slug": "env-accumulation-v1",
+  "started_at": "2026-05-16T11:40:53.914Z",
+  "completed_at": "2026-05-16T11:40:53.937Z",
+  "runs_requested": 1,
+  "runs_completed": 0,
+  "hard_errors": 1,
+  "hard_error_rows": [
+    {
+      "run": 1,
+      "seed": -264751289,
+      "prompt_text": null,
+      "prompt_label": null,
+      "session_id": null,
+      "retries": 0,
+      "metrics": null,
+      "warnings": [],
+      "error": "HTTP error: HTTP 404: <!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot POST //narrate</pre>\n</body>\n</html>\n"
+    }
+  ],
+  "soft_warnings_total": 0,
+  "aggregate_warnings": [],
+  "metrics": {}
+}

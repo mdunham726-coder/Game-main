@@ -1,0 +1,18 @@
+{
+  "name": "condition-dedup-probe",
+  "description": "Probe for duplicate condition creation when the narrator describes the same injury across consecutive turns. Tests whether CB emits new_condition for an injury that already has an active condition_id.",
+  "endpoint": "/narrate",
+  "method": "POST",
+  "request_lifecycle": "session_per_run",
+  "request_template": {
+    "action": "I am a wanderer walking through a thorny thicket. The thorns scratch my arms deeply as I push through.",
+    "WORLD_PROMPT": "A dense, overgrown forest path choked with brambles and thorny vines.",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "narration_debug.extraction_packet.condition_events",
+  "metrics": [
+    "continuity_block_chars"
+  ],
+  "expected_runtime_ms_per_run": 10000,
+  "runs": 10
+}

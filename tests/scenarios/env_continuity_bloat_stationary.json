@@ -1,0 +1,55 @@
+{
+  "name": "env_continuity_bloat_stationary",
+  "description": "Stays in the same cell and looks around repeatedly to verify the ENV_ATTR_WINDOW cap (20) prevents unbounded continuity packet growth. Measures continuity_block_chars across 6 turns of stationary observation.",
+  "category": "narrative_continuity",
+  "world_prompt": "A quiet town on a warm afternoon. Main Street has cracked pavement, faded facades with peeling paint, a red-and-white awning over a shop door, a rusted mailbox with its flag at half-mast, and weeds pushing through concrete seams.",
+  "turns": [
+    {
+      "action": "—",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "action": "look around",
+      "assert": [
+        { "op": "no_error" },
+        { "op": "present", "path": "debug.narration_debug.continuity_block_chars" },
+        { "op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 1000 }
+      ]
+    },
+    {
+      "action": "look around carefully",
+      "assert": [
+        { "op": "no_error" },
+        { "op": "present", "path": "debug.narration_debug.continuity_block_chars" },
+        { "op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2000 }
+      ]
+    },
+    {
+      "action": "examine the ground more closely",
+      "assert": [
+        { "op": "no_error" },
+        { "op": "present", "path": "debug.narration_debug.continuity_block_chars" },
+        { "op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500 }
+      ]
+    },
+    {
+      "action": "study the mailbox more closely",
+      "assert": [
+        { "op": "no_error" },
+        { "op": "present", "path": "debug.narration_debug.continuity_block_chars" },
+        { "op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500 }
+      ]
+    },
+    {
+      "action": "look at the awning",
+      "assert": [
+        { "op": "no_error" },
+        { "op": "present", "path": "debug.narration_debug.continuity_block_chars" },
+        { "op": "lt", "path": "debug.narration_debug.continuity_block_chars", "value": 2500 }
+      ]
+    }
+  ],
+  "stability": "probe"
+}

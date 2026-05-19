@@ -1,0 +1,41 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-14_0145_site-localspace-semantics
+[probe-runner] Spec: site-localspace-semantics
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_fill_rate, ls_unique_name_rate, localspace_count, ls_size_spread, ls_mean_size
+
+[RUN 1] seed=2088714360 random "I am inside a hidden underground market" ls_count=48 [WARN]
+[pause] 5000ms between runs…
+[RUN 2] seed=1331468752 random "I step into the mad alchemist's tower" ls_count=5 [WARN]
+[pause] 5000ms between runs…
+[RUN 3] seed=606822722 random "I am inside a rowdy alehouse" ls_count=20 [WARN]
+[pause] 5000ms between runs…
+[RUN 4] seed=1639860868 random "I am inside the space station's main hub" ls_count=21 [WARN]
+[pause] 5000ms between runs…
+[RUN 5] seed=-1195956090 random "I step into the necromancer's lair" ls_count=32 [WARN]
+
+======================================================================
+AGGREGATE  (5/5 runs succeeded)
+======================================================================
+  ls_fill_rate                     min=0.02  max=0.20  mean=0.07  stddev=0.07 [WARN]
+  ls_unique_name_rate              min=0.02  max=0.20  mean=0.07  stddev=0.07  p10=0.03  p50=0.05  p90=0.14 [WARN]
+  localspace_count                 min=5.00  max=48.00  mean=25.20  stddev=14.27  p10=11.00  p50=21.00  p90=41.60
+  ls_size_spread                   min=6.00  max=9.00  mean=8.00  stddev=1.26  p10=6.40  p50=9.00  p90=9.00
+  ls_mean_size                     min=3.05  max=3.80  mean=3.33  stddev=0.26
+[probe-runner] Results saved: tests/probe-results/2026-05-14_0145_site-localspace-semantics
+
+----------------------------------------------------------------------
+SOFT WARNINGS:
+  [WARN] [RUN 1] ls_fill_rate = 0.02 below min 1
+  [WARN] [RUN 1] ls_unique_name_rate = 0.02 below min 0.9
+  [WARN] [RUN 2] ls_fill_rate = 0.20 below min 1
+  [WARN] [RUN 2] ls_unique_name_rate = 0.20 below min 0.9
+  [WARN] [RUN 3] ls_fill_rate = 0.05 below min 1
+  [WARN] [RUN 3] ls_unique_name_rate = 0.05 below min 0.9
+  [WARN] [RUN 4] ls_fill_rate = 0.05 below min 1
+  [WARN] [RUN 4] ls_unique_name_rate = 0.05 below min 0.9
+  [WARN] [RUN 5] ls_fill_rate = 0.03 below min 1
+  [WARN] [RUN 5] ls_unique_name_rate = 0.03 below min 0.9
+  [WARN] [AGGREGATE] ls_fill_rate = 0.07 below min 1 (mean)
+  [WARN] [AGGREGATE] ls_unique_name_rate = 0.07 below min 0.9 (mean)
+----------------------------------------------------------------------

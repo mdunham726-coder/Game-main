@@ -1,0 +1,38 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-14_0301_site-localspace-semantics-v3
+[probe-runner] Spec: site-localspace-semantics-v3
+[probe-runner] Runs: 5 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: ls_fill_rate, ls_unique_name_rate, localspace_count, ls_size_spread, ls_mean_size
+
+[RUN 1] seed=-1501093807 random "I stand before a knight's armory" ls_count=4 [WARN]
+[pause] 5000ms between runs…
+[RUN 2] seed=555551003 random "I arrive at a monastery" ERROR: post_extract: extract path "active_site" returned null
+[RUN 3] seed=-1858405619 random "I approach the sailors' social club" ls_count=15
+[pause] 5000ms between runs…
+[RUN 4] seed=-1843825951 random "I arrive at a shipwright's hall" ls_count=17 [WARN]
+[pause] 5000ms between runs…
+[RUN 5] seed=65005099 random "I arrive at a shipwright's hall" ls_count=17 [WARN]
+
+======================================================================
+AGGREGATE  (4/5 runs succeeded)
+======================================================================
+  ls_fill_rate                     min=0.06  max=1.00  mean=0.34  stddev=0.39 [WARN]
+  ls_unique_name_rate              min=0.06  max=1.00  mean=0.34  stddev=0.39  p10=0.06  p50=0.15  p90=0.78 [WARN]
+  localspace_count                 min=4.00  max=17.00  mean=13.25  stddev=5.40  p10=7.30  p50=16.00  p90=17.00
+  ls_size_spread                   min=2.00  max=8.00  mean=5.50  stddev=2.18  p10=3.20  p50=6.00  p90=7.40
+  ls_mean_size                     min=2.25  max=4.40  mean=3.19  stddev=0.77
+[probe-runner] Results saved: tests/probe-results/2026-05-14_0301_site-localspace-semantics-v3
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 2] post_extract: extract path "active_site" returned null
+SOFT WARNINGS:
+  [WARN] [RUN 1] ls_fill_rate = 0.25 below min 1
+  [WARN] [RUN 1] ls_unique_name_rate = 0.25 below min 0.9
+  [WARN] [RUN 4] ls_fill_rate = 0.06 below min 1
+  [WARN] [RUN 4] ls_unique_name_rate = 0.06 below min 0.9
+  [WARN] [RUN 5] ls_fill_rate = 0.06 below min 1
+  [WARN] [RUN 5] ls_unique_name_rate = 0.06 below min 0.9
+  [WARN] [AGGREGATE] ls_fill_rate = 0.34 below min 1 (mean)
+  [WARN] [AGGREGATE] ls_unique_name_rate = 0.34 below min 0.9 (mean)
+----------------------------------------------------------------------

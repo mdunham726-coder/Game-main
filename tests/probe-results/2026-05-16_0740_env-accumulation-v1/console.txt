@@ -1,0 +1,38 @@
+
+[probe-runner] Results folder: tests/probe-results/2026-05-16_0740_env-accumulation-v1
+[probe-runner] Spec: env-accumulation-v1
+[probe-runner] Runs: 1 | Lifecycle: session_per_run | Strict: false
+[probe-runner] Metrics: continuity_block_chars
+
+[RUN 1] seed=-264751289 ERROR: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+
+======================================================================
+AGGREGATE  (0/1 runs succeeded)
+======================================================================
+  continuity_block_chars           no data
+[probe-runner] Results saved: tests/probe-results/2026-05-16_0740_env-accumulation-v1
+
+----------------------------------------------------------------------
+HARD ERRORS (exit 1):
+  [ERROR] [RUN 1] HTTP error: HTTP 404: <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot POST //narrate</pre>
+</body>
+</html>
+
+----------------------------------------------------------------------

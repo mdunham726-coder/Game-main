@@ -1,0 +1,56 @@
+{
+  "spec_name": "localspace-semantics-v2",
+  "spec_slug": "localspace-semantics-v2",
+  "started_at": "2026-05-14T06:51:32.988Z",
+  "completed_at": "2026-05-14T06:55:07.529Z",
+  "runs_requested": 5,
+  "runs_completed": 5,
+  "hard_errors": 0,
+  "hard_error_rows": [],
+  "soft_warnings_total": 6,
+  "aggregate_warnings": [
+    "[AGGREGATE] ls_fill_rate = 0.62 below min 0.9 (mean)",
+    "[AGGREGATE] ls_unique_name_rate = 0.62 below min 0.9 (mean)"
+  ],
+  "metrics": {
+    "ls_fill_rate": {
+      "min": 0.020833333333333332,
+      "max": 1,
+      "mean": 0.6159313725490196,
+      "stddev": 0.47053946846989114
+    },
+    "ls_unique_name_rate": {
+      "min": 0.020833333333333332,
+      "max": 1,
+      "mean": 0.6159313725490196,
+      "stddev": 0.47053946846989114,
+      "p10": 0.03602941176470588,
+      "p50": 1,
+      "p90": 1
+    },
+    "localspace_count": {
+      "min": 17,
+      "max": 48,
+      "mean": 28.8,
+      "stddev": 10.457533169921097,
+      "p10": 19.8,
+      "p50": 25,
+      "p90": 40.8
+    },
+    "ls_size_spread": {
+      "min": 5,
+      "max": 7,
+      "mean": 6.4,
+      "stddev": 0.8,
+      "p10": 5.4,
+      "p50": 7,
+      "p90": 7
+    },
+    "ls_mean_size": {
+      "min": 2.5,
+      "max": 3.4,
+      "mean": 3.1234313725490197,
+      "stddev": 0.3337057320019155
+    }
+  }
+}

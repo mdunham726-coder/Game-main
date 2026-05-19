@@ -186,8 +186,14 @@
     "ls_size_spread"
   ],
   "warnings": {
-    "ls_fill_rate":        { "min": 1.0 },
-    "ls_unique_name_rate": { "min": 0.9 },
-    "localspace_count":    { "min": 1 }
+    "ls_fill_rate": {
+      "min": 1
+    },
+    "ls_unique_name_rate": {
+      "min": 0.9
+    },
+    "localspace_count": {
+      "min": 1
+    }
   }
 }

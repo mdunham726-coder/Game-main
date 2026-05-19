@@ -1,0 +1,26 @@
+{
+  "name": "env-accumulation-v1",
+  "description": "Measures environmental fact accumulation rate in the continuity packet across seeds. Each run fires a single founding turn in a fixed env-rich town prompt, then measures continuity_block_chars. This establishes the baseline output-side metric for the capped behavior. After the ENV_ATTR_WINDOW=20 cap, continuity_block_chars should be stable across seeds regardless of how many env facts the narrator generates on Turn 1.",
+  "endpoint": "/narrate",
+  "method": "POST",
+  "request_lifecycle": "session_per_run",
+  "request_template": {
+    "action": "I am standing on Main Street in a quiet town, in front of a row of weathered buildings with cracked pavement and a red-and-white awning. A rusted mailbox stands crooked nearby.",
+    "WORLD_PROMPT": "A quiet town on a warm afternoon. Main Street has cracked pavement, faded facades with peeling paint, a red-and-white awning over a shop door, and a rusted mailbox with its flag at half-mast. Weeds push through the concrete seams.",
+    "WORLD_SEED": "$SEED"
+  },
+  "extract": "debug.narration_debug.continuity_block_chars",
+  "metrics": [
+    "continuity_block_chars"
+  ],
+  "percentile_metrics": [
+    "continuity_block_chars"
+  ],
+  "warnings": {
+    "continuity_block_chars": {
+      "min": 0,
+      "max": 2000
+    }
+  },
+  "expected_runtime_ms_per_run": 5000
+}

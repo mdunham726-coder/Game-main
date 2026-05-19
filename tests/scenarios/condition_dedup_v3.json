@@ -1,0 +1,25 @@
+{
+  "name": "condition_dedup_v3",
+  "description": "Tests whether CB creates duplicate conditions when the narrator describes the same injury across consecutive turns. Uses a more constrained founding premise that explicitly states the injury, then checks that Turn 2 does not create a new_condition event (only interactions are allowed).",
+  "category": "narrative_continuity",
+  "world_prompt": "A quiet forest clearing with soft moss and dappled sunlight.",
+  "turns": [
+    {
+      "action": "I am a wanderer. My forearms are scratched and bleeding from pushing through thorns.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    },
+    {
+      "action": "I look at my scratched forearms. They still sting.",
+      "assert": [
+        {
+          "op": "no_error"
+        }
+      ]
+    }
+  ],
+  "stability": "probe"
+}
