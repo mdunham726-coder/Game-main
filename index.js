@@ -4208,7 +4208,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               return false;
             }
             // v1.84.88: narrator_independent items must land on grid/localspace — never directly in player inventory
-            if (c.container_type === 'player' && c.transfer_origin === 'narrator_independent') {
+            // v1.88.25: Turn 1 founding-premise exemption — mirrors player_claimed Turn 1 exemption (line above).
+            // On Turn 1 the founding premise IS constitutional reality; narrator-described player interaction
+            // objects (e.g. "we are drinking tea") are not conjuration attempts — they are initial world state.
+            if (c.container_type === 'player' && c.transfer_origin === 'narrator_independent' && turnNumber !== 1) {
               console.warn(`[ORIGIN-GATE] narrator_independent player item blocked: "${c.name}"`);
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'narrator_independent_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
@@ -5953,10 +5956,10 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     if (!_lastTurnOr) {
       context += `Last turn: no data\n`;
     } else if (_lastTurnOr.ran) {
-      context += `Last turn: ran:YES | promoted:${_lastTurnOr.promoted}  transferred:${_lastTurnOr.transferred}  errors:${_lastTurnOr.errors}\n`;
-      if (_lastTurnOr.errors > 0 && Array.isArray(_lastTurnOr.error_entries)) {
+      context += `Last turn: ran:YES | promoted:${_lastTurnOr.promoted}  transferred:${_lastTurnOr.transferred}  errors:${_lastTurnOr.errors}  origin_blocked:${_lastTurnOr.origin_blocked || 0}\n`;
+      if ((_lastTurnOr.errors > 0 || (_lastTurnOr.origin_blocked || 0) > 0) && Array.isArray(_lastTurnOr.error_entries)) {
         for (const _orErr of _lastTurnOr.error_entries.slice(0, 3)) {
-          context += `  ERROR: ${_orErr.action || '?'} | "${_orErr.object_name || '?'}" | ${_orErr.reason || '?'} -> use trace_object\n`;
+          context += `  ERROR: ${_orErr.action || _orErr.stage || '?'} | "${_orErr.object_name || _orErr.name || '?'}" | ${_orErr.reason || '?'} -> use trace_object\n`;
         }
       }
     } else {
