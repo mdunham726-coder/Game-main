@@ -3810,6 +3810,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     let _dmNoteArchived   = null;   // v1.70.0: retired (dm_note superseded by entity.attributes promotion)
     let _dmNoteStatus     = 'new_game'; // v1.70.0: 'updated' | 'new_game'
     let _watchMessageThisTurn = null; // v1.79.0: Mother's watch_message for this turn
+    let _cbSchemaDrift = [];            // v1.88.40: CB schema drift detection results
     {
       // Assemble compact watch context for Phase B — 5 structured fields, no prose
       // NOTE: movement and _turnViolations are not yet computed at Phase B time — omit them
@@ -3858,7 +3859,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       _extractionPacket = _phaseBResult ? _phaseBResult.extracted : null;
       _dmNoteArchived = null; // dm_note retired in v1.70.0
       // v1.88.40: CB schema drift detection — forward (missing expected fields) and backward (legacy fields)
-      const _cbSchemaDrift = [];
+      _cbSchemaDrift = [];
       if (_phaseBResult) {
         for (const _driftField of ['object_candidates','visible_objects','environmental_features','entity_candidates']) {
           if (!(_driftField in _phaseBResult)) {
