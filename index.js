@@ -4438,8 +4438,38 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _qe.container_id = _expectedSiteKey94;
           _preRewritten++;
         }
+        // v1.88.38: pre-write normalization for transfer from/to container types
+        // Same depth-based rewrite as the promote gate — CB emits "grid" for localspace IDs at L2
+        let _txNormalized = 0;
+        for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
+          const _qe = _quarantine[_i];
+          if (_qe.action !== 'transfer') continue;
+          const _txActiveLs   = gameState.world?.active_local_space;
+          const _txActiveSite = gameState.world?.active_site;
+          if (_txActiveLs) {
+            const _txLsId = _txActiveLs.local_space_id;
+            if (_txLsId) {
+              let _txNormd = false;
+              if (_qe.from_container_type === 'grid') { _qe.from_container_type = 'localspace'; _qe.from_container_id = _txLsId; _txNormd = true; }
+              if (_qe.to_container_type   === 'grid') { _qe.to_container_type   = 'localspace'; _qe.to_container_id   = _txLsId; _txNormd = true; }
+              if (_txNormd) _txNormalized++;
+            }
+          } else if (_txActiveSite) {
+            const _txSiteId = _txActiveSite.id || _txActiveSite.site_id;
+            const _txPx = gameState.player?.position?.x;
+            const _txPy = gameState.player?.position?.y;
+            if (_txSiteId != null && _txPx != null && _txPy != null) {
+              const _txSiteKey = `${_txSiteId}:${_txPx},${_txPy}`;
+              let _txNormd = false;
+              if (_qe.from_container_type === 'grid') { _qe.from_container_type = 'site'; _qe.from_container_id = _txSiteKey; _txNormd = true; }
+              if (_qe.to_container_type   === 'grid') { _qe.to_container_type   = 'site'; _qe.to_container_id   = _txSiteKey; _txNormd = true; }
+              if (_txNormd) _txNormalized++;
+            }
+          }
+        }
         _objectRealityDebug.pre_rejected = _preRejected;
         _objectRealityDebug.pre_rewritten = _preRewritten;
+        _objectRealityDebug.tx_normalized = _txNormalized;
         _objectRealityDebug.quarantine_size = _quarantine.length;
         if (_quarantine.length > 0) {
           const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
