@@ -2308,6 +2308,10 @@ function generateL2Site(siteId, site_size, npc_array, worldSeed, npcModule, opti
     };
     if (start_local_space_id === null) start_local_space_id = local_space_id;
   }
+  // v1.88.40: guard — warn if no localspaces were created (should never happen given max(1,floor()) but log if it does)
+  if (Object.keys(local_spaces).length === 0) {
+    console.warn(`[WORLDGEN] WARN empty_local_spaces siteId=${siteId} site_size=${site_size}`);
+  }
 
   // PHASE 3C: Generate or use existing NPCs with persistence
   let npcs = [];

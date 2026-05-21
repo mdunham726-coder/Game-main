@@ -3716,6 +3716,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
+    if (narrationContent.length > 28000) console.warn(`[NARRATOR] WARN prompt_oversized len=${narrationContent.length} turn=${turnNumber}`); // v1.88.40
 
     // Reset capture tracking for this turn
     gameState.world._lastNpcCapture = { detected: false };
@@ -3856,6 +3857,32 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       _dmNoteStatus = _phaseBResult ? 'updated' : 'new_game';
       _extractionPacket = _phaseBResult ? _phaseBResult.extracted : null;
       _dmNoteArchived = null; // dm_note retired in v1.70.0
+      // v1.88.40: CB schema drift detection — forward (missing expected fields) and backward (legacy fields)
+      const _cbSchemaDrift = [];
+      if (_phaseBResult) {
+        for (const _driftField of ['object_candidates','visible_objects','environmental_features','entity_candidates']) {
+          if (!(_driftField in _phaseBResult)) {
+            _cbSchemaDrift.push(`missing_field:${_driftField}`);
+            console.warn(`[CB-SCHEMA-DRIFT] missing_field:${_driftField} turn=${turnNumber}`);
+          }
+        }
+        if (Array.isArray(_phaseBResult.entity_candidates)) {
+          for (const _ec of _phaseBResult.entity_candidates) {
+            if (!('held_objects' in _ec)) {
+              _cbSchemaDrift.push('missing_field:held_objects');
+              console.warn(`[CB-SCHEMA-DRIFT] missing_field:held_objects entity=${_ec.entity_id||'?'} turn=${turnNumber}`);
+            }
+            if (!('worn_objects' in _ec)) {
+              _cbSchemaDrift.push('missing_field:worn_objects');
+              console.warn(`[CB-SCHEMA-DRIFT] missing_field:worn_objects entity=${_ec.entity_id||'?'} turn=${turnNumber}`);
+            }
+            if ('held_or_worn_objects' in _ec) {
+              _cbSchemaDrift.push('legacy_field:held_or_worn_objects');
+              console.warn(`[CB-SCHEMA-DRIFT] legacy_field:held_or_worn_objects entity=${_ec.entity_id||'?'} turn=${turnNumber}`);
+            }
+          }
+        }
+      }
       if (_phaseBResult?.watch_message) {
         _watchMessageThisTurn = _phaseBResult.watch_message;
         _lastWatchMessage = _watchMessageThisTurn;
@@ -4485,6 +4512,24 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           // v1.85.25: guard prevents 'empty_quarantine' from overwriting 'ap_dedup_all_transfers'.
           // When all CB transfers were AP-deduped, quarantine ends up empty but skip_reason is already set.
           if (!_objectRealityDebug.skip_reason) _objectRealityDebug.skip_reason = 'empty_quarantine';
+        }
+
+        // v1.88.40: B4 ORS reconciliation — compare live _generated_interior object_ids vs world.sites persistent mirror
+        {
+          const _orsLs = gameState.world?.active_local_space;
+          const _orsSite = gameState.world?.active_site;
+          if (_orsLs?._generated_interior && _orsSite) {
+            const _liveObjIds = _orsLs._generated_interior.object_ids || [];
+            const _lsKey  = _orsLs.local_space_id;
+            const _siteKey = _orsSite.id || _orsSite.site_id;
+            const _mirrorLs = gameState.world?.sites?.[_siteKey]?.local_spaces?.[_lsKey];
+            if (_mirrorLs?._generated_interior) {
+              const _mirrorObjIds = _mirrorLs._generated_interior.object_ids || [];
+              if (_liveObjIds.length !== _mirrorObjIds.length) {
+                console.warn(`[ORS-RECONCILE] WARN sites_mirror_divergence live=${_liveObjIds.length} mirror=${_mirrorObjIds.length} ls=${_lsKey} turn=${turnNumber}`);
+              }
+            }
+          }
         }
 
         // v1.88.37: build normalized candidate snapshot — mirrors pre-write normalization onto shallow
@@ -5131,7 +5176,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           referenced_abilities:       _authorityGateResult.referenced_abilities,
           evidence_supported:         _authorityGateResult.evidence?.engine_supported ?? null,
           authority_gate_duration_ms: _agDurationMs,
-        } : null
+        } : null,
+        cb_schema_drift: _cbSchemaDrift.length > 0 ? _cbSchemaDrift : undefined,  // v1.88.40
       },
       logs: turnLogs,
       reality_check: {
