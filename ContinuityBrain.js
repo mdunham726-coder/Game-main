@@ -514,7 +514,7 @@ function _describeTrackedObjects(gameState) {
   // Naturally bounded — gameState.objects only contains ORS-promoted persistent entities.
   // Fail closed: skip any object whose container_id doesn't match the exact format.
   const nearby = [];
-  if (pos && typeof pos.lx === 'number' && typeof pos.ly === 'number') {
+  if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
     for (const r of Object.values(objects)) {
       if (r.status !== 'active') continue;
       if (r.current_container_type !== 'site') continue;
@@ -527,7 +527,7 @@ function _describeTrackedObjects(gameState) {
       if (!xyMatch) continue;
       const objX = parseInt(xyMatch[1], 10);
       const objY = parseInt(xyMatch[2], 10);
-      const dist = Math.abs(objX - pos.lx) + Math.abs(objY - pos.ly);
+      const dist = Math.abs(objX - pos.x) + Math.abs(objY - pos.y);
       if (dist !== 1) continue;
       nearby.push(r);
     }
