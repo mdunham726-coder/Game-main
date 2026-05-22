@@ -494,7 +494,8 @@ function _describeActiveConditions(gameState) {
 function _describeTrackedObjects(gameState) {
   const objects = gameState.objects || {};
   const w       = gameState.world || {};
-  const pos     = w.position;
+  // v1.88.45: use player.position (has site-local x/y at depth 2) not world.position (lx/ly only)
+  const pos     = gameState.player?.position || w.position;
   const loc     = w.active_local_space || w.active_site;
 
   const validContainers = new Set(['player']);
