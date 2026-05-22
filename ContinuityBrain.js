@@ -313,6 +313,7 @@ Identify concrete, discrete, portable physical objects explicitly mentioned in t
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
+Objects annotated with "nearby (1 tile)" in TRACKED OBJECTS are placed objects at a fixed floor location adjacent to the player — treat them as tracked and do not emit promote candidates for them.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
@@ -505,13 +506,46 @@ function _describeTrackedObjects(gameState) {
   const tracked = Object.values(objects).filter(r =>
     r.status === 'active' && validContainers.has(r.current_container_id)
   );
-  if (!tracked.length) return '(none)';
-  return tracked.map(r => {
+
+  // v1.88.43: include site-floor objects at Manhattan distance === 1 from the player's
+  // site-local position. Fixes spatial duplicate promotion: CB could not suppress
+  // re-promotion of objects at adjacent tiles because they were absent from this list.
+  // ORS dedup is container-scoped, so cross-tile re-promotes escaped it.
+  // Naturally bounded — gameState.objects only contains ORS-promoted persistent entities.
+  // Fail closed: skip any object whose container_id doesn't match the exact format.
+  const nearby = [];
+  if (pos && typeof pos.lx === 'number' && typeof pos.ly === 'number') {
+    for (const r of Object.values(objects)) {
+      if (r.status !== 'active') continue;
+      if (r.current_container_type !== 'site') continue;
+      if (validContainers.has(r.current_container_id)) continue;
+      const cid = r.current_container_id || '';
+      const lastColon = cid.lastIndexOf(':');
+      if (lastColon < 0) continue;
+      const xyPart = cid.slice(lastColon + 1);
+      const xyMatch = /^(-?\d+),(-?\d+)$/.exec(xyPart);
+      if (!xyMatch) continue;
+      const objX = parseInt(xyMatch[1], 10);
+      const objY = parseInt(xyMatch[2], 10);
+      const dist = Math.abs(objX - pos.lx) + Math.abs(objY - pos.ly);
+      if (dist !== 1) continue;
+      nearby.push(r);
+    }
+    nearby.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  if (!tracked.length && !nearby.length) return '(none)';
+
+  const lines = tracked.map(r => {
     const containerLabel = r.current_container_type === 'player' ? 'player'
       : r.current_container_type === 'npc' ? `npc:${r.current_container_id}`
       : `${r.current_container_id}`;
     return `- ${r.id} | ${r.name} | container: ${containerLabel}`;
-  }).join('\n');
+  });
+  for (const r of nearby) {
+    lines.push(`- ${r.id} | ${r.name} | container: ${r.current_container_id} | nearby (1 tile)`);
+  }
+  return lines.join('\n');
 }
 
 function _describeApActionsThisTurn(gameState) {
