@@ -316,6 +316,13 @@ in a pile, within reach, described as part of the setting). A named object's pas
 the narration is sufficient reason to emit a candidate. Do not apply a salience or relevance
 filter — if it is named, portable, and concrete, extract it. For plural or group mentions, emit
 a single group object candidate unless the narration clearly distinguishes individual instances.
+First decide whether the object should be extracted. Then independently decide its physical
+container — do not let the reason an object was extracted determine its container. If the
+narration shows a specific instance being held, eaten, drunk, used, carried, grabbed, lifted,
+bitten, unwrapped, or otherwise physically manipulated by the player or an NPC, that specific
+instance belongs in the player or npc container even if similar objects are also present in the
+scene. Passive surface/pile/table presence applies only to objects that are not actively
+possessed or manipulated.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
 Figurative or embellished prose does not disqualify extraction. Apply this test: is there a
