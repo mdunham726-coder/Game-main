@@ -309,7 +309,13 @@ Fields:
 
 OBJECT CANDIDATES (optional)
 
-Identify concrete, discrete, portable physical objects explicitly mentioned in the narration.
+Your goal is a complete inventory of all concrete, portable physical objects present in this
+scene — not a filtered list of the most active or salient ones. Extract every named concrete
+portable object in the narration whether it is actively handled or merely present (on a surface,
+in a pile, within reach, described as part of the setting). A named object's passive presence in
+the narration is sufficient reason to emit a candidate. Do not apply a salience or relevance
+filter — if it is named, portable, and concrete, extract it. For plural or group mentions, emit
+a single group object candidate unless the narration clearly distinguishes individual instances.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
 Figurative or embellished prose does not disqualify extraction. Apply this test: is there a
