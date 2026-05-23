@@ -389,19 +389,37 @@ If no qualifying objects are present, emit: "object_candidates": []
 
 ACTOR ASSOCIATION RULES (actor_npc_ref field):
 
-  Emit actor_npc_ref when the narration shows an NPC actively interacting with the object.
-  Active interaction includes: eating, drinking, using, holding, carrying, gripping,
-  opening, wearing, reaching for, or physically manipulating the object.
+  Emit actor_npc_ref when the narration signals EITHER of the following:
 
-  Use the entity_ref value from entity_candidates for that NPC — the same ref you assigned
-  to that NPC in the entity_candidates array this turn.
+  TRIGGER 1 — Active physical interaction:
+  The actor is physically doing something with the object: eating, drinking, using, holding,
+  carrying, gripping, opening, wearing, reaching for, or physically manipulating the object.
 
-  DO NOT EMIT when the NPC is merely spatially near the object without active involvement:
-  "near", "beside", "in front of", "behind", "next to" are NOT association triggers.
-  Proximity alone does not constitute actor_npc_ref.
+  TRIGGER 2 — Possessive language (two strength tiers):
 
-  Omit the field entirely when no NPC is actively associated with this object.
-  One actor_npc_ref per object candidate — the most directly involved NPC only.
+    Strong possessive — always emit:
+    A possessive pronoun or possessive construction directly modifying the object name:
+    first-person (my, mine) or third-person (his, her, their, [actor-name]'s).
+    These are unambiguous ownership signals regardless of context.
+
+    Contextual assignment — emit only for concrete possessible/usable items:
+    Intent phrases (for me, for him, for [actor-name]) signal physical assignment ONLY when
+    the object is something the actor will concretely hold, consume, wear, or carry.
+    Do NOT emit when the phrase expresses purpose, destination, or abstract benefit rather
+    than direct physical possession — the phrase must imply the actor ends up with the object,
+    not merely that the object serves some function in relation to them.
+
+  ACTOR REF VALUES:
+  - First-person references (my, mine, for me) → use "player"
+  - Third-person references to a known NPC (his, her, their, [NPC-name]'s, for [NPC-name])
+    → use that NPC's entity_ref from entity_candidates (the same ref assigned this turn)
+
+  DO NOT EMIT for spatial proximity alone:
+  "near", "beside", "in front of", "behind", "next to", "between" are NOT triggers.
+  Proximity without possessive language or active interaction → omit the field.
+
+  Omit the field entirely when no actor is actively or possessively associated with this object.
+  One actor_npc_ref per object candidate — the most directly involved actor only.
 
 ---
 
