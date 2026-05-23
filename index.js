@@ -76,12 +76,15 @@ let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object sh
 // ── Session TTL eviction ─────────────────────────────────────────────────────
 // Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
 const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
-const SESSION_MAX_AGE_MS = 3 * 60 * 1000; // 3 minutes — probe sessions are single-turn throw-aways
+const SESSION_PROBE_MAX_AGE_MS = 5 * 60 * 1000;       // 5 min  — probes/harness are throw-aways
+const SESSION_GAME_MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24 hrs — browser game sessions survive overnight
 setInterval(() => {
   const _sweepNow = Date.now();
   let _evictCount = 0;
   for (const [_sid, _ts] of _sessionLastUsed) {
-    if (_sweepNow - _ts > SESSION_MAX_AGE_MS) {
+    const _sess = sessionStates.get(_sid);
+    const _maxAge = _sess?.session_type === 'game' ? SESSION_GAME_MAX_AGE_MS : SESSION_PROBE_MAX_AGE_MS;
+    if (_sweepNow - _ts > _maxAge) {
       sessionStates.delete(_sid);
       _sessionLastUsed.delete(_sid);
       _consultHistory.delete(_sid);
@@ -1052,7 +1055,8 @@ app.post('/narrate', async (req, res) => {
   let _reportProgress = () => {};
   if (isFirstTurn === true) {
     isFirstTurn = false;
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+    const _sessionType = req.headers['x-progress-token'] ? 'game' : 'probe';
+    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger, session_type: _sessionType });
     inputObj = mapActionToInput(action, "WORLD_PROMPT");
     inputObj.player_intent.channel = 'do';
     if (_rawWorldSeed != null && Number.isFinite(Number(_rawWorldSeed))) inputObj.WORLD_SEED = Number(_rawWorldSeed);
