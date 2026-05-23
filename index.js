@@ -37,6 +37,7 @@ const CB = require('./ContinuityBrain'); // v1.70.0
 const ObjectHelper = require('./ObjectHelper'); // v1.84.52
 const ConditionBot = require('./conditionbot'); // v1.84.19
 const AuthorityGate = require('./authoritygate'); // v1.88.0
+const diag = require('./diagnostics');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -1650,7 +1651,7 @@ app.post('/narrate', async (req, res) => {
         });
 
         // C2c: Coarse map snapshot — 16×16 grid (each block = 8×8 cells)
-        const _terrainCodes = _TERRAIN_CODES; // alias to module-level constant
+        const _terrainCodes = diag.TERRAIN_CODES; // alias to diagnostics module constant
         const _coarseGrid = [];
         for (let by = 0; by < 16; by++) {
           const row = [];
@@ -6385,7 +6386,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
             const _sIdentity = _s.identity !== null && _s.identity !== undefined ? _s.identity : '(null)';
             const _enterable = _s.enterable === false ? 'NO' : 'YES';
             const _filled    = _s.is_filled ? 'YES' : 'NO';
-            const _interior  = _getSiteInteriorState(_s, gameState.world.sites);
+            const _interior  = diag.getSiteInteriorState(_s, gameState.world.sites);
             context += `${_sid} | ${_sName} | slot_identity:${_sIdentity} | enterable:${_enterable} | filled:${_filled} | interior:${_interior}\n`;
           }
         }
@@ -6413,7 +6414,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
           mx: _wsCell.mx, my: _wsCell.my,
           lx: _wsCell.lx, ly: _wsCell.ly,
           enterable: _wsSite.enterable !== false,
-          interior: _getSiteInteriorState(_wsSite, gameState.world.sites)
+          interior: diag.getSiteInteriorState(_wsSite, gameState.world.sites)
         });
       }
     }
@@ -6487,7 +6488,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
             const _freq = {};
             for (const _c of _macroCells) { const _t = _c.type || ''; _freq[_t] = (_freq[_t] || 0) + 1; }
             const _dom = Object.entries(_freq).sort(([,a],[,b]) => b - a)[0][0];
-            _code = _TERRAIN_CODES[_dom] || '??';
+            _code = diag.TERRAIN_CODES[_dom] || '??';
           }
           // Check if cell has any enterable site
           const _hasSite = Object.values(gameState.world.sites || {}).some(s => s && s.mx === _mx && s.my === _my && s.enterable !== false && !s.is_stub);
@@ -6496,7 +6497,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
           if (_isPlayer)   { _label = '[*]'; }
           else if (_hasSite) { _label = '[S]'; _appearingCodes.add(`S=site`); }
           else if (_isUnknown) { _label = '[ ]'; }
-          else { _label = `[${_code}]`; _appearingCodes.add(`${_code}=${Object.entries(_TERRAIN_CODES).find(([k,v])=>v===_code)?.[0]||_code}`); }
+          else { _label = `[${_code}]`; _appearingCodes.add(`${_code}=${Object.entries(diag.TERRAIN_CODES).find(([k,v])=>v===_code)?.[0]||_code}`); }
           row.push(_label);
         }
         _gridRows.push(row.join(' '));
@@ -7145,33 +7146,6 @@ let _lastNarratorRawResponse = null; // cache of raw narrator response string (f
 let _lastWatchMessage = null;        // cache of Mother's last watch_message (from Phase B)
 let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
 
-// Interior state helper — shared by buildDebugContext() and /diagnostics/sites
-// Returns one of six codes describing the generation state of an enterable site slot.
-function _getSiteInteriorState(s, sites) {
-  if (s.enterable === false) return 'NOT_APPLICABLE';
-  if (!s.is_filled)          return 'PENDING_FILL';
-  if (!s.interior_key)       return 'MISSING_INTERIOR_KEY';
-  const mirror = sites?.[s.interior_key];
-  if (!mirror)               return 'MISSING_INTERIOR_RECORD';
-  // v1.81.1: !mirror.is_stub covers false (new saves) and undefined (old saves). is_stub:true = stub only.
-  if (!mirror.is_stub)       return 'GENERATED';
-  return 'NOT_GENERATED';
-}
-
-// Terrain type -> 2-char code map (module-level for world map 5x5 grid in buildDebugContext)
-const _TERRAIN_CODES = {
-  plains_grassland:'PG', plains_wildflower:'PW', meadow:'ME',
-  forest_deciduous:'FD', forest_mixed:'FM', forest_coniferous:'FC',
-  hills_rolling:'HR', hills_rocky:'HK', rocky_terrain:'RT', scree:'SC',
-  mountain_slopes:'MS', mountain_peak:'MP', mountain_pass:'MA',
-  desert_sand:'DS', desert_dunes:'DD', desert_rocky:'DR',
-  scrubland:'SB', badlands:'BL', canyon:'CY', mesa:'MZ',
-  tundra:'TU', snowfield:'SF', ice_sheet:'IS', permafrost:'PF', alpine:'AL',
-  swamp:'SW', marsh:'MR', wetland:'WL', bog:'BG',
-  beach_sand:'BS', beach_pebble:'BP', cliffs_coastal:'CC', tidepools:'TP', dunes_coastal:'DC',
-  river_crossing:'RC', stream:'ST', lake_shore:'LS', waterfall:'WF', spring:'SP'
-};
-
 app.get('/diagnostics/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -7358,51 +7332,6 @@ app.get('/diagnostics/log', (req, res) => {
   res.json({ turns, total_turns: history.length });
 });
 
-// Disk fallback for turn archive reads — consults flight-recorder JSONL when in-memory session is gone.
-// turnNum: numeric → return that specific turn's turnObject; null → return the highest-turn turnObject found.
-// Never throws. Returns null on any error, missing directory, missing file, or malformed line.
-async function _readTurnFromDisk(sessionId, turnNum) {
-  try {
-    const safeId = String(sessionId).replace(/[^a-zA-Z0-9_-]/g, '_');
-    const flRoot = path.join(__dirname, 'logs', 'flight-recorder');
-    let dateDirs;
-    try {
-      dateDirs = await fsPromises.readdir(flRoot);
-    } catch (e) {
-      return null; // flight-recorder root does not exist yet
-    }
-    // Sort descending — most recent date checked first (early exit for recent sessions)
-    dateDirs.sort((a, b) => b.localeCompare(a));
-    for (const dateDir of dateDirs) {
-      const filePath = path.join(flRoot, dateDir, 'session_' + safeId + '.jsonl');
-      let raw;
-      try {
-        raw = await fsPromises.readFile(filePath, 'utf8');
-      } catch (e) {
-        if (e.code === 'ENOENT') continue;
-        continue; // skip unreadable files without throwing
-      }
-      let bestParsed = null;
-      for (const line of raw.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let parsed;
-        try { parsed = JSON.parse(trimmed); } catch (e) { continue; }
-        if (!parsed || !parsed.turnObject) continue;
-        if (turnNum !== null) {
-          if (parsed.turn === turnNum) return parsed.turnObject;
-        } else {
-          if (!bestParsed || (parsed.turn || 0) > (bestParsed.turn || 0)) bestParsed = parsed;
-        }
-      }
-      if (turnNum === null && bestParsed) return bestParsed.turnObject;
-    }
-    return null;
-  } catch (e) {
-    return null;
-  }
-}
-
 // Turn archive — GET /diagnostics/turn/:sessionId/:turn
 // Returns the full turnObject for a specific turn from turn_history[].
 // Optional ?fields= comma-separated: narrative, extraction_packet, continuity_snapshot,
@@ -7417,7 +7346,7 @@ app.get('/diagnostics/turn/:sessionId/:turn', async (req, res) => {
   const history = session?.gameState?.turn_history || [];
   let turnObj = history.find(t => t.turn_number === turnNum);
   if (!turnObj) {
-    turnObj = await _readTurnFromDisk(sessionId, turnNum);
+    turnObj = await diag.readTurnFromDisk(sessionId, turnNum);
   }
   if (!turnObj) {
     if (!session) {
@@ -7474,7 +7403,7 @@ app.get('/diagnostics/turn/latest', async (req, res) => {
     ? history.slice().sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0]
     : null;
   if (!latest) {
-    latest = await _readTurnFromDisk(sessionId, null);
+    latest = await diag.readTurnFromDisk(sessionId, null);
   }
   if (!latest) {
     if (!session) {
@@ -7590,7 +7519,7 @@ app.get('/diagnostics/sites', (req, res) => {
   let cellSites = [];
   if (cell?.sites && !Array.isArray(cell.sites)) {
     cellSites = Object.values(cell.sites).map(s => {
-      const interiorState = _getSiteInteriorState(s, gs.world.sites);
+      const interiorState = diag.getSiteInteriorState(s, gs.world.sites);
       const mirror = s.interior_key ? gs.world.sites?.[s.interior_key] : null;
       return {
         site_id:        s.site_id ?? null,
@@ -7723,7 +7652,7 @@ app.get('/diagnostics/sites-query', (req, res) => {
         mx: cell.mx, my: cell.my, lx: cell.lx, ly: cell.ly,
         enterable:            s.enterable !== false,
         is_filled:            s.is_filled ?? false,
-        interior_state:       _getSiteInteriorState(s, gs.world.sites),
+        interior_state:       diag.getSiteInteriorState(s, gs.world.sites),
         distance_from_player: distCells
       });
     }
@@ -7751,17 +7680,6 @@ app.get('/diagnostics/sites-query', (req, res) => {
 // Only covers loaded/generated runtime state. No claim is made about
 // unloaded/unvisited world regions. All endpoints are read-only, no auth required.
 
-// Inline helper: find a site record in world.sites by site_id (bare or /l2 form).
-// Returns { site, interior_key } or null.
-const _findSiteRecord = (gs, site_id) => {
-  const clean = (site_id || '').replace(/\/l2$/, '');
-  for (const [interior_key, s] of Object.entries(gs.world.sites || {})) {
-    const sId = (s.site_id ?? s.id ?? '').replace(/\/l2$/, '');
-    if (sId === clean) return { site: s, interior_key };
-  }
-  return null;
-};
-
 // Single site record — GET /diagnostics/site?site_id=...
 // Returns full stored runtime record for any site in loaded/generated world state.
 app.get('/diagnostics/site-placement', (req, res) => {
@@ -7777,7 +7695,7 @@ app.get('/diagnostics/site', (req, res) => {
   if (!site_id) return res.status(400).json({ error: 'site_id required' });
 
   const gs     = _lastGameState;
-  const found  = _findSiteRecord(gs, site_id);
+  const found  = diag.findSiteRecord(gs, site_id);
   if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
     message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
 
@@ -7847,7 +7765,7 @@ app.get('/diagnostics/localspaces', (req, res) => {
   if (!site_id) return res.status(400).json({ error: 'site_id required' });
 
   const gs    = _lastGameState;
-  const found = _findSiteRecord(gs, site_id);
+  const found = diag.findSiteRecord(gs, site_id);
   if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
     message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
 
@@ -7901,7 +7819,7 @@ app.get('/diagnostics/localspace', (req, res) => {
 
   if (site_id) {
     // Narrow search: look in the specific site only
-    const found = _findSiteRecord(gs, site_id);
+    const found = diag.findSiteRecord(gs, site_id);
     if (found) {
       ls = found.site.local_spaces?.[localspace_id] ?? null;
       if (ls) parentSiteId = found.interior_key;
