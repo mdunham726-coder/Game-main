@@ -41,7 +41,7 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.2.0';
+const MB_VERSION = '7.2.1';
 // MB v7.1.2 (May 2026): SOURCE-ROOT VERIFICATION doctrine block added. Prevents a class of silently-inert code proposal: proposing a property path through a local alias that doesn't own the needed field (e.g. w.player when w = gameState.world and player is a sibling of world, not a child). Rule: before proposing any code change involving a nested property path, first identify the local variable root and its binding; if the needed data lives outside that root, use the original top-level object, not an invented child path. Block inserted after SOURCE CODE READ EFFICIENCY, before SOURCE FILE GUIDE. MB_VERSION 7.1.1 -> 7.1.2.
 // MB v7.1.1 (May 2026): ACTION AUTHORING DISCIPLINE doctrine block added to GAMEPLAY TOOLS section. Defines the boundary between privileged engine access (diagnostic capability) and player action text (scene-authority surface). Privileged grid/entity knowledge may inform test design and navigation but must not appear in take_turn action text unless narratively established. Narrator pipeline treats player action text as potential scene truth; embedding unestablished entity claims is a contamination vector, not a test input. MB_VERSION 7.1.0 -> 7.1.1.
 // MB v7.1.0 (May 2026): Doctrine enrichment — ARBITER INTERNALS, CONDITION BOT INTERNALS, SEMANTIC PARSER INTERNALS, NARRATOR PROMPT STRUCTURE INTERNALS, WORLDGEN INVESTIGATION GUIDE. Closes 5 MB knowledge blind spots identified in self-assessment.
@@ -527,13 +527,18 @@ const MB_TOOLS = [
               'probe_worldgen_sites_10',
               'probe_worldgen_sites_50',
               'run_probe_localspace',
-              'run_probe'
+              'run_probe',
+              'run_node_script'
             ],
-            description: 'node_check_*=syntax check; harness_<name>=run scenario; harness_sweep_a=run sweep A; probe_worldgen_sites_10/50=worldgen distribution probe (10 or 50 runs); run_probe_localspace=localspace distribution probe (5 runs, smoke); run_probe=run any .probe.json spec (requires spec_path param)'
+            description: 'node_check_*=syntax check; harness_<name>=run scenario; harness_sweep_a=run sweep A; probe_worldgen_sites_10/50=worldgen distribution probe (10 or 50 runs); run_probe_localspace=localspace distribution probe (5 runs, smoke); run_probe=run any .probe.json spec (requires spec_path param); run_node_script=run any scripts/*.js|cjs|mjs file you have written (requires script_path param, 30s timeout)'
           },
           spec_path: {
             type: 'string',
             description: 'Required when task=run_probe. Path to .probe.json file relative to Game-main root. Example: "tests/probes/worldgen-sites.probe.json". No .. allowed.'
+          },
+          script_path: {
+            type: 'string',
+            description: 'Required when task=run_node_script. Path to a .js, .cjs, or .mjs file inside the scripts/ directory. Example: "scripts/test-no-session.cjs". Must be scripts/<name>.ext — no .. allowed.'
           },
           runs: {
             type: 'integer',
@@ -1269,7 +1274,7 @@ WHEN TO USE: (1) After a fix is applied, call node_check_<file> to verify syntax
 
 NORMAL CONNECTED RUNS: For typical forensic investigation when [Harness: Connected], prefer harness_run_scenario — it goes through the server endpoint and returns structured tool output. Use run_validation for syntax checks, direct CLI verification, or when the harness endpoint is unreachable.
 
-WHAT IT IS NOT: run_validation is not a shell. It maps symbolic task names to fixed hardcoded commands. Unknown task names are rejected. You cannot pass arguments, pipes, redirections, or arbitrary commands.
+WHAT IT IS NOT: run_validation is not a general shell. It maps symbolic task names to fixed hardcoded commands. Unknown task names are rejected. You cannot pass arbitrary shell commands, pipes, or redirections. EXCEPTION: run_node_script lets you execute a .js/.cjs/.mjs file you have written to scripts/. Workflow: write the script with write_file (path must start with scripts/), then execute it with run_node_script(task="run_node_script", script_path="scripts/<name>.cjs"). Use this for multi-route HTTP probe scripts, diagnostic batch tests, or any Node.js utility you authored. 30s timeout.
 
 SYNTAX CHECK WORKFLOW: When you suspect a file has a syntax error, or after you recommend a code change, call the relevant node_check_* task. exit_code 0 = clean. exit_code != 0 = stderr contains the parse error location.
 
@@ -1702,6 +1707,26 @@ async function executeToolCall(name, args) {
           _child.stderr.on('data', (chunk) => { const _t = chunk.toString(); _stderr += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  [stderr] ${l}${R}`); }); });
           _child.on('close', (code) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, runs: _probeRuns, stdout: _stdout, stderr: _timedOut ? 'ETIMEDOUT' : _stderr, exit_code: _timedOut ? 1 : (code ?? 0) })); });
           _child.on('error', (err) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, stdout: _stdout, stderr: err.message, exit_code: 1 })); });
+        });
+      }
+      // run_node_script: run a scripts/*.js|cjs|mjs file Mother has written
+      if (_task === 'run_node_script') {
+        const _scriptPath = (args.script_path || '').trim();
+        if (!_scriptPath) return JSON.stringify({ error: 'run_node_script requires script_path parameter' });
+        if (_scriptPath.includes('..') || !/^scripts\/[a-z0-9_\-\.]+\.(js|cjs|mjs)$/i.test(_scriptPath)) {
+          return JSON.stringify({ error: 'invalid_script_path', detail: 'Path must be scripts/<name>.js|cjs|mjs, relative, no ..' });
+        }
+        const _scriptCmd = `node "${_scriptPath}"`;
+        printLine(`${DIM}[run_validation] ${_scriptCmd}${R}`);
+        const { spawn: _spawnScript } = require('child_process');
+        return await new Promise((resolve) => {
+          let _stdout = '', _stderr = '', _timedOut = false;
+          const _child = _spawnScript(_scriptCmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', shell: true, env: { ...process.env } });
+          const _timer = setTimeout(() => { _timedOut = true; _child.kill('SIGKILL'); }, 30000);
+          _child.stdout.on('data', (chunk) => { const _t = chunk.toString(); _stdout += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  ${l}${R}`); }); });
+          _child.stderr.on('data', (chunk) => { const _t = chunk.toString(); _stderr += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  [stderr] ${l}${R}`); }); });
+          _child.on('close', (code) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_node_script', script_path: _scriptPath, stdout: _stdout, stderr: _timedOut ? 'ETIMEDOUT' : _stderr, exit_code: _timedOut ? 1 : (code ?? 0) })); });
+          _child.on('error', (err) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_node_script', script_path: _scriptPath, stdout: _stdout, stderr: err.message, exit_code: 1 })); });
         });
       }
       if (!_taskMap[_task]) return JSON.stringify({ error: 'unknown_task', valid_tasks: Object.keys(_taskMap) });
