@@ -7046,10 +7046,6 @@ app.get('/diagnostics/localspace', (req, res) => {
   res.json(record);
 });
 
-// Source slice reader — GET /diagnostics/source
-// Used by Mother Brain get_source_slice tool for targeted implementation verification.
-// Auth: requires x-diagnostics-key header matching DIAGNOSTICS_KEY env var.
-// Disabled entirely (503) when DIAGNOSTICS_KEY is not set — safe default.
 // =============================================================================
 // v1.84.54: OBJECT REALITY DIAGNOSTIC ENDPOINTS
 // =============================================================================
@@ -7270,133 +7266,7 @@ app.get('/diagnostics/objects/trace', (req, res) => {
 // END v1.84.54 OBJECT REALITY DIAGNOSTIC ENDPOINTS
 // =============================================================================
 
-// Params: ?file= (required, filename only), ?from= (1-based line, default 1), ?to= (default from+199, hard cap from+299)
-const _SOURCE_ALLOWLIST = new Set([
-  'index.js', 'Engine.js', 'ActionProcessor.js', 'NPCs.js', 'WorldGen.js',
-  'NarrativeContinuity.js', 'ContinuityBrain.js', 'SemanticParser.js',
-  'continuity.js', 'QuestSystem.js', 'logger.js', 'logging.js',
-  'flight-recorder.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js',  // v1.84.54
-  'cbpanel.js', 'npcpanel.js', 'sitelens.js', 'motherwatch.js',              // v1.85.1
-  'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
-  'test-harness.js',                                                           // v1.85.53
-  'scripts/probe-runner.js', 'scripts/probe-metrics.js'                       // v1.85.75
-]);
-// Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
-// OR any probe spec: tests/probes/<name>.probe.json
-// Pattern: single path segment under tests/scenarios/ or tests/probes/, alphanumeric/underscore/hyphen name, .json only.
-function _isSourceAllowed(file) {
-  if (_SOURCE_ALLOWLIST.has(file)) return true;
-  if (/^tests\/scenarios\/[a-z0-9_-]+\.json$/i.test(file)) return true;
-  if (/^tests\/probes\/[a-z0-9_-]+\.probe\.json$/i.test(file)) return true;
-  return false;
-}
-app.get('/diagnostics/source', (req, res) => {
-  const diagKey = process.env.DIAGNOSTICS_KEY;
-  if (!diagKey) {
-    return res.status(503).json({ error: 'source_access_disabled', message: 'DIAGNOSTICS_KEY env var is not set.' });
-  }
-  if (req.headers['x-diagnostics-key'] !== diagKey) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  const file = req.query.file;
-  if (!file || path.isAbsolute(file) || file.includes('\\') || file.includes('..')) {
-    return res.status(400).json({ error: 'invalid_file', message: 'file param must be a relative path with no backslashes, drive letters, or ..' });
-  }
-  if (!_isSourceAllowed(file)) {
-    return res.status(403).json({ error: 'not_allowed', message: `${file} is not in the source allowlist.` });
-  }
-  const fromLine = Math.max(1, parseInt(req.query.from, 10) || 1);
-  const maxTo    = fromLine + 299;
-  const toLine   = Math.min(maxTo, Math.max(fromLine, parseInt(req.query.to, 10) || (fromLine + 199)));
-  try {
-    const filePath  = path.join(__dirname, file);
-    if (!filePath.startsWith(path.resolve(__dirname) + path.sep)) {
-      return res.status(403).json({ error: 'path_escape', message: 'Resolved path is outside the project directory.' });
-    }
-    const allLines  = fs.readFileSync(filePath, 'utf8').split('\n');
-    const total     = allLines.length;
-    const sliceFrom = Math.min(fromLine, total);
-    const sliceTo   = Math.min(toLine, total);
-    const lines     = allLines.slice(sliceFrom - 1, sliceTo).join('\n');
-    return res.json({ file, from: sliceFrom, to: sliceTo, total_lines: total, lines });
-  } catch (err) {
-    return res.status(500).json({ error: 'read_failed', message: err.message });
-  }
-});
-
-// Source search — GET /diagnostics/source-search
-// Used by Mother Brain search_source tool for code discovery before get_source_slice verification.
-// Auth: same DIAGNOSTICS_KEY pattern as /diagnostics/source.
-// Params: ?query= (required, min 3 chars, literal string), ?file= (optional, scope to one file)
-// Returns: { query, file_scope, total_matches_returned, capped, results: [{file, line_number, line, context_before, context_after}] }
-app.get('/diagnostics/source-search', (req, res) => {
-  const diagKey = process.env.DIAGNOSTICS_KEY;
-  if (!diagKey) {
-    return res.status(503).json({ error: 'source_search_disabled', message: 'DIAGNOSTICS_KEY env var is not set.' });
-  }
-  if (req.headers['x-diagnostics-key'] !== diagKey) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  const query = req.query.query;
-  if (!query || query.length < 3) {
-    return res.status(400).json({ error: 'invalid_query_too_short', message: 'query must be at least 3 characters.' });
-  }
-  const fileParam = req.query.file;
-  if (fileParam) {
-    if (!fileParam || path.isAbsolute(fileParam) || fileParam.includes('\\') || fileParam.includes('..')) {
-      return res.status(400).json({ error: 'invalid_file', message: 'file param must be a relative path with no backslashes, drive letters, or ..' });
-    }
-    if (!_isSourceAllowed(fileParam)) {
-      return res.status(403).json({ error: 'not_allowed', message: `${fileParam} is not in the source allowlist.` });
-    }
-  }
-  const filesToSearch = fileParam ? [fileParam] : (() => {
-    const list = [..._SOURCE_ALLOWLIST];
-    // Also enumerate tests/scenarios/*.json and tests/probes/*.probe.json for global sweeps
-    for (const dir of ['tests/scenarios', 'tests/probes']) {
-      try {
-        const dirPath = path.join(__dirname, dir);
-        for (const f of fs.readdirSync(dirPath)) {
-          if (/^[a-z0-9_-]+\.(?:probe\.)?json$/i.test(f)) {
-            list.push(`${dir}/${f}`);
-          }
-        }
-      } catch (_e) { /* dir may not exist */ }
-    }
-    return list;
-  })();
-  const fileScope     = fileParam || 'all';
-  const results       = [];
-  const MAX_RESULTS   = 20;
-  outer: for (const fname of filesToSearch) {
-    try {
-      const fPath    = path.join(__dirname, fname);
-      const allLines = fs.readFileSync(fPath, 'utf8').split('\n');
-      for (let i = 0; i < allLines.length; i++) {
-        if (allLines[i].includes(query)) {
-          results.push({
-            file:           fname,
-            line_number:    i + 1,
-            line:           allLines[i].trim(),
-            context_before: i > 0 ? allLines[i - 1].trim() : null,
-            context_after:  i < allLines.length - 1 ? allLines[i + 1].trim() : null
-          });
-          if (results.length >= MAX_RESULTS) break outer;
-        }
-      }
-    } catch (_e) {
-      // skip unreadable files silently
-    }
-  }
-  console.log('[search_source]', JSON.stringify(query), fileScope, results.length);
-  return res.json({
-    query,
-    file_scope:             fileScope,
-    total_matches_returned: results.length,
-    capped:                 results.length >= MAX_RESULTS,
-    results
-  });
-});
+// /diagnostics/source and /diagnostics/source-search migrated to diagnostics.js (Cluster 2) — registered via diag.registerRoutes(app)
 
 // Session bootstrap probe for Mother Brain — GET /diagnostics/session
 // Returns the last known session ID and turn count so MB can self-initialize without waiting for an SSE turn.
