@@ -970,6 +970,21 @@ function registerStreamHandler(req, res) {
 }
 
 // =============================================================================
+// DIAG HISTORY STATE (Cluster 3)
+// Rolling per-turn cost/token history — max 200 entries, written each turn.
+// =============================================================================
+let _diagHistory = [];
+
+function pushDiagHistory(entry) {
+  _diagHistory.push(entry);
+  if (_diagHistory.length > 200) _diagHistory.shift();
+}
+
+function getDiagHistory() {
+  return _diagHistory;
+}
+
+// =============================================================================
 // SOURCE ALLOWLIST (Cluster 2)
 // =============================================================================
 const _SOURCE_ALLOWLIST = new Set([
@@ -1014,6 +1029,34 @@ function registerRoutes(app, opts = {}) {
       printLines.forEach(l => console.error(`[MOTHER BRAIN CRASHED]   ${l.trim()}`));
     }
     res.json({ logged: true });
+  });
+
+  // --- Cluster 3: session summary ------------------------------------------
+  // On-demand session summary — GET /diagnostics/summary
+  // Returns aggregate stats over _diagHistory (since last server restart).
+  app.get('/diagnostics/summary', (req, res) => {
+    const valid        = _diagHistory.filter(e => e.system_total != null);
+    const turns        = _diagHistory.length;
+    const avgSystem    = valid.length ? Math.round(valid.reduce((s, e) => s + e.system_total, 0) / valid.length) : null;
+    const avgNarrator  = valid.length ? Math.round(valid.reduce((s, e) => s + (e.narrator_total || 0), 0) / valid.length) : null;
+    const avgParser    = valid.length ? Math.round(valid.reduce((s, e) => s + (e.parser_total  || 0), 0) / valid.length) : null;
+    const totalSpent   = valid.reduce((s, e) => s + e.system_total, 0);
+    const peakEntry    = valid.reduce((m, e) => (e.system_total > (m?.system_total || 0) ? e : m), null);
+    const cachedTurns  = _diagHistory.filter(e => e.parser_cached).length;
+    const violationCounts = {};
+    _diagHistory.forEach(e => (e.violations || []).forEach(v => { violationCounts[v] = (violationCounts[v] || 0) + 1; }));
+    res.json({
+      turns,
+      avg_system:        avgSystem,
+      avg_narrator:      avgNarrator,
+      avg_parser:        avgParser,
+      total_spent:       totalSpent,
+      peak_entry:        peakEntry,
+      cached_turns:      cachedTurns,
+      cont_chars_first:  _diagHistory[0]?.cont_chars ?? null,
+      cont_chars_last:   _diagHistory[_diagHistory.length - 1]?.cont_chars ?? null,
+      violation_counts:  violationCounts
+    });
   });
 
   // --- Cluster 2: source reader + source search ---------------------------
@@ -1141,6 +1184,9 @@ module.exports = {
   // SSE infrastructure
   emitDiagnostics,
   registerStreamHandler,
+  // diag history (Cluster 3)
+  pushDiagHistory,
+  getDiagHistory,
   // route registration
   registerRoutes,
 };

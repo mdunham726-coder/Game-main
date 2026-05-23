@@ -5296,10 +5296,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     }, 0);
 
     // Delta and rolling average from history
-    const _prevEntry       = _diagHistory.length > 0 ? _diagHistory[_diagHistory.length - 1] : null;
+    const _dh              = diag.getDiagHistory();
+    const _prevEntry       = _dh.length > 0 ? _dh[_dh.length - 1] : null;
     const _deltaTok        = (_systemTokTotal !== null && _prevEntry?.system_total != null) ? _systemTokTotal - _prevEntry.system_total : null;
     const _deltaContChars  = _prevEntry != null ? _contGrowthChars - _prevEntry.cont_chars : null;
-    const _last5           = _diagHistory.slice(-5).filter(e => e.system_total != null);
+    const _last5           = _dh.slice(-5).filter(e => e.system_total != null);
     const _avg5            = _last5.length > 0 ? Math.round(_last5.reduce((s, e) => s + e.system_total, 0) / _last5.length) : null;
 
     // Emit to SSE diagnostics stream (flight-recorder.js terminal client)
@@ -5599,7 +5600,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       .catch(err => console.warn('[AUTOSAVE] write failed:', err.message));
 
     // Update rolling history for delta/avg computation next turn
-    _diagHistory.push({
+    diag.pushDiagHistory({
       turn_number:         turnNumber,
       narrator_total:      _narratorUsage?.total_tokens      ?? null,
       narrator_prompt:     _narratorUsage?.prompt_tokens     ?? null,
@@ -5612,7 +5613,6 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       dm_note_chars:       (gameState.world.dm_note || '').length,
       history_turns:       (gameState.turn_history || []).filter(t => t.narration_debug?.extraction_packet != null).length
     });
-    if (_diagHistory.length > 200) _diagHistory.shift();
 
     return res.json({ 
       sessionId: resolvedSessionId,
@@ -6328,7 +6328,7 @@ const server = app.listen(PORT, () => {
 // Emits a structured payload after every narration turn.
 // flight-recorder.js connects here to render the terminal flight recorder.
 // =============================================================================
-let _diagHistory = []; // rolling per-turn cost history for delta/avg and session summary (max 200 entries)
+// _diagHistory migrated to diagnostics.js (Cluster 3) — use diag.pushDiagHistory / diag.getDiagHistory
 let _lastRenderedBlock = null; // cache of the exact continuity text injected into the model each turn
 let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
 let _lastSessionId    = null; // cache of most-recent resolved session ID (used by /diagnostics/session for MB bootstrap)
@@ -6614,32 +6614,7 @@ app.get('/diagnostics/payload/:sessionId/:turn', (req, res) => {
   return res.json({ turn: turnNum, stage, part, data: stageData?.[part] ?? null });
 });
 
-// On-demand session summary — GET /diagnostics/summary
-// Returns aggregate stats over _diagHistory (since last server restart).
-app.get('/diagnostics/summary', (req, res) => {
-  const valid        = _diagHistory.filter(e => e.system_total != null);
-  const turns        = _diagHistory.length;
-  const avgSystem    = valid.length ? Math.round(valid.reduce((s, e) => s + e.system_total, 0) / valid.length) : null;
-  const avgNarrator  = valid.length ? Math.round(valid.reduce((s, e) => s + (e.narrator_total || 0), 0) / valid.length) : null;
-  const avgParser    = valid.length ? Math.round(valid.reduce((s, e) => s + (e.parser_total  || 0), 0) / valid.length) : null;
-  const totalSpent   = valid.reduce((s, e) => s + e.system_total, 0);
-  const peakEntry    = valid.reduce((m, e) => (e.system_total > (m?.system_total || 0) ? e : m), null);
-  const cachedTurns  = _diagHistory.filter(e => e.parser_cached).length;
-  const violationCounts = {};
-  _diagHistory.forEach(e => (e.violations || []).forEach(v => { violationCounts[v] = (violationCounts[v] || 0) + 1; }));
-  res.json({
-    turns,
-    avg_system:        avgSystem,
-    avg_narrator:      avgNarrator,
-    avg_parser:        avgParser,
-    total_spent:       totalSpent,
-    peak_entry:        peakEntry,
-    cached_turns:      cachedTurns,
-    cont_chars_first:  _diagHistory[0]?.cont_chars ?? null,
-    cont_chars_last:   _diagHistory[_diagHistory.length - 1]?.cont_chars ?? null,
-    violation_counts:  violationCounts
-  });
-});
+// /diagnostics/summary migrated to diagnostics.js (Cluster 3) — registered via diag.registerRoutes(app)
 
 // On-demand game state context for Mother Brain — GET /diagnostics/context?sessionId=X&level=detailed
 // Calls buildDebugContext() and returns the formatted context string.
@@ -7285,10 +7260,11 @@ app.get('/diagnostics/session', (req, res) => {
   if (!_lastSessionId || !_lastGameState) {
     return res.json({ sessionId: null, hasTurnData: false, lastTurn: null, sessions });
   }
-  const lastEntry = _diagHistory.length > 0 ? _diagHistory[_diagHistory.length - 1] : null;
+  const _dh = diag.getDiagHistory();
+  const lastEntry = _dh.length > 0 ? _dh[_dh.length - 1] : null;
   res.json({
     sessionId:   _lastSessionId,
-    hasTurnData: _diagHistory.length > 0,
+    hasTurnData: _dh.length > 0,
     lastTurn:    lastEntry?.turn_number ?? null,
     sessions
   });
