@@ -318,6 +318,45 @@ If a tracked object moved to a new container this turn, capture that movement in
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
 
+CONTAINER-CHANGE IDENTIFICATION RULE:
+When the narration describes a physical relocation action (set down, place, put, drop, slide,
+push, lay, leave beside, move) applied to an object — and that object resolves to ONE clearly
+identified tracked object — emit a TRANSFER of the existing object_id. Do NOT promote.
+
+The referent qualifies as "clearly identified" under exactly ONE of these conditions:
+  (a) Exact name match — narration name matches a tracked object name exactly.
+  (b) Strong normalized alias — a subset of the tracked name that uniquely identifies one
+      tracked object (e.g. "Baja Blast" uniquely matches "mountain dew baja blast" if no
+      other tracked object shares that substring).
+  (c) Actor-association alias — a possessive reference whose actor resolves to exactly one
+      tracked object: "my drink" → tracked object with actor: player; "Bob's soda" → tracked
+      soda/drink with actor: Bob.
+
+Do NOT apply container-change transfer when:
+  - Two or more tracked objects could plausibly match (e.g. two cups, two sodas, two drinks).
+  - The reference is proximity-only ("the drink nearest my hand", "that one", "the cup").
+  - The reference is a bare generic noun with no actor association and multiple possible matches.
+
+If the referent is ambiguous, leave the action unresolved — do not promote a duplicate, do not
+guess. Ambiguity is not an error; silence is the correct output.
+
+GROUP EXTRACTION RULE:
+When a tracked object is plural, mass, or group-like in name (examples: "tacos", "napkins and
+straws", "large cups of soda", "chips", "coins"), and the narration shows an actor selecting or
+extracting a single item or small subset from it:
+  - PROMOTE the extracted individual item as a new object (new temp_ref, destination container
+    = where the actor takes it: player, npc, etc.)
+  - Use the narration's specific name for the extracted item if the narration provides one;
+    otherwise derive a conservative singular: "tacos" → "taco", "napkins and straws" →
+    "napkins", "large cups of soda" → "cup of soda".
+  - Do NOT emit a transfer of the group object itself.
+  - Do NOT emit a condition update on the group unless the narration explicitly describes
+    visible depletion or change to the remaining group.
+
+Guard: apply this rule ONLY when the tracked source is clearly plural/mass/group-like AND the
+narration explicitly selects a single item or subset from it. Do NOT apply to singular tracked
+objects — those follow the container-change rule above.
+
 For each object, emit one entry in the "object_candidates" array:
 {
   "temp_ref": "<short stable handle — reuse the same ref if this object appears again in a later turn>",
