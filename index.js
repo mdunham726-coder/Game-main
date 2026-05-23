@@ -2860,10 +2860,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     }
     const _cbMeta = {};  // v1.84.31: accumulator for CB diagnostic passback
     const _continuityBlock = CB.assembleContinuityPacket(gameState, _cbMeta); // v1.70.0
-    _lastRenderedBlock = _continuityBlock; // cache for /diagnostics/continuity
+    diag.setLastRenderedBlock(_continuityBlock);  // Cluster 5: state repatriated to diagnostics.js
     diag.pushContinuityBlock(turnNumber, _continuityBlock, _continuityBlock.length);
-    _lastGameState = gameState;            // cache for /diagnostics/continuity
-    _lastSessionId = resolvedSessionId;    // cache for /diagnostics/session
+    diag.setLastGameState(gameState);              // Cluster 5: live ref passed to diagnostics owner
+    diag.setLastSessionId(resolvedSessionId);      // Cluster 5: cached for /diagnostics/session
     // v1.63.0: reflects actual block output — true when narrator received any continuity content
     // (active_continuity OR narrative_memory entries), not just active_continuity presence
     const _continuityInjected = _continuityBlock.length > 0;
@@ -3887,7 +3887,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       }
       if (_phaseBResult?.watch_message) {
         _watchMessageThisTurn = _phaseBResult.watch_message;
-        _lastWatchMessage = _watchMessageThisTurn;
+        diag.setLastWatchMessage(_watchMessageThisTurn);  // Cluster 5: write-only — reserved for future diagnostics surface
       }
       // v1.84.21: CB payload snapshot
       if (_phaseBResult) {
@@ -6329,577 +6329,24 @@ const server = app.listen(PORT, () => {
 // flight-recorder.js connects here to render the terminal flight recorder.
 // =============================================================================
 // _diagHistory migrated to diagnostics.js (Cluster 3) — use diag.pushDiagHistory / diag.getDiagHistory
-let _lastRenderedBlock = null; // cache of the exact continuity text injected into the model each turn
-let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
-let _lastSessionId    = null; // cache of most-recent resolved session ID (used by /diagnostics/session for MB bootstrap)
-let _lastWatchMessage = null;        // cache of Mother's last watch_message (from Phase B)
+// _lastRenderedBlock, _lastGameState, _lastSessionId, _lastWatchMessage migrated to diagnostics.js (Cluster 5)
+// — write via diag.setLastGameState / setLastRenderedBlock / setLastSessionId / setLastWatchMessage
+// — read via diag.getLastGameState / getLastSessionId (used by Clusters 6–7 routes pending migration)
 let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
 
 app.get('/diagnostics/stream', (req, res) => diag.registerStreamHandler(req, res));
 
-// On-demand continuity inspector — GET /diagnostics/continuity?turns=N
-// v1.70.0: Returns ContinuityBrain CB fields. Legacy NC fields (active_continuity,
-// dm_note, narrative_memory) are retired and no longer returned.
-app.get('/diagnostics/continuity', (req, res) => {
-  if (!_lastGameState || _lastRenderedBlock === null) {
-    return res.json({ no_data: true, reason: 'No turns played yet — start the game and take at least one action.' });
-  }
-  const history   = _lastGameState.turn_history || [];
-  const total     = history.length;
-  const lastTurn  = history[history.length - 1] || null;
-  const lastDebug = lastTurn?.narration_debug || {};
-
-  // Visible NPC attributes — entity_id → { label, attributes{} }
-  const w   = _lastGameState.world || {};
-  const loc = w.active_local_space || w.active_site || (() => {
-    const _p = w.position;
-    if (!_p) return null;
-    return w.cells?.[`LOC:${_p.mx},${_p.my}:${_p.lx},${_p.ly}`] || null;
-  })();
-  const visibleNpcs = (loc?._visible_npcs || []);
-  const visible_npc_attributes = {};
-  for (const npc of visibleNpcs) {
-    const label = npc.npc_name ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
-    visible_npc_attributes[npc.id] = { label, attributes: npc.attributes || {} };
-  }
-
-  // Site/local_space attributes (falls back to L0 cell at overworld)
-  const _diagPos = w.position;
-  const site_attributes = {
-    name: loc?.name || (_diagPos ? `cell(${_diagPos.mx},${_diagPos.my}:${_diagPos.lx},${_diagPos.ly})` : null),
-    attributes: loc?.attributes || {}
-  };
-
-  // mood_history — full array
-  const mood_history = w.mood_history || [];
-
-  // Recent promotion log — last 20 entries
-  const promoLog = w.promotion_log || [];
-  const promotion_log_recent = promoLog.slice(-20);
-
-  // cb_diagnostics from last turn
-  const cb_diagnostics = lastDebug.continuity_diagnostics || null;
-
-  // extraction_packet from last turn (raw CB JSON schema)
-  const extraction_packet = lastDebug.extraction_packet || null;
-
-  // Last N narrations (for context in CB extraction panel)
-  const turnsParam = req.query.turns;
-  let count = turnsParam === 'all' ? total : (parseInt(turnsParam, 10) || 3);
-  if (!Number.isFinite(count) || count < 1) count = 3;
-  const last_narrations = history.slice(-count).map(t => ({
-    turn_number:           t.turn_number,
-    narrative:             t.narrative,
-    continuity_block_chars: t.narration_debug?.continuity_block_chars ?? null
-  }));
-
-  // Player attributes (v1.73.0 — separate top-level field, NPC-only visible_npc_attributes unchanged)
-  const _diagPlayer = _lastGameState.player;
-  const player_attributes = _diagPlayer ? {
-    id: _diagPlayer.id,
-    is_player: _diagPlayer.is_player || false,
-    position: _diagPlayer.position || null,
-    attributes: _diagPlayer.attributes || {}
-  } : null;
-
-  res.json({
-    turn:                  total,
-    rendered_block:        _lastRenderedBlock,
-    extraction_packet,
-    cb_diagnostics,
-    player_attributes,
-    visible_npc_attributes,
-    site_attributes,
-    mood_history,
-    promotion_log_recent,
-    narrative_archive_total: total,
-    last_narrations
-  });
-});
-
-// On-demand turn log — GET /diagnostics/log?from=N&to=M
-// Returns full narration_debug per turn from turn_history.
-// Parameters: from (1-based turn_number, inclusive), to (inclusive). Omit for full session.
-// This endpoint is the sole authoritative source for logging.js range/copy operations.
-app.get('/diagnostics/log', (req, res) => {
-  if (!_lastGameState) {
-    return res.json({ no_data: true, reason: 'No turns played yet.' });
-  }
-  const history = _lastGameState.turn_history || [];
-  if (history.length === 0) {
-    return res.json({ no_data: true, reason: 'No turns in history yet.' });
-  }
-
-  const fromParam = req.query.from !== undefined ? parseInt(req.query.from, 10) : null;
-  const toParam   = req.query.to   !== undefined ? parseInt(req.query.to,   10) : null;
-
-  const filtered = history.filter(t => {
-    const n = t.turn_number;
-    if (fromParam !== null && n < fromParam) return false;
-    if (toParam   !== null && n > toParam)   return false;
-    return true;
-  });
-
-  const turns = filtered.map(t => {
-    const nd = t.narration_debug || {};
-    const cd = nd.continuity_diagnostics || {};
-    return {
-      turn_number:              t.turn_number,
-      timestamp:                t.timestamp,
-      // Input / parser
-      channel:                  t.intent_channel,
-      raw_input:                t.input?.raw ?? null,
-      parsed_action:            t.input?.parsed_intent?.action ?? null,
-      parsed_dir:               t.input?.parsed_intent?.dir ?? null,
-      parsed_intent_source:     t.input?.parsed_intent_source ?? null,
-      // Spatial
-      spatial: {
-        depth:            t.authoritative_state?.current_depth ?? null,
-        position:         t.authoritative_state?.position ?? null,
-        site_name:        t.authoritative_state?.active_site_name ?? null,
-        local_space_name: t.authoritative_state?.local_space_name ?? null,
-      },
-      // Movement
-      movement: t.movement ?? null,
-      // Continuity
-      continuity: {
-        injected:              nd.continuity_injected ?? null,
-        block_chars:           nd.continuity_block_chars ?? null,
-        evicted:               nd.continuity_evicted ?? null,
-        extraction_success:    nd.continuity_extraction_success ?? null,
-        rejection_reason:      cd.rejection_reason ?? null,
-        prior_memory_count:    null, // not stored per-turn; available via /diagnostics/continuity
-        alerts:                cd.alerts ?? [],
-        entity_updates:        cd.entity_updates_applied ?? [],
-        entity_cleared:        cd.entity_continuity_cleared ?? [],
-        extraction_packet_present: nd.extraction_packet != null,
-      },
-      // DM note — verbatim stored strings only
-      dm_note_archived:  nd.dm_note_archived  ?? null,
-      dm_note_status:    nd.dm_note_status    ?? null,
-      // Narration
-      narrative:         t.narrative ?? null,
-      engine_message:    null, // not stored per-turn; available via SSE
-      // Entities
-      entities_visible:  t.authoritative_state?.visible_npcs_snapshot ?? [],
-      // Violations
-      violations:        t.diagnostics?.filter(d => d?.type === 'violation').map(d => d.message) ?? [],
-      // Engine spatial notes
-      engine_spatial_notes: nd.engine_spatial_notes ?? null,
-    };
-  });
-
-  res.json({ turns, total_turns: history.length });
-});
+// /diagnostics/continuity, /diagnostics/log, /diagnostics/context migrated to diagnostics.js (Cluster 5, Subcluster A)
 
 // /diagnostics/turn, /diagnostics/turn/latest, /diagnostics/payload migrated to diagnostics.js (Cluster 4)
 
 // /diagnostics/summary migrated to diagnostics.js (Cluster 3) — registered via diag.registerRoutes(app)
 
-// On-demand game state context for Mother Brain — GET /diagnostics/context?sessionId=X&level=detailed
-// Calls buildDebugContext() and returns the formatted context string.
-// Mother Brain fetches this on every question to get the live authoritative game state.
-app.get('/diagnostics/context', (req, res) => {
-  const { sessionId, level = 'detailed' } = req.query;
-  if (!sessionId) {
-    return res.status(400).json({ error: 'no_session', message: 'sessionId query param required.' });
-  }
-  if (!_lastGameState) {
-    return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
-  }
-  let context;
-  try {
-    context = diag.buildDebugContext(_lastGameState, level);
-  } catch (err) {
-    return res.status(500).json({ error: 'context_build_failed', message: err.message });
-  }
-  res.json({ context, sessionId, level, contextLength: context.length });
-});
+// /diagnostics/context migrated to diagnostics.js (Cluster 5, Subcluster A) — see above
 
-// Sites & Localspaces structured state — GET /diagnostics/sites
-// Powers the sitelens.js panel and Mother Brain on-demand site/space data access.
-// Returns current cell sites, active site, active local space, fill log, and grid dimensions.
-// Read-only. Uses _lastGameState cache. sessionId is accepted but not required.
-app.get('/diagnostics/sites', (req, res) => {
-  if (!_lastGameState) {
-    return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
-  }
-  const gs   = _lastGameState;
-  const pos   = gs.world.position;
-  const depth = gs.world.active_local_space ? 3 : gs.world.active_site ? 2 : 1;
-  const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
-  const cell    = cellKey ? gs.world.cells?.[cellKey] : null;
+// /diagnostics/sites, /diagnostics/sites-query, /diagnostics/site-placement, /diagnostics/site,
+// /diagnostics/localspaces, /diagnostics/localspace migrated to diagnostics.js (Cluster 5, Subcluster B)
 
-  // Cell sites — object dict, not array
-  let cellSites = [];
-  if (cell?.sites && !Array.isArray(cell.sites)) {
-    cellSites = Object.values(cell.sites).map(s => {
-      const interiorState = diag.getSiteInteriorState(s, gs.world.sites);
-      const mirror = s.interior_key ? gs.world.sites?.[s.interior_key] : null;
-      return {
-        site_id:        s.site_id ?? null,
-        name:           s.name ?? null,
-        description:    s.description ?? null,
-        identity:       s.identity ?? null,
-        is_filled:      s.is_filled ?? false,
-        enterable:      s.enterable !== false,
-        interior_key:   s.interior_key ?? null,
-        interior_state: interiorState,
-        grid_w:         mirror?.width  ?? null,
-        grid_h:         mirror?.height ?? null,
-        npc_count:      Array.isArray(mirror?.npcs) ? mirror.npcs.length : 0
-      };
-    });
-  }
-
-  // Active site
-  let activeSite = null;
-  if (gs.world.active_site) {
-    const as = gs.world.active_site;
-    const lsEntries = Object.entries(as.local_spaces || {}).map(([key, s]) => {
-      const gen = s._generated_interior || null;
-      return {
-        local_space_id:          key,
-        parent_site_id:          s.parent_site_id ?? as.site_id ?? null,
-        name:                    s.name ?? null,
-        description:             s.description ?? null,
-        is_filled:               s.is_filled ?? false,
-        enterable:               s.enterable !== false,
-        localspace_size:         s.localspace_size ?? null,
-        x:                       s.x ?? null,
-        y:                       s.y ?? null,
-        width:                   s.width ?? gen?.width  ?? null,
-        height:                  s.height ?? gen?.height ?? null,
-        npc_ids:                 Array.isArray(s.npc_ids) ? [...s.npc_ids] : [],
-        npc_count:               Array.isArray(s.npc_ids) ? s.npc_ids.length : 0,
-        has_generated_interior:  Array.isArray(s._generated_interior?.grid)
-      };
-    });
-    const activeSiteCleanId = (as.site_id || '').replace(/\/l2$/, '');
-    const activeCellSlot = cellSites.find(cs => cs.site_id === activeSiteCleanId);
-    activeSite = {
-      site_id:             as.site_id ?? null,
-      name:                as.name ?? null,
-      description:         as.description ?? activeCellSlot?.description ?? null,
-      is_filled:           as.is_filled ?? false,
-      enterable:           as.enterable !== false,
-      site_size:           as.site_size ?? null,
-      ls_pct:              as.ls_pct ?? null,              // v1.85.94: density % rolled at generateL2Site()
-      eligible_tile_count: as.eligible_tile_count ?? null, // v1.85.94: non-street tile count used for density roll
-      local_spaces:        lsEntries
-    };
-  }
-
-  // Active local space
-  let activeLocalSpace = null;
-  if (gs.world.active_local_space) {
-    const als = gs.world.active_local_space;
-    activeLocalSpace = {
-      local_space_id: als.local_space_id ?? null,
-      parent_site_id: als.parent_site_id ?? null,
-      name:           als.name ?? null,
-      description:    als.description ?? null,
-      is_filled:      als.is_filled ?? false,
-      enterable:      als.enterable !== false,
-      width:          als.width  ?? null,
-      height:         als.height ?? null,
-      npc_count:      Array.isArray(als.npc_ids) ? als.npc_ids.length : 0
-    };
-  }
-
-  res.json({
-    depth,
-    cell_key:            cellKey,
-    cell_sites:          cellSites,
-    active_site:         activeSite,
-    active_local_space:  activeLocalSpace,
-    fill_log:            Array.isArray(gs.world._fillLog) ? gs.world._fillLog : []
-  });
-});
-
-// World site registry query — GET /diagnostics/sites-query
-// Used by Mother Brain get_sites tool. Queries all filled site slots across loaded cells.
-// Params: mx, my (exact macro cell), radius (macro-cell radius around player, toroidal),
-//         filled_only (default true). Results sorted by distance from player.
-// NOTE: only covers currently loaded/generated cells — unvisited areas are unknown.
-app.get('/diagnostics/sites-query', (req, res) => {
-  if (!_lastGameState) {
-    return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
-  }
-  const gs        = _lastGameState;
-  const pos       = gs.world.position;
-  const macroW    = gs.world.l0_grid?.width  || 8;
-  const macroH    = gs.world.l0_grid?.height || 8;
-  const filledOnly = req.query.filled_only !== 'false'; // default true
-  const filterMx  = req.query.mx !== undefined ? parseInt(req.query.mx, 10) : null;
-  const filterMy  = req.query.my !== undefined ? parseInt(req.query.my, 10) : null;
-  const radius    = req.query.radius !== undefined ? parseInt(req.query.radius, 10) : null;
-
-  // Collect matching sites from all loaded cells
-  const results = [];
-  for (const cell of Object.values(gs.world.cells || {})) {
-    if (!cell || Array.isArray(cell.sites)) continue;
-    // Macro cell filter
-    if (filterMx !== null && filterMy !== null) {
-      if (cell.mx !== filterMx || cell.my !== filterMy) continue;
-    }
-    // Radius filter (toroidal Manhattan on macro grid)
-    if (radius !== null && pos) {
-      const dMx = ((cell.mx - pos.mx + Math.floor(macroW/2)) % macroW + macroW) % macroW - Math.floor(macroW/2);
-      const dMy = ((cell.my - pos.my + Math.floor(macroH/2)) % macroH + macroH) % macroH - Math.floor(macroH/2);
-      if (Math.abs(dMx) > radius || Math.abs(dMy) > radius) continue;
-    }
-    for (const s of Object.values(cell.sites || {})) {
-      if (!s) continue;
-      if (filledOnly && !s.is_filled) continue;
-      const distCells = pos
-        ? (() => {
-            const dMx = ((cell.mx - pos.mx + Math.floor(macroW/2)) % macroW + macroW) % macroW - Math.floor(macroW/2);
-            const dMy = ((cell.my - pos.my + Math.floor(macroH/2)) % macroH + macroH) % macroH - Math.floor(macroH/2);
-            return Math.abs(dMx * 128 + (cell.lx - pos.lx)) + Math.abs(dMy * 128 + (cell.ly - pos.ly));
-          })()
-        : null;
-      results.push({
-        site_id:              s.site_id   ?? null,
-        name:                 s.name      ?? null,
-        description:          s.description ?? null,
-        identity:             s.identity  ?? null,
-        mx: cell.mx, my: cell.my, lx: cell.lx, ly: cell.ly,
-        enterable:            s.enterable !== false,
-        is_filled:            s.is_filled ?? false,
-        interior_state:       diag.getSiteInteriorState(s, gs.world.sites),
-        distance_from_player: distCells
-      });
-    }
-  }
-
-  // Sort by distance (nulls last)
-  results.sort((a, b) => {
-    if (a.distance_from_player === null) return 1;
-    if (b.distance_from_player === null) return -1;
-    return a.distance_from_player - b.distance_from_player;
-  });
-
-  res.json({
-    loaded_cells_only: true,
-    note: 'Only covers currently loaded/generated cells. Unvisited areas may have undiscovered sites.',
-    total: results.length,
-    sites: results
-  });
-});
-
-// =============================================================================
-// MB v3.0.4: RUNTIME SITE & LOCALSPACE INSPECTION ENDPOINTS
-// =============================================================================
-// Operate against the entire world.sites map — no proximity filter.
-// Only covers loaded/generated runtime state. No claim is made about
-// unloaded/unvisited world regions. All endpoints are read-only, no auth required.
-
-// Single site record — GET /diagnostics/site?site_id=...
-// Returns full stored runtime record for any site in loaded/generated world state.
-app.get('/diagnostics/site-placement', (req, res) => {
-  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
-  const log = _lastGameState.world?.site_placement_log || null;
-  if (!log) return res.status(404).json({ error: 'no_placement_log', message: 'No site placement log on current world state.' });
-  return res.json(log);
-});
-
-app.get('/diagnostics/site', (req, res) => {
-  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
-  const { site_id } = req.query;
-  if (!site_id) return res.status(400).json({ error: 'site_id required' });
-
-  const gs     = _lastGameState;
-  const found  = diag.findSiteRecord(gs, site_id);
-  if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
-    message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
-
-  const { site: s, interior_key } = found;
-  const cleanId = (site_id || '').replace(/\/l2$/, '');
-
-  // Look up the cell slot for enterable/is_filled/identity (registry-side metadata)
-  const cellKey  = s._source_cell_key || (s.mx != null ? `LOC:${s.mx},${s.my}:${s.lx},${s.ly}` : null);
-  const cellSlot = cellKey ? (gs.world.cells?.[cellKey]?.sites?.[cleanId] ?? null) : null;
-
-  // Collect floor object IDs from floor_positions
-  const floorObjIds = [];
-  for (const pos of Object.values(s.floor_positions || {})) {
-    if (Array.isArray(pos.object_ids)) floorObjIds.push(...pos.object_ids);
-  }
-
-  const localspaceIds = Object.keys(s.local_spaces || {});
-
-  res.json({
-    site_id:            cleanId,
-    interior_key,
-    name:               s.name      ?? null,
-    description:        s.description ?? cellSlot?.description ?? null,
-    identity:           cellSlot?.identity ?? null,
-    enterable:          cellSlot ? (cellSlot.enterable !== false) : true,
-    is_filled:          cellSlot?.is_filled ?? s.is_filled ?? false,
-    interior_state:     !s.is_stub ? 'GENERATED' : 'NOT_GENERATED',
-    site_size:          s.site_size  ?? null,
-    width:              s.width      ?? null,
-    height:             s.height     ?? null,
-    population:         s.population ?? null,
-    is_stub:            s.is_stub    ?? false,
-    created_at:         s.created_at ?? null,
-    coords: {
-      mx:       s.mx ?? null,
-      my:       s.my ?? null,
-      lx:       s.lx ?? null,
-      ly:       s.ly ?? null,
-      cell_key: cellKey
-    },
-    localspace_count:   localspaceIds.length,
-    localspace_ids:     localspaceIds,
-    ...(() => {
-      const allNpcIds      = (s.npcs || []).map(n => n.id).filter(Boolean);
-      const lsNpcIds       = new Set(Object.values(s.local_spaces || {}).flatMap(ls => ls.npc_ids || []));
-      const floorNpcIds    = allNpcIds.filter(id => !lsNpcIds.has(id));
-      const lsNpcIdArr     = [...lsNpcIds];
-      return {
-        npc_count:            allNpcIds.length,
-        npc_count_total:      allNpcIds.length,
-        npc_floor_count:      floorNpcIds.length,
-        npc_floor_ids:        floorNpcIds,
-        npc_localspace_count: lsNpcIds.size,
-        npc_localspace_ids:   lsNpcIdArr,
-      };
-    })(),
-    floor_object_count: floorObjIds.length,
-    floor_object_ids:   floorObjIds
-  });
-});
-
-// All localspaces for a site (compact table) — GET /diagnostics/localspaces?site_id=...
-// Returns compact summaries for every localspace in a loaded/generated site.
-app.get('/diagnostics/localspaces', (req, res) => {
-  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
-  const { site_id } = req.query;
-  if (!site_id) return res.status(400).json({ error: 'site_id required' });
-
-  const gs    = _lastGameState;
-  const found = diag.findSiteRecord(gs, site_id);
-  if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
-    message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
-
-  const { site: s } = found;
-  const localspaces = Object.entries(s.local_spaces || {}).map(([lsKey, ls]) => {
-    const gen = ls._generated_interior ?? null;
-    return {
-      localspace_id:          lsKey,
-      parent_site_id:         ls.parent_site_id ?? null,
-      name:                   ls.name           ?? null,
-      description:            ls.description    ?? null,
-      enterable:              ls.enterable      ?? true,
-      is_filled:              ls.is_filled       ?? false,
-      localspace_size:        ls.localspace_size ?? null,
-      x:                      ls.x              ?? null,
-      y:                      ls.y              ?? null,
-      width:                  ls.width          ?? null,
-      height:                 ls.height         ?? null,
-      npc_count:              (ls.npc_ids || []).length,
-      npc_ids:                ls.npc_ids         ?? [],
-      object_count:           gen?.object_ids?.length ?? 0,
-      has_generated_interior: Array.isArray(gen?.grid)
-    };
-  });
-
-  // Sort by localspace_id
-  localspaces.sort((a, b) => a.localspace_id.localeCompare(b.localspace_id));
-
-  res.json({
-    site_id,
-    site_name:       s.name ?? null,
-    localspace_count: localspaces.length,
-    note: 'Localspaces whose interiors have not been generated return has_generated_interior: false and null/empty grid_summary.',
-    localspaces
-  });
-});
-
-// Single localspace record — GET /diagnostics/localspace?localspace_id=...&site_id=...
-// Returns full stored runtime record for one localspace. site_id is optional but faster.
-// Pass include_grid=true to receive the full 2D interior grid array (large — use sparingly).
-app.get('/diagnostics/localspace', (req, res) => {
-  if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
-  const { localspace_id, site_id, include_grid } = req.query;
-  if (!localspace_id) return res.status(400).json({ error: 'localspace_id required' });
-
-  const gs          = _lastGameState;
-  const includeGrid = include_grid === 'true';
-
-  let ls          = null;
-  let parentSiteId = null;
-
-  if (site_id) {
-    // Narrow search: look in the specific site only
-    const found = diag.findSiteRecord(gs, site_id);
-    if (found) {
-      ls = found.site.local_spaces?.[localspace_id] ?? null;
-      if (ls) parentSiteId = found.interior_key;
-    }
-  } else {
-    // Broad search: scan all loaded sites
-    for (const [interior_key, s] of Object.entries(gs.world.sites || {})) {
-      const candidate = s.local_spaces?.[localspace_id];
-      if (candidate) {
-        ls = candidate;
-        parentSiteId = interior_key;
-        break;
-      }
-    }
-  }
-
-  if (!ls) return res.status(404).json({ error: 'localspace_not_found', localspace_id,
-    message: 'Localspace not found in loaded/generated world state. May not exist or its parent site may be in an unloaded region.' });
-
-  const gen = ls._generated_interior ?? null;
-  const hasGrid = Array.isArray(gen?.grid);
-
-  // Build grid_summary if interior grid exists
-  let gridSummary = null;
-  if (hasGrid) {
-    let floorTiles = 0;
-    let npcTiles   = 0;
-    for (const row of gen.grid) {
-      for (const tile of (row || [])) {
-        if (tile && tile.type !== 'wall') floorTiles++;
-        if (tile && tile.npc_id)         npcTiles++;
-      }
-    }
-    gridSummary = {
-      rows:        gen.grid.length,
-      cols:        gen.grid[0]?.length ?? 0,
-      floor_tiles: floorTiles,
-      npc_tiles:   npcTiles
-    };
-  }
-
-  const record = {
-    localspace_id,
-    parent_site_id:         parentSiteId ?? ls.parent_site_id ?? null,
-    name:                   ls.name           ?? null,
-    description:            ls.description    ?? null,
-    enterable:              ls.enterable      ?? true,
-    is_filled:              ls.is_filled       ?? false,
-    localspace_size:        ls.localspace_size ?? null,
-    x:                      ls.x              ?? null,
-    y:                      ls.y              ?? null,
-    width:                  ls.width          ?? null,
-    height:                 ls.height         ?? null,
-    npc_count:              (ls.npc_ids || []).length,
-    npc_ids:                ls.npc_ids         ?? [],
-    object_count:           gen?.object_ids?.length ?? 0,
-    object_ids:             gen?.object_ids     ?? [],
-    has_generated_interior: hasGrid,
-    grid_summary:           gridSummary
-  };
-
-  if (includeGrid && hasGrid) record.grid = gen.grid;
-
-  res.json(record);
-});
 
 // =============================================================================
 // v1.84.54: OBJECT REALITY DIAGNOSTIC ENDPOINTS
@@ -7008,13 +6455,13 @@ app.get('/diagnostics/session', (req, res) => {
     sessions.push({ session_id: sid, total_turns, depth });
   }
   sessions.sort((a, b) => b.total_turns - a.total_turns);
-  if (!_lastSessionId || !_lastGameState) {
+  if (!diag.getLastSessionId() || !diag.getLastGameState()) {
     return res.json({ sessionId: null, hasTurnData: false, lastTurn: null, sessions });
   }
   const _dh = diag.getDiagHistory();
   const lastEntry = _dh.length > 0 ? _dh[_dh.length - 1] : null;
   res.json({
-    sessionId:   _lastSessionId,
+    sessionId:   diag.getLastSessionId(),
     hasTurnData: _dh.length > 0,
     lastTurn:    lastEntry?.turn_number ?? null,
     sessions
@@ -7025,11 +6472,11 @@ app.get('/diagnostics/session', (req, res) => {
 // Returns visible NPCs at the player's current tile with field-level checks.
 // No sessionId required. computeVisibleNpcs is called fresh on every request.
 app.get('/diagnostics/npc', (req, res) => {
-  if (!_lastGameState) {
+  const gs = diag.getLastGameState();
+  if (!gs) {
     return res.json({ location: null, npcs: [], site_npc_count: 0 });
   }
   const Actions = require('./ActionProcessor.js');
-  const gs = _lastGameState;
   const depth = gs.world?.active_local_space ? 3 : gs.world?.active_site ? 2 : 1;
   const activeSite = gs.world?.active_site || null;
   const activeLS   = gs.world?.active_local_space || null;
@@ -7092,11 +6539,11 @@ app.get('/diagnostics/npcs', (req, res) => {
   if (!diagKey) return res.status(503).json({ error: 'diagnostics_disabled' });
   if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
 
-  if (!_lastGameState) {
+  const gs = diag.getLastGameState();
+  if (!gs) {
     return res.json({ layer: 'unknown', world_npcs: [], site_npcs: [], total: 0 });
   }
 
-  const gs = _lastGameState;
   const Actions = require('./ActionProcessor.js');
   const depth = gs.world?.active_local_space ? 3 : gs.world?.active_site ? 2 : 1;
   const layerLabel = depth === 3 ? 'L2' : depth === 2 ? 'L1' : 'L0';

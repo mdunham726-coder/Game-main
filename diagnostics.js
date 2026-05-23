@@ -985,6 +985,24 @@ function getDiagHistory() {
 }
 
 // =============================================================================
+// LAST GAME STATE CACHE (Cluster 5)
+// Live references written by index.js turn handler; read by Cluster 5–7 routes.
+// Reference semantics preserved intentionally — no clone, no serialize.
+// _lastWatchMessage is write-only / reserved for future diagnostics surface.
+// =============================================================================
+let _lastGameState     = null; // most-recent gameState — live reference, not snapshot
+let _lastRenderedBlock = null; // exact continuity text injected into narrator each turn
+let _lastSessionId     = null; // most-recent resolved session ID (used by /diagnostics/session)
+let _lastWatchMessage  = null; // Mother's last watch_message — write-only / reserved for future diagnostics surface
+
+function setLastGameState(gs)        { _lastGameState    = gs; }
+function setLastRenderedBlock(block) { _lastRenderedBlock = block; }
+function setLastSessionId(id)        { _lastSessionId    = id; }
+function setLastWatchMessage(msg)    { _lastWatchMessage  = msg; }  // write-only — no route reads this yet
+function getLastGameState()          { return _lastGameState; }
+function getLastSessionId()          { return _lastSessionId; }
+
+// =============================================================================
 // SOURCE ALLOWLIST (Cluster 2)
 // =============================================================================
 const _SOURCE_ALLOWLIST = new Set([
@@ -1011,6 +1029,8 @@ function _isSourceAllowed(file) {
 // Called once at startup: diag.registerRoutes(app, opts)
 // opts grows with each cluster. Currently accepted keys:
 //   getSessionStates {Function} — () => sessionStates Map (required for Cluster 4+)
+// Cluster 5 routes read module-private state via setLastGameState/setLastRenderedBlock etc.
+//   No new opts keys added in Cluster 5.
 // =============================================================================
 function registerRoutes(app, opts = {}) {
   // --- Cluster 1: crash reporter -------------------------------------------
@@ -1397,6 +1417,514 @@ function registerRoutes(app, opts = {}) {
       turns_with_data: turnsWithData
     });
   });
+
+  // --- Subcluster A: continuity / history / context readers ----------------
+  // All routes read module-private _lastGameState (+ _lastRenderedBlock for
+  // /diagnostics/continuity). State owned by diagnostics.js from Cluster 5 onward.
+
+  // GET /diagnostics/continuity?turns=N
+  app.get('/diagnostics/continuity', (req, res) => {
+    if (!_lastGameState || _lastRenderedBlock === null) {
+      return res.json({ no_data: true, reason: 'No turns played yet — start the game and take at least one action.' });
+    }
+    const history   = _lastGameState.turn_history || [];
+    const total     = history.length;
+    const lastTurn  = history[history.length - 1] || null;
+    const lastDebug = lastTurn?.narration_debug || {};
+
+    const w   = _lastGameState.world || {};
+    const loc = w.active_local_space || w.active_site || (() => {
+      const _p = w.position;
+      if (!_p) return null;
+      return w.cells?.[`LOC:${_p.mx},${_p.my}:${_p.lx},${_p.ly}`] || null;
+    })();
+    const visibleNpcs = (loc?._visible_npcs || []);
+    const visible_npc_attributes = {};
+    for (const npc of visibleNpcs) {
+      const label = npc.npc_name ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
+      visible_npc_attributes[npc.id] = { label, attributes: npc.attributes || {} };
+    }
+
+    const _diagPos = w.position;
+    const site_attributes = {
+      name: loc?.name || (_diagPos ? `cell(${_diagPos.mx},${_diagPos.my}:${_diagPos.lx},${_diagPos.ly})` : null),
+      attributes: loc?.attributes || {}
+    };
+    const mood_history = w.mood_history || [];
+    const promoLog = w.promotion_log || [];
+    const promotion_log_recent = promoLog.slice(-20);
+    const cb_diagnostics = lastDebug.continuity_diagnostics || null;
+    const extraction_packet = lastDebug.extraction_packet || null;
+
+    const turnsParam = req.query.turns;
+    let count = turnsParam === 'all' ? total : (parseInt(turnsParam, 10) || 3);
+    if (!Number.isFinite(count) || count < 1) count = 3;
+    const last_narrations = history.slice(-count).map(t => ({
+      turn_number:            t.turn_number,
+      narrative:              t.narrative,
+      continuity_block_chars: t.narration_debug?.continuity_block_chars ?? null
+    }));
+
+    const _diagPlayer = _lastGameState.player;
+    const player_attributes = _diagPlayer ? {
+      id:         _diagPlayer.id,
+      is_player:  _diagPlayer.is_player || false,
+      position:   _diagPlayer.position || null,
+      attributes: _diagPlayer.attributes || {}
+    } : null;
+
+    res.json({
+      turn:                    total,
+      rendered_block:          _lastRenderedBlock,
+      extraction_packet,
+      cb_diagnostics,
+      player_attributes,
+      visible_npc_attributes,
+      site_attributes,
+      mood_history,
+      promotion_log_recent,
+      narrative_archive_total: total,
+      last_narrations
+    });
+  });
+
+  // GET /diagnostics/log?from=N&to=M
+  app.get('/diagnostics/log', (req, res) => {
+    if (!_lastGameState) {
+      return res.json({ no_data: true, reason: 'No turns played yet.' });
+    }
+    const history = _lastGameState.turn_history || [];
+    if (history.length === 0) {
+      return res.json({ no_data: true, reason: 'No turns in history yet.' });
+    }
+
+    const fromParam = req.query.from !== undefined ? parseInt(req.query.from, 10) : null;
+    const toParam   = req.query.to   !== undefined ? parseInt(req.query.to,   10) : null;
+
+    const filtered = history.filter(t => {
+      const n = t.turn_number;
+      if (fromParam !== null && n < fromParam) return false;
+      if (toParam   !== null && n > toParam)   return false;
+      return true;
+    });
+
+    const turns = filtered.map(t => {
+      const nd = t.narration_debug || {};
+      const cd = nd.continuity_diagnostics || {};
+      return {
+        turn_number:          t.turn_number,
+        timestamp:            t.timestamp,
+        channel:              t.intent_channel,
+        raw_input:            t.input?.raw ?? null,
+        parsed_action:        t.input?.parsed_intent?.action ?? null,
+        parsed_dir:           t.input?.parsed_intent?.dir ?? null,
+        parsed_intent_source: t.input?.parsed_intent_source ?? null,
+        spatial: {
+          depth:            t.authoritative_state?.current_depth ?? null,
+          position:         t.authoritative_state?.position ?? null,
+          site_name:        t.authoritative_state?.active_site_name ?? null,
+          local_space_name: t.authoritative_state?.local_space_name ?? null,
+        },
+        movement: t.movement ?? null,
+        continuity: {
+          injected:                  nd.continuity_injected ?? null,
+          block_chars:               nd.continuity_block_chars ?? null,
+          evicted:                   nd.continuity_evicted ?? null,
+          extraction_success:        nd.continuity_extraction_success ?? null,
+          rejection_reason:          cd.rejection_reason ?? null,
+          prior_memory_count:        null,
+          alerts:                    cd.alerts ?? [],
+          entity_updates:            cd.entity_updates_applied ?? [],
+          entity_cleared:            cd.entity_continuity_cleared ?? [],
+          extraction_packet_present: nd.extraction_packet != null,
+        },
+        dm_note_archived:     nd.dm_note_archived  ?? null,
+        dm_note_status:       nd.dm_note_status    ?? null,
+        narrative:            t.narrative ?? null,
+        engine_message:       null,
+        entities_visible:     t.authoritative_state?.visible_npcs_snapshot ?? [],
+        violations:           t.diagnostics?.filter(d => d?.type === 'violation').map(d => d.message) ?? [],
+        engine_spatial_notes: nd.engine_spatial_notes ?? null,
+      };
+    });
+
+    res.json({ turns, total_turns: history.length });
+  });
+
+  // GET /diagnostics/context?sessionId=X&level=detailed
+  app.get('/diagnostics/context', (req, res) => {
+    const { sessionId, level = 'detailed' } = req.query;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'no_session', message: 'sessionId query param required.' });
+    }
+    if (!_lastGameState) {
+      return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    }
+    let context;
+    try {
+      context = buildDebugContext(_lastGameState, level);
+    } catch (err) {
+      return res.status(500).json({ error: 'context_build_failed', message: err.message });
+    }
+    res.json({ context, sessionId, level, contextLength: context.length });
+  });
+
+  // --- Subcluster B: world / site topology readers -------------------------
+  // All routes read _lastGameState. Module-private helpers _getSiteInteriorState
+  // and _findSiteRecord used directly (no diag. prefix within same module).
+
+  // GET /diagnostics/sites
+  app.get('/diagnostics/sites', (req, res) => {
+    if (!_lastGameState) {
+      return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    }
+    const gs      = _lastGameState;
+    const pos     = gs.world.position;
+    const depth   = gs.world.active_local_space ? 3 : gs.world.active_site ? 2 : 1;
+    const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
+    const cell    = cellKey ? gs.world.cells?.[cellKey] : null;
+
+    let cellSites = [];
+    if (cell?.sites && !Array.isArray(cell.sites)) {
+      cellSites = Object.values(cell.sites).map(s => {
+        const interiorState = _getSiteInteriorState(s, gs.world.sites);
+        const mirror = s.interior_key ? gs.world.sites?.[s.interior_key] : null;
+        return {
+          site_id:        s.site_id ?? null,
+          name:           s.name ?? null,
+          description:    s.description ?? null,
+          identity:       s.identity ?? null,
+          is_filled:      s.is_filled ?? false,
+          enterable:      s.enterable !== false,
+          interior_key:   s.interior_key ?? null,
+          interior_state: interiorState,
+          grid_w:         mirror?.width  ?? null,
+          grid_h:         mirror?.height ?? null,
+          npc_count:      Array.isArray(mirror?.npcs) ? mirror.npcs.length : 0
+        };
+      });
+    }
+
+    let activeSite = null;
+    if (gs.world.active_site) {
+      const as = gs.world.active_site;
+      const lsEntries = Object.entries(as.local_spaces || {}).map(([key, s]) => {
+        const gen = s._generated_interior || null;
+        return {
+          local_space_id:          key,
+          parent_site_id:          s.parent_site_id ?? as.site_id ?? null,
+          name:                    s.name ?? null,
+          description:             s.description ?? null,
+          is_filled:               s.is_filled ?? false,
+          enterable:               s.enterable !== false,
+          localspace_size:         s.localspace_size ?? null,
+          x:                       s.x ?? null,
+          y:                       s.y ?? null,
+          width:                   s.width ?? gen?.width  ?? null,
+          height:                  s.height ?? gen?.height ?? null,
+          npc_ids:                 Array.isArray(s.npc_ids) ? [...s.npc_ids] : [],
+          npc_count:               Array.isArray(s.npc_ids) ? s.npc_ids.length : 0,
+          has_generated_interior:  Array.isArray(s._generated_interior?.grid)
+        };
+      });
+      const activeSiteCleanId = (as.site_id || '').replace(/\/l2$/, '');
+      const activeCellSlot = cellSites.find(cs => cs.site_id === activeSiteCleanId);
+      activeSite = {
+        site_id:             as.site_id ?? null,
+        name:                as.name ?? null,
+        description:         as.description ?? activeCellSlot?.description ?? null,
+        is_filled:           as.is_filled ?? false,
+        enterable:           as.enterable !== false,
+        site_size:           as.site_size ?? null,
+        ls_pct:              as.ls_pct ?? null,
+        eligible_tile_count: as.eligible_tile_count ?? null,
+        local_spaces:        lsEntries
+      };
+    }
+
+    let activeLocalSpace = null;
+    if (gs.world.active_local_space) {
+      const als = gs.world.active_local_space;
+      activeLocalSpace = {
+        local_space_id: als.local_space_id ?? null,
+        parent_site_id: als.parent_site_id ?? null,
+        name:           als.name ?? null,
+        description:    als.description ?? null,
+        is_filled:      als.is_filled ?? false,
+        enterable:      als.enterable !== false,
+        width:          als.width  ?? null,
+        height:         als.height ?? null,
+        npc_count:      Array.isArray(als.npc_ids) ? als.npc_ids.length : 0
+      };
+    }
+
+    res.json({
+      depth,
+      cell_key:           cellKey,
+      cell_sites:         cellSites,
+      active_site:        activeSite,
+      active_local_space: activeLocalSpace,
+      fill_log:           Array.isArray(gs.world._fillLog) ? gs.world._fillLog : []
+    });
+  });
+
+  // GET /diagnostics/sites-query
+  app.get('/diagnostics/sites-query', (req, res) => {
+    if (!_lastGameState) {
+      return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    }
+    const gs        = _lastGameState;
+    const pos       = gs.world.position;
+    const macroW    = gs.world.l0_grid?.width  || 8;
+    const macroH    = gs.world.l0_grid?.height || 8;
+    const filledOnly = req.query.filled_only !== 'false';
+    const filterMx  = req.query.mx !== undefined ? parseInt(req.query.mx, 10) : null;
+    const filterMy  = req.query.my !== undefined ? parseInt(req.query.my, 10) : null;
+    const radius    = req.query.radius !== undefined ? parseInt(req.query.radius, 10) : null;
+
+    const results = [];
+    for (const cell of Object.values(gs.world.cells || {})) {
+      if (!cell || Array.isArray(cell.sites)) continue;
+      if (filterMx !== null && filterMy !== null) {
+        if (cell.mx !== filterMx || cell.my !== filterMy) continue;
+      }
+      if (radius !== null && pos) {
+        const dMx = ((cell.mx - pos.mx + Math.floor(macroW/2)) % macroW + macroW) % macroW - Math.floor(macroW/2);
+        const dMy = ((cell.my - pos.my + Math.floor(macroH/2)) % macroH + macroH) % macroH - Math.floor(macroH/2);
+        if (Math.abs(dMx) > radius || Math.abs(dMy) > radius) continue;
+      }
+      for (const s of Object.values(cell.sites || {})) {
+        if (!s) continue;
+        if (filledOnly && !s.is_filled) continue;
+        const distCells = pos
+          ? (() => {
+              const dMx = ((cell.mx - pos.mx + Math.floor(macroW/2)) % macroW + macroW) % macroW - Math.floor(macroW/2);
+              const dMy = ((cell.my - pos.my + Math.floor(macroH/2)) % macroH + macroH) % macroH - Math.floor(macroH/2);
+              return Math.abs(dMx * 128 + (cell.lx - pos.lx)) + Math.abs(dMy * 128 + (cell.ly - pos.ly));
+            })()
+          : null;
+        results.push({
+          site_id:              s.site_id   ?? null,
+          name:                 s.name      ?? null,
+          description:          s.description ?? null,
+          identity:             s.identity  ?? null,
+          mx: cell.mx, my: cell.my, lx: cell.lx, ly: cell.ly,
+          enterable:            s.enterable !== false,
+          is_filled:            s.is_filled ?? false,
+          interior_state:       _getSiteInteriorState(s, gs.world.sites),
+          distance_from_player: distCells
+        });
+      }
+    }
+
+    results.sort((a, b) => {
+      if (a.distance_from_player === null) return 1;
+      if (b.distance_from_player === null) return -1;
+      return a.distance_from_player - b.distance_from_player;
+    });
+
+    res.json({
+      loaded_cells_only: true,
+      note: 'Only covers currently loaded/generated cells. Unvisited areas may have undiscovered sites.',
+      total: results.length,
+      sites: results
+    });
+  });
+
+  // GET /diagnostics/site-placement
+  app.get('/diagnostics/site-placement', (req, res) => {
+    if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    const log = _lastGameState.world?.site_placement_log || null;
+    if (!log) return res.status(404).json({ error: 'no_placement_log', message: 'No site placement log on current world state.' });
+    return res.json(log);
+  });
+
+  // GET /diagnostics/site?site_id=...
+  app.get('/diagnostics/site', (req, res) => {
+    if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    const { site_id } = req.query;
+    if (!site_id) return res.status(400).json({ error: 'site_id required' });
+
+    const gs    = _lastGameState;
+    const found = _findSiteRecord(gs, site_id);
+    if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
+      message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
+
+    const { site: s, interior_key } = found;
+    const cleanId  = (site_id || '').replace(/\/l2$/, '');
+    const cellKey  = s._source_cell_key || (s.mx != null ? `LOC:${s.mx},${s.my}:${s.lx},${s.ly}` : null);
+    const cellSlot = cellKey ? (gs.world.cells?.[cellKey]?.sites?.[cleanId] ?? null) : null;
+
+    const floorObjIds = [];
+    for (const pos of Object.values(s.floor_positions || {})) {
+      if (Array.isArray(pos.object_ids)) floorObjIds.push(...pos.object_ids);
+    }
+    const localspaceIds = Object.keys(s.local_spaces || {});
+
+    res.json({
+      site_id:            cleanId,
+      interior_key,
+      name:               s.name      ?? null,
+      description:        s.description ?? cellSlot?.description ?? null,
+      identity:           cellSlot?.identity ?? null,
+      enterable:          cellSlot ? (cellSlot.enterable !== false) : true,
+      is_filled:          cellSlot?.is_filled ?? s.is_filled ?? false,
+      interior_state:     !s.is_stub ? 'GENERATED' : 'NOT_GENERATED',
+      site_size:          s.site_size  ?? null,
+      width:              s.width      ?? null,
+      height:             s.height     ?? null,
+      population:         s.population ?? null,
+      is_stub:            s.is_stub    ?? false,
+      created_at:         s.created_at ?? null,
+      coords: {
+        mx:       s.mx ?? null,
+        my:       s.my ?? null,
+        lx:       s.lx ?? null,
+        ly:       s.ly ?? null,
+        cell_key: cellKey
+      },
+      localspace_count:   localspaceIds.length,
+      localspace_ids:     localspaceIds,
+      ...(() => {
+        const allNpcIds      = (s.npcs || []).map(n => n.id).filter(Boolean);
+        const lsNpcIds       = new Set(Object.values(s.local_spaces || {}).flatMap(ls => ls.npc_ids || []));
+        const floorNpcIds    = allNpcIds.filter(id => !lsNpcIds.has(id));
+        const lsNpcIdArr     = [...lsNpcIds];
+        return {
+          npc_count:            allNpcIds.length,
+          npc_count_total:      allNpcIds.length,
+          npc_floor_count:      floorNpcIds.length,
+          npc_floor_ids:        floorNpcIds,
+          npc_localspace_count: lsNpcIds.size,
+          npc_localspace_ids:   lsNpcIdArr,
+        };
+      })(),
+      floor_object_count: floorObjIds.length,
+      floor_object_ids:   floorObjIds
+    });
+  });
+
+  // GET /diagnostics/localspaces?site_id=...
+  app.get('/diagnostics/localspaces', (req, res) => {
+    if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    const { site_id } = req.query;
+    if (!site_id) return res.status(400).json({ error: 'site_id required' });
+
+    const gs    = _lastGameState;
+    const found = _findSiteRecord(gs, site_id);
+    if (!found) return res.status(404).json({ error: 'site_not_found', site_id,
+      message: 'Site not found in loaded/generated world.sites. May not exist or may be in an unloaded region.' });
+
+    const { site: s } = found;
+    const localspaces = Object.entries(s.local_spaces || {}).map(([lsKey, ls]) => {
+      const gen = ls._generated_interior ?? null;
+      return {
+        localspace_id:          lsKey,
+        parent_site_id:         ls.parent_site_id ?? null,
+        name:                   ls.name           ?? null,
+        description:            ls.description    ?? null,
+        enterable:              ls.enterable      ?? true,
+        is_filled:              ls.is_filled       ?? false,
+        localspace_size:        ls.localspace_size ?? null,
+        x:                      ls.x              ?? null,
+        y:                      ls.y              ?? null,
+        width:                  ls.width          ?? null,
+        height:                 ls.height         ?? null,
+        npc_count:              (ls.npc_ids || []).length,
+        npc_ids:                ls.npc_ids         ?? [],
+        object_count:           gen?.object_ids?.length ?? 0,
+        has_generated_interior: Array.isArray(gen?.grid)
+      };
+    });
+
+    localspaces.sort((a, b) => a.localspace_id.localeCompare(b.localspace_id));
+
+    res.json({
+      site_id,
+      site_name:        s.name ?? null,
+      localspace_count: localspaces.length,
+      note: 'Localspaces whose interiors have not been generated return has_generated_interior: false and null/empty grid_summary.',
+      localspaces
+    });
+  });
+
+  // GET /diagnostics/localspace?localspace_id=...&site_id=...
+  app.get('/diagnostics/localspace', (req, res) => {
+    if (!_lastGameState) return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    const { localspace_id, site_id, include_grid } = req.query;
+    if (!localspace_id) return res.status(400).json({ error: 'localspace_id required' });
+
+    const gs          = _lastGameState;
+    const includeGrid = include_grid === 'true';
+
+    let ls           = null;
+    let parentSiteId = null;
+
+    if (site_id) {
+      const found = _findSiteRecord(gs, site_id);
+      if (found) {
+        ls = found.site.local_spaces?.[localspace_id] ?? null;
+        if (ls) parentSiteId = found.interior_key;
+      }
+    } else {
+      for (const [interior_key, s] of Object.entries(gs.world.sites || {})) {
+        const candidate = s.local_spaces?.[localspace_id];
+        if (candidate) {
+          ls = candidate;
+          parentSiteId = interior_key;
+          break;
+        }
+      }
+    }
+
+    if (!ls) return res.status(404).json({ error: 'localspace_not_found', localspace_id,
+      message: 'Localspace not found in loaded/generated world state. May not exist or its parent site may be in an unloaded region.' });
+
+    const gen     = ls._generated_interior ?? null;
+    const hasGrid = Array.isArray(gen?.grid);
+
+    let gridSummary = null;
+    if (hasGrid) {
+      let floorTiles = 0;
+      let npcTiles   = 0;
+      for (const row of gen.grid) {
+        for (const tile of (row || [])) {
+          if (tile && tile.type !== 'wall') floorTiles++;
+          if (tile && tile.npc_id)         npcTiles++;
+        }
+      }
+      gridSummary = {
+        rows:        gen.grid.length,
+        cols:        gen.grid[0]?.length ?? 0,
+        floor_tiles: floorTiles,
+        npc_tiles:   npcTiles
+      };
+    }
+
+    const record = {
+      localspace_id,
+      parent_site_id:         parentSiteId ?? ls.parent_site_id ?? null,
+      name:                   ls.name           ?? null,
+      description:            ls.description    ?? null,
+      enterable:              ls.enterable      ?? true,
+      is_filled:              ls.is_filled       ?? false,
+      localspace_size:        ls.localspace_size ?? null,
+      x:                      ls.x              ?? null,
+      y:                      ls.y              ?? null,
+      width:                  ls.width          ?? null,
+      height:                 ls.height         ?? null,
+      npc_count:              (ls.npc_ids || []).length,
+      npc_ids:                ls.npc_ids         ?? [],
+      object_count:           gen?.object_ids?.length ?? 0,
+      object_ids:             gen?.object_ids     ?? [],
+      has_generated_interior: hasGrid,
+      grid_summary:           gridSummary
+    };
+
+    if (includeGrid && hasGrid) record.grid = gen.grid;
+
+    res.json(record);
+  });
 }
 
 module.exports = {
@@ -1417,6 +1945,13 @@ module.exports = {
   // diag history (Cluster 3)
   pushDiagHistory,
   getDiagHistory,
+  // Cluster 5 state setters + getters
+  setLastGameState,
+  setLastRenderedBlock,
+  setLastSessionId,
+  setLastWatchMessage,
+  getLastGameState,
+  getLastSessionId,
   // route registration
   registerRoutes,
 };
