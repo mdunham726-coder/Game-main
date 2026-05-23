@@ -327,7 +327,17 @@
     <button onclick="copyStory()" style="width: 100%; padding: 10px; font-size: 14px; background: #2c3e50; color: white; border: none; cursor: pointer; border-radius: 3px;">Copy Story</button>
   </div>
   <div style="margin-bottom: 10px;">
-    <button onclick="copyRealityCheckSnapshot()" style="width: 100%; padding: 10px; font-size: 14px; background: #c0392b; color: white; border: none; cursor: pointer; border-radius: 3px;">Copy Reality Check Snapshot</button>
+    <button onclick="copyRCSnapshotLatest()" style="width: 100%; padding: 10px; font-size: 14px; background: #c0392b; color: white; border: none; cursor: pointer; border-radius: 3px;">Copy RC Snapshot — Latest Turn</button>
+  </div>
+  <div style="margin-bottom: 6px; display: flex; gap: 6px; align-items: center;">
+    <label style="color: #888; font-size: 12px; font-family: monospace; white-space: nowrap;">Turns</label>
+    <input id="rcRangeFrom" type="number" min="1" placeholder="from" style="width: 60px; background: #1a1a1a; color: #ccc; border: 1px solid #555; border-radius: 3px; padding: 4px 6px; font-size: 12px; font-family: monospace;">
+    <span style="color: #555; font-size: 12px;">&#8211;</span>
+    <input id="rcRangeTo" type="number" min="1" placeholder="to" style="width: 60px; background: #1a1a1a; color: #ccc; border: 1px solid #555; border-radius: 3px; padding: 4px 6px; font-size: 12px; font-family: monospace;">
+    <button onclick="copyRCSnapshotRange()" style="flex: 1; padding: 6px 10px; font-size: 12px; background: #922b21; color: white; border: none; cursor: pointer; border-radius: 3px; font-family: monospace;">Copy Range</button>
+  </div>
+  <div style="margin-bottom: 10px;">
+    <button onclick="copyRealityCheckSnapshot()" style="width: 100%; padding: 8px; font-size: 12px; background: #641e16; color: #aaa; border: none; cursor: pointer; border-radius: 3px;">Copy RC Snapshot — All Turns</button>
   </div>
   <div id="logsLoading" style="display: none; color: #2ecc71; margin-top: 10px; font-size: 12px;">Processing logs...</div>
   <div id="logsResponse" style="margin-top: 15px; padding: 10px; background: #1a1a1a; border: 1px solid #2ecc71; border-radius: 3px; min-height: 50px; color: #fff; font-size: 13px; line-height: 1.4; max-height: 500px; overflow-y: auto; display: none; white-space: pre-wrap; word-wrap: break-word; font-family: monospace;"></div>
@@ -2890,88 +2900,83 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       logDom.scrollTop = logDom.scrollHeight;
     }
 
-    async function copyRealityCheckSnapshot() {
-      const turnHistory = lastGameResponse?.turn_history;
-      if (!turnHistory || turnHistory.length === 0) {
-        alert('No turns yet. Start a game first!');
-        return;
-      }
-      const blocks = turnHistory.map(t => {
-        const rc = t.reality_check || {};
-        const st = t.stage_times || {};
-        const rcDuration = (st.rc_start != null && st.rc_end != null)
-          ? `${st.rc_end - st.rc_start}ms` : null;
-        const narDuration = (st.narrator_start != null && st.narrator_end != null)
-          ? `${st.narrator_end - st.narrator_start}ms` : null;
-        const orderConfirmed = (st.rc_end != null && st.narrator_start != null)
-          ? (st.rc_end <= st.narrator_start ? 'YES -- rc_end <= narrator_start' : 'NO -- ORDER VIOLATION DETECTED')
-          : '(n/a -- RC skipped or data absent)';
-        const lines = [
-          `=== TURN SNAPSHOT (Turn ${t.turn_number}) ===`,
-          '',
-          'INPUT',
-          `raw_input: "${t.input?.raw ?? '(none)'}"`,
-          `parsed_action: "${t.input?.parsed_intent?.action ?? '(none)'}"`,
-          '',
-          'AUTHORITY GATE',
-          (() => {
-            const ag = t.narration_debug?.authority_gate;
-            if (!ag) return '(no authority_gate data)';
-            return [
-              `decision:              ${ag.decision ?? 'null'}`,
-              `route:                 ${ag.route ?? 'null'}`,
-              `rc_allowed:            ${ag.rc_allowed ?? 'null'}`,
-              `input_type:            ${ag.input_type ?? 'null'}`,
-              `reason_code:           ${ag.reason_code ?? 'null'}`,
-              `parsed_action:         ${ag.parsed_action ?? 'null'}`,
-              `layer_1_matched:       ${ag.gate_fast_path_hit ?? 'null'}`,
-              `llm_called:            ${ag.llm_called ?? 'null'}`,
-              `llm_confidence:        ${ag.llm_confidence ?? 'null'}`,
-              `authority_gate_dur_ms: ${ag.authority_gate_duration_ms ?? 'null'}`,
-              `referenced_objects:    ${JSON.stringify(ag.referenced_objects ?? [])}`,
-              `referenced_entities:   ${JSON.stringify(ag.referenced_entities ?? [])}`,
-              `referenced_abilities:  ${JSON.stringify(ag.referenced_abilities ?? [])}`,
-              `evidence_supported:    ${ag.evidence_supported ?? 'null'}`,
-            ].join('\n');
-          })(),
-          '',
-          'REALITY CHECK',
-          `fired: ${rc.fired ?? false}`,
-          `skipped_reason: ${rc.skipped_reason ?? 'null'}`,
-          `result: ${rc.result != null ? '"' + rc.result + '"' : 'null'}`,
-          `raw_response: ${rc.raw_response != null ? '"' + rc.raw_response + '"' : 'null'}`,
+    function _buildRCBlock(t) {
+      const rc = t.reality_check || {};
+      const st = t.stage_times || {};
+      const rcDuration = (st.rc_start != null && st.rc_end != null)
+        ? `${st.rc_end - st.rc_start}ms` : null;
+      const narDuration = (st.narrator_start != null && st.narrator_end != null)
+        ? `${st.narrator_end - st.narrator_start}ms` : null;
+      const orderConfirmed = (st.rc_end != null && st.narrator_start != null)
+        ? (st.rc_end <= st.narrator_start ? 'YES -- rc_end <= narrator_start' : 'NO -- ORDER VIOLATION DETECTED')
+        : '(n/a -- RC skipped or data absent)';
+      const lines = [
+        `=== TURN SNAPSHOT (Turn ${t.turn_number}) ===`,
+        '',
+        'INPUT',
+        `raw_input: "${t.input?.raw ?? '(none)'}"`,
+        `parsed_action: "${t.input?.parsed_intent?.action ?? '(none)'}"`,
+        '',
+        'AUTHORITY GATE',
+        (() => {
+          const ag = t.narration_debug?.authority_gate;
+          if (!ag) return '(no authority_gate data)';
+          return [
+            `decision:              ${ag.decision ?? 'null'}`,
+            `route:                 ${ag.route ?? 'null'}`,
+            `rc_allowed:            ${ag.rc_allowed ?? 'null'}`,
+            `input_type:            ${ag.input_type ?? 'null'}`,
+            `reason_code:           ${ag.reason_code ?? 'null'}`,
+            `parsed_action:         ${ag.parsed_action ?? 'null'}`,
+            `layer_1_matched:       ${ag.gate_fast_path_hit ?? 'null'}`,
+            `llm_called:            ${ag.llm_called ?? 'null'}`,
+            `llm_confidence:        ${ag.llm_confidence ?? 'null'}`,
+            `authority_gate_dur_ms: ${ag.authority_gate_duration_ms ?? 'null'}`,
+            `referenced_objects:    ${JSON.stringify(ag.referenced_objects ?? [])}`,
+            `referenced_entities:   ${JSON.stringify(ag.referenced_entities ?? [])}`,
+            `referenced_abilities:  ${JSON.stringify(ag.referenced_abilities ?? [])}`,
+            `evidence_supported:    ${ag.evidence_supported ?? 'null'}`,
+          ].join('\n');
+        })(),
+        '',
+        'REALITY CHECK',
+        `fired: ${rc.fired ?? false}`,
+        `skipped_reason: ${rc.skipped_reason ?? 'null'}`,
+        `result: ${rc.result != null ? '"' + rc.result + '"' : 'null'}`,
+        `raw_response: ${rc.raw_response != null ? '"' + rc.raw_response + '"' : 'null'}`,
+        '',
+        'RAW DEEPSEEK RESPONSE (verbatim)',
+        rc.raw_response != null ? rc.raw_response : '(skipped -- RC did not fire)',
+        '',
+        'REALITY ANCHOR (INJECTED BLOCK)',
+        rc.anchor_block != null ? rc.anchor_block.trim() : '(skipped -- no anchor)',
+        '',
+        'NARRATOR OUTPUT',
+        `"${t.narrative ?? '(none)'}"`,
+        '',
+        '--- POST-ARBITER: async SSE -- not included in synchronous snapshot ---',
+        '',
+        'STAGE TIMES',
+        `rc_start:       ${st.rc_start ?? 'null'}`,
+        `rc_end:         ${st.rc_end ?? 'null'}`,
+        `narrator_start: ${st.narrator_start ?? 'null'}`,
+        `narrator_end:   ${st.narrator_end ?? 'null'}`,
+        `rc_duration:       ${rcDuration ?? '(skipped)'}`,
+        `narrator_duration: ${narDuration ?? '(no data)'}`,
+        `order_confirmed:   ${orderConfirmed}`,
+        '',
+        '=== END TURN ==='
+      ];
+      return lines.join('\n');
+    }
 
-          '',
-          'RAW DEEPSEEK RESPONSE (verbatim)',
-          rc.raw_response != null ? rc.raw_response : '(skipped -- RC did not fire)',
-          '',
-          'REALITY ANCHOR (INJECTED BLOCK)',
-          rc.anchor_block != null ? rc.anchor_block.trim() : '(skipped -- no anchor)',
-          '',
-          'NARRATOR OUTPUT',
-          `"${t.narrative ?? '(none)'}"`,
-          '',
-          '--- POST-ARBITER: async SSE -- not included in synchronous snapshot ---',
-          '',
-          'STAGE TIMES',
-          `rc_start:       ${st.rc_start ?? 'null'}`,
-          `rc_end:         ${st.rc_end ?? 'null'}`,
-          `narrator_start: ${st.narrator_start ?? 'null'}`,
-          `narrator_end:   ${st.narrator_end ?? 'null'}`,
-          `rc_duration:       ${rcDuration ?? '(skipped)'}`,
-          `narrator_duration: ${narDuration ?? '(no data)'}`,
-          `order_confirmed:   ${orderConfirmed}`,
-          '',
-          '=== END TURN ==='
-        ];
-        return lines.join('\n');
-      });
-      const text = blocks.join('\n\n');
+    async function _copyRCBlocks(turns, label) {
+      const text = turns.map(_buildRCBlock).join('\n\n');
       try {
         await navigator.clipboard.writeText(text);
         const logsResponse = document.getElementById('logsResponse');
         if (logsResponse) {
-          logsResponse.textContent = `Reality Check Snapshot copied! (${turnHistory.length} turns)`;
+          logsResponse.textContent = label;
           logsResponse.style.color = '#e74c3c';
           logsResponse.style.display = 'block';
           setTimeout(() => { logsResponse.style.display = 'none'; }, 3000);
@@ -2979,6 +2984,31 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       } catch (err) {
         alert('Copy failed: ' + err.message);
       }
+    }
+
+    async function copyRCSnapshotLatest() {
+      const turnHistory = lastGameResponse?.turn_history;
+      if (!turnHistory || turnHistory.length === 0) { alert('No turns yet. Start a game first!'); return; }
+      const t = turnHistory[turnHistory.length - 1];
+      await _copyRCBlocks([t], `RC Snapshot copied — Turn ${t.turn_number}`);
+    }
+
+    async function copyRCSnapshotRange() {
+      const turnHistory = lastGameResponse?.turn_history;
+      if (!turnHistory || turnHistory.length === 0) { alert('No turns yet. Start a game first!'); return; }
+      const from = parseInt(document.getElementById('rcRangeFrom').value, 10);
+      const to   = parseInt(document.getElementById('rcRangeTo').value, 10);
+      if (isNaN(from) || isNaN(to)) { alert('Enter both a From and To turn number.'); return; }
+      if (from > to) { alert('From must be ≤ To.'); return; }
+      const slice = turnHistory.filter(t => t.turn_number >= from && t.turn_number <= to);
+      if (slice.length === 0) { alert(`No turns found between ${from} and ${to}.`); return; }
+      await _copyRCBlocks(slice, `RC Snapshot copied — Turns ${from}–${to} (${slice.length} turns)`);
+    }
+
+    async function copyRealityCheckSnapshot() {
+      const turnHistory = lastGameResponse?.turn_history;
+      if (!turnHistory || turnHistory.length === 0) { alert('No turns yet. Start a game first!'); return; }
+      await _copyRCBlocks(turnHistory, `Reality Check Snapshot copied! (${turnHistory.length} turns)`);
     }
 
     async function copyStory() {
