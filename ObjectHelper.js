@@ -301,6 +301,24 @@ async function run(gameState, quarantine, turnNumber) {
   // so that two same-named objects in the same container each claim a distinct slot.
   const _claimedObjectIds = new Set();
 
+  // v1.88.76: build cross-ref transfer-destination quota pool.
+  // Handles the case where CB emits a transfer keyed by object_id (existing tracked object)
+  // AND a promote keyed by a new temp_ref for the same conceptual object at the same destination.
+  // Since the transfer uses object_id (not temp_ref), it never enters _transferTempRefs, so the
+  // v1.84.83 same-temp_ref check misses it. Pass 1 creates a new object (original still in its
+  // source container at dedup time); Pass 2 moves original → two copies at destination.
+  // Pool is keyed by normalized_name + ':' + to_container_id. Each qualifying transfer claims one
+  // slot; each matching promote consumes one slot. Promotes beyond the quota go through normally.
+  const _transferDestinationPool = new Map();
+  for (const _tde of quarantine) {
+    if (_tde.action !== 'transfer' || !_tde.object_id || _tde.temp_ref) continue;
+    const _tdeObj = gameState.objects[_tde.object_id];
+    if (!_tdeObj || _tdeObj.status !== 'active') continue;
+    const _tdeKey = String(_tdeObj.name).toLowerCase().trim() + ':' + _tde.to_container_id;
+    if (!_transferDestinationPool.has(_tdeKey)) _transferDestinationPool.set(_tdeKey, []);
+    _transferDestinationPool.get(_tdeKey).push({ object_id: _tde.object_id });
+  }
+
   for (const entry of quarantine) {
     if (entry.action !== 'promote') continue;
 
@@ -341,6 +359,23 @@ async function run(gameState, quarantine, turnNumber) {
         continue;
       }
       // No existing scene match → newborn object being created and moved same turn; fall through to normal promote.
+    }
+
+    // v1.88.76: cross-ref transfer-destination quota pool check (fallback for differing temp_refs).
+    // If a transfer in this batch moves an existing object with the same normalized name to the same
+    // destination as this promote, the promote is a re-description of that object (not a new one).
+    // Consume one pool slot and suppress. Pool is quota-limited: promotes beyond the count of
+    // matching in-flight transfers go through normally — legitimate new objects are not collapsed.
+    const _poolKey76 = String(name).toLowerCase().trim() + ':' + container_id;
+    if (_transferDestinationPool.has(_poolKey76)) {
+      const _poolSlots76 = _transferDestinationPool.get(_poolKey76);
+      if (_poolSlots76.length > 0) {
+        const _poolEntry76 = _poolSlots76.shift();
+        tempRefMap[temp_ref] = _poolEntry76.object_id;
+        _claimedObjectIds.add(_poolEntry76.object_id);
+        audit.push({ turn: turnNumber, action: 'promote_suppressed_transfer_name_collision', object_id: _poolEntry76.object_id, object_name: name, container_type, container_id, temp_ref, ts });
+        continue;
+      }
     }
 
     // v1.84.61: name-match dedup guard — if an active object with the same name already
