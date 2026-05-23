@@ -1010,7 +1010,7 @@ function _isSourceAllowed(file) {
 // ROUTE REGISTRATION
 // Called once at startup: diag.registerRoutes(app, opts)
 // opts grows with each cluster. Currently accepted keys:
-//   (none — Clusters 1-2 require no external state)
+//   getSessionStates {Function} — () => sessionStates Map (required for Cluster 4+)
 // =============================================================================
 function registerRoutes(app, opts = {}) {
   // --- Cluster 1: crash reporter -------------------------------------------
@@ -1165,6 +1165,236 @@ function registerRoutes(app, opts = {}) {
       total_matches_returned: results.length,
       capped:                 results.length >= MAX_RESULTS,
       results
+    });
+  });
+
+  // --- Cluster 4: session-scoped turn/payload/object routes ----------------
+  // All routes in this cluster read live session state via opts.getSessionStates().
+
+  // Turn archive — GET /diagnostics/turn/:sessionId/:turn
+  app.get('/diagnostics/turn/:sessionId/:turn', async (req, res) => {
+    const { sessionId, turn } = req.params;
+    const turnNum = parseInt(turn, 10);
+    if (!sessionId || isNaN(turnNum)) {
+      return res.status(400).json({ error: 'sessionId and numeric turn are required' });
+    }
+    const session = opts.getSessionStates().get(sessionId);
+    const history = session?.gameState?.turn_history || [];
+    let turnObj = history.find(t => t.turn_number === turnNum);
+    if (!turnObj) {
+      turnObj = await _readTurnFromDisk(sessionId, turnNum);
+    }
+    if (!turnObj) {
+      if (!session) {
+        return res.status(404).json({ error: 'session_not_found' });
+      }
+      return res.status(404).json({ error: 'turn_not_found', turn: turnNum, total_turns: history.length });
+    }
+    const fieldsParam = req.query.fields;
+    if (!fieldsParam) {
+      return res.json(turnObj);
+    }
+    const FIELD_MAP = {
+      narrative:           'narrative',
+      extraction_packet:   'narration_debug.extraction_packet',
+      continuity_snapshot: 'narration_debug.continuity_snapshot',
+      authoritative_state: 'authoritative_state',
+      input:               'input',
+      stage_times:         'stage_times',
+      reality_check:       'reality_check',
+      narration_debug:     'narration_debug',
+      logs:                'logs',
+      object_reality:      'object_reality',
+      arbiter_verdict:     'arbiter_verdict'
+    };
+    const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
+    const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };
+    for (const field of requested) {
+      if (field in FIELD_MAP) {
+        const key = FIELD_MAP[field];
+        if (key.includes('.')) {
+          const [top, sub] = key.split('.');
+          result[field] = turnObj[top]?.[sub] ?? null;
+        } else {
+          result[field] = turnObj[key] ?? null;
+        }
+      }
+    }
+    return res.json(result);
+  });
+
+  // Latest turn — GET /diagnostics/turn/latest?sessionId=X
+  app.get('/diagnostics/turn/latest', async (req, res) => {
+    const { sessionId } = req.query;
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId query param is required' });
+    }
+    const session = opts.getSessionStates().get(sessionId);
+    const history = session?.gameState?.turn_history || [];
+    let latest = history.length > 0
+      ? history.slice().sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0]
+      : null;
+    if (!latest) {
+      latest = await _readTurnFromDisk(sessionId, null);
+    }
+    if (!latest) {
+      if (!session) {
+        return res.status(404).json({ error: 'session_not_found' });
+      }
+      return res.status(404).json({ error: 'no_turns' });
+    }
+    return res.json(latest);
+  });
+
+  // Payload archive — GET /diagnostics/payload/:sessionId/:turn
+  app.get('/diagnostics/payload/:sessionId/:turn', (req, res) => {
+    const { sessionId, turn } = req.params;
+    const turnNum = parseInt(turn, 10);
+    if (!sessionId || isNaN(turnNum)) {
+      return res.status(400).json({ error: 'sessionId and numeric turn are required' });
+    }
+    const session = opts.getSessionStates().get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'session_not_found' });
+    }
+    const archive = session.gameState?.payload_archive || {};
+    const entry = archive[turnNum];
+    if (!entry) {
+      return res.status(404).json({ error: 'payload_not_found', turn: turnNum });
+    }
+    const stage = req.query.stage;
+    const part  = req.query.part;
+    if (!stage) {
+      return res.json(entry);
+    }
+    const VALID_STAGES = ['reality_check', 'narrator', 'continuity_brain', 'condition_bot'];
+    if (!VALID_STAGES.includes(stage)) {
+      return res.status(400).json({ error: 'invalid_stage', valid: VALID_STAGES });
+    }
+    const stageData = entry.pipeline?.[stage] ?? null;
+    if (!part) {
+      return res.json({ turn: turnNum, stage, data: stageData });
+    }
+    if (part !== 'prompt' && part !== 'response') {
+      return res.status(400).json({ error: 'invalid_part', valid: ['prompt', 'response'] });
+    }
+    return res.json({ turn: turnNum, stage, part, data: stageData?.[part] ?? null });
+  });
+
+  // Object registry query — GET /diagnostics/objects
+  app.get('/diagnostics/objects', (req, res) => {
+    const { sessionId, container_type, container_id, status: statusFilter = 'active', include_events } = req.query;
+    if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
+    const session = opts.getSessionStates().get(sessionId);
+    if (!session) return res.status(404).json({ error: 'session_not_found' });
+    const gs = session.gameState;
+    const includeEvents = include_events === 'true';
+    const allObjects = (gs.objects && typeof gs.objects === 'object') ? gs.objects : {};
+    let filtered = Object.values(allObjects);
+    if (statusFilter !== 'all') filtered = filtered.filter(o => (o.status || 'active') === statusFilter);
+    if (container_type) filtered = filtered.filter(o => o.current_container_type === container_type);
+    if (container_id)   filtered = filtered.filter(o => o.current_container_id   === container_id);
+    const by_container = { player: [], npc: {}, cell: {}, localspace: {}, site: {} };
+    for (const obj of Object.values(allObjects)) {
+      if (statusFilter !== 'all' && (obj.status || 'active') !== statusFilter) continue;
+      const ct = obj.current_container_type;
+      const ci = obj.current_container_id;
+      if (ct === 'player') {
+        by_container.player.push(obj.id);
+      } else if (ct === 'npc') {
+        if (!by_container.npc[ci]) by_container.npc[ci] = [];
+        by_container.npc[ci].push(obj.id);
+      } else if (ct === 'cell' || ct === 'grid') {
+        if (!by_container.cell[ci]) by_container.cell[ci] = [];
+        by_container.cell[ci].push(obj.id);
+      } else if (ct === 'localspace') {
+        if (!by_container.localspace[ci]) by_container.localspace[ci] = [];
+        by_container.localspace[ci].push(obj.id);
+      } else if (ct === 'site') {
+        if (!by_container.site[ci]) by_container.site[ci] = [];
+        by_container.site[ci].push(obj.id);
+      }
+    }
+    const result = filtered.map(o => {
+      const rec = { id: o.id, name: o.name, description: o.description, status: o.status || 'active',
+                    created_turn: o.created_turn, current_container_type: o.current_container_type,
+                    current_container_id: o.current_container_id };
+      if (includeEvents) rec.events = o.events || [];
+      return rec;
+    });
+    return res.json({
+      total: result.length,
+      status_filter: statusFilter,
+      objects: result,
+      by_container,
+      object_errors: (gs.object_errors || []).slice(-20)
+    });
+  });
+
+  // Entity inspector — GET /diagnostics/entity
+  app.get('/diagnostics/entity', (req, res) => {
+    const { sessionId, entity_type, entity_id } = req.query;
+    if (!sessionId)   return res.status(400).json({ error: 'sessionId required' });
+    if (!entity_type) return res.status(400).json({ error: 'entity_type required (object/npc/player/cell)' });
+    const session = opts.getSessionStates().get(sessionId);
+    if (!session) return res.status(404).json({ error: 'session_not_found' });
+    const gs = session.gameState;
+    if (entity_type === 'object') {
+      if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=object' });
+      const record = gs.objects?.[entity_id];
+      if (!record) return res.status(404).json({ error: 'object_not_found', entity_id });
+      return res.json(record);
+    }
+    if (entity_type === 'player') {
+      return res.json(gs.player || {});
+    }
+    if (entity_type === 'npc') {
+      if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=npc' });
+      const allNpcs = [
+        ...(Array.isArray(gs.world?.npcs) ? gs.world.npcs : []),
+        ...(Array.isArray(gs.world?.active_site?.npcs) ? gs.world.active_site.npcs : [])
+      ];
+      const npc = allNpcs.find(n => (n.npc_id || n.id) === entity_id);
+      if (!npc) return res.status(404).json({ error: 'npc_not_found', entity_id });
+      return res.json(npc);
+    }
+    if (entity_type === 'cell') {
+      if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=cell' });
+      const cell = gs.world?.cells?.[entity_id];
+      if (!cell) return res.status(404).json({ error: 'cell_not_found', entity_id });
+      return res.json(cell);
+    }
+    return res.status(400).json({ error: 'invalid_entity_type', valid: ['object', 'npc', 'player', 'cell'] });
+  });
+
+  // Object lifecycle trace — GET /diagnostics/objects/trace
+  app.get('/diagnostics/objects/trace', (req, res) => {
+    const { sessionId, object_id } = req.query;
+    if (!sessionId)  return res.status(400).json({ error: 'sessionId required' });
+    if (!object_id)  return res.status(400).json({ error: 'object_id required' });
+    const session = opts.getSessionStates().get(sessionId);
+    if (!session) return res.status(404).json({ error: 'session_not_found' });
+    const gs = session.gameState;
+    const currentRecord = gs.objects?.[object_id] ?? null;
+    const turnHistory   = gs.turn_history || [];
+    const turnsWithData = turnHistory.filter(t => t.object_reality && Array.isArray(t.object_reality.audit)).length;
+    const timeline = [];
+    for (const turn of turnHistory) {
+      if (!turn.object_reality?.audit) continue;
+      for (const entry of turn.object_reality.audit) {
+        if (entry.object_id === object_id) {
+          timeline.push({ turn: turn.turn_number, ...entry });
+        }
+      }
+    }
+    const errors = (gs.object_errors || []).filter(e => e.object_id === object_id);
+    return res.json({
+      object_id,
+      found_in_registry: !!currentRecord,
+      current_record: currentRecord,
+      timeline,
+      errors,
+      turns_with_data: turnsWithData
     });
   });
 }

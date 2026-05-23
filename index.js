@@ -5718,8 +5718,8 @@ app.get('/ping', (req, res) => {
   res.json({ ok: true });
 });
 
-// Diagnostics routes — Cluster 1 (mb-crash) registered here; clusters 2–7 added incrementally.
-diag.registerRoutes(app);
+// Diagnostics routes — Clusters 1–4 registered here; clusters 5–7 added incrementally.
+diag.registerRoutes(app, { getSessionStates: () => sessionStates });
 
 
 app.post('/init', (req, res) => {
@@ -6492,127 +6492,7 @@ app.get('/diagnostics/log', (req, res) => {
   res.json({ turns, total_turns: history.length });
 });
 
-// Turn archive — GET /diagnostics/turn/:sessionId/:turn
-// Returns the full turnObject for a specific turn from turn_history[].
-// Optional ?fields= comma-separated: narrative, extraction_packet, continuity_snapshot,
-//   authoritative_state, input, stage_times, reality_check, narration_debug
-app.get('/diagnostics/turn/:sessionId/:turn', async (req, res) => {
-  const { sessionId, turn } = req.params;
-  const turnNum = parseInt(turn, 10);
-  if (!sessionId || isNaN(turnNum)) {
-    return res.status(400).json({ error: 'sessionId and numeric turn are required' });
-  }
-  const session = sessionStates.get(sessionId);
-  const history = session?.gameState?.turn_history || [];
-  let turnObj = history.find(t => t.turn_number === turnNum);
-  if (!turnObj) {
-    turnObj = await diag.readTurnFromDisk(sessionId, turnNum);
-  }
-  if (!turnObj) {
-    if (!session) {
-      return res.status(404).json({ error: 'session_not_found' });
-    }
-    return res.status(404).json({ error: 'turn_not_found', turn: turnNum, total_turns: history.length });
-  }
-  const fieldsParam = req.query.fields;
-  if (!fieldsParam) {
-    return res.json(turnObj);
-  }
-  // Selective field projection
-  const FIELD_MAP = {
-    narrative:           'narrative',
-    extraction_packet:   'narration_debug.extraction_packet',
-    continuity_snapshot: 'narration_debug.continuity_snapshot',
-    authoritative_state: 'authoritative_state',
-    input:               'input',
-    stage_times:         'stage_times',
-    reality_check:       'reality_check',
-    narration_debug:     'narration_debug',
-    logs:                'logs',
-    object_reality:      'object_reality',   // v1.84.54
-    arbiter_verdict:     'arbiter_verdict'   // v1.88.23
-  };
-  const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
-  const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };
-  for (const field of requested) {
-    if (field in FIELD_MAP) {
-      const key = FIELD_MAP[field];
-      if (key.includes('.')) {
-        const [top, sub] = key.split('.');
-        result[field] = turnObj[top]?.[sub] ?? null;
-      } else {
-        result[field] = turnObj[key] ?? null;
-      }
-    }
-  }
-  return res.json(result);
-});
-
-// Latest turn — GET /diagnostics/turn/latest?sessionId=X
-// Returns the most-recent turnObject for a session without needing a turn number.
-// Compatible with probe-runner post_extract (?sessionId=X query param pattern).
-// post_extract.extract path: narration_debug.continuity_block_chars
-app.get('/diagnostics/turn/latest', async (req, res) => {
-  const { sessionId } = req.query;
-  if (!sessionId) {
-    return res.status(400).json({ error: 'sessionId query param is required' });
-  }
-  const session = sessionStates.get(sessionId);
-  const history = session?.gameState?.turn_history || [];
-  let latest = history.length > 0
-    ? history.slice().sort((a, b) => (b.turn_number || 0) - (a.turn_number || 0))[0]
-    : null;
-  if (!latest) {
-    latest = await diag.readTurnFromDisk(sessionId, null);
-  }
-  if (!latest) {
-    if (!session) {
-      return res.status(404).json({ error: 'session_not_found' });
-    }
-    return res.status(404).json({ error: 'no_turns' });
-  }
-  return res.json(latest);
-});
-
-// Payload archive — GET /diagnostics/payload/:sessionId/:turn
-// Returns raw DeepSeek payload archive for a specific turn (prompt + response per pipeline stage).
-// Pipeline order: reality_check -> narrator -> continuity_brain -> condition_bot
-// Optional ?stage=reality_check|narrator|continuity_brain|condition_bot
-// Optional ?part=prompt|response (only valid with ?stage=)
-// null stage = that stage did not run that turn (not a crash)
-app.get('/diagnostics/payload/:sessionId/:turn', (req, res) => {
-  const { sessionId, turn } = req.params;
-  const turnNum = parseInt(turn, 10);
-  if (!sessionId || isNaN(turnNum)) {
-    return res.status(400).json({ error: 'sessionId and numeric turn are required' });
-  }
-  const session = sessionStates.get(sessionId);
-  if (!session) {
-    return res.status(404).json({ error: 'session_not_found' });
-  }
-  const archive = session.gameState?.payload_archive || {};
-  const entry = archive[turnNum];
-  if (!entry) {
-    return res.status(404).json({ error: 'payload_not_found', turn: turnNum });
-  }
-  const stage = req.query.stage;
-  const part  = req.query.part;
-  if (!stage) {
-    return res.json(entry);
-  }
-  const VALID_STAGES = ['reality_check', 'narrator', 'continuity_brain', 'condition_bot'];
-  if (!VALID_STAGES.includes(stage)) {
-    return res.status(400).json({ error: 'invalid_stage', valid: VALID_STAGES });
-  }
-  const stageData = entry.pipeline?.[stage] ?? null;
-  if (!part) {
-    return res.json({ turn: turnNum, stage, data: stageData });
-  }
-  if (part !== 'prompt' && part !== 'response') {
-    return res.status(400).json({ error: 'invalid_part', valid: ['prompt', 'response'] });
-  }
-  return res.json({ turn: turnNum, stage, part, data: stageData?.[part] ?? null });
-});
+// /diagnostics/turn, /diagnostics/turn/latest, /diagnostics/payload migrated to diagnostics.js (Cluster 4)
 
 // /diagnostics/summary migrated to diagnostics.js (Cluster 3) — registered via diag.registerRoutes(app)
 
@@ -7025,62 +6905,7 @@ app.get('/diagnostics/localspace', (req, res) => {
 // v1.84.54: OBJECT REALITY DIAGNOSTIC ENDPOINTS
 // =============================================================================
 
-// Object registry query — GET /diagnostics/objects
-// Returns filtered view of gameState.objects with by_container index and recent errors.
-// Params: sessionId (required), container_type, container_id, status (active|all), include_events (bool)
-app.get('/diagnostics/objects', (req, res) => {
-  const { sessionId, container_type, container_id, status: statusFilter = 'active', include_events } = req.query;
-  if (!sessionId) return res.status(400).json({ error: 'sessionId required' });
-  const session = sessionStates.get(sessionId);
-  if (!session) return res.status(404).json({ error: 'session_not_found' });
-  const gs = session.gameState;
-  const includeEvents = include_events === 'true';
-  const allObjects = (gs.objects && typeof gs.objects === 'object') ? gs.objects : {};
-
-  let filtered = Object.values(allObjects);
-  if (statusFilter !== 'all') filtered = filtered.filter(o => (o.status || 'active') === statusFilter);
-  if (container_type) filtered = filtered.filter(o => o.current_container_type === container_type);
-  if (container_id)   filtered = filtered.filter(o => o.current_container_id   === container_id);
-
-  // Build by_container index from ALL objects matching statusFilter only
-  const by_container = { player: [], npc: {}, cell: {}, localspace: {}, site: {} }; // v1.84.92: added site
-  for (const obj of Object.values(allObjects)) {
-    if (statusFilter !== 'all' && (obj.status || 'active') !== statusFilter) continue;
-    const ct = obj.current_container_type;
-    const ci = obj.current_container_id;
-    if (ct === 'player') {
-      by_container.player.push(obj.id);
-    } else if (ct === 'npc') {
-      if (!by_container.npc[ci]) by_container.npc[ci] = [];
-      by_container.npc[ci].push(obj.id);
-    } else if (ct === 'cell' || ct === 'grid') {
-      if (!by_container.cell[ci]) by_container.cell[ci] = [];
-      by_container.cell[ci].push(obj.id);
-    } else if (ct === 'localspace') {
-      if (!by_container.localspace[ci]) by_container.localspace[ci] = [];
-      by_container.localspace[ci].push(obj.id);
-    } else if (ct === 'site') {
-      if (!by_container.site[ci]) by_container.site[ci] = [];
-      by_container.site[ci].push(obj.id);
-    }
-  }
-
-  const result = filtered.map(o => {
-    const rec = { id: o.id, name: o.name, description: o.description, status: o.status || 'active',
-                  created_turn: o.created_turn, current_container_type: o.current_container_type,
-                  current_container_id: o.current_container_id };
-    if (includeEvents) rec.events = o.events || [];
-    return rec;
-  });
-
-  return res.json({
-    total: result.length,
-    status_filter: statusFilter,
-    objects: result,
-    by_container,
-    object_errors: (gs.object_errors || []).slice(-20)
-  });
-});
+// /diagnostics/objects, /diagnostics/entity, /diagnostics/objects/trace migrated to diagnostics.js (Cluster 4)
 
 // Harness NPC fixture injector — POST /diagnostics/inject-npc
 // Injects a synthetic NPC directly onto the player's current tile. For QA harness use only.
@@ -7161,81 +6986,7 @@ app.post('/diagnostics/inject-npc', (req, res) => {
   return res.json({ injected: true, npc_id, npc_name, job_category, tile: { x: pos.x, y: pos.y } });
 });
 
-// Entity inspector — GET /diagnostics/entity
-// Returns the raw engine record for any entity type: object, npc, player, or cell.
-// Params: sessionId (required), entity_type (object|npc|player|cell), entity_id (required except for player)
-app.get('/diagnostics/entity', (req, res) => {
-  const { sessionId, entity_type, entity_id } = req.query;
-  if (!sessionId)   return res.status(400).json({ error: 'sessionId required' });
-  if (!entity_type) return res.status(400).json({ error: 'entity_type required (object/npc/player/cell)' });
-  const session = sessionStates.get(sessionId);
-  if (!session) return res.status(404).json({ error: 'session_not_found' });
-  const gs = session.gameState;
-
-  if (entity_type === 'object') {
-    if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=object' });
-    const record = gs.objects?.[entity_id];
-    if (!record) return res.status(404).json({ error: 'object_not_found', entity_id });
-    return res.json(record);
-  }
-  if (entity_type === 'player') {
-    return res.json(gs.player || {});
-  }
-  if (entity_type === 'npc') {
-    if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=npc' });
-    const allNpcs = [
-      ...(Array.isArray(gs.world?.npcs) ? gs.world.npcs : []),
-      ...(Array.isArray(gs.world?.active_site?.npcs) ? gs.world.active_site.npcs : [])
-    ];
-    const npc = allNpcs.find(n => (n.npc_id || n.id) === entity_id);
-    if (!npc) return res.status(404).json({ error: 'npc_not_found', entity_id });
-    return res.json(npc);
-  }
-  if (entity_type === 'cell') {
-    if (!entity_id) return res.status(400).json({ error: 'entity_id required for entity_type=cell' });
-    const cell = gs.world?.cells?.[entity_id];
-    if (!cell) return res.status(404).json({ error: 'cell_not_found', entity_id });
-    return res.json(cell);
-  }
-  return res.status(400).json({ error: 'invalid_entity_type', valid: ['object', 'npc', 'player', 'cell'] });
-});
-
-// Object lifecycle trace — GET /diagnostics/objects/trace
-// Reconstructs the full history of one object across all frozen turn_history entries.
-// Params: sessionId (required), object_id (required)
-app.get('/diagnostics/objects/trace', (req, res) => {
-  const { sessionId, object_id } = req.query;
-  if (!sessionId)  return res.status(400).json({ error: 'sessionId required' });
-  if (!object_id)  return res.status(400).json({ error: 'object_id required' });
-  const session = sessionStates.get(sessionId);
-  if (!session) return res.status(404).json({ error: 'session_not_found' });
-  const gs = session.gameState;
-
-  const currentRecord = gs.objects?.[object_id] ?? null;
-  const turnHistory   = gs.turn_history || [];
-  const turnsWithData = turnHistory.filter(t => t.object_reality && Array.isArray(t.object_reality.audit)).length;
-
-  const timeline = [];
-  for (const turn of turnHistory) {
-    if (!turn.object_reality?.audit) continue;
-    for (const entry of turn.object_reality.audit) {
-      if (entry.object_id === object_id) {
-        timeline.push({ turn: turn.turn_number, ...entry });
-      }
-    }
-  }
-
-  const errors = (gs.object_errors || []).filter(e => e.object_id === object_id);
-
-  return res.json({
-    object_id,
-    found_in_registry: !!currentRecord,
-    current_record: currentRecord,
-    timeline,
-    errors,
-    turns_with_data: turnsWithData   // only turns after v1.84.54 deploy will have frozen object_reality
-  });
-});
+// /diagnostics/entity and /diagnostics/objects/trace migrated to diagnostics.js (Cluster 4)
 
 // =============================================================================
 // END v1.84.54 OBJECT REALITY DIAGNOSTIC ENDPOINTS
