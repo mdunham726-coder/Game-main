@@ -467,9 +467,14 @@ async function run(gameState, quarantine, turnNumber) {
       );
       if (_ownerNpc) _resolvedOwnerId = _ownerNpc.id;
     }
+    // v1.88.64: exclude objects already claimed this pass — they are same-turn sibling candidates
+    // from the same CB batch (e.g. tray_1/tray_2), not pre-existing cross-provenance duplicates.
+    // Original Patch 1L intent (birth_custom vs CB re-promote) is preserved: birth_custom objects
+    // predate the current pass and are never in _claimedObjectIds.
     const _resolvedDupEid = containerIds.find(eid => {
       const _rdo = gameState.objects[eid];
-      return _rdo && _rdo.status === 'active' && String(_rdo.name || '').toLowerCase().trim() === _nameLower;
+      return _rdo && _rdo.status === 'active' && String(_rdo.name || '').toLowerCase().trim() === _nameLower
+        && !_claimedObjectIds.has(eid);
     });
     if (_resolvedDupEid) {
       const _resolvedDupObj = gameState.objects[_resolvedDupEid];
