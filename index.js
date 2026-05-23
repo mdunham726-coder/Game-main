@@ -72,6 +72,7 @@ const _consultHistory = new Map();
 const _initProgress = new Map();
 
 let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
+let _activeTurnDebug = null;         // v1.88.67: module-level fallback — never primary routing (async interleave hazard)
 
 // ── Session TTL eviction ─────────────────────────────────────────────────────
 // Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
@@ -100,6 +101,17 @@ function _pushProgress(token, step, pct, detail = {}) {
   const arr = _initProgress.get(token) || [];
   arr.push({ step, pct, detail, ts: Date.now() });
   _initProgress.set(token, arr);
+}
+
+// v1.88.67: route turn diagnostics to console AND narration_debug console_log[].
+// debugTarget is always passed explicitly from the narrate handler (avoids async cross-session bleed).
+// _activeTurnDebug is module-level fallback only — for future external-module callers (ObjectHelper, CB).
+function _turnLog(debugTarget, level, tag, msg, data) {
+  console[level]('[' + tag + '] ' + msg);
+  const _tgt = debugTarget || _activeTurnDebug;
+  if (_tgt && Array.isArray(_tgt.console_log)) {
+    _tgt.console_log.push({ level, tag, message: msg, data: data ?? null, ts: new Date().toISOString() });
+  }
 }
 
 function generateSessionId() {
@@ -4129,8 +4141,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         retirement_updates: [],
         fission_retired: 0,
         fission_successors_injected: 0,
-        npc_intro_materialized: 0
+        npc_intro_materialized: 0,
+        console_log: [],
+        actor_resolution: []
       };
+      _activeTurnDebug = _objectRealityDebug;
       if (_phaseBResult) {
         // v1.85.28: NPC intro capture — materialize held/worn objects from entity_candidates as real ObjectRecords.
         // _promoteEntityAttributes runs synchronously inside CB before _phaseBResult is returned, so
@@ -4173,7 +4188,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               const _hNameNorm = _hItem.trim().toLowerCase();
               // v1.85.32: Fix 3 — absence filter. Does NOT count toward _capturedForNpc (absence ≠ object).
               if (_isAbsencePhrase(_hNameNorm)) {
-                console.log(`[NPC-INTRO-CAPTURE] skipped absence-phrase held: "${_hItem.trim()}" (T-${turnNumber})`);
+                _turnLog(_objectRealityDebug, 'log', 'NPC-INTRO-CAPTURE', `skipped absence-phrase held: "${_hItem.trim()}" (T-${turnNumber})`, {item: _hItem.trim(), status: 'absence_phrase', container: 'held', turn: turnNumber});
                 continue;
               }
               const _hAlreadyExists = Object.values(gameState.objects || {}).some(r =>
@@ -4183,7 +4198,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                 String(r.name).toLowerCase().trim() === _hNameNorm
               );
               if (_hAlreadyExists) {
-                console.log(`[NPC-INTRO-CAPTURE] "${_hItem.trim()}" already materialized → skipping push, counting (T-${turnNumber})`);
+                _turnLog(_objectRealityDebug, 'log', 'NPC-INTRO-CAPTURE', `"${_hItem.trim()}" already materialized → skipping push, counting (T-${turnNumber})`, {item: _hItem.trim(), status: 'already_materialized', container: 'held', turn: turnNumber});
                 _capturedForNpc++;
                 continue;
               }
@@ -4198,7 +4213,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                 _source_phrase: _hItem.trim(),
                 _created_turn: turnNumber
               });
-              console.log(`[NPC-INTRO-CAPTURE] "${_hItem.trim()}" → npc/${_intrNpc.id} (T-${turnNumber})`);
+              _turnLog(_objectRealityDebug, 'log', 'NPC-INTRO-CAPTURE', `"${_hItem.trim()}" → npc/${_intrNpc.id} (T-${turnNumber})`, {item: _hItem.trim(), npc_id: _intrNpc.id, status: 'materialized', container: 'held', turn: turnNumber});
               _capturedForNpc++;
               _npcIntroCaptureCount++;
             }
@@ -4208,7 +4223,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               const _wNameNorm = _wItem.trim().toLowerCase();
               // v1.85.32: Fix 4 — absence filter for worn items. Does NOT count toward _capturedForNpc.
               if (_isAbsencePhrase(_wNameNorm)) {
-                console.log(`[NPC-INTRO-CAPTURE] skipped absence-phrase worn: "${_wItem.trim()}" (T-${turnNumber})`);
+                _turnLog(_objectRealityDebug, 'log', 'NPC-INTRO-CAPTURE', `skipped absence-phrase worn: "${_wItem.trim()}" (T-${turnNumber})`, {item: _wItem.trim(), status: 'absence_phrase', container: 'worn', turn: turnNumber});
                 continue;
               }
               const _wAlreadyExists = Object.values(gameState.objects || {}).some(r =>
@@ -4218,7 +4233,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                 String(r.name).toLowerCase().trim() === _wNameNorm
               );
               if (_wAlreadyExists) {
-                console.log(`[NPC-INTRO-CAPTURE] "${_wItem.trim()}" already materialized (worn) → skipping push, counting (T-${turnNumber})`);
+                _turnLog(_objectRealityDebug, 'log', 'NPC-INTRO-CAPTURE', `"${_wItem.trim()}" already materialized (worn) → skipping push, counting (T-${turnNumber})`, {item: _wItem.trim(), status: 'already_materialized', container: 'worn', turn: turnNumber});
                 _capturedForNpc++;
                 continue;
               }
@@ -4233,7 +4248,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                 _source_phrase: _wItem.trim(),
                 _created_turn: turnNumber
               });
-              console.log(`[NPC-INTRO-CAPTURE] "${_wItem.trim()}" → npc_worn/${_intrNpc.id} (T-${turnNumber})`);
+              _turnLog(_objectRealityDebug, 'log', 'NPC-INTRO-CAPTURE', `"${_wItem.trim()}" → npc_worn/${_intrNpc.id} (T-${turnNumber})`, {item: _wItem.trim(), npc_id: _intrNpc.id, status: 'materialized', container: 'worn', turn: turnNumber});
               _capturedForNpc++;
               _npcIntroCaptureCount++;
             }
@@ -4246,7 +4261,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         if (_soliloquyFired && Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
             if (c.container_type === 'player') {
-              console.warn(`[SOLILOQUY-GATE] player-targeted object_candidate blocked on soliloquy turn: "${c.name}"`);
+              _turnLog(_objectRealityDebug, 'warn', 'SOLILOQUY-GATE', `player-targeted object_candidate blocked on soliloquy turn: "${c.name}"`, {name: c.name});
               return false;
             }
             return true;
@@ -4254,7 +4269,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           if (Array.isArray(_phaseBResult.object_transfers)) {
             _phaseBResult.object_transfers = _phaseBResult.object_transfers.filter(t => {
               if (t.to_container_type === 'player') {
-                console.warn(`[SOLILOQUY-GATE] player-targeted object_transfer blocked on soliloquy turn: "${t.object_name || t.object_id}"`);
+                _turnLog(_objectRealityDebug, 'warn', 'SOLILOQUY-GATE', `player-targeted object_transfer blocked on soliloquy turn: "${t.object_name || t.object_id}"`, {name: t.object_name || t.object_id});
                 return false;
               }
               return true;
@@ -4268,7 +4283,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
             if (c.transfer_origin === 'npc_introduction') return true; // v1.85.28: NPC intro capture — always pass through
             if (c.container_type === 'player' && c.transfer_origin === 'player_claimed' && turnNumber !== 1) {
-              console.warn(`[ORIGIN-GATE] player_claimed item blocked: "${c.name}"`);
+              _turnLog(_objectRealityDebug, 'warn', 'ORIGIN-GATE', `player_claimed item blocked: "${c.name}"`, {name: c.name, transfer_origin: c.transfer_origin});
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'player_claimed_item_blocked', name: c.name, turn: turnNumber });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
@@ -4279,7 +4294,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             // On Turn 1 the founding premise IS constitutional reality; narrator-described player interaction
             // objects (e.g. "we are drinking tea") are not conjuration attempts — they are initial world state.
             if (c.container_type === 'player' && c.transfer_origin === 'narrator_independent' && turnNumber !== 1) {
-              console.warn(`[ORIGIN-GATE] narrator_independent player item blocked: "${c.name}"`);
+              _turnLog(_objectRealityDebug, 'warn', 'ORIGIN-GATE', `narrator_independent player item blocked: "${c.name}"`, {name: c.name, transfer_origin: c.transfer_origin});
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'narrator_independent_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
@@ -4310,7 +4325,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             // and freeform actions may reveal objects in the environment — they may NOT place objects
             // directly in player inventory.
             if (c.container_type === 'player' && c.transfer_origin === 'environment_interaction' && _parsedAction !== 'take') {
-              console.warn(`[ORIGIN-GATE] environment_interaction non-acquisition player item blocked: "${c.name}" (action: ${_parsedAction})`);
+              _turnLog(_objectRealityDebug, 'warn', 'ORIGIN-GATE', `environment_interaction non-acquisition player item blocked: "${c.name}" (action: ${_parsedAction})`, {name: c.name, transfer_origin: c.transfer_origin, action: _parsedAction});
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'environment_interaction_non_acquisition_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
@@ -4328,7 +4343,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         if (_envGatherLabel && Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
             if (c.container_type === 'grid' && c.transfer_origin === 'environment_interaction' && String(c.name || '').toLowerCase() === _envGatherLabel) {
-              console.warn(`[ORIGIN-GATE] env_gather_not_acquired blocked: "${c.name}"`);
+              _turnLog(_objectRealityDebug, 'warn', 'ORIGIN-GATE', `env_gather_not_acquired blocked: "${c.name}"`, {name: c.name, transfer_origin: c.transfer_origin});
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'env_gather_not_acquired', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
               if (gameState.object_errors.length > 100) gameState.object_errors.shift();
@@ -4534,9 +4549,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             }
             if (_aMatch) {
               _qeActor._resolved_actor_id = _aMatch.id;
+              _objectRealityDebug.actor_resolution.push({ object_name: _qeActor.name, actor_npc_ref: _qeActor.actor_npc_ref, resolved_to: _aMatch.id, status: 'resolved' });
             } else {
-              console.warn(`[ORS-ACTOR-UNRESOLVED] actor_npc_ref="${_qeActor.actor_npc_ref}" on object "${_qeActor.name}" T-${turnNumber} — no live NPC match; associated_actor_id left null`);
+              _turnLog(_objectRealityDebug, 'warn', 'ORS-ACTOR-UNRESOLVED', `actor_npc_ref="${_qeActor.actor_npc_ref}" on object "${_qeActor.name}" T-${turnNumber} — no live NPC match; associated_actor_id left null`, {actor_npc_ref: _qeActor.actor_npc_ref, object_name: _qeActor.name, turn: turnNumber});
               _qeActor._resolved_actor_id = null;
+              _objectRealityDebug.actor_resolution.push({ object_name: _qeActor.name, actor_npc_ref: _qeActor.actor_npc_ref, resolved_to: null, status: 'unresolved' });
             }
           }
         }
@@ -4567,7 +4584,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               if (!Array.isArray(_aoNpc.associated_object_ids)) _aoNpc.associated_object_ids = [];
               if (!_aoNpc.associated_object_ids.includes(_aoAudit.object_id)) {
                 _aoNpc.associated_object_ids.push(_aoAudit.object_id);
-                console.log(`[ACTOR-ASSOC] "${_aoRec.name}" (${_aoAudit.object_id}) → npc/${_aoRec.associated_actor_id} T-${turnNumber}`);
+                _turnLog(_objectRealityDebug, 'log', 'ACTOR-ASSOC', `"${_aoRec.name}" (${_aoAudit.object_id}) → npc/${_aoRec.associated_actor_id} T-${turnNumber}`, {object_name: _aoRec.name, object_id: _aoAudit.object_id, npc_id: _aoRec.associated_actor_id, turn: turnNumber});
               }
             }
           }
@@ -4589,7 +4606,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             if (_mirrorLs?._generated_interior) {
               const _mirrorObjIds = _mirrorLs._generated_interior.object_ids || [];
               if (_liveObjIds.length !== _mirrorObjIds.length) {
-                console.warn(`[ORS-RECONCILE] WARN sites_mirror_divergence live=${_liveObjIds.length} mirror=${_mirrorObjIds.length} ls=${_lsKey} turn=${turnNumber}`);
+                _turnLog(_objectRealityDebug, 'warn', 'ORS-RECONCILE', `WARN sites_mirror_divergence live=${_liveObjIds.length} mirror=${_mirrorObjIds.length} ls=${_lsKey} turn=${turnNumber}`, {live: _liveObjIds.length, mirror: _mirrorObjIds.length, ls: _lsKey, turn: turnNumber});
               }
             }
           }
@@ -5675,6 +5692,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       history_turns:       (gameState.turn_history || []).filter(t => t.narration_debug?.extraction_packet != null).length
     });
 
+    _activeTurnDebug = null;
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative, 
@@ -5705,6 +5723,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       logger.narrationFailed(err.message);
     }
     _abortTurn('NARRATION_ERROR');
+    _activeTurnDebug = null;
     return res.json({ 
       sessionId: resolvedSessionId,
       narrative: "The engine encountered an error generating narration. Please try again.",

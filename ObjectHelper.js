@@ -555,7 +555,7 @@ async function run(gameState, quarantine, turnNumber) {
     promoted++;
     if (_priorRejection) reconciled++;  // v1.85.91: only after record fully committed (post one-container check)
     // v1.85.10: stamp parent_object_id so UI can distinguish fission vs normal promoted rows
-    audit.push({ turn: turnNumber, action: 'promoted', object_id: objectId, object_name: name, container_type, container_id, temp_ref, parent_object_id: entry.parent_object_id || null, ts });
+    audit.push({ turn: turnNumber, action: 'promoted', object_id: objectId, object_name: name, container_type, container_id, temp_ref, parent_object_id: entry.parent_object_id || null, associated_actor_id: record.associated_actor_id ?? null, ts });
     console.log(`[ObjectHelper] Promoted: ${objectId} (${name}) → ${container_type}/${container_id}`);
   }
 
