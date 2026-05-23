@@ -41,7 +41,7 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.1.2';
+const MB_VERSION = '7.2.0';
 // MB v7.1.2 (May 2026): SOURCE-ROOT VERIFICATION doctrine block added. Prevents a class of silently-inert code proposal: proposing a property path through a local alias that doesn't own the needed field (e.g. w.player when w = gameState.world and player is a sibling of world, not a child). Rule: before proposing any code change involving a nested property path, first identify the local variable root and its binding; if the needed data lives outside that root, use the original top-level object, not an invented child path. Block inserted after SOURCE CODE READ EFFICIENCY, before SOURCE FILE GUIDE. MB_VERSION 7.1.1 -> 7.1.2.
 // MB v7.1.1 (May 2026): ACTION AUTHORING DISCIPLINE doctrine block added to GAMEPLAY TOOLS section. Defines the boundary between privileged engine access (diagnostic capability) and player action text (scene-authority surface). Privileged grid/entity knowledge may inform test design and navigation but must not appear in take_turn action text unless narratively established. Narrator pipeline treats player action text as potential scene truth; embedding unestablished entity claims is a contamination vector, not a test input. MB_VERSION 7.1.0 -> 7.1.1.
 // MB v7.1.0 (May 2026): Doctrine enrichment — ARBITER INTERNALS, CONDITION BOT INTERNALS, SEMANTIC PARSER INTERNALS, NARRATOR PROMPT STRUCTURE INTERNALS, WORLDGEN INVESTIGATION GUIDE. Closes 5 MB knowledge blind spots identified in self-assessment.
@@ -326,13 +326,13 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'get_source_slice',
-      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. Also allowed: tests/scenarios/<name>.json and tests/probes/<name>.probe.json — use the full relative path (e.g. tests/scenarios/arbiter_basic.json or tests/probes/worldgen-sites.probe.json), NOT the bare filename. Returns: file, from, to, total_lines, lines (the raw source text)',
+      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. Also allowed: tests/scenarios/<name>.json and tests/probes/<name>.probe.json — use the full relative path (e.g. tests/scenarios/arbiter_basic.json or tests/probes/worldgen-sites.probe.json), NOT the bare filename. Returns: file, from, to, total_lines, lines (the raw source text)',
       parameters: {
         type: 'object',
         properties: {
           file: {
             type: 'string',
-            description: 'For source files: filename only (no path) — e.g. index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. For scripts/ files: use the FULL RELATIVE PATH — e.g. scripts/probe-runner.js or scripts/probe-metrics.js. For scenario JSON files: use the FULL RELATIVE PATH — e.g. tests/scenarios/arbiter_basic.json. For probe specs: use the FULL RELATIVE PATH — e.g. tests/probes/worldgen-sites.probe.json. Do NOT use a bare filename — it will be rejected.'
+            description: 'For source files: filename only (no path) — e.g. index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. For scripts/ files: use the FULL RELATIVE PATH — e.g. scripts/probe-runner.js or scripts/probe-metrics.js. For scenario JSON files: use the FULL RELATIVE PATH — e.g. tests/scenarios/arbiter_basic.json. For probe specs: use the FULL RELATIVE PATH — e.g. tests/probes/worldgen-sites.probe.json. Do NOT use a bare filename — it will be rejected.'
           },
           from: {
             type: 'integer',
@@ -361,7 +361,7 @@ const MB_TOOLS = [
           },
           file: {
             type: 'string',
-            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html.'
+            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html.'
           }
         },
         required: ['query']
@@ -1189,7 +1189,8 @@ SOURCE CODE READ EFFICIENCY: When reading source code with get_source_slice, use
 SOURCE-ROOT VERIFICATION: Before proposing any code change involving a nested property path, first identify the local variable root and its binding. If the needed data lives outside that root, use the original top-level object, not an invented child path.
 
 SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it.
-  index.js — turn orchestration, narrator/RC/CB/ORS pipeline, all prompt assembly, gates, and intercepts | read when tracing a turn pipeline fault, prompt instruction, or gate behavior
+  index.js — turn orchestration, narrator/RC/CB/ORS pipeline, all prompt assembly, gates, and intercepts | read when tracing a turn pipeline fault, prompt instruction, or gate behavior | NOTE: all /diagnostics/* routes extracted to diagnostics.js as of v1.88.55
+  diagnostics.js — backend diagnostics subsystem: all /diagnostics/* route handlers, diagnostics state (_lastGameState, _lastSessionId, _diagHistory etc.), SSE infrastructure (emitDiagnostics, registerStreamHandler), buildDebugContext | read when tracing a /diagnostics/* route fault, auth behavior, or response shape | NOT the SSE terminal client — that is flight-recorder.js
   Engine.js — world state mutations: movement, enterSite/exitSite, enterLocalSpace/exitLocalSpace, cell/site/LS generation entry points | read when tracing spatial transitions or state mutations
   ActionProcessor.js — synchronous player action validation and execution (take/drop/throw/move/examine), pre-CB inventory transfers | read when a player action resolves incorrectly or hits the wrong gate
   WorldGen.js — procedural generation: cells, sites, localspaces, NPC distribution, site_id field | read when investigating generation output or site/LS structure

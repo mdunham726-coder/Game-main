@@ -1013,7 +1013,8 @@ const _SOURCE_ALLOWLIST = new Set([
   'cbpanel.js', 'npcpanel.js', 'sitelens.js', 'motherwatch.js',              // v1.85.1
   'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
   'test-harness.js',                                                           // v1.85.53
-  'scripts/probe-runner.js', 'scripts/probe-metrics.js'                       // v1.85.75
+  'scripts/probe-runner.js', 'scripts/probe-metrics.js',                      // v1.85.75
+  'diagnostics.js'                                                             // v1.88.56
 ]);
 // Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
 // OR any probe spec: tests/probes/<name>.probe.json
