@@ -4327,7 +4327,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             // v1.88.72: Turn 1 founding-premise exemption — mirrors player_claimed and narrator_independent
             // exemptions above. On Turn 1 _parsedAction is always '' (founding premise never parses as
             // 'take'), so without this guard every player-acquired object in a founding turn is blocked.
-            if (c.container_type === 'player' && c.transfer_origin === 'environment_interaction' && _parsedAction !== 'take' && turnNumber !== 1) {
+            // v1.88.75: 'unknown' exemption — parser returns 'unknown' on complex compound inputs (not a
+            // confident non-acquisition classification). Blocking on 'unknown' prevents valid acquisitions
+            // that CB correctly flagged in compound turns. Only block on known non-acquisition actions.
+            if (c.container_type === 'player' && c.transfer_origin === 'environment_interaction' && _parsedAction !== 'take' && _parsedAction !== 'unknown' && turnNumber !== 1) {
               _turnLog(_objectRealityDebug, 'warn', 'ORIGIN-GATE', `environment_interaction non-acquisition player item blocked: "${c.name}" (action: ${_parsedAction})`, {name: c.name, transfer_origin: c.transfer_origin, action: _parsedAction});
               if (!Array.isArray(gameState.object_errors)) gameState.object_errors = [];
               gameState.object_errors.push({ stage: 'cb_origin_gate', reason: 'environment_interaction_non_acquisition_player_blocked', name: c.name, turn: (gameState.turn_history?.length || 0) + 1 });
