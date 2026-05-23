@@ -5718,22 +5718,8 @@ app.get('/ping', (req, res) => {
   res.json({ ok: true });
 });
 
-// Mother Brain crash reporter — logs crash to server console so it's visible in the server CMD window
-app.post('/diagnostics/mb-crash', (req, res) => {
-  const diagKey = process.env.DIAGNOSTICS_KEY;
-  if (!diagKey) return res.status(503).json({ error: 'diagnostics_disabled' });
-  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
-  const { type, message, where, stack, mb_version, session, last_turn } = req.body || {};
-  console.error(`\n[MOTHER BRAIN CRASHED] ${type} -- v${mb_version} -- session=${session} turn=${last_turn}`);
-  console.error(`[MOTHER BRAIN CRASHED] ${message}`);
-  if (stack) {
-    const appLines = stack.split('\n')
-      .filter(l => l.includes('    at ') && l.includes('Game-main') && !l.includes('node_modules'));
-    const printLines = appLines.length ? appLines : stack.split('\n').slice(0, 8);
-    printLines.forEach(l => console.error(`[MOTHER BRAIN CRASHED]   ${l.trim()}`));
-  }
-  res.json({ logged: true });
-});
+// Diagnostics routes — Cluster 1 (mb-crash) registered here; clusters 2–7 added incrementally.
+diag.registerRoutes(app);
 
 
 app.post('/init', (req, res) => {

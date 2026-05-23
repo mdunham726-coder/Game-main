@@ -969,6 +969,32 @@ function registerStreamHandler(req, res) {
   });
 }
 
+// =============================================================================
+// ROUTE REGISTRATION
+// Called once at startup: diag.registerRoutes(app, opts)
+// opts grows with each cluster. Currently accepted keys:
+//   (none — Cluster 1 requires no external state)
+// =============================================================================
+function registerRoutes(app, opts = {}) {
+  // --- Cluster 1: crash reporter -------------------------------------------
+  // Mother Brain crash reporter — logs crash to server console
+  app.post('/diagnostics/mb-crash', (req, res) => {
+    const diagKey = process.env.DIAGNOSTICS_KEY;
+    if (!diagKey) return res.status(503).json({ error: 'diagnostics_disabled' });
+    if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+    const { type, message, where, stack, mb_version, session, last_turn } = req.body || {};
+    console.error(`\n[MOTHER BRAIN CRASHED] ${type} -- v${mb_version} -- session=${session} turn=${last_turn}`);
+    console.error(`[MOTHER BRAIN CRASHED] ${message}`);
+    if (stack) {
+      const appLines = stack.split('\n')
+        .filter(l => l.includes('    at ') && l.includes('Game-main') && !l.includes('node_modules'));
+      const printLines = appLines.length ? appLines : stack.split('\n').slice(0, 8);
+      printLines.forEach(l => console.error(`[MOTHER BRAIN CRASHED]   ${l.trim()}`));
+    }
+    res.json({ logged: true });
+  });
+}
+
 module.exports = {
   TERRAIN_CODES:              _TERRAIN_CODES,
   getSiteInteriorState:       _getSiteInteriorState,
@@ -984,4 +1010,6 @@ module.exports = {
   // SSE infrastructure
   emitDiagnostics,
   registerStreamHandler,
+  // route registration
+  registerRoutes,
 };
