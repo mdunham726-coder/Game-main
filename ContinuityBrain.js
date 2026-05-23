@@ -428,6 +428,14 @@ OBJECT TRANSFERS (optional)
 Identify objects that clearly changed hands or location in this narration.
 Only emit when the narration explicitly describes the movement (e.g. handed over, dropped, taken).
 
+Also emit a transfer when the narration shows an actor taking possession of, picking up, using,
+handling, or beginning to consume/use/handle an already-tracked object that appears in TRACKED
+OBJECTS with a localspace/grid/site container AND has an actor annotation (actor:) matching that
+actor. Use the tracked object_id — do NOT emit a new promote candidate for this object.
+Exception: do not apply this rule when the narration clearly introduces a new separate instance —
+words like "another", "new", "second", "fresh", or "different" signal a genuinely new object that
+should be promoted.
+
 For each transfer, emit one entry in the "object_transfers" array.
 IMPORTANT: identify the object by temp_ref (same-turn object from object_candidates above) OR by object_id (if it was established in a prior turn). Do NOT use name-only references.
 For objects already listed in TRACKED OBJECTS, always use the exact object_id field — never use temp_ref alone for a tracked object. temp_ref is only valid for objects born this turn via a promote candidate in object_candidates.
@@ -441,6 +449,12 @@ For objects already listed in TRACKED OBJECTS, always use the exact object_id fi
   "to_container_id": "<exact value from valid containers list above>",
   "reason": "<exact phrase from narration supporting this transfer>"
 }
+
+Promote container is the object's starting location this turn. If the object is also transferred
+the same turn, the promote container is where it exists BEFORE the action; the transfer moves it
+to the final destination. Never assign the same container as both the promote destination and the
+transfer destination for the same temp_ref — doing so creates a redundant transfer that will be
+silently skipped.
 
 If no transfers occurred, emit: "object_transfers": []
 
@@ -576,10 +590,12 @@ function _describeTrackedObjects(gameState) {
     const containerLabel = r.current_container_type === 'player' ? 'player'
       : r.current_container_type === 'npc' ? `npc:${r.current_container_id}`
       : `${r.current_container_id}`;
-    return `- ${r.id} | ${r.name} | container: ${containerLabel}`;
+    const actorLabel = r.associated_actor_id ? ` | actor: ${r.associated_actor_id}` : '';
+    return `- ${r.id} | ${r.name} | container: ${containerLabel}${actorLabel}`;
   });
   for (const r of nearby) {
-    lines.push(`- ${r.id} | ${r.name} | container: ${r.current_container_id} | nearby (1 tile)`);
+    const actorLabel = r.associated_actor_id ? ` | actor: ${r.associated_actor_id}` : '';
+    lines.push(`- ${r.id} | ${r.name} | container: ${r.current_container_id} | nearby (1 tile)${actorLabel}`);
   }
   return lines.join('\n');
 }
