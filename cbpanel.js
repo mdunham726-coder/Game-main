@@ -9,7 +9,7 @@
  *   [X] Explain This — DeepSeek explanation of last turn's extraction behavior
  *
  * Launch: node cbpanel.js
- * Hotkey from diagnostics.js: [B]
+ * Hotkey from flight-recorder.js: [B]
  */
 
 'use strict';
