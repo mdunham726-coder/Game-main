@@ -6334,7 +6334,7 @@ const server = app.listen(PORT, () => {
 // — read via diag.getLastGameState / getLastSessionId (used by Clusters 6–7 routes pending migration)
 let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
 
-app.get('/diagnostics/stream', (req, res) => diag.registerStreamHandler(req, res));
+// /diagnostics/stream migrated to diagnostics.js (Cluster 7) — registered via registerRoutes
 
 // /diagnostics/continuity, /diagnostics/log, /diagnostics/context migrated to diagnostics.js (Cluster 5, Subcluster A)
 
@@ -6354,84 +6354,7 @@ app.get('/diagnostics/stream', (req, res) => diag.registerStreamHandler(req, res
 
 // /diagnostics/objects, /diagnostics/entity, /diagnostics/objects/trace migrated to diagnostics.js (Cluster 4)
 
-// Harness NPC fixture injector — POST /diagnostics/inject-npc
-// Injects a synthetic NPC directly onto the player's current tile. For QA harness use only.
-// Auth: x-diagnostics-key header. Body: { sessionId, npc_name, job_category }.
-// The injected NPC is marked source:"harness_fixture" and fixture:true for forensic identification.
-app.post('/diagnostics/inject-npc', (req, res) => {
-  const diagKey = process.env.DIAGNOSTICS_KEY;
-  if (!diagKey) return res.status(503).json({ error: 'inject_npc_disabled', message: 'DIAGNOSTICS_KEY not set.' });
-  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(401).json({ error: 'unauthorized' });
-
-  const { sessionId, npc_name, job_category } = req.body || {};
-  if (!sessionId)    return res.status(400).json({ error: 'sessionId required' });
-  if (!npc_name)     return res.status(400).json({ error: 'npc_name required' });
-  if (!job_category) return res.status(400).json({ error: 'job_category required' });
-
-  const session = sessionStates.get(sessionId);
-  if (!session) return res.status(404).json({ error: 'session_not_found' });
-  const gs = session.gameState;
-
-  const site = gs.world?.active_local_space || gs.world?.active_site;
-  if (!site) return res.status(400).json({ error: 'no_active_site', message: 'No active site or localspace in this session.' });
-
-  const pos = gs.player?.position;
-  if (!pos) return res.status(400).json({ error: 'no_player_position', message: 'Player position not set.' });
-
-  // Build synthetic NPC record — pre-filled, fixture-marked
-  const npc_id = `fixture#npc_${Date.now()}`;
-  const npc = {
-    id: npc_id,
-    site_id: site.site_id || site.id || 'unknown',
-    npc_name,
-    job_category,
-    gender: null, age: null,
-    _fill_frozen: true,        // skip NPC-FILL pipeline — already filled
-    is_learned: true,          // narrator receives real name, not null
-    player_recognition: null,
-    reputation_player: 50,
-    traits: [],
-    attributes: {},
-    object_capture_turn: null,
-    position: { mx: 0, my: 0, lx: pos.x, ly: pos.y },
-    source: 'harness_fixture', // forensic marker — injected by QA harness, not worldgen
-    fixture: true
-  };
-
-  // Add to site NPC registry
-  if (!Array.isArray(site.npcs)) site.npcs = [];
-  site.npcs.push(npc);
-
-  // computeVisibleNpcs for localspaces resolves npc ids against active_site.npcs, not active_local_space.npcs.
-  // When injecting at depth 3 (site === active_local_space), also register in active_site so the resolver finds the id.
-  const _injectActiveSite = gs.world?.active_site;
-  if (_injectActiveSite && _injectActiveSite !== site) {
-    if (!Array.isArray(_injectActiveSite.npcs)) _injectActiveSite.npcs = [];
-    _injectActiveSite.npcs.push(npc);
-  }
-
-  // Add NPC id to player's exact tile so computeVisibleNpcs picks it up
-  const grid = site.grid;
-  if (Array.isArray(grid) && grid[pos.y] && grid[pos.y][pos.x]) {
-    const tile = grid[pos.y][pos.x];
-    if (!Array.isArray(tile.npc_ids)) tile.npc_ids = [];
-    tile.npc_ids.push(npc_id);
-  } else {
-    // Grid missing or tile uninitialized — still added to registry; visibility depends on grid structure
-    console.warn(`[INJECT-NPC] grid tile at (${pos.x},${pos.y}) not found — NPC added to registry only`);
-  }
-
-  // Recompute _visible_npcs so the Arbiter sees the injected NPC without requiring player movement.
-  // _visible_npcs is normally only computed on entry or movement; injection bypasses both.
-  const _injectLS = gs.world?.active_local_space;
-  if (_injectLS && _injectLS.grid) {
-    _injectLS._visible_npcs = Actions.computeVisibleNpcs(_injectLS, pos, gs.world.active_site?.npcs || []);
-  } else if (gs.world?.active_site?.grid) {
-    gs.world.active_site._visible_npcs = Actions.computeVisibleNpcs(gs.world.active_site, pos);
-  }
-
-  return res.json({ injected: true, npc_id, npc_name, job_category, tile: { x: pos.x, y: pos.y } });
-});
+// /diagnostics/inject-npc migrated to diagnostics.js (Cluster 7)
 
 // /diagnostics/entity and /diagnostics/objects/trace migrated to diagnostics.js (Cluster 4)
 
@@ -6441,32 +6364,7 @@ app.post('/diagnostics/inject-npc', (req, res) => {
 
 // /diagnostics/source and /diagnostics/source-search migrated to diagnostics.js (Cluster 2) — registered via diag.registerRoutes(app)
 
-// Session bootstrap probe for Mother Brain — GET /diagnostics/session
-// Returns the last known session ID and turn count so MB can self-initialize without waiting for an SSE turn.
-// v1.87.3: also returns sessions[] — all active sessions sorted by total_turns desc, so attach_session can pick
-// the real game session instead of the last probe/harness session that happened to POST /narrate most recently.
-app.get('/diagnostics/session', (req, res) => {
-  // Build sessions[] from all entries in sessionStates Map
-  const sessions = [];
-  for (const [sid, sess] of sessionStates.entries()) {
-    const gs = sess.gameState;
-    const total_turns = gs?.turn_history?.length ?? 0;
-    const depth = gs?.world?.active_local_space ? 3 : gs?.world?.active_site ? 2 : gs?.world?.position ? 1 : 0;
-    sessions.push({ session_id: sid, total_turns, depth });
-  }
-  sessions.sort((a, b) => b.total_turns - a.total_turns);
-  if (!diag.getLastSessionId() || !diag.getLastGameState()) {
-    return res.json({ sessionId: null, hasTurnData: false, lastTurn: null, sessions });
-  }
-  const _dh = diag.getDiagHistory();
-  const lastEntry = _dh.length > 0 ? _dh[_dh.length - 1] : null;
-  res.json({
-    sessionId:   diag.getLastSessionId(),
-    hasTurnData: _dh.length > 0,
-    lastTurn:    lastEntry?.turn_number ?? null,
-    sessions
-  });
-});
+// /diagnostics/session migrated to diagnostics.js (Cluster 7)
 
 // /diagnostics/npc, /diagnostics/npcs migrated to diagnostics.js (Cluster 6)
 
