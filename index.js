@@ -4538,6 +4538,14 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             if (_qeActor.action !== 'promote' || !_qeActor.actor_npc_ref) continue;
             const _aRef = String(_qeActor.actor_npc_ref).toLowerCase().trim();
             if (!_aRef) { _qeActor._resolved_actor_id = null; continue; }
+            // v1.88.68: player sentinel — "player" is a valid actor ref, not an NPC ID.
+            // Preserve the association without NPC pool lookup; Phase 4 bookkeeping already
+            // skips associated_actor_id === 'player' from NPC reverse-index population.
+            if (_aRef === 'player') {
+              _qeActor._resolved_actor_id = 'player';
+              _objectRealityDebug.actor_resolution.push({ object_name: _qeActor.name, actor_npc_ref: _qeActor.actor_npc_ref, resolved_to: 'player', status: 'player_sentinel' });
+              continue;
+            }
             // Direct NPC ID match
             let _aMatch = _actorAllNpcs.find(n => n.id === _qeActor.actor_npc_ref);
             // Turn 1 registry fallback for prose founding labels
