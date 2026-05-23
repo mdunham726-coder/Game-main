@@ -989,7 +989,7 @@ app.post('/narrate', async (req, res) => {
   };
 
   // v1.85.39: turn_stage SSE — parsing start
-  emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+  diag.emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
   let parseResult = null;
   try {
     parseResult = await normalizeUserIntent(userInput, gameContext, resolvedChannel);
@@ -999,7 +999,7 @@ app.post('/narrate', async (req, res) => {
   }
   const _parserUsage = parseResult?.parser_usage || null;
   // v1.85.39: turn_stage SSE — parsing complete
-  emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
+  diag.emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
   let debug = {
     parser: "none",
     input: userInput,
@@ -2265,7 +2265,7 @@ app.post('/narrate', async (req, res) => {
       if (_sfUnfilled.length > 0) {
         // v1.85.39: fill stage start
         _fillStageEmitted = true;
-        emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+        diag.emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
         const _sfFoundingClause = gameState.world.founding_prompt
           ? `World description: "${gameState.world.founding_prompt}". `
           : '';
@@ -2320,7 +2320,7 @@ app.post('/narrate', async (req, res) => {
             }
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
             // v1.85.39: fill complete (SITE-FILL)
-            emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
+            diag.emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
           } else {
             console.warn('[SITE-FILL] Failed to parse fill response — blocking narration');
             if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -2788,7 +2788,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
 
     // v1.85.39: if no fill block fired, emit the explicit skip so frontend can mark [-]
     if (!_fillStageEmitted) {
-      emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
+      diag.emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
     }
 
     // [NARRATION-GATE] Block narration if active site slot is incomplete.
@@ -3034,14 +3034,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     let _agDurationMs = 0;
     gameState._lastParsedTarget = inputObj?.player_intent?.target || null;
     if (turnNumber === 1) {
-      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
+      diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
       _authorityGateResult = { decision: 'allow_no_rc', route: 'narrator', rc_allowed: false, input_type: 'valid_low_risk', reason_code: 'turn_1_founding', referenced_objects: [], referenced_entities: [], referenced_abilities: [], evidence: { engine_supported: true, matched_records: [] }, _llm_called: false, gate_fast_path_hit: false, llm_confidence: null };
     } else {
-      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+      diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
       const _agStart = Date.now();
       _authorityGateResult = await AuthorityGate.runAuthorityGate(_rawInput, gameState, _parsedAction, process.env.DEEPSEEK_API_KEY);
       _agDurationMs = Date.now() - _agStart;
-      emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId, decision: _authorityGateResult.decision, rc_allowed: _authorityGateResult.rc_allowed });
+      diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId, decision: _authorityGateResult.decision, rc_allowed: _authorityGateResult.rc_allowed });
     }
     delete gameState._lastParsedTarget;
     console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} fast_path:${_authorityGateResult.gate_fast_path_hit ? 'L1' : 'L2'} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'} dur:${_agDurationMs}ms`);
@@ -3270,17 +3270,17 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           if (_rcTruncated) console.warn(`[REALITY-CHECK] response truncated (finish_reason=length) — turn ${turnNumber}, increase max_tokens if this persists`);
           _rcPayloadSnapshot = { prompt: _realityQuery, response: _rcRawResponse }; // v1.84.21
           if (!_realityAnchor) throw new Error('empty_response');
-          emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, truncated: _rcTruncated || false, gameSessionId: resolvedSessionId });
+          diag.emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: _realityAnchor, truncated: _rcTruncated || false, gameSessionId: resolvedSessionId });
           console.log(`[REALITY-CHECK] fired — turn ${turnNumber}, query length ${_realityQuery.length}, result length ${_realityAnchor.length}${_rcTruncated ? ' [TRUNCATED]' : ''}`);
         } catch (_rcErr) {
           console.error('[REALITY-CHECK] HARD FAILURE:', _rcErr.message, '— turn halted, narrator not called');
-          emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: null, error: _rcErr.message, gameSessionId: resolvedSessionId });
+          diag.emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: true, skipped_reason: null, query: _realityQuery, result: null, error: _rcErr.message, gameSessionId: resolvedSessionId });
           return res.json({ sessionId: resolvedSessionId, error: 'REALITY_CHECK_FAILED', narrative: 'The world could not adjudicate that action. Please try again.' });
         }
       }
     }
     if (_rcSkippedReason) {
-      emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: false, skipped_reason: _rcSkippedReason, query: null, result: null, gameSessionId: resolvedSessionId });
+      diag.emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: false, skipped_reason: _rcSkippedReason, query: null, result: null, gameSessionId: resolvedSessionId });
       console.log(`[REALITY-CHECK] skipped — turn ${turnNumber}, reason: ${_rcSkippedReason}`);
     }
     // v1.87.0: Post-RC name-reveal resolver — detect whether RC signaled a true-name reveal and
@@ -3750,7 +3750,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     diag.setNarratorPayload(_nar);
     try {
       // v1.85.39: narration stage start
-      emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+      diag.emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
       _reportProgress('narrating', 64, {});
       _narratorStart = Date.now();
       response = await _makeNarCall();
@@ -3802,8 +3802,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     }
 
     // v1.85.39: narration complete, world_update starting
-    emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
-    emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
+    diag.emitDiagnostics({ type: 'turn_stage', stage: 'narration', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
+    diag.emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
 
     // v1.70.0: ContinuityBrain Phase B — forensic extraction + promotion; replaces NC extraction+freeze
     let _continuityExtractionSuccess = false;
@@ -4683,7 +4683,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     }
 
     // v1.85.39: ORS complete — world_update done
-    emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
+    diag.emitDiagnostics({ type: 'turn_stage', stage: 'world_update', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
 
     // Extract player entity candidate for Mother Brain visibility
     const _playerExtraction = (() => {
@@ -5313,7 +5313,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       if (debug.soliloquy_active && debug.narrator_mode_active) v.push('SOLILOQUY + NARRATOR_MODE contradiction');
       return v;
     })();
-    emitDiagnostics({
+    diag.emitDiagnostics({
       type: 'turn',
       turn: turnNumber,
       raw_input: action,
@@ -5420,11 +5420,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         const _wEstCost = _wCacheHitTok > 0 || _wCacheMissTok > 0
           ? (_wCacheHitTok * 0.000000028) + (_wCacheMissTok * 0.00000014) + (_wCompletionTok * 0.00000028)
           : (_wPromptTok   * 0.00000014)  + (_wCompletionTok * 0.00000028);
-        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: _wLines, gameSessionId: resolvedSessionId,
+        diag.emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: _wLines, gameSessionId: resolvedSessionId,
           usage: { prompt_tokens: _wPromptTok, completion_tokens: _wCompletionTok, total_tokens: _wTotalTok,
                    cache_hit_tokens: _wCacheHitTok, cache_miss_tokens: _wCacheMissTok, est_cost_usd: _wEstCost } });
       } catch (e) {
-        emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: [`[scan failed: ${e.message}]`], gameSessionId: resolvedSessionId,
+        diag.emitDiagnostics({ type: 'watch_verdict', turn: turnNumber, lines: [`[scan failed: ${e.message}]`], gameSessionId: resolvedSessionId,
           usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cache_hit_tokens: 0, cache_miss_tokens: 0, est_cost_usd: 0 } });
       }
     })();
@@ -5440,7 +5440,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         const _hasTransformCapability = Object.values(gameState?.player?.attributes || {})
           .some(a => a.bucket === 'declared' && /transform|shapeshift|change.form|alter.form|become/i.test(a.value));
         if (_arbVisibleNpcs.length === 0 && !_hasTransformCapability) {
-          emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, gameSessionId: resolvedSessionId });
+          diag.emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, gameSessionId: resolvedSessionId });
           // Invariant: every Arbiter pass leaves a verdict object. "Found nothing to do" is still a verdict.
           gameState._lastArbiterVerdict = { turn: turnNumber, raw: null, applied: { reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null } };
           return;
@@ -5578,11 +5578,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             }
           }
         }
-        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, player_recognition_changes: _arbRecApplied, player_form_change: _arbFormApplied, gameSessionId: resolvedSessionId });
+        diag.emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: _arbApplied, is_learned_changes: _arbLearnApplied, player_recognition_changes: _arbRecApplied, player_form_change: _arbFormApplied, gameSessionId: resolvedSessionId });
         _reportProgress('world_update', 91, {});
         gameState._lastArbiterVerdict = { turn: turnNumber, raw: _arbParsed, applied: { player_form_change: _arbFormApplied, player_recognition_changes: _arbRecApplied } }; // v1.85.21: forensic — raw=what Arbiter emitted, applied=what engine wrote
       } catch (e) {
-        emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, error: e.message, gameSessionId: resolvedSessionId });
+        diag.emitDiagnostics({ type: 'arbiter_verdict', turn: turnNumber, reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null, error: e.message, gameSessionId: resolvedSessionId });
         gameState._lastArbiterVerdict = { turn: turnNumber, raw: null, error: String(e?.message || e), applied: { reputation_changes: [], is_learned_changes: [], player_recognition_changes: [], player_form_change: null } };
       }
     })();
@@ -5639,7 +5639,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     const _narErrKind = (err.name === 'AbortError' || err.code === 'ERR_CANCELED') ? 'timeout'
                       : err.code === 'ECONNRESET' ? 'econnreset'
                       : 'error';
-    emitDiagnostics({ type: 'narrator_error', turn: turnNumber, kind: _narErrKind, message: err.message, gameSessionId: resolvedSessionId });
+    diag.emitDiagnostics({ type: 'narrator_error', turn: turnNumber, kind: _narErrKind, message: err.message, gameSessionId: resolvedSessionId });
     if (logger) {
       logger.narrationFailed(err.message);
     }
@@ -6334,7 +6334,7 @@ const server = app.listen(PORT, () => {
   console.log(`[ENV CHECK] DEEPSEEK_API_KEY present: ${!!process.env.DEEPSEEK_API_KEY}`);
   // Notify Mother Brain that Node is online. _lastDiagnosticPayload will replay
   // this to MB on its first connect even if MB starts after Node.
-  emitDiagnostics({ type: 'lifecycle', event: 'online', ts: new Date().toISOString(), port: PORT, sessionId: _mbSessionId });
+  diag.emitDiagnostics({ type: 'lifecycle', event: 'online', ts: new Date().toISOString(), port: PORT, sessionId: _mbSessionId });
 });
 
 // =============================================================================
@@ -6342,8 +6342,6 @@ const server = app.listen(PORT, () => {
 // Emits a structured payload after every narration turn.
 // flight-recorder.js connects here to render the terminal flight recorder.
 // =============================================================================
-const _sseClients = new Set();
-let _lastDiagnosticPayload = null; // replayed to new connections so they show current state immediately
 let _diagHistory = []; // rolling per-turn cost history for delta/avg and session summary (max 200 entries)
 let _lastRenderedBlock = null; // cache of the exact continuity text injected into the model each turn
 let _lastGameState    = null; // cache of most-recent gameState for diagnostics endpoints (routes lack request-scope access)
@@ -6351,36 +6349,7 @@ let _lastSessionId    = null; // cache of most-recent resolved session ID (used 
 let _lastWatchMessage = null;        // cache of Mother's last watch_message (from Phase B)
 let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
 
-app.get('/diagnostics/stream', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.flushHeaders();
-  req.socket.setTimeout(0);
-  req.socket.setNoDelay(true); // disable Nagle — flush every write immediately
-  res.write('data: {"type":"connected"}\n\n');
-  // Replay last turn immediately so reconnects don't show stale data
-  if (_lastDiagnosticPayload) {
-    try { res.write(`data: ${JSON.stringify(_lastDiagnosticPayload)}\n\n`); } catch (_) {}
-  }
-  _sseClients.add(res);
-  const keepalive = setInterval(() => {
-    if (res.writableEnded || res.destroyed) {
-      clearInterval(keepalive);
-      _sseClients.delete(res);
-      return;
-    }
-    try { res.write(': keepalive\n\n'); } catch (_) {
-      clearInterval(keepalive);
-      _sseClients.delete(res);
-    }
-  }, 15000);
-  req.on('close', () => {
-    clearInterval(keepalive);
-    _sseClients.delete(res);
-  });
-});
+app.get('/diagnostics/stream', (req, res) => diag.registerStreamHandler(req, res));
 
 // On-demand continuity inspector — GET /diagnostics/continuity?turns=N
 // v1.70.0: Returns ContinuityBrain CB fields. Legacy NC fields (active_continuity,
@@ -7709,30 +7678,6 @@ app.get('/harness/result/last', (req, res) => {
   res.json(_lastHarnessResult);
 });
 
-function emitDiagnostics(payload) {
-  let data;
-  try {
-    data = `data: ${JSON.stringify(payload)}\n\n`;
-  } catch (err) {
-    console.error('[EMIT_DIAG] JSON.stringify failed:', err.message);
-    return;
-  }
-  _lastDiagnosticPayload = payload; // cache for replay on reconnect
-  console.log(`[EMIT_DIAG] turn=${payload.turn} clients=${_sseClients.size}`);
-  for (const client of _sseClients) {
-    if (client.writableEnded || client.destroyed) {
-      _sseClients.delete(client);
-      continue;
-    }
-    try {
-      client.write(data);
-      if (client.socket) client.socket.uncork();
-    } catch (err) {
-      console.error('[EMIT_DIAG] write failed:', err.message);
-      _sseClients.delete(client);
-    }
-  }
-}
 // Allow heavy prompts (e.g. "critique my game") to complete before Node kills the socket.
 // headersTimeout and requestTimeout must exceed the outbound axios timeout (120s).
 server.headersTimeout = 130000;
@@ -7747,7 +7692,7 @@ server.setTimeout(0); // disable per-socket idle timeout — axios owns the outb
 // =============================================================================
 function _mbEmitOffline(reason) {
   try {
-    emitDiagnostics({ type: 'lifecycle', event: 'offline', reason, ts: new Date().toISOString(), sessionId: _mbSessionId });
+    diag.emitDiagnostics({ type: 'lifecycle', event: 'offline', reason, ts: new Date().toISOString(), sessionId: _mbSessionId });
   } catch (_) {}
 }
 

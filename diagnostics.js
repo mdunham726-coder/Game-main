@@ -906,6 +906,69 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
   return context;
 }
 
+// =============================================================================
+// SSE INFRASTRUCTURE
+// =============================================================================
+const _sseClients = new Set();
+let _lastDiagnosticPayload = null; // replayed to new connections so they show current state immediately
+
+function emitDiagnostics(payload) {
+  let data;
+  try {
+    data = `data: ${JSON.stringify(payload)}\n\n`;
+  } catch (err) {
+    console.error('[EMIT_DIAG] JSON.stringify failed:', err.message);
+    return;
+  }
+  _lastDiagnosticPayload = payload; // cache for replay on reconnect
+  console.log(`[EMIT_DIAG] turn=${payload.turn} clients=${_sseClients.size}`);
+  for (const client of _sseClients) {
+    if (client.writableEnded || client.destroyed) {
+      _sseClients.delete(client);
+      continue;
+    }
+    try {
+      client.write(data);
+      if (client.socket) client.socket.uncork();
+    } catch (err) {
+      console.error('[EMIT_DIAG] write failed:', err.message);
+      _sseClients.delete(client);
+    }
+  }
+}
+
+// Handler for app.get('/diagnostics/stream', diag.registerStreamHandler)
+function registerStreamHandler(req, res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders();
+  req.socket.setTimeout(0);
+  req.socket.setNoDelay(true); // disable Nagle — flush every write immediately
+  res.write('data: {"type":"connected"}\n\n');
+  // Replay last turn immediately so reconnects don't show stale data
+  if (_lastDiagnosticPayload) {
+    try { res.write(`data: ${JSON.stringify(_lastDiagnosticPayload)}\n\n`); } catch (_) {}
+  }
+  _sseClients.add(res);
+  const keepalive = setInterval(() => {
+    if (res.writableEnded || res.destroyed) {
+      clearInterval(keepalive);
+      _sseClients.delete(res);
+      return;
+    }
+    try { res.write(': keepalive\n\n'); } catch (_) {
+      clearInterval(keepalive);
+      _sseClients.delete(res);
+    }
+  }, 15000);
+  req.on('close', () => {
+    clearInterval(keepalive);
+    _sseClients.delete(res);
+  });
+}
+
 module.exports = {
   TERRAIN_CODES:              _TERRAIN_CODES,
   getSiteInteriorState:       _getSiteInteriorState,
@@ -918,4 +981,7 @@ module.exports = {
   setNarratorRawResponse,
   // primary API
   buildDebugContext,
+  // SSE infrastructure
+  emitDiagnostics,
+  registerStreamHandler,
 };
