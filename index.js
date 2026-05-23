@@ -71,6 +71,8 @@ const _consultHistory = new Map();
 // ── Real-time init progress bus (for first-turn progress polling) ─────────────
 const _initProgress = new Map();
 
+let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
+
 // ── Session TTL eviction ─────────────────────────────────────────────────────
 // Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
 const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
@@ -5718,7 +5720,7 @@ app.get('/ping', (req, res) => {
   res.json({ ok: true });
 });
 
-// Diagnostics routes — Clusters 1–4 registered here; clusters 5–7 added incrementally.
+// All /diagnostics/* routes registered in diagnostics.js via registerRoutes()
 diag.registerRoutes(app, { getSessionStates: () => sessionStates });
 
 
@@ -6322,51 +6324,6 @@ const server = app.listen(PORT, () => {
   // this to MB on its first connect even if MB starts after Node.
   diag.emitDiagnostics({ type: 'lifecycle', event: 'online', ts: new Date().toISOString(), port: PORT, sessionId: _mbSessionId });
 });
-
-// =============================================================================
-// SSE DIAGNOSTICS STREAM — /diagnostics/stream
-// Emits a structured payload after every narration turn.
-// flight-recorder.js connects here to render the terminal flight recorder.
-// =============================================================================
-// _diagHistory migrated to diagnostics.js (Cluster 3) — use diag.pushDiagHistory / diag.getDiagHistory
-// _lastRenderedBlock, _lastGameState, _lastSessionId, _lastWatchMessage migrated to diagnostics.js (Cluster 5)
-// — write via diag.setLastGameState / setLastRenderedBlock / setLastSessionId / setLastWatchMessage
-// — read via diag.getLastGameState / getLastSessionId (used by Clusters 6–7 routes pending migration)
-let _wUsageShapeLogged = false;      // one-time flag: log Watch usage object shape on first call to confirm DeepSeek field names
-
-// /diagnostics/stream migrated to diagnostics.js (Cluster 7) — registered via registerRoutes
-
-// /diagnostics/continuity, /diagnostics/log, /diagnostics/context migrated to diagnostics.js (Cluster 5, Subcluster A)
-
-// /diagnostics/turn, /diagnostics/turn/latest, /diagnostics/payload migrated to diagnostics.js (Cluster 4)
-
-// /diagnostics/summary migrated to diagnostics.js (Cluster 3) — registered via diag.registerRoutes(app)
-
-// /diagnostics/context migrated to diagnostics.js (Cluster 5, Subcluster A) — see above
-
-// /diagnostics/sites, /diagnostics/sites-query, /diagnostics/site-placement, /diagnostics/site,
-// /diagnostics/localspaces, /diagnostics/localspace migrated to diagnostics.js (Cluster 5, Subcluster B)
-
-
-// =============================================================================
-// v1.84.54: OBJECT REALITY DIAGNOSTIC ENDPOINTS
-// =============================================================================
-
-// /diagnostics/objects, /diagnostics/entity, /diagnostics/objects/trace migrated to diagnostics.js (Cluster 4)
-
-// /diagnostics/inject-npc migrated to diagnostics.js (Cluster 7)
-
-// /diagnostics/entity and /diagnostics/objects/trace migrated to diagnostics.js (Cluster 4)
-
-// =============================================================================
-// END v1.84.54 OBJECT REALITY DIAGNOSTIC ENDPOINTS
-// =============================================================================
-
-// /diagnostics/source and /diagnostics/source-search migrated to diagnostics.js (Cluster 2) — registered via diag.registerRoutes(app)
-
-// /diagnostics/session migrated to diagnostics.js (Cluster 7)
-
-// /diagnostics/npc, /diagnostics/npcs migrated to diagnostics.js (Cluster 6)
 
 // =============================================================================
 // HARNESS CONTROL ENDPOINTS — /harness/*
