@@ -312,6 +312,11 @@ OBJECT CANDIDATES (optional)
 Identify concrete, discrete, portable physical objects explicitly mentioned in the narration.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
+Figurative or embellished prose does not disqualify extraction. Apply this test: is there a
+concrete, portable physical object named in the phrase? If yes, extract it — evocative adjectives,
+dramatized verbs, and metaphorical modifiers around a named object do not nullify the object's
+existence. If no concrete portable noun is named — only a metaphor, impression, or abstract
+quality — do not invent an object.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
 Objects annotated with "nearby (1 tile)" in TRACKED OBJECTS are placed objects at a fixed floor location adjacent to the player — treat them as tracked and do not emit promote candidates for them.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
