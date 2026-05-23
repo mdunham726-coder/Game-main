@@ -1,7 +1,7 @@
 /**
- * diagnostics.js — CMD Flight Recorder for the Dungeon Master Engine
+ * flight-recorder.js — CMD Flight Recorder for the Dungeon Master Engine
  * Connects to /diagnostics/stream (SSE) and redraws the terminal every turn.
- * Run standalone: node diagnostics.js
+ * Run standalone: node flight-recorder.js
  */
 
 'use strict';

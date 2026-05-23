@@ -5301,7 +5301,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     const _last5           = _diagHistory.slice(-5).filter(e => e.system_total != null);
     const _avg5            = _last5.length > 0 ? Math.round(_last5.reduce((s, e) => s + e.system_total, 0) / _last5.length) : null;
 
-    // Emit to SSE diagnostics stream (diagnostics.js terminal flight recorder)
+    // Emit to SSE diagnostics stream (flight-recorder.js terminal client)
     const _turnViolations = (() => {
       const v = [];
       if (_parsedAction === 'move' && debug.parser !== 'legacy' && !debug.degraded_from && !debug.freeform_block_active && !movement) v.push('move: no movement object');
@@ -7130,7 +7130,7 @@ const server = app.listen(PORT, () => {
 // =============================================================================
 // SSE DIAGNOSTICS STREAM — /diagnostics/stream
 // Emits a structured payload after every narration turn.
-// diagnostics.js connects here to render the terminal flight recorder.
+// flight-recorder.js connects here to render the terminal flight recorder.
 // =============================================================================
 const _sseClients = new Set();
 let _lastDiagnosticPayload = null; // replayed to new connections so they show current state immediately
@@ -8197,7 +8197,7 @@ const _SOURCE_ALLOWLIST = new Set([
   'index.js', 'Engine.js', 'ActionProcessor.js', 'NPCs.js', 'WorldGen.js',
   'NarrativeContinuity.js', 'ContinuityBrain.js', 'SemanticParser.js',
   'continuity.js', 'QuestSystem.js', 'logger.js', 'logging.js',
-  'diagnostics.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js',  // v1.84.54
+  'flight-recorder.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js',  // v1.84.54
   'cbpanel.js', 'npcpanel.js', 'sitelens.js', 'motherwatch.js',              // v1.85.1
   'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
   'test-harness.js',                                                           // v1.85.53

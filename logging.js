@@ -9,7 +9,7 @@
  *   C → copy-all re-fetch from endpoint → clipboard + file
  *   X → copy-range re-fetch from endpoint → clipboard + file
  *
- * Section names, order, and field labels match diagnostics.js exactly.
+ * Section names, order, and field labels match flight-recorder.js exactly.
  *
  * Run standalone: node logging.js
  */
@@ -27,7 +27,7 @@ const SSE_PATH     = '/diagnostics/stream';
 const LOG_PATH     = '/diagnostics/log';
 const RECONNECT_MS = 500;
 
-// ── ANSI helpers (matching diagnostics.js) ───────────────────────────────────
+// ── ANSI helpers (matching flight-recorder.js) ──────────────────────────────
 const R   = '\x1b[0m';
 const B   = '\x1b[1m';
 const DIM = '\x1b[2m';
@@ -91,7 +91,7 @@ function nullOr(v) {
 }
 
 // ── Format one turn entry as display lines ────────────────────────────────────
-// Sections and field labels match diagnostics.js exactly.
+// Sections and field labels match flight-recorder.js exactly.
 function formatEntry(t) {
   const lines = [];
   const push  = (...ss) => ss.forEach(s => lines.push(s));
