@@ -1,0 +1,1 @@
+{"name":"diagnostics-no-session","description":"Test six no-session diagnostic routes","endpoint":"/diagnostics/session","method":"GET","request_lifecycle":"session_per_run","request_template":{"WORLD_SEED":"$SEED"},"extract":"statusCode","metrics":[],"prompt_cycle":["a traveler arrives"]}

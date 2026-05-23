@@ -1339,7 +1339,8 @@ function registerRoutes(app, opts = {}) {
     const result = filtered.map(o => {
       const rec = { id: o.id, name: o.name, description: o.description, status: o.status || 'active',
                     created_turn: o.created_turn, current_container_type: o.current_container_type,
-                    current_container_id: o.current_container_id };
+                    current_container_id: o.current_container_id,
+                    associated_actor_id: o.associated_actor_id ?? null };  // v1.88.66
       if (includeEvents) rec.events = o.events || [];
       return rec;
     });

@@ -326,6 +326,7 @@ For each object, emit one entry in the "object_candidates" array:
   "container_type": "grid" | "npc" | "player" | "localspace",
   "container_id": "<exact value from valid containers list above — use the localspace ID when inside a localspace>",
   "reason": "<exact phrase from narration supporting this placement>",
+  "actor_npc_ref": "<optional — see ACTOR ASSOCIATION RULES below>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
   "initial_evidence": "<optional — exact narration phrase that establishes the initial condition>",
   "transfer_origin": "<required when container_type is 'player' AND item is not in Confirmed player inventory above — see TRANSFER ORIGIN RULES below>"
@@ -385,6 +386,22 @@ framed as held, shown, or gathered — that is player_claimed with no exceptions
 The narrator's prose does not change this classification.
 
 If no qualifying objects are present, emit: "object_candidates": []
+
+ACTOR ASSOCIATION RULES (actor_npc_ref field):
+
+  Emit actor_npc_ref when the narration shows an NPC actively interacting with the object.
+  Active interaction includes: eating, drinking, using, holding, carrying, gripping,
+  opening, wearing, reaching for, or physically manipulating the object.
+
+  Use the entity_ref value from entity_candidates for that NPC — the same ref you assigned
+  to that NPC in the entity_candidates array this turn.
+
+  DO NOT EMIT when the NPC is merely spatially near the object without active involvement:
+  "near", "beside", "in front of", "behind", "next to" are NOT association triggers.
+  Proximity alone does not constitute actor_npc_ref.
+
+  Omit the field entirely when no NPC is actively associated with this object.
+  One actor_npc_ref per object candidate — the most directly involved NPC only.
 
 ---
 

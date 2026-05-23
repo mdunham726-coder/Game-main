@@ -879,6 +879,7 @@ app.post('/narrate', async (req, res) => {
   if (gameState.player && !Array.isArray(gameState.player.object_ids)) gameState.player.object_ids = [];
   if (gameState.world && Array.isArray(gameState.world.npcs)) {
     gameState.world.npcs.forEach(npc => { if (!Array.isArray(npc.object_ids)) npc.object_ids = []; });
+    gameState.world.npcs.forEach(npc => { if (!Array.isArray(npc.associated_object_ids)) npc.associated_object_ids = []; }); // v1.88.66
   }
   // v1.84.0: NPC reputation rename — old saves used player_reputation (-25..+25); new schema uses reputation_player (0-100)
   if (gameState.world && Array.isArray(gameState.world.npcs)) {
@@ -2666,7 +2667,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
                 created_turn: 1,
                 current_container_type: 'player_worn',
                 current_container_id: 'player_worn',
-                owner_id: 'player',
+                associated_actor_id: 'player',
                 source: _boSrc,
                 status: 'active',
                 conditions: [],
@@ -3937,6 +3938,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               attributes:       {},
               object_ids:       [],
               worn_object_ids:  [],
+              associated_object_ids: [],  // v1.88.66: reverse index of objects associated with this NPC
               source:           'turn_1_declaration',
               _fill_frozen:     false
             };
@@ -3962,7 +3964,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               const _bnObjInput = [_bnItemName.toLowerCase(), 'npc', _bnId, 'born_npc_carried'].join('|');
               const _bnObjId    = 'obj_' + require('crypto').createHash('sha256').update(_bnObjInput, 'utf8').digest('hex').slice(0, 12);
               if (!gameState.objects[_bnObjId]) {
-                gameState.objects[_bnObjId] = { id: _bnObjId, name: _bnItemName, description: _bnItemDesc, created_turn: 1, current_container_type: 'npc', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
+                gameState.objects[_bnObjId] = { id: _bnObjId, name: _bnItemName, description: _bnItemDesc, created_turn: 1, current_container_type: 'npc', current_container_id: _bnId, associated_actor_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
               }
               if (!_bnNpc.object_ids.includes(_bnObjId)) _bnNpc.object_ids.push(_bnObjId);
             }
@@ -3984,7 +3986,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               const _bnWornInput = [_bnWornName.toLowerCase(), 'npc_worn', _bnId, 'born_npc_worn'].join('|');
               const _bnWornId    = 'obj_' + require('crypto').createHash('sha256').update(_bnWornInput, 'utf8').digest('hex').slice(0, 12);
               if (!gameState.objects[_bnWornId]) {
-                gameState.objects[_bnWornId] = { id: _bnWornId, name: _bnWornName, description: _bnWornDesc, created_turn: 1, current_container_type: 'npc_worn', current_container_id: _bnId, owner_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
+                gameState.objects[_bnWornId] = { id: _bnWornId, name: _bnWornName, description: _bnWornDesc, created_turn: 1, current_container_type: 'npc_worn', current_container_id: _bnId, associated_actor_id: _bnId, source: 'birth_custom', status: 'active', conditions: [], events: [] };
               }
               if (!_bnNpc.worn_object_ids.includes(_bnWornId)) _bnNpc.worn_object_ids.push(_bnWornId);
             }
@@ -4506,6 +4508,39 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         _objectRealityDebug.pre_rewritten = _preRewritten;
         _objectRealityDebug.tx_normalized = _txNormalized;
         _objectRealityDebug.quarantine_size = _quarantine.length;
+
+        // v1.88.66: actor_npc_ref resolution — resolve CB's prose entity_ref to a live NPC ID
+        // before ObjectHelper runs. Result stored as _resolved_actor_id on each quarantine entry.
+        // Guard: unresolved refs produce null and a [ORS-ACTOR-UNRESOLVED] warning — never a hard error.
+        {
+          const _actorAllNpcs = [
+            ...(gameState.world?.npcs || []),
+            ...(gameState.world?.active_site?.npcs || []),
+            ...(gameState.world?.active_local_space?._visible_npcs || [])
+          ].filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
+          const _actorT1Reg = gameState.world?._turn1_founded_entities || [];
+          for (const _qeActor of _quarantine) {
+            if (_qeActor.action !== 'promote' || !_qeActor.actor_npc_ref) continue;
+            const _aRef = String(_qeActor.actor_npc_ref).toLowerCase().trim();
+            if (!_aRef) { _qeActor._resolved_actor_id = null; continue; }
+            // Direct NPC ID match
+            let _aMatch = _actorAllNpcs.find(n => n.id === _qeActor.actor_npc_ref);
+            // Turn 1 registry fallback for prose founding labels
+            if (!_aMatch && turnNumber === 1 && _actorT1Reg.length) {
+              _aMatch = _actorAllNpcs.find(n => {
+                const _fe = _actorT1Reg.find(fe => fe.entity_id === n.id);
+                return _fe && _fe.labels.includes(_aRef);
+              });
+            }
+            if (_aMatch) {
+              _qeActor._resolved_actor_id = _aMatch.id;
+            } else {
+              console.warn(`[ORS-ACTOR-UNRESOLVED] actor_npc_ref="${_qeActor.actor_npc_ref}" on object "${_qeActor.name}" T-${turnNumber} — no live NPC match; associated_actor_id left null`);
+              _qeActor._resolved_actor_id = null;
+            }
+          }
+        }
+
         if (_quarantine.length > 0) {
           const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
           console.log(`[NARRATE] ObjectHelper: promoted=${_ohResult.promoted} transferred=${_ohResult.transferred} errors=${_ohResult.errors} | pre_rejected=${_preRejected}`);
@@ -4516,6 +4551,26 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _objectRealityDebug.audit        = _ohResult.audit || [];
           _objectRealityDebug.reconciliation_count = _ohResult.reconciled || 0;
           _objectRealityDebug.error_entries = (gameState.object_errors || []).filter(e => e.turn === turnNumber);
+
+          // v1.88.66: Phase 4 — populate associated_object_ids[] reverse index on NPCs.
+          // Walk ORS audit to find objects promoted this pass with associated_actor_id pointing to an NPC.
+          for (const _aoAudit of (_ohResult.audit || [])) {
+            if (_aoAudit.action !== 'promoted') continue;
+            const _aoRec = gameState.objects[_aoAudit.object_id];
+            if (!_aoRec?.associated_actor_id || _aoRec.associated_actor_id === 'player') continue;
+            const _aoAllNpcs = [
+              ...(gameState.world?.npcs || []),
+              ...(gameState.world?.active_site?.npcs || [])
+            ];
+            const _aoNpc = _aoAllNpcs.find(n => n.id === _aoRec.associated_actor_id);
+            if (_aoNpc) {
+              if (!Array.isArray(_aoNpc.associated_object_ids)) _aoNpc.associated_object_ids = [];
+              if (!_aoNpc.associated_object_ids.includes(_aoAudit.object_id)) {
+                _aoNpc.associated_object_ids.push(_aoAudit.object_id);
+                console.log(`[ACTOR-ASSOC] "${_aoRec.name}" (${_aoAudit.object_id}) → npc/${_aoRec.associated_actor_id} T-${turnNumber}`);
+              }
+            }
+          }
         } else {
           // v1.85.25: guard prevents 'empty_quarantine' from overwriting 'ap_dedup_all_transfers'.
           // When all CB transfers were AP-deduped, quarantine ends up empty but skip_reason is already set.

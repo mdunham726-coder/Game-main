@@ -512,7 +512,7 @@ async function run(gameState, quarantine, turnNumber) {
       created_turn:           turnNumber,
       current_container_type: container_type,
       current_container_id:   container_id,
-      owner_id:               null,
+      associated_actor_id:    entry._resolved_actor_id ?? null,  // v1.88.66: resolved from actor_npc_ref
       source:                 'continuity_brain',
       status:                 'active',
       conditions:             [],
