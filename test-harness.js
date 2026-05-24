@@ -399,6 +399,168 @@ function evalRule(rule, response) {
         evidence: `promoted:${promoted} transferred:${or.transferred ?? 0} errors:${or.errors ?? 0}` };
     }
 
+    // ── TSL Semantic Layer operators ─────────────────────────────────────────
+
+    case 'tsl_present': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      const passed = tsl !== null && tsl !== undefined && tsl.version === '1.0';
+      return {
+        passed,
+        expected: 'object_reality.tsl present with version "1.0"',
+        actual: tsl == null ? null : { version: tsl.version },
+        evidence: passed ? `tsl v${tsl.version} present` : 'tsl absent or wrong version',
+      };
+    }
+
+    case 'tsl_no_warnings': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      if (!tsl) return { passed: false, error: 'tsl_no_warnings: object_reality.tsl absent' };
+      const warnings = tsl.warnings;
+      if (!Array.isArray(warnings)) return { passed: false, error: 'tsl_no_warnings: warnings is not an array' };
+      const passed = warnings.length === 0;
+      return {
+        passed,
+        expected: 'tsl.warnings is empty',
+        actual: warnings.length,
+        evidence: passed ? 'no warnings' : `${warnings.length} warning(s): ${warnings.map(w => w.type).join(', ')}`,
+      };
+    }
+
+    case 'tsl_has_warning': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      if (!tsl) return { passed: false, error: 'tsl_has_warning: object_reality.tsl absent' };
+      const warnings = tsl.warnings;
+      if (!Array.isArray(warnings)) return { passed: false, error: 'tsl_has_warning: warnings is not an array' };
+      const wtype = rule.warning_type;
+      if (!wtype) return { passed: false, error: 'tsl_has_warning: warning_type field required' };
+      const passed = warnings.some(w => w.type === wtype);
+      return {
+        passed,
+        expected: `tsl.warnings contains type "${wtype}"`,
+        actual: warnings.map(w => w.type),
+        evidence: passed ? `found warning type "${wtype}"` : `types present: [${warnings.map(w => w.type).join(', ')}]`,
+      };
+    }
+
+    case 'tsl_transfer_grounded': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      if (!tsl) return { passed: false, error: 'tsl_transfer_grounded: object_reality.tsl absent' };
+      const signals = tsl.transfer_signals;
+      if (!Array.isArray(signals)) return { passed: false, error: 'tsl_transfer_grounded: transfer_signals is not an array' };
+      const pat = (rule.object_pattern || '').toLowerCase();
+      const match = signals.find(s => s.object_name && s.object_name.toLowerCase().includes(pat));
+      if (!match) return {
+        passed: false,
+        expected: `transfer_signal matching "${pat}" with source_signals`,
+        actual: signals.map(s => s.object_name),
+        evidence: `no transfer_signal matching "${pat}"`,
+      };
+      const passed = Array.isArray(match.source_signals) && match.source_signals.length > 0;
+      return {
+        passed,
+        expected: `transfer_signal for "${pat}" has source_signals`,
+        actual: match.source_signals,
+        evidence: passed ? `grounded: [${match.source_signals.join(', ')}]` : 'source_signals empty',
+      };
+    }
+
+    case 'tsl_alias_resolved': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      if (!tsl) return { passed: false, error: 'tsl_alias_resolved: object_reality.tsl absent' };
+      const candidates = tsl.alias_candidates;
+      if (!Array.isArray(candidates)) return { passed: false, error: 'tsl_alias_resolved: alias_candidates is not an array' };
+      const rawPat = (rule.raw_name || '').toLowerCase();
+      const method  = rule.match_method;
+      const match = candidates.find(c => c.raw_name && c.raw_name.toLowerCase().includes(rawPat));
+      if (!match) return {
+        passed: false,
+        expected: `alias_candidate with raw_name matching "${rawPat}"`,
+        actual: candidates.map(c => c.raw_name),
+        evidence: `no alias_candidate matching "${rawPat}"`,
+      };
+      const passed = method ? match.match_method === method : match.match_method != null;
+      return {
+        passed,
+        expected: method ? `match_method "${method}" for "${rawPat}"` : `match_method present for "${rawPat}"`,
+        actual: match.match_method,
+        evidence: `match_method: ${match.match_method}, resolved: ${match.resolved_name}`,
+      };
+    }
+
+    // ── TSL Probe-grade operators (probabilistic; require CB mediation) ───────
+
+    case 'tsl_alias_ambiguous': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      if (!tsl) return { passed: false, error: 'tsl_alias_ambiguous: object_reality.tsl absent' };
+      const candidates = tsl.alias_candidates;
+      if (!Array.isArray(candidates)) return { passed: false, error: 'tsl_alias_ambiguous: alias_candidates is not an array' };
+      const rawPat = (rule.raw_name || '').toLowerCase();
+      const match = candidates.find(c => c.raw_name && c.raw_name.toLowerCase().includes(rawPat));
+      if (!match) return {
+        passed: false,
+        expected: `alias_candidate with raw_name matching "${rawPat}"`,
+        actual: candidates.map(c => c.raw_name),
+        evidence: `no alias_candidate matching "${rawPat}"`,
+      };
+      const passed = match.unresolved_ambiguity != null;
+      return {
+        passed,
+        expected: `alias_candidate for "${rawPat}" has unresolved_ambiguity`,
+        actual: match.unresolved_ambiguity,
+        evidence: passed ? `ambiguity: ${JSON.stringify(match.unresolved_ambiguity)}` : 'unresolved_ambiguity is null',
+      };
+    }
+
+    case 'tsl_acquisition_grounded': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      if (!tsl) return { passed: false, error: 'tsl_acquisition_grounded: object_reality.tsl absent' };
+      const signals = tsl.acquisition_signals;
+      if (!Array.isArray(signals)) return { passed: false, error: 'tsl_acquisition_grounded: acquisition_signals is not an array' };
+      const pat = (rule.object_pattern || '').toLowerCase();
+      const match = signals.find(s => s.object_name && s.object_name.toLowerCase().includes(pat));
+      if (!match) return {
+        passed: false,
+        expected: `acquisition_signal matching "${pat}" with source_signals`,
+        actual: signals.map(s => s.object_name),
+        evidence: `no acquisition_signal matching "${pat}"`,
+      };
+      const passed = Array.isArray(match.source_signals) && match.source_signals.length > 0;
+      return {
+        passed,
+        expected: `acquisition_signal for "${pat}" has source_signals`,
+        actual: match.source_signals,
+        evidence: passed ? `grounded: [${match.source_signals.join(', ')}]` : 'source_signals empty',
+      };
+    }
+
+    case 'tsl_acquisition_ungrounded': {
+      const tsl = resolvePath(response, 'object_reality.tsl');
+      if (!tsl) return { passed: false, error: 'tsl_acquisition_ungrounded: object_reality.tsl absent' };
+      const signals  = tsl.acquisition_signals;
+      const warnings = tsl.warnings;
+      const pat = (rule.object_pattern || '').toLowerCase();
+      const warnMatch = Array.isArray(warnings) && warnings.some(w =>
+        w.type === 'acquisition_ungrounded' &&
+        (!w.object_name || w.object_name.toLowerCase().includes(pat))
+      );
+      const sigMatch = Array.isArray(signals) && signals.some(s =>
+        s.object_name && s.object_name.toLowerCase().includes(pat) &&
+        Array.isArray(s.source_signals) && s.source_signals.length === 0
+      );
+      const passed = warnMatch || sigMatch;
+      return {
+        passed,
+        expected: `acquisition_ungrounded for "${pat}" (warning or empty source_signals)`,
+        actual: {
+          warnings: Array.isArray(warnings) ? warnings.map(w => w.type) : null,
+          signals:  Array.isArray(signals)  ? signals.map(s => `${s.object_name}[${(s.source_signals || []).length}]`) : null,
+        },
+        evidence: passed
+          ? `ungrounded detected: warnMatch=${warnMatch} sigMatch=${sigMatch}`
+          : `no ungrounded signal for "${pat}"`,
+      };
+    }
+
     default:
       return { passed: false, error: `unknown operator: "${op}"` };
   }

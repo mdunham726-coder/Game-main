@@ -39,8 +39,9 @@
       "intent_channel": "do",
       "assert": [
         { "op": "no_error" },
-        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" },
-        { "path": "debug.narration_debug.object_reality.tsl.acquisition_signals", "op": "array_len_gt", "value": 0 }
+        { "op": "tsl_present" },
+        { "op": "tsl_transfer_grounded", "object_pattern": "coin pouch" },
+        { "op": "tsl_no_warnings" }
       ]
     }
   ]

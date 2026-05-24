@@ -40,7 +40,7 @@
       "intent_channel": "do",
       "assert": [
         { "op": "no_error" },
-        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" }
+        { "path": "object_reality.tsl", "op": "present" }
       ]
     }
   ]
