@@ -612,13 +612,24 @@ function _normalizeFissionEvents(fissionEvents, activeObjects, gateRefs, apStamp
     const ambiguous       = matches.length > 1;
 
     const products   = Array.isArray(evt.products) ? evt.products : [];
-    const dest       = _resolveDestinationHint(evt.destination_hint, gameState);
     const successors = [];
     for (let i = 0; i < products.length; i++) {
       const prod = products[i];
-      if (!prod || typeof prod !== 'string') continue;
+      // Structured product object: {name, destination_hint} — v1.90.05
+      // Backward compat: plain string falls through to evt.destination_hint
+      let prodName, prodDestHint;
+      if (prod && typeof prod === 'object' && typeof prod.name === 'string' && prod.name.trim()) {
+        prodName     = prod.name.trim();
+        prodDestHint = typeof prod.destination_hint === 'string' ? prod.destination_hint : evt.destination_hint;
+      } else if (typeof prod === 'string' && prod.trim()) {
+        prodName     = prod.trim();
+        prodDestHint = evt.destination_hint;
+      } else {
+        continue;
+      }
+      const dest = _resolveDestinationHint(prodDestHint, gameState);
       successors.push({
-        name:           prod,
+        name:           prodName,
         quantity:       1,
         unit:           null,
         container_type: dest.container_type,
