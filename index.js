@@ -3089,6 +3089,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     let _emoteRemoveExecuted = false; // v1.85.42: set inside RC else-block, consumed by narrator assembly
     let _emoteRemovedItemName = null;
     let _rcHiddenNpcTarget = null; // v1.87.0: NPC with hidden canonical name on SAY-channel turns — hoisted for post-RC resolver access
+    let _rcNpcRole = null; // v1.89.04: hoisted — was const inside RC else-block, referenced outside it by name-reveal resolver
     const _rcSuffix = 'Focus on immediate physical, social, and legal consequences. Respond in plain prose, 2-3 sentences maximum. No headers, no bullet points. Be direct and specific.';
     // v1.88.0: Authority Gate deny takes priority — set _rcSkippedReason before existing skip block.
     if (_authorityGateResult?.decision === 'freeform') {
@@ -3139,7 +3140,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _rcSkippedReason = 'target_not_in_inventory';
     } else {
       // Build query — SAY channel with matched NPC gets role context
-      const _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
+      _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
         ? (_npcTalkResult?.npc?.job || _rawNpcTarget)
         : null;
       // v1.84.75: Relevant truth fragment — only supported attrs forwarded to RC
