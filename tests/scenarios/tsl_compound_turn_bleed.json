@@ -4,17 +4,23 @@
   "description": "[TSL S8] Compound-turn semantic bleed: player input combines acquisition verb (grab) targeting one object with non-acquisition verb (look at) targeting another. TSL must show grounded acquisition for the taken object only. If CB erroneously player-containers the examined object, acquisition_ungrounded fires for it.",
   "tsl_expected": {
     "turn": "grab_and_look",
-    "notes": "Compound input: player grabs the coin pouch AND looks at the knife in one action. AP does not execute the grab (origin gate blocks it — no prior establishment of coin pouch in environment). CB emits a player-container candidate for coin pouch with transfer_origin=environment_interaction. TSL correctly emits acquisition_signal for coin pouch with source_signals=[gate.referenced_objects, cb.transfer_origin=environment_interaction], confidence ~0.4. transfer_signals is empty (no AP-executed transfer). Clean run = 1 grounded acquisition_signal for coin pouch, 0 warnings. Bleed run = acquisition_ungrounded warning for the knife if CB erroneously emits it as player-container. This is a regression probe for the v1.88.77 compound-turn fix as seen through the TSL lens.",
+    "notes": "Compound input: player grabs the coin pouch AND looks at the knife in one action. AP-mediated successful grab: coin pouch is cleanly transferred via ap_executed_transfer and lives in transfer_signals (not acquisition_signals). The knife is an origin-blocked CB environment_interaction candidate (examine verb, not take) and correctly lands in acquisition_signals with source_signals=[cb.transfer_origin=environment_interaction], confidence ~0.3, unresolved_ambiguity=object_exists_in_localspace. Clean run = transfer_signal for coin pouch grounded by ap_executed_transfer; acquisition_signal for knife (origin-blocked false candidate); 0 warnings. Bleed run = acquisition_ungrounded warning for the knife (or a second player-container candidate). This probes both surfaces of a compound turn simultaneously.",
     "alias_candidates": [],
     "acquisition_signals": [
       {
-        "object_name_pattern": "coin pouch",
-        "expected_source_signals_include": ["gate.referenced_objects"],
-        "expected_confidence_gte": 0.4,
-        "expected_unresolved_ambiguity": null
+        "object_name_pattern": "knife",
+        "expected_source_signals_include": ["cb.transfer_origin=environment_interaction"],
+        "expected_confidence_gte": 0.25,
+        "expected_unresolved_ambiguity": "object_exists_in_localspace"
       }
     ],
-    "transfer_signals": [],
+    "transfer_signals": [
+      {
+        "object_name_pattern": "coin pouch",
+        "expected_source_signals_include": ["ap_executed_transfer"],
+        "expected_confidence_gte": 0.6
+      }
+    ],
     "warnings_expected": [
       {
         "type": "acquisition_ungrounded",
@@ -40,7 +46,8 @@
       "assert": [
         { "op": "no_error" },
         { "op": "tsl_present" },
-        { "op": "tsl_acquisition_grounded", "object_pattern": "coin pouch" },
+        { "op": "tsl_transfer_grounded", "object_pattern": "coin pouch" },
+        { "op": "tsl_acquisition_grounded", "object_pattern": "knife" },
         { "op": "tsl_no_warnings" }
       ]
     }
