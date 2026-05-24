@@ -393,8 +393,17 @@ For each object, emit one entry in the "object_candidates" array:
   "actor_npc_ref": "<optional — see ACTOR ASSOCIATION RULES below>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
   "initial_evidence": "<optional — exact narration phrase that establishes the initial condition>",
+  "quantity": "<optional — integer count when narration explicitly states a number (e.g. 'three coins', 'a dozen arrows', '12 slices'). Omit when count is unspecified or clearly singular.>",
+  "unit": "<optional — unit label when narration gives one (e.g. 'piece', 'slice', 'coin', 'arrow'). Omit when not stated. Must match the name field (e.g. name:'bread slice' unit:'slice').>",
   "transfer_origin": "<required when container_type is 'player' AND item is not in Confirmed player inventory above — see TRANSFER ORIGIN RULES below>"
 }
+
+quantity and unit rules:
+- EMIT quantity only when the narration or player input contains an explicit count (a numeral or spelled-out number directly attached to this object).
+- DO NOT EMIT quantity for singular objects, vague amounts ('some', 'a few', 'several'), or when count is unknown.
+- DO NOT EMIT quantity: 1 explicitly — singular is the default and omitting the field is correct.
+- EMIT unit only when the narration uses a clear unit label that meaningfully describes a single instance of the stack (e.g. 'slice' for bread slices, 'coin' for coins). Omit for abstract or unnamed units.
+- Both fields are optional and independent — quantity can appear without unit and vice versa.
 
 initial_condition rules:
 - EMIT when the object is introduced already damaged, modified, or in a non-default state (e.g. split skin, cracked, soaked, bent).
