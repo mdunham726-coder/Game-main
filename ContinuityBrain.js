@@ -1240,6 +1240,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     object_transfers:         Array.isArray(extracted.object_transfers)         ? extracted.object_transfers         : [],
     object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],
     object_retirements:       Array.isArray(extracted.object_retirements)       ? extracted.object_retirements       : [],
+    fission_events:           Array.isArray(extracted.fission_events)           ? extracted.fission_events           : [],
   };
 }
 
