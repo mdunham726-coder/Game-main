@@ -641,7 +641,7 @@ Split verbs that trigger fission_events: tear, rip, split, halve, divide, separa
 {
   "source_ref": "<prose name of the object that was split — as named in narration>",
   "verb": "<the split verb>",
-  "products": [{"name": "<prose name of this individual piece>", "destination_hint": "<player_hands | table | ground | unknown>"}],
+  "products": [{"name": "<noun phrase for this piece — include the source material in the name>", "destination_hint": "<player_hands | table | ground | unknown>"}],
   "actor_ref": "<entity ref who performed the split — player or npc_id>",
   "destination_hint": "<player_hands | table | ground | unknown>",
   "evidence": "<exact phrase from narration that describes the split>"
@@ -650,6 +650,7 @@ Split verbs that trigger fission_events: tear, rip, split, halve, divide, separa
 Rules:
 - source_ref: the object's prose name as it appears in narration. Never an object_id.
 - products: one object per individual physical piece produced — not per piece type. If two identical pieces end up in different locations, emit two separate entries.
+- products[].name: a noun phrase that includes the source material — reference what was split, not just a bare fragment word alone.
 - products[].destination_hint: where this specific piece ends up immediately after the split.
 - destination_hint (top-level): where most or all pieces end up; used as fallback when a product entry omits its own destination_hint.
 - Emit one entry per fission event. If no split verb applies to a tracked object this turn, emit: "fission_events": []
