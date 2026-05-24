@@ -4280,8 +4280,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
 
         // v1.88.78: TSL Stage 1 — observe-only semantic normalization (Point B)
         // Reads CB output + existing pipeline signals. Does NOT mutate _phaseBResult, gameState, or ORS state.
+        // v1.88.87: hoisted to function scope so line 4585 (ObjectHelper.run) can read _tslR?.tsl outside the block.
+        let _tslR = null;
         {
-          const _tslR = SemanticNormalizer.analyze(_phaseBResult, _rawInput, _parsedAction, _authorityGateResult, gameState);
+          _tslR = SemanticNormalizer.analyze(_phaseBResult, _rawInput, _parsedAction, _authorityGateResult, gameState);
           _objectRealityDebug.tsl    = _tslR.tsl;
           _objectRealityDebug.tsl_ms = _tslR.processing_time_ms;
         }
