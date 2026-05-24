@@ -21,6 +21,13 @@
 
 const ENABLED = true;
 
+// Words in a proposed_name that imply the candidate is a distinct/new/state-changed object.
+// Any match vetoes a recommend_suppress_promote recommendation. Veto-only — never asserts truth.
+const SUPPRESSION_BLOCKLIST = [
+  'another', 'second', 'new', 'fresh', 'other', 'extra',
+  'sliced', 'broken', 'empty', 'half', 'torn', 'used', 'remaining'
+];
+
 function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
   if (!ENABLED || !phaseBResult) {
     return { tsl: null, processing_time_ms: 0 };
@@ -330,6 +337,14 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
       }
     }
 
+    // Attach suppression recommendation to each entry (observe-only — ObjectHelper does not consume until v1.88.86)
+    const cContainerType = c.container_type || null;
+    for (const m of top) {
+      const rec = _computeRecommendation(m, cContainerType);
+      m.action_recommendation = rec.action_recommendation;
+      m.veto_reasons          = rec.veto_reasons;
+    }
+
     for (const m of top) dedup_candidates.push(m);
   }
 
@@ -448,6 +463,64 @@ function _findExistingObjectId(name, activeObjects) {
   const nameLower = String(name).toLowerCase().trim();
   const match = activeObjects.find(o => String(o.name).toLowerCase().trim() === nameLower);
   return match ? match.id : null;
+}
+
+/**
+ * Compute action_recommendation + veto_reasons for a dedup_candidates entry.
+ * Green zone → recommend_suppress_promote (all six conditions met).
+ * Any red-line veto → do_not_suppress.
+ * Everything else → warn_only.
+ */
+function _computeRecommendation(entry, candidateContainerType) {
+  const veto_reasons = [];
+
+  // Red-line: ambiguous match (multiple candidates — cannot pick one)
+  if (entry.relationship_type === 'ambiguous_match') {
+    veto_reasons.push('ambiguous_match');
+  }
+
+  // Red-line: token_subset only (too loose — state-change objects look identical)
+  if (entry.match_method !== 'exact') {
+    veto_reasons.push('token_subset_match');
+  }
+
+  // Red-line: no provenance signal beyond bare name match
+  const hasProvenance = entry.source_signals.includes('ap_executed_transfer') ||
+                        entry.source_signals.includes('gate.referenced_objects');
+  if (!hasProvenance) {
+    veto_reasons.push('no_provenance_signal');
+  }
+
+  // Red-line: blocklist word in proposed_name (implies distinct/new/state-changed object)
+  const nameTokens = new Set(String(entry.proposed_name).toLowerCase().split(/\s+/).filter(Boolean));
+  for (const word of SUPPRESSION_BLOCKLIST) {
+    if (nameTokens.has(word)) {
+      veto_reasons.push(`blocklist_word:${word}`);
+      break;
+    }
+  }
+
+  // Red-line: container mismatch with no AP provenance
+  // AP provenance overrides stale containers in both take and drop directions.
+  const apProvenance = entry.source_signals.includes('ap_executed_transfer');
+  if (!apProvenance &&
+      candidateContainerType &&
+      entry.existing_container_type &&
+      candidateContainerType !== entry.existing_container_type) {
+    veto_reasons.push('container_mismatch_no_ap_provenance');
+  }
+
+  if (veto_reasons.length > 0) {
+    return { action_recommendation: 'do_not_suppress', veto_reasons };
+  }
+
+  // Soft threshold: confidence below green zone minimum
+  if (entry.confidence < 0.9) {
+    return { action_recommendation: 'warn_only', veto_reasons: ['confidence_below_threshold'] };
+  }
+
+  // All conditions met → green zone
+  return { action_recommendation: 'recommend_suppress_promote', veto_reasons: [] };
 }
 
 /** Weighted confidence score for player acquisition intent. */
