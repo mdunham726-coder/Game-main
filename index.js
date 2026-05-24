@@ -37,6 +37,7 @@ const CB = require('./ContinuityBrain'); // v1.70.0
 const ObjectHelper = require('./ObjectHelper'); // v1.84.52
 const ConditionBot = require('./conditionbot'); // v1.84.19
 const AuthorityGate = require('./authoritygate'); // v1.88.0
+const SemanticNormalizer = require('./SemanticNormalizer'); // v1.88.78: TSL Stage 1
 const diag = require('./diagnostics');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -4275,6 +4276,14 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               return true;
             });
           }
+        }
+
+        // v1.88.78: TSL Stage 1 — observe-only semantic normalization (Point B)
+        // Reads CB output + existing pipeline signals. Does NOT mutate _phaseBResult, gameState, or ORS state.
+        {
+          const _tslR = SemanticNormalizer.analyze(_phaseBResult, _rawInput, _parsedAction, _authorityGateResult, gameState);
+          _objectRealityDebug.tsl    = _tslR.tsl;
+          _objectRealityDebug.tsl_ms = _tslR.processing_time_ms;
         }
 
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
