@@ -4750,6 +4750,28 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'malformed_entry' } });
             continue;
           }
+          // v1.89.02: fission parent binding guard — fission retirements only (successors present).
+          // If the stored parent name shares no tokens with reason + successor names/descriptions,
+          // the parent binding is likely wrong (CB retired the wrong object). Block retirement entirely.
+          // Plain retirements (no successors) bypass this guard — they have no fission context to check.
+          if (Array.isArray(ret.successors) && ret.successors.length > 0) {
+            const _candidateRec = gameState.objects[ret.object_id];
+            if (_candidateRec && _candidateRec.status === 'active') {
+              const _pTokens = _candidateRec.name.toLowerCase().split(/\W+/).filter(t => t.length > 2);
+              if (_pTokens.length > 0) {
+                const _ctxText = [
+                  ret.reason || '',
+                  ...ret.successors.map(s => `${s.name || ''} ${s.description || ''}`)
+                ].join(' ').toLowerCase();
+                if (!_pTokens.some(t => _ctxText.includes(t))) {
+                  console.warn(`[FISSION] parent_mismatch: "${_candidateRec.name}" (${ret.object_id}) — no name token overlap with successors/reason; retirement blocked`);
+                  _objectRealityDebug.fission_mismatch_skipped = (_objectRealityDebug.fission_mismatch_skipped || 0) + 1;
+                  _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'fission_parent_mismatch' } });
+                  continue;
+                }
+              }
+            }
+          }
           const _retResult = ObjectHelper.retireObject(gameState, ret.object_id, ret.reason || '', turnNumber);
           _retirementPairs.push({ entry: ret, result: _retResult });
         }

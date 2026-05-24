@@ -588,6 +588,8 @@ EMIT for: object split into distinct sub-objects, object fully consumed/eaten, o
 DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
 Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
 
+OBJECT_ID BINDING RULE: Before selecting an object_id, verify that the tracked object's name directly matches what is physically undergoing the transformation in the narration. The retirement must target the object itself — not its container, not a co-located inventory item, not a nearby object in the same space. If the player splits or tears an object, select the ID of that object — not the container it came from, not the surface it rests on. If you cannot find a tracked object whose name clearly matches the transformation target, omit the retirement entry entirely. Omission is always safer than retiring the wrong object.
+
 {
   "object_id": "<exact id from tracked objects list>",
   "reason": "<exact narration phrase — what happened to it>",
