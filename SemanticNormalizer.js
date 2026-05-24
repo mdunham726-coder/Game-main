@@ -28,6 +28,34 @@ const SUPPRESSION_BLOCKLIST = [
   'sliced', 'broken', 'empty', 'half', 'torn', 'used', 'remaining'
 ];
 
+// ── Scene-continuity proximity helpers ───────────────────────────────────────────────
+// v1.88.88: conservative floor-object proximity detection.
+// grid-to-grid: same mx,my prefix in LOC:mx,my:lx,ly format.
+// localspace-to-localspace: exact container_id match only.
+// site-to-site: exact container_id match only.
+// No mixed-type matching — avoids treating unrelated spaces as nearby.
+
+function _extractMacroLocation(containerId) {
+  const _m = String(containerId || '').match(/^LOC:(-?\d+),(-?\d+):/);
+  return _m ? `${_m[1]},${_m[2]}` : null;
+}
+
+function _isFloorContainer(containerType) {
+  return containerType === 'grid' || containerType === 'localspace' || containerType === 'site';
+}
+
+function _sameSceneContext(cType, cId, existingType, existingId) {
+  if (!_isFloorContainer(cType) || !_isFloorContainer(existingType)) return false;
+  if (cType !== existingType) return false; // no mixed-type matching
+  if (cType === 'grid') {
+    const _cMacro = _extractMacroLocation(cId);
+    const _eMacro = _extractMacroLocation(existingId);
+    return _cMacro !== null && _eMacro !== null && _cMacro === _eMacro;
+  }
+  // localspace or site: exact ID match only
+  return String(cId) === String(existingId);
+}
+
 function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
   if (!ENABLED || !phaseBResult) {
     return { tsl: null, processing_time_ms: 0 };
@@ -337,8 +365,21 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
       }
     }
 
-    // Attach suppression recommendation to each entry (observe-only — ObjectHelper does not consume until v1.88.86)
+    // v1.88.88: inject scene_continuity signal for single unambiguous exact-match floor-object candidates.
+    // Fires when candidate and existing object share the same scene context (grid macro-location,
+    // or exact same localspace/site container). Multi-match entries skip this — ambiguous_match
+    // veto in _computeRecommendation fires first regardless.
     const cContainerType = c.container_type || null;
+    if (top.length === 1) {
+      const _sc = top[0];
+      if (_sameSceneContext(c.container_type, c.container_id, _sc.existing_container_type, _sc.existing_container_id)) {
+        if (!_sc.source_signals.includes('scene_continuity')) {
+          _sc.source_signals.push('scene_continuity');
+        }
+      }
+    }
+
+    // Attach suppression recommendation to each entry (observe-only — ObjectHelper does not consume until v1.88.86)
     for (const m of top) {
       const rec = _computeRecommendation(m, cContainerType);
       m.action_recommendation = rec.action_recommendation;
@@ -484,10 +525,13 @@ function _computeRecommendation(entry, candidateContainerType) {
     veto_reasons.push('token_subset_match');
   }
 
-  // Red-line: no provenance signal beyond bare name match
-  const hasProvenance = entry.source_signals.includes('ap_executed_transfer') ||
-                        entry.source_signals.includes('gate.referenced_objects');
-  if (!hasProvenance) {
+  // Red-line: no provenance signal beyond bare name match.
+  // scene_continuity is a weaker floor-object proximity signal (v1.88.88) — it exits the
+  // do_not_suppress path but does not reach the green zone; handled below as warn_only.
+  const hasProvenance      = entry.source_signals.includes('ap_executed_transfer') ||
+                             entry.source_signals.includes('gate.referenced_objects');
+  const hasSceneContinuity = entry.source_signals.includes('scene_continuity');
+  if (!hasProvenance && !hasSceneContinuity) {
     veto_reasons.push('no_provenance_signal');
   }
 
@@ -512,6 +556,12 @@ function _computeRecommendation(entry, candidateContainerType) {
 
   if (veto_reasons.length > 0) {
     return { action_recommendation: 'do_not_suppress', veto_reasons };
+  }
+
+  // scene_continuity without hard provenance (AP/gate) → warn_only.
+  // Observe-only until MB audits false-positive rate; does not bridge to ObjectHelper.
+  if (!hasProvenance && hasSceneContinuity) {
+    return { action_recommendation: 'warn_only', veto_reasons: ['scene_continuity_only'] };
   }
 
   // Soft threshold: confidence below green zone minimum
