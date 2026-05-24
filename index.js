@@ -4848,7 +4848,6 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                   resolvedId: _fop.source_object_id
                 });
                 _tslFissionInjected++;
-                _objectRealityDebug.fission_retired++;
               }
             }
           }
