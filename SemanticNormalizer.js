@@ -297,15 +297,22 @@ function _resolveAlias(rawName, actorRef, activeObjects, gateRefs, apStampIds) {
       confidence = 0.72;
       source_signals.push('token_subset_match');
     } else {
-      const gateMatch = gateRefs.some(r =>
-        r === objNameLower ||
-        _tokenContains(r, objNameLower) ||
-        _tokenContains(objNameLower, r)
+      const candidateInGate = gateRefs.some(r =>
+        r === nameLower ||
+        _tokenContains(r, nameLower) ||
+        _tokenContains(nameLower, r)
       );
-      if (gateMatch) {
-        method     = 'gate_reference';
-        confidence = 0.60;
-        source_signals.push('gate.referenced_objects');
+      if (candidateInGate) {
+        const gateMatch = gateRefs.some(r =>
+          r === objNameLower ||
+          _tokenContains(r, objNameLower) ||
+          _tokenContains(objNameLower, r)
+        );
+        if (gateMatch) {
+          method     = 'gate_reference';
+          confidence = 0.60;
+          source_signals.push('gate.referenced_objects');
+        }
       }
     }
 
