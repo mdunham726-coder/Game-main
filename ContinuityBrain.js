@@ -374,6 +374,13 @@ extracting a single item or small subset from it:
 Guard: apply this rule ONLY when the tracked source is clearly plural/mass/group-like AND the
 narration explicitly selects a single item or subset from it. Do NOT apply to singular tracked
 objects — those follow the container-change rule above.
+Transfer origin for the group-extracted individual: if any acquisition verb in the player's
+input (grab, take, pick up, pull, tear, unwrap, scoop, lift from, etc.) is directly paired with
+this group object as the source, assign transfer_origin: "environment_interaction" to the
+promoted individual. Do not fall through to the general TRANSFER ORIGIN RULES to determine
+transfer_origin when the player's acquisition verb is the clear trigger — the verb is the
+determining signal. Use narrator_independent only if the narrator describes the extraction
+with no acquisition verb in the player's input at all.
 
 For each object, emit one entry in the "object_candidates" array:
 {
@@ -411,6 +418,14 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
                               is NOT met. Classify such items as narrator_independent
                               (container_type: grid or localspace), NOT
                               environment_interaction.
+                              COMPOUND TURNS: on inputs containing multiple actions,
+                              evaluate condition (1) per individual object-action pair.
+                              If any acquisition verb in the player's input is directly
+                              paired with this specific object (e.g. "grab [object]",
+                              "tear open [object]", "pick up [object]"), condition (1)
+                              is met for that object regardless of other non-acquisition
+                              actions in the same input. Trace each named object to its
+                              specific verb — do not evaluate the turn globally.
                           (2) Item has environmental basis in described scene (ground, floor,
                               attached to something visible, plausible feature of location).
                           (3) Player input does NOT frame item as already held, carried,
@@ -424,12 +439,20 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
   narrator_independent  — Narrator introduced the item with no player request and no NPC
                           transfer. Player input did not reference the item in any way.
                           CONTAINER RESTRICTION: must use container_type 'grid' or 'localspace'
-                          only — NEVER 'player'. The narrator may place items in the environment
-                          (on a table, on the floor, on the ground), but narrator prose alone
-                          cannot put an item in the player's hand. If the narration described the
-                          item as "in your hand" or "in your pocket" but the player never
-                          requested it and no NPC gave it, classify container_type as 'grid'
-                          (current floor/surface) — not 'player'. ALLOW for grid/localspace.
+                          only — NEVER 'player'. This is an absolute rule with no exceptions.
+                          SELF-CORRECTION: if you find yourself assigning container_type
+                          'player' with transfer_origin 'narrator_independent', you have made
+                          a classification error — stop and reassign: use
+                          'environment_interaction' if any acquisition verb in the player's
+                          input directly pairs with this object, or change container_type to
+                          'localspace' if the narrator placed it on a surface. The combination
+                          narrator_independent + player container is always wrong.
+                          The narrator may place items in the environment (on a table, on the
+                          floor, on the ground), but narrator prose alone cannot put an item in
+                          the player's hand. If the narration described the item as "in your
+                          hand" or "in your pocket" but the player never requested it and no
+                          NPC gave it, classify container_type as 'grid' (current
+                          floor/surface) — not 'player'. ALLOW for grid/localspace.
 
   player_claimed        — Player input mentioned, implied, or gestured the item as currently
                           held, gathered, shown, or carried — in any form: speech ("I have X"),
