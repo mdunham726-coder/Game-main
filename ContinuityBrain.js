@@ -588,7 +588,29 @@ EMIT for: object split into distinct sub-objects, object fully consumed/eaten, o
 DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
 Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
 
-{ "object_id": "<exact id from tracked objects list>", "reason": "<exact narration phrase — what happened to it>" }
+{
+  "object_id": "<exact id from tracked objects list>",
+  "reason": "<exact narration phrase — what happened to it>",
+  "successors": [
+    {
+      "name": "<name of the successor object, lowercase, specific>",
+      "description": "<brief physical description>",
+      "container_type": "<same type as parent unless narration specifies otherwise>",
+      "container_id": "<same container as parent unless narration specifies otherwise>",
+      "temp_ref": "<short stable handle for this successor>",
+      "quantity": "<optional — integer count when narration explicitly states a number. Same rules as object_candidates quantity. Omit when singular or unspecified.>",
+      "unit": "<optional — unit label when narration gives one. Same rules as object_candidates unit. Omit when not stated.>"
+    }
+  ]
+}
+
+successors rules:
+- EMIT successors only when the retirement describes a physical split into distinct named sub-objects.
+- DO NOT EMIT successors for consumption, burning, or destruction where no new objects emerge.
+- Emit ONE successor entry per named stack — not one entry per individual item. Use quantity for count.
+- Successors inherit the retired parent's container unless narration explicitly places them elsewhere.
+- quantity and unit on each successor follow identical rules to object_candidates quantity and unit.
+- Omit the successors field entirely (or emit [] ) when no successor objects emerge.
 
 If none, emit: "object_retirements": []
 

@@ -4780,7 +4780,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               temp_ref:          `${_retEntry.object_id}_${_suc.temp_ref || 'frag'}`,
               transfer_origin:   'fission_successor',
               parent_object_id:  _retEntry.object_id,
-              reason:            `fission successor of ${_retEntry.object_id}`
+              reason:            `fission successor of ${_retEntry.object_id}`,
+              // v1.89.01: quantity/unit passthrough — mirrors ObjectHelper guard exactly
+              quantity:          Number.isInteger(_suc.quantity) && _suc.quantity >= 1 ? _suc.quantity : 1,
+              unit:              typeof _suc.unit === 'string' && _suc.unit.trim() ? _suc.unit.trim() : null
             });
             _objectRealityDebug.fission_successors_injected++;
           }
