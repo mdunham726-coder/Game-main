@@ -4747,16 +4747,61 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         const _cbRetirements = Array.isArray(_phaseBResult.object_retirements) ? _phaseBResult.object_retirements : [];
         const _retirementPairs = []; // [{ entry, result }] — entry kept for successor extraction
         for (const ret of _cbRetirements) {
-          if (!ret || !ret.object_id) {
+          if (!ret) {
             _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'malformed_entry' } });
             continue;
+          }
+          // v1.89.05: Establish effective ID — null means CB signalled fission with uncertain ID (BINDING RULE).
+          // Non-null path: _resolvedId = ret.object_id (no change to existing behaviour).
+          let _resolvedId = ret.object_id || null;
+          if (_resolvedId === null) {
+            // Attempt container-scoped name-match resolution when fission context is present.
+            if (typeof ret.reason === 'string' && ret.reason.trim() &&
+                Array.isArray(ret.successors) && ret.successors.length > 0) {
+              const _nrContainerType = ret.successors[0].container_type;
+              const _nrContainerId   = ret.successors[0].container_id;
+              if (_nrContainerType && _nrContainerId) {
+                // Build context from reason + successor names/descriptions (mirrors fission_parent_mismatch guard)
+                const _nrCtxText = [
+                  ret.reason,
+                  ...ret.successors.map(s => `${s.name || ''} ${s.description || ''}`)
+                ].join(' ').toLowerCase();
+                const _nrTokens = _nrCtxText.split(/\W+/).filter(t => t.length > 2);
+                const _nrCandidates = Object.values(gameState.objects).filter(o =>
+                  o.status === 'active' &&
+                  o.current_container_type === _nrContainerType &&
+                  o.current_container_id   === _nrContainerId &&
+                  _nrTokens.some(t => o.name.toLowerCase().includes(t))
+                );
+                if (_nrCandidates.length === 1) {
+                  _resolvedId = _nrCandidates[0].id;
+                  _objectRealityDebug.null_id_resolved = (_objectRealityDebug.null_id_resolved || 0) + 1;
+                  console.log(`[FISSION] null_id_resolved: "${_nrCandidates[0].name}" (${_resolvedId}) from fission context`);
+                } else if (_nrCandidates.length === 0) {
+                  _objectRealityDebug.null_id_unresolvable = (_objectRealityDebug.null_id_unresolvable || 0) + 1;
+                  _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'null_id_unresolvable' } });
+                  continue;
+                } else {
+                  _objectRealityDebug.null_id_ambiguous = (_objectRealityDebug.null_id_ambiguous || 0) + 1;
+                  _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'null_id_ambiguous' } });
+                  continue;
+                }
+              } else {
+                _objectRealityDebug.null_id_unresolvable = (_objectRealityDebug.null_id_unresolvable || 0) + 1;
+                _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'null_id_unresolvable' } });
+                continue;
+              }
+            } else {
+              _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'malformed_entry' } });
+              continue;
+            }
           }
           // v1.89.02: fission parent binding guard — fission retirements only (successors present).
           // If the stored parent name shares no tokens with reason + successor names/descriptions,
           // the parent binding is likely wrong (CB retired the wrong object). Block retirement entirely.
           // Plain retirements (no successors) bypass this guard — they have no fission context to check.
           if (Array.isArray(ret.successors) && ret.successors.length > 0) {
-            const _candidateRec = gameState.objects[ret.object_id];
+            const _candidateRec = gameState.objects[_resolvedId];
             if (_candidateRec && _candidateRec.status === 'active') {
               const _pTokens = _candidateRec.name.toLowerCase().split(/\W+/).filter(t => t.length > 2);
               if (_pTokens.length > 0) {
@@ -4765,7 +4810,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
                   ...ret.successors.map(s => `${s.name || ''} ${s.description || ''}`)
                 ].join(' ').toLowerCase();
                 if (!_pTokens.some(t => _ctxText.includes(t))) {
-                  console.warn(`[FISSION] parent_mismatch: "${_candidateRec.name}" (${ret.object_id}) — no name token overlap with successors/reason; retirement blocked`);
+                  console.warn(`[FISSION] parent_mismatch: "${_candidateRec.name}" (${_resolvedId}) — no name token overlap with successors/reason; retirement blocked`);
                   _objectRealityDebug.fission_mismatch_skipped = (_objectRealityDebug.fission_mismatch_skipped || 0) + 1;
                   _retirementPairs.push({ entry: ret, result: { retired: false, reason: 'fission_parent_mismatch' } });
                   continue;
@@ -4773,8 +4818,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               }
             }
           }
-          const _retResult = ObjectHelper.retireObject(gameState, ret.object_id, ret.reason || '', turnNumber);
-          _retirementPairs.push({ entry: ret, result: _retResult });
+          const _retResult = ObjectHelper.retireObject(gameState, _resolvedId, ret.reason || '', turnNumber);
+          _retirementPairs.push({ entry: ret, result: _retResult, resolvedId: _resolvedId });
         }
         const _retirementResults = _retirementPairs.map(p => p.result);
         if (_cbRetirements.length > 0) {
@@ -4786,12 +4831,13 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // Atomicity gate: successors are only injected when parent retirement returned retired:true.
         // No state can exist where the original object and its fragments are simultaneously active.
         const _fissionQuarantine = [];
-        for (const { entry: _retEntry, result: _retResult } of _retirementPairs) {
+        for (const { entry: _retEntry, result: _retResult, resolvedId: _retResolvedId } of _retirementPairs) {
           if (!_retResult.retired) continue;
           if (!Array.isArray(_retEntry.successors) || _retEntry.successors.length === 0) continue;
+          const _effectiveParentId = _retResolvedId || _retEntry.object_id;
           for (const _suc of _retEntry.successors) {
             if (!_suc?.name || !_suc.container_type || !_suc.container_id) {
-              console.warn(`[FISSION] malformed successor entry for parent ${_retEntry.object_id} — skipped`);
+              console.warn(`[FISSION] malformed successor entry for parent ${_effectiveParentId} — skipped`);
               continue;
             }
             _fissionQuarantine.push({
@@ -4800,10 +4846,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               description:       _suc.description || '',
               container_type:    _suc.container_type,
               container_id:      _suc.container_id,
-              temp_ref:          `${_retEntry.object_id}_${_suc.temp_ref || 'frag'}`,
+              temp_ref:          `${_effectiveParentId}_${_suc.temp_ref || 'frag'}`,
               transfer_origin:   'fission_successor',
-              parent_object_id:  _retEntry.object_id,
-              reason:            `fission successor of ${_retEntry.object_id}`,
+              parent_object_id:  _effectiveParentId,
+              reason:            `fission successor of ${_effectiveParentId}`,
               // v1.89.01: quantity/unit passthrough — mirrors ObjectHelper guard exactly
               quantity:          Number.isInteger(_suc.quantity) && _suc.quantity >= 1 ? _suc.quantity : 1,
               unit:              typeof _suc.unit === 'string' && _suc.unit.trim() ? _suc.unit.trim() : null
