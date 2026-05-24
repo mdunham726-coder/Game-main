@@ -177,6 +177,8 @@ held_objects
   Test: "Is this something they are carrying or transporting — not wearing as attire?"
   Include only explicitly named items. Exclude category labels, vague collective nouns, and absence descriptions.
 
+FISSION EXCEPTION: Do not route the resulting pieces of a fission event into held_objects. When a tracked object is split, torn, halved, divided, sliced, cut, chopped, broken, or snapped, the original object must be retired with successors[] in object_retirements — regardless of whether narration describes the player immediately picking up or holding the resulting pieces. The player's possession of the pieces is captured by the retirement's successors[], not by held_objects. Routing the pieces into held_objects without also emitting the retirement is always wrong when the source was a tracked object.
+
 worn_objects
   Items worn, equipped, or fitted to the body of THIS entity as clothing or gear.
   Route here: boots, belt, hat, jacket, armor, cloak, gloves, scabbard, holster, any clothing or body-fitted equipment.
