@@ -476,7 +476,7 @@ The narrator's prose does not change this classification.
 
 If no qualifying objects are present, emit: "object_candidates": []
 
-ACTOR ASSOCIATION RULES (actor_npc_ref field):
+FISSION EXCEPTION: Do not emit object_candidates for pieces, portions, fragments, or halves that are the direct result of splitting, tearing, or dividing a tracked object. Those resulting pieces belong exclusively in the successors[] array of the parent's object_retirement entry. Emitting them as candidates alongside a retirement creates duplicate records and is always wrong when the parent is being retired.
 
   Emit actor_npc_ref when the narration signals EITHER of the following:
 
@@ -578,6 +578,8 @@ Fallback form (use only when same-name ambiguity cannot be resolved):
 
 If no object condition changes are present, emit: "object_condition_updates": []
 
+FISSION EXCEPTION: Do not emit a condition update for an object when you are also emitting (or would emit) an object_retirement for that same object. Retirement means the object no longer exists as itself — annotating its condition is contradictory. If the object is being split or divided into pieces and you are classifying this as a fission event, the retirement is the correct and sole output for the parent — omit the condition update entirely.
+
 ---
 
 OBJECT RETIREMENTS (optional)
@@ -592,7 +594,7 @@ SPLIT VERB RECOGNITION: The following verbs, when applied to a tracked physical 
 - Separation verbs: tear, rip, split, halve, divide, separate
 - Cutting verbs: slice, cut, chop, carve
 - Breaking verbs: break, snap, shatter, crack, fracture
-When one of these verbs applies to a tracked object AND the narration describes resulting pieces (halves, slices, chunks, shards, fragments, portions), emit the retirement with successors[]. Each distinct named stack is one successor entry — use quantity when a count is stated. If the object_id is uncertain, emit object_id: null rather than guessing. Omit successors[] only when the verb produces no trackable pieces (e.g. "snapped the twig and discarded both pieces" with no further scene presence, or "cut the rope" where no rope pieces appear in narration).
+When one of these verbs applies to a tracked object AND the narration describes resulting pieces (halves, slices, chunks, shards, fragments, portions), emit the retirement with successors[]. Each distinct named stack is one successor entry — use quantity when a count is stated. If the object_id is uncertain, emit object_id: null rather than guessing. Omit successors[] only when the verb produces no trackable pieces (e.g. "snapped the twig and discarded both pieces" with no further scene presence, or "cut the rope" where no rope pieces appear in narration). The retirement+successors path is the exclusive output for a fission event — do not simultaneously emit a condition update for the parent object or emit the resulting pieces as object_candidates. Fission replaces both of those patterns, it does not supplement them.
 
 OBJECT_ID BINDING RULE: Before selecting an object_id, verify that the tracked object's name directly matches what is physically undergoing the transformation in the narration. The retirement must target the object itself — not its container, not a co-located inventory item, not a nearby object in the same space. If the player splits or tears an object, select the ID of that object — not the container it came from, not the surface it rests on. If you cannot find a tracked object whose name clearly matches the transformation target, omit the retirement entry entirely. Omission is always safer than retiring the wrong object.
 
