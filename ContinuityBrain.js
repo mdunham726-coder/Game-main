@@ -177,6 +177,8 @@ held_objects
   Test: "Is this something they are carrying or transporting — not wearing as attire?"
   Include only explicitly named items. Exclude category labels, vague collective nouns, and absence descriptions.
 
+FISSION EXCEPTION: An observable state does not replace a fission retirement. When a tracked object is torn, split, halved, divided, sliced, cut, or broken, recording the player's observable state (holding pieces, gripping halves, clutching torn material) does not substitute for emitting object_retirements with successors[]. The lifecycle event must be recorded in object_retirements. The observable state may still describe the player's resulting posture or physical condition, but it must not serve as the sole output for a fission event.
+
 FISSION EXCEPTION: Do not route the resulting pieces of a fission event into held_objects. When a tracked object is split, torn, halved, divided, sliced, cut, chopped, broken, or snapped, the original object must be retired with successors[] in object_retirements — regardless of whether narration describes the player immediately picking up or holding the resulting pieces. The player's possession of the pieces is captured by the retirement's successors[], not by held_objects. Routing the pieces into held_objects without also emitting the retirement is always wrong when the source was a tracked object.
 
 worn_objects
@@ -618,7 +620,7 @@ OBJECT_ID BINDING RULE: Before selecting an object_id, verify that the tracked o
 }
 
 successors rules:
-- EMIT successors only when the retirement describes a physical split into distinct named sub-objects.
+- EMIT successors when the retirement describes a physical split into pieces, portions, or fragments. Generic piece language (halves, pieces, chunks, slices, fragments) is sufficient successor identity — pieces do not require unique individual names or placement in different containers. Two pieces held simultaneously in the same container are still two separate successors.
 - DO NOT EMIT successors for consumption, burning, or destruction where no new objects emerge.
 - Emit ONE successor entry per named stack — not one entry per individual item. Use quantity for count.
 - Successors inherit the retired parent's container unless narration explicitly places them elsewhere.
