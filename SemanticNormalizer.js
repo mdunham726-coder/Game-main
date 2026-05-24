@@ -43,6 +43,7 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
   const acquisition_signals = [];
   const transfer_signals    = [];
   const warnings            = [];
+  const dedup_candidates    = [];
 
   // ── Alias resolution: CB candidates ──────────────────────────────────────
   // For each CB candidate name, attempt to match to an existing active ObjectRecord.
@@ -242,6 +243,96 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
     });
   }
 
+  // ── Dedup candidates ─────────────────────────────────────────────────────
+  // For each CB candidate, identify whether it probably refers to an existing
+  // active ObjectRecord under the same or similar name.
+  // Observe-only: does not influence ObjectHelper or ORS. Diagnostic surface only.
+  // gate_reference never emits an entry on its own — it only boosts confidence
+  // for an already-found exact/token_subset match.
+  for (const c of candidates) {
+    if (!c.name) continue;
+    const cNameLower = c.name.toLowerCase().trim();
+    const matches    = [];
+
+    for (const obj of activeObjects) {
+      const objNameLower = obj.name.toLowerCase().trim();
+      let match_method       = null;
+      let base_confidence    = 0;
+      let relationship_type  = null;
+      const source_signals   = [];
+
+      if (cNameLower === objNameLower) {
+        match_method      = 'exact';
+        base_confidence   = 0.95;
+        relationship_type = 'exact_name_match';
+        source_signals.push('exact_name_match');
+      } else if (_tokenContains(cNameLower, objNameLower) || _tokenContains(objNameLower, cNameLower)) {
+        match_method      = 'token_subset';
+        base_confidence   = 0.65;
+        relationship_type = 'token_subset_match';
+        source_signals.push('token_subset_match');
+      }
+
+      if (!match_method) continue;
+
+      let confidence = base_confidence;
+
+      // gate_reference boost — only if match already found
+      const candidateInGate = gateRefs.some(r =>
+        r === cNameLower ||
+        _tokenContains(r, cNameLower) ||
+        _tokenContains(cNameLower, r)
+      );
+      if (candidateInGate && gateRefs.some(r =>
+        r === objNameLower ||
+        _tokenContains(r, objNameLower) ||
+        _tokenContains(objNameLower, r)
+      )) {
+        source_signals.push('gate.referenced_objects');
+        confidence        = Math.min(1.0, confidence + 0.10);
+        relationship_type = 'possible_same_object';
+      }
+
+      // AP stamp boost — only if match already found
+      if (apStampIds.includes(obj.id)) {
+        source_signals.push('ap_executed_transfer');
+        confidence        = Math.min(1.0, confidence + 0.05);
+        relationship_type = 'possible_same_object';
+      }
+
+      matches.push({
+        proposed_name:            c.name,
+        cb_candidate_ref:         c.temp_ref || null,
+        probable_existing_id:     obj.id,
+        existing_name:            obj.name,
+        existing_container_type:  obj.current_container_type,
+        existing_container_id:    obj.current_container_id,
+        match_method,
+        confidence,
+        relationship_type,
+        source_signals,
+        unresolved_ambiguity:     null
+      });
+    }
+
+    if (matches.length === 0) continue;
+
+    // Sort by confidence desc, cap at 3
+    matches.sort((a, b) => b.confidence - a.confidence);
+    const top = matches.slice(0, 3);
+
+    // If multiple matches, mark all as ambiguous
+    if (top.length > 1) {
+      const ids = top.map(m => m.probable_existing_id).join(',');
+      for (const m of top) {
+        m.relationship_type   = 'ambiguous_match';
+        m.unresolved_ambiguity = `multiple_matches:[${ids}]`;
+      }
+    }
+
+    for (const m of top) dedup_candidates.push(m);
+  }
+
   return {
     tsl: {
       version:              '1.0',
@@ -249,7 +340,8 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
       alias_candidates,
       acquisition_signals,
       transfer_signals,
-      warnings
+      warnings,
+      dedup_candidates
     },
     processing_time_ms: Date.now() - t0
   };
