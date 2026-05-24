@@ -125,7 +125,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "object_candidates": [],
   "object_transfers": [],
   "object_condition_updates": [],
-  "object_retirements": []${isFoundingTurn ? `,
+  "object_retirements": [],
+  "fission_events": []${isFoundingTurn ? `,
   "founding_premise": {
     "form": null,
     "location_premise": null,
@@ -176,6 +177,10 @@ held_objects
   Route here: rifle slung over shoulder, pack on back, satchel at hip, item in hand, anything loaded or stowed as cargo.
   Test: "Is this something they are carrying or transporting — not wearing as attire?"
   Include only explicitly named items. Exclude category labels, vague collective nouns, and absence descriptions.
+
+FISSION EXCEPTION: An observable state does not replace a fission retirement. When a tracked object is torn, split, halved, divided, sliced, cut, or broken, recording the player's observable state (holding pieces, gripping halves, clutching torn material) does not substitute for emitting object_retirements with successors[]. The lifecycle event must be recorded in object_retirements. The observable state may still describe the player's resulting posture or physical condition, but it must not serve as the sole output for a fission event.
+
+FISSION EXCEPTION: Do not route the resulting pieces of a fission event into held_objects. When a tracked object is split, torn, halved, divided, sliced, cut, chopped, broken, or snapped, the original object must be retired with successors[] in object_retirements — regardless of whether narration describes the player immediately picking up or holding the resulting pieces. The player's possession of the pieces is captured by the retirement's successors[], not by held_objects. Routing the pieces into held_objects without also emitting the retirement is always wrong when the source was a tracked object.
 
 worn_objects
   Items worn, equipped, or fitted to the body of THIS entity as clothing or gear.
@@ -393,8 +398,17 @@ For each object, emit one entry in the "object_candidates" array:
   "actor_npc_ref": "<optional — see ACTOR ASSOCIATION RULES below>",
   "initial_condition": "<optional — concrete physical state if the object is introduced in a non-pristine state this turn>",
   "initial_evidence": "<optional — exact narration phrase that establishes the initial condition>",
+  "quantity": "<optional — integer count when narration explicitly states a number (e.g. 'three coins', 'a dozen arrows', '12 slices'). Omit when count is unspecified or clearly singular.>",
+  "unit": "<optional — unit label when narration gives one (e.g. 'piece', 'slice', 'coin', 'arrow'). Omit when not stated. Must match the name field (e.g. name:'bread slice' unit:'slice').>",
   "transfer_origin": "<required when container_type is 'player' AND item is not in Confirmed player inventory above — see TRANSFER ORIGIN RULES below>"
 }
+
+quantity and unit rules:
+- EMIT quantity only when the narration or player input contains an explicit count (a numeral or spelled-out number directly attached to this object).
+- DO NOT EMIT quantity for singular objects, vague amounts ('some', 'a few', 'several'), or when count is unknown.
+- DO NOT EMIT quantity: 1 explicitly — singular is the default and omitting the field is correct.
+- EMIT unit only when the narration uses a clear unit label that meaningfully describes a single instance of the stack (e.g. 'slice' for bread slices, 'coin' for coins). Omit for abstract or unnamed units.
+- Both fields are optional and independent — quantity can appear without unit and vice versa.
 
 initial_condition rules:
 - EMIT when the object is introduced already damaged, modified, or in a non-default state (e.g. split skin, cracked, soaked, bent).
@@ -467,7 +481,7 @@ The narrator's prose does not change this classification.
 
 If no qualifying objects are present, emit: "object_candidates": []
 
-ACTOR ASSOCIATION RULES (actor_npc_ref field):
+FISSION EXCEPTION: Do not emit object_candidates for pieces, portions, fragments, or halves that are the direct result of splitting, tearing, or dividing a tracked object. Those resulting pieces belong exclusively in the successors[] array of the parent's object_retirement entry. Emitting them as candidates alongside a retirement creates duplicate records and is always wrong when the parent is being retired.
 
   Emit actor_npc_ref when the narration signals EITHER of the following:
 
@@ -569,6 +583,8 @@ Fallback form (use only when same-name ambiguity cannot be resolved):
 
 If no object condition changes are present, emit: "object_condition_updates": []
 
+FISSION EXCEPTION: Do not emit a condition update for an object when you are also emitting (or would emit) an object_retirement for that same object. Retirement means the object no longer exists as itself — annotating its condition is contradictory. If the object is being split or divided into pieces and you are classifying this as a fission event, the retirement is the correct and sole output for the parent — omit the condition update entirely.
+
 ---
 
 OBJECT RETIREMENTS (optional)
@@ -579,9 +595,65 @@ EMIT for: object split into distinct sub-objects, object fully consumed/eaten, o
 DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
 Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
 
-{ "object_id": "<exact id from tracked objects list>", "reason": "<exact narration phrase — what happened to it>" }
+SPLIT VERB RECOGNITION: The following verbs, when applied to a tracked physical object and when the narration implies resulting pieces or transformed material, mandate a retirement entry with successors[]:
+- Separation verbs: tear, rip, split, halve, divide, separate
+- Cutting verbs: slice, cut, chop, carve
+- Breaking verbs: break, snap, shatter, crack, fracture
+This mandate overrides any other classification path — including interaction, manipulation, and entity held_objects events. Even when narration describes the player immediately holding or carrying the resulting pieces, the retirement for the original object must still be emitted. The destination of the pieces does not affect whether the parent retirement is required.
+When one of these verbs applies to a tracked object AND the narration describes resulting pieces (halves, slices, chunks, shards, fragments, portions), emit the retirement with successors[]. Each distinct named stack is one successor entry — use quantity when a count is stated. If the object_id is uncertain, emit object_id: null rather than guessing. Omit successors[] only when the verb produces no trackable pieces (e.g. "snapped the twig and discarded both pieces" with no further scene presence, or "cut the rope" where no rope pieces appear in narration). The retirement+successors path is the exclusive output for a fission event — do not simultaneously emit a condition update for the parent object or emit the resulting pieces as object_candidates. Fission replaces both of those patterns, it does not supplement them.
+
+OBJECT_ID BINDING RULE: Before selecting an object_id, verify that the tracked object's name directly matches what is physically undergoing the transformation in the narration. The retirement must target the object itself — not its container, not a co-located inventory item, not a nearby object in the same space. If the player splits or tears an object, select the ID of that object — not the container it came from, not the surface it rests on. If you cannot find a tracked object whose name clearly matches the transformation target, omit the retirement entry entirely. Omission is always safer than retiring the wrong object. Multi-object disambiguation: If there are multiple tracked objects in scope with similar or related names, descriptions, or types, and you are uncertain which one is the primary transformation target, emit object_id: null rather than selecting the most recently active or most accessible option. Null is always safer than retiring the wrong object from a group of similar candidates.
+
+{
+  "object_id": "<exact id from tracked objects list>",
+  "reason": "<exact narration phrase — what happened to it>",
+  "successors": [
+    {
+      "name": "<name of the successor object, lowercase, specific>",
+      "description": "<brief physical description>",
+      "container_type": "<same type as parent unless narration specifies otherwise>",
+      "container_id": "<same container as parent unless narration specifies otherwise>",
+      "temp_ref": "<short stable handle for this successor>",
+      "quantity": "<optional — integer count when narration explicitly states a number. Same rules as object_candidates quantity. Omit when singular or unspecified.>",
+      "unit": "<optional — unit label when narration gives one. Same rules as object_candidates unit. Omit when not stated.>"
+    }
+  ]
+}
+
+successors rules:
+- EMIT successors when the retirement describes a physical split into pieces, portions, or fragments. Generic piece language (halves, pieces, chunks, slices, fragments) is sufficient successor identity — pieces do not require unique individual names or placement in different containers. Two pieces held simultaneously in the same container are still two separate successors.
+- DO NOT EMIT successors for consumption, burning, or destruction where no new objects emerge.
+- Emit ONE successor entry per named stack — not one entry per individual item. Use quantity for count.
+- Successors inherit the retired parent's container unless narration explicitly places them elsewhere.
+- quantity and unit on each successor follow identical rules to object_candidates quantity and unit.
+- Omit the successors field entirely (or emit [] ) when no successor objects emerge.
 
 If none, emit: "object_retirements": []
+
+---
+
+FISSION EVENTS (optional)
+
+When a split or division verb is applied to a tracked physical object in the narration, emit an entry in fission_events. This is a witness report only — do not attempt to resolve object IDs or containers.
+
+Split verbs that trigger fission_events: tear, rip, split, halve, divide, separate, slice, cut, chop, carve, break, snap, shatter, crack, fracture
+
+{
+  "source_ref": "<prose name of the object that was split — as named in narration>",
+  "verb": "<the split verb>",
+  "products": [{"name": "<noun phrase for this piece — include the source material in the name>", "destination_hint": "<player_hands | table | ground | unknown>"}],
+  "actor_ref": "<entity ref who performed the split — player or npc_id>",
+  "destination_hint": "<player_hands | table | ground | unknown>",
+  "evidence": "<exact phrase from narration that describes the split>"
+}
+
+Rules:
+- source_ref: the object's prose name as it appears in narration. Never an object_id.
+- products: one object per individual physical piece produced — not per piece type. If two identical pieces end up in different locations, emit two separate entries.
+- products[].name: a noun phrase that includes the source material — reference what was split, not just a bare fragment word alone.
+- products[].destination_hint: where this specific piece ends up immediately after the split.
+- destination_hint (top-level): where most or all pieces end up; used as fallback when a product entry omits its own destination_hint.
+- Emit one entry per fission event. If no split verb applies to a tracked object this turn, emit: "fission_events": []
 
 ${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
@@ -1170,6 +1242,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     object_transfers:         Array.isArray(extracted.object_transfers)         ? extracted.object_transfers         : [],
     object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],
     object_retirements:       Array.isArray(extracted.object_retirements)       ? extracted.object_retirements       : [],
+    fission_events:           Array.isArray(extracted.fission_events)           ? extracted.fission_events           : [],
   };
 }
 

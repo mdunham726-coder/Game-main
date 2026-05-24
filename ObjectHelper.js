@@ -605,6 +605,8 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
       associated_actor_id:    entry._resolved_actor_id ?? null,  // v1.88.66: resolved from actor_npc_ref
       source:                 'continuity_brain',
       status:                 'active',
+      quantity:               1,    // v1.89.00: stack/quantity foundation — default 1 for all records
+      unit:                   null, // v1.89.00: optional unit of measure (e.g. 'piece', 'slice')
       conditions:             [],
       events:                 [],
       reconciled_from_rejection: _priorRejection
@@ -614,6 +616,14 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
     gameState.objects[objectId] = record;
     // v1.85.8: stamp fission lineage — parent_object_id links successor to the retired source object
     if (entry.parent_object_id) record.parent_object_id = entry.parent_object_id;
+    // v1.89.00: quantity/unit passthrough — write explicit values from quarantine entry if valid.
+    // CB emits these only when narration makes count explicit; defaults (1/null) are preserved otherwise.
+    if (entry.quantity != null && Number.isInteger(entry.quantity) && entry.quantity >= 1) {
+      record.quantity = entry.quantity;
+    }
+    if (entry.unit != null && typeof entry.unit === 'string' && entry.unit.trim()) {
+      record.unit = entry.unit.trim();
+    }
     // v1.85.28: NPC intro provenance — diagnostic fields only, not read by any promotion/transfer/gate logic
     if (entry._source_npc_id) {
       record.source = 'npc_introduction';
