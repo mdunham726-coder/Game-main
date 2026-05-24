@@ -1,0 +1,48 @@
+{
+  "name": "tsl_alias_token_subset",
+  "stability": "probe",
+  "description": "[TSL S2 / Class C] Lexical alias drift: object established as 'iron dagger' in turn 1; player references it as 'dagger' in turn 2. TSL must resolve the partial name to the existing ObjectRecord via token_subset matching.",
+  "tsl_expected": {
+    "turn": "take_dagger_alias",
+    "notes": "Class C lexical alias drift. 'iron dagger' is established and tracked after the founding turn. On the trigger turn, player input uses 'dagger' only. If CB emits a candidate or transfer named 'dagger', TSL alias resolution must match it to the 'iron dagger' ObjectRecord: all tokens of 'dagger' appear in 'iron dagger', so match_method must be 'token_subset', confidence ~0.72. resolved_name must contain 'iron dagger'. unresolved_ambiguity should be null (only one 'dagger' in the scene). This verifies TSL correctly bridges CB lexical shortening to the authoritative ObjectRecord name rather than treating it as a new unknown object.",
+    "alias_candidates": [
+      {
+        "raw_name_pattern": "dagger",
+        "expected_match_method": "token_subset",
+        "expected_resolved_name_contains": "iron dagger",
+        "expected_confidence_gte": 0.7,
+        "expected_unresolved_ambiguity": null
+      }
+    ],
+    "acquisition_signals": [
+      {
+        "object_name_pattern": "dagger",
+        "expected_source_signals_include": ["parser.action=take"],
+        "expected_confidence_gte": 0.4
+      }
+    ],
+    "transfer_signals": [],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am in a blacksmith's workshop. An iron dagger rests on the wooden workbench in front of me.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the workshop.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_dagger_alias",
+      "action": "I pick up the dagger.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" },
+        { "path": "debug.narration_debug.object_reality.tsl.acquisition_signals", "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}

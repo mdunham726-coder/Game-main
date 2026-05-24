@@ -1,0 +1,40 @@
+{
+  "name": "tsl_npc_transfer_provenance",
+  "stability": "probe",
+  "description": "[TSL S7] NPC transfer provenance: NPC physically delivers an object to the player. TSL transfer_signal must capture from_actor as the NPC reference. If CB misclassifies as environment_interaction, the source_signals will lack any npc_transfer origin, revealing the provenance gap. Probabilistic.",
+  "tsl_expected": {
+    "turn": "receive_letter",
+    "notes": "NPC (courier) presses a sealed letter into the player's hands — canonical npc_transfer scenario. CB must classify transfer_origin as 'npc_transfer' (NPC is the causal agent; player input did not request the item). TSL transfer_signals should carry from_actor = courier NPC reference (not 'environment'). If CB misclassifies as environment_interaction, source_signals will lack a npc_transfer signal and from_actor will point to environment — this is the provenance gap TSL surfaces. Probabilistic: narrator output determines whether the NPC transfer is written clearly enough for CB to classify correctly. Non-firing (no transfer_signal) may mean the narrator did not write the handoff. Firing with environment_interaction from_actor = CB misclassification.",
+    "alias_candidates": [],
+    "acquisition_signals": [],
+    "transfer_signals": [
+      {
+        "object_name_pattern": "letter",
+        "expected_from_actor_is_npc": true,
+        "expected_source_signals_should_not_include": ["cb.transfer_origin=environment_interaction"],
+        "notes": "from_actor should reference the courier NPC, not environment. If environment_interaction appears in source_signals or from_actor is not an NPC reference, that is the misclassification signal."
+      }
+    ],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am at a message post at the edge of town. A courier in riding leathers stands behind the counter, holding a sealed letter bearing my name.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the message post.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "receive_letter",
+      "action": "I approach the counter and identify myself to the courier.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" }
+      ]
+    }
+  ]
+}

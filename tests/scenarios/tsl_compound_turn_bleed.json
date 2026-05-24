@@ -1,0 +1,47 @@
+{
+  "name": "tsl_compound_turn_bleed",
+  "stability": "probe",
+  "description": "[TSL S8] Compound-turn semantic bleed: player input combines acquisition verb (grab) targeting one object with non-acquisition verb (look at) targeting another. TSL must show grounded acquisition for the taken object only. If CB erroneously player-containers the examined object, acquisition_ungrounded fires for it.",
+  "tsl_expected": {
+    "turn": "grab_and_look",
+    "notes": "Compound input: player grabs the coin pouch AND looks at the knife in one action. v1.88.77 CB fix established COMPOUND TURNS evaluation rule: each object must be paired with its specific verb, not evaluated globally. TSL expected clean result: acquisition_signal for coin pouch with source_signals including parser.action=take (grounded); no player-container candidate for the knife (it was examined, not taken). If CB bleeds and emits the knife as player-container, acquisition_ungrounded fires for the knife (no take verb paired with it, no gate acquisition evidence). Clean run = 1 grounded acquisition_signal for coin pouch, 0 warnings. Bleed run = acquisition_ungrounded warning for the knife. This is a regression probe for the v1.88.77 compound-turn fix as seen through the TSL lens.",
+    "alias_candidates": [],
+    "acquisition_signals": [
+      {
+        "object_name_pattern": "coin pouch",
+        "expected_source_signals_include": ["parser.action=take"],
+        "expected_confidence_gte": 0.4,
+        "expected_unresolved_ambiguity": null
+      }
+    ],
+    "transfer_signals": [],
+    "warnings_expected": [
+      {
+        "type": "acquisition_ungrounded",
+        "condition": "fires only if CB erroneously emits the knife as player-container — compound-turn verb-bleed fault",
+        "determinism": "probabilistic"
+      }
+    ]
+  },
+  "world_prompt": "I am in a dim tavern. On the bar in front of me sit a leather coin pouch and a short-bladed knife.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the tavern.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "grab_and_look",
+      "action": "I grab the coin pouch and look at the knife.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" },
+        { "path": "debug.narration_debug.object_reality.tsl.acquisition_signals", "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}

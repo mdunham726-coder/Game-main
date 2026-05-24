@@ -1,0 +1,48 @@
+{
+  "name": "tsl_clean_acquisition_baseline",
+  "stability": "probe",
+  "description": "[TSL S1] Baseline: explicit player acquisition with take verb produces grounded acquisition_signal with parser and gate evidence. No warnings expected. If TSL cannot report clean provenance for a simple explicit take, all other TSL probes are unreliable.",
+  "tsl_expected": {
+    "turn": "take_key",
+    "notes": "Cleanest possible acquisition: single named object, explicit 'pick up' verb, no ambiguity. TSL acquisition_signal must include at minimum parser.action=take and gate.input_type=player_attempt in source_signals. confidence >= 0.6. warnings[] must be empty. This is the positive baseline — all other scenarios depend on this case being demonstrably clean.",
+    "alias_candidates": [
+      {
+        "raw_name_pattern": "brass key",
+        "expected_match_method": "exact",
+        "expected_confidence": 1.0,
+        "expected_unresolved_ambiguity": null
+      }
+    ],
+    "acquisition_signals": [
+      {
+        "object_name_pattern": "brass key",
+        "expected_source_signals_include": ["parser.action=take", "gate.input_type=player_attempt"],
+        "expected_confidence_gte": 0.6,
+        "expected_unresolved_ambiguity": null
+      }
+    ],
+    "transfer_signals": [],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am in a small stone room with bare walls. A brass key rests on the stone floor near my feet.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the room.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_key",
+      "action": "I pick up the brass key.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" },
+        { "path": "debug.narration_debug.object_reality.tsl.acquisition_signals", "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}

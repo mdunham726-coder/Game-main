@@ -1,0 +1,62 @@
+{
+  "name": "tsl_ownership_inertia",
+  "stability": "probe",
+  "description": "[TSL S4 / Class G] Ownership inertia: player places a held object on a surface in turn 2; player examines the area in turn 3 without re-acquiring the object. If CB re-emits the object as player-container on turn 3, TSL acquisition_ungrounded must fire. Probabilistic.",
+  "tsl_expected": {
+    "turn": "examine_altar",
+    "notes": "Class G ownership inertia. Turn 2 player explicitly sets the pendant down — the object should transfer from player to grid/localspace. Turn 3 player examines the altar (no re-acquisition request). If CB sees the pendant described on the altar and re-emits it as player-container, TSL fires acquisition_ungrounded: no parser.action=take, no gate evidence for re-acquisition. TSL alias_candidates may additionally show the pendant resolved to its existing object_id (proving TSL sees this as a known tracked object being erroneously re-claimed rather than a new introduction). Probabilistic: CB may correctly leave the pendant as grid/localspace on turn 3, in which case no warning fires. Non-firing = correct CB behavior. Firing = TSL correctly surfaces inertia fault.",
+    "alias_candidates": [
+      {
+        "condition": "if pendant is re-emitted by CB, TSL should resolve it to the existing object_id from turn 2 promotion",
+        "object_name_pattern": "silver pendant",
+        "expected_match_method": "exact or token_subset",
+        "determinism": "probabilistic"
+      }
+    ],
+    "acquisition_signals": [
+      {
+        "condition": "fires only if CB re-emits pendant as player-container on the examine turn",
+        "object_name_pattern": "silver pendant",
+        "expected_source_signals_include": [],
+        "expected_confidence_lte": 0.1,
+        "determinism": "probabilistic"
+      }
+    ],
+    "transfer_signals": [],
+    "warnings_expected": [
+      {
+        "type": "acquisition_ungrounded",
+        "condition": "fires only if CB re-emits the pendant as player-container on the examine turn with no upstream acquisition signals",
+        "determinism": "probabilistic"
+      }
+    ]
+  },
+  "world_prompt": "I am in a stone temple. I am holding a silver pendant that was given to me before I entered. There is an ancient altar at the center of the room.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the temple.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "place_pendant",
+      "action": "I set the silver pendant down on the altar.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "examine_altar",
+      "action": "I step back and examine the altar.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" }
+      ]
+    }
+  ]
+}

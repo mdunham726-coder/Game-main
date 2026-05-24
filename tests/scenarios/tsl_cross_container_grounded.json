@@ -1,0 +1,41 @@
+{
+  "name": "tsl_cross_container_grounded",
+  "stability": "probe",
+  "description": "[TSL S6] Cross-container reference, clean provenance: player explicitly names the object and its source surface in the take action. TSL must report acquisition_signal grounded by both gate.referenced_objects and parser.action=take. No warnings expected. This is the named cross-container positive case.",
+  "tsl_expected": {
+    "turn": "take_compass",
+    "notes": "Player names both the object ('brass compass') and the source location ('the shelf') in the take action. Gate will populate gate.referenced_objects with 'brass compass'. TSL acquisition_signal must include both parser.action=take and gate.referenced_objects in source_signals — this is the strongest possible provenance chain for an environment_interaction acquisition. confidence >= 0.6. unresolved_ambiguity null (one compass in scene). warnings[] empty. This verifies that explicitly-named cross-container acquisitions produce the richest source_signals set and that gate.referenced_objects correctly flows through as a TSL grounding signal.",
+    "alias_candidates": [],
+    "acquisition_signals": [
+      {
+        "object_name_pattern": "brass compass",
+        "expected_source_signals_include": ["parser.action=take", "gate.referenced_objects"],
+        "expected_confidence_gte": 0.6,
+        "expected_unresolved_ambiguity": null
+      }
+    ],
+    "transfer_signals": [],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am at a traveler's supply post. A brass compass sits on the wooden display shelf along the wall.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the supply post.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_compass",
+      "action": "I grab the brass compass from the shelf.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" },
+        { "path": "debug.narration_debug.object_reality.tsl.acquisition_signals", "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "tsl_narrator_acquisition_no_request",
+  "stability": "probe",
+  "description": "[TSL S3 / Class D] Narrator-mediated acquisition: player uses search/examine verb (not take). If narrator implies player pocketed an object and CB emits player-container with no valid grounding, TSL acquisition_ungrounded warning must fire. Probabilistic: fires only when CB makes the classification error.",
+  "tsl_expected": {
+    "turn": "search_ruins",
+    "notes": "Class D adversarial case. Player input is 'search' — a discovery verb, not an acquisition verb. CB TRANSFER ORIGIN RULES explicitly exclude 'search' from condition (1) acquisition verbs. CB must NOT emit player-container for any found object. If it does (narrator implied acquisition without player take request), TSL fires acquisition_ungrounded: source_signals will be empty or contain only cb.transfer_origin=narrator_independent (which is a CB rule violation for player containers), confidence ~0. Non-firing run means CB classified correctly (grid or localspace) — this is a pass, not a failure. Firing run means TSL correctly surfaces the semantic fault. This is a probabilistic probe: run multiple times to characterize CB reliability on search-class inputs.",
+    "alias_candidates": [],
+    "acquisition_signals": [
+      {
+        "condition": "fires only if CB emits player-container with no grounding",
+        "object_name_pattern": "(any)",
+        "expected_source_signals_include": [],
+        "expected_confidence_lte": 0.1,
+        "determinism": "probabilistic"
+      }
+    ],
+    "transfer_signals": [],
+    "warnings_expected": [
+      {
+        "type": "acquisition_ungrounded",
+        "condition": "fires only if CB incorrectly emits player-container candidate with no upstream acquisition signal",
+        "determinism": "probabilistic"
+      }
+    ]
+  },
+  "world_prompt": "I am exploring a collapsed ruin. Crumbled stone walls surround me. Scattered among the rubble are small artifacts and trinkets half-buried in the dust.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around at the ruins.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "search_ruins",
+      "action": "I search through the rubble carefully.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "debug.narration_debug.object_reality.tsl", "op": "present" }
+      ]
+    }
+  ]
+}
