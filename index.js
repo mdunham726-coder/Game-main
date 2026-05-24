@@ -4827,6 +4827,35 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
         _objectRealityDebug.retirement_updates = _retirementResults;
 
+        // v1.90.02: TLS fission injection — retire objects TLS resolved that CB missed this turn.
+        // Inserts into _retirementPairs so the existing fission second pass picks up successors automatically.
+        {
+          const _tslFissionOps = Array.isArray(_tslR?.tsl?.fission_operations) ? _tslR.tsl.fission_operations : [];
+          let _tslFissionInjected    = 0;
+          let _tslFissionUnresolvable = 0;
+          if (_tslFissionOps.length > 0) {
+            const _alreadyRetiredIds = new Set(
+              _retirementPairs.filter(p => p.result.retired && p.resolvedId).map(p => p.resolvedId)
+            );
+            for (const _fop of _tslFissionOps) {
+              if (!_fop.source_object_id) { _tslFissionUnresolvable++; continue; }
+              if (_alreadyRetiredIds.has(_fop.source_object_id)) continue; // CB already owns this retirement
+              const _tslRetResult = ObjectHelper.retireObject(gameState, _fop.source_object_id, `tsl_fission: ${_fop.verb || 'split'}`, turnNumber);
+              if (_tslRetResult.retired) {
+                _retirementPairs.push({
+                  entry:      { object_id: _fop.source_object_id, reason: `tsl_fission: ${_fop.verb || 'split'}`, successors: _fop.successors || [] },
+                  result:     _tslRetResult,
+                  resolvedId: _fop.source_object_id
+                });
+                _tslFissionInjected++;
+                _objectRealityDebug.fission_retired++;
+              }
+            }
+          }
+          _objectRealityDebug.tsl_fission_injected     = _tslFissionInjected;
+          _objectRealityDebug.tsl_fission_unresolvable = _tslFissionUnresolvable;
+        }
+
         // v1.85.8: Fission second pass — promote successor objects from successfully-retired parents.
         // Atomicity gate: successors are only injected when parent retirement returned retired:true.
         // No state can exist where the original object and its fragments are simultaneously active.
