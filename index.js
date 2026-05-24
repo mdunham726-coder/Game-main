@@ -4168,7 +4168,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         if (Array.isArray(_phaseBResult.entity_candidates)) {
           for (const _intrNpc of _visibleNpcsForCapture) {
             if (_intrNpc.object_capture_turn !== null && _intrNpc.object_capture_turn !== undefined) continue;
-            const _intrCand = _phaseBResult.entity_candidates.find(ec => {
+            let _intrCand = _phaseBResult.entity_candidates.find(ec => {
               if (ec.entity_ref === _intrNpc.id) return true;
               // v1.88.9 Patch 1C: Turn 1 only — resolve prose founding labels via registry
               if (turnNumber === 1 && _t1Registry.length) {
@@ -4179,6 +4179,21 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               }
               return false;
             });
+            // v1.88.89 Tier 4: job_category prose label resolution.
+            // CB sometimes emits entity_ref as a prose job_category label (e.g. "gate warden") instead of
+            // the engine NPC ID. Only fires when Tiers 1–3 all missed. Uniqueness guard: if two or more
+            // visible NPCs share the same job_category, skip both rather than guess (ambiguous).
+            // Applies on any turn (not Turn-1-gated).
+            if (!_intrCand) {
+              const _t4JobCat = _intrNpc.job_category?.toLowerCase?.()?.trim() || null;
+              if (_t4JobCat) {
+                const _t4ShareCount = _visibleNpcsForCapture.filter(n => n.job_category?.toLowerCase?.()?.trim() === _t4JobCat).length;
+                if (_t4ShareCount === 1) {
+                  const _t4Cand = _phaseBResult.entity_candidates.find(ec => String(ec.entity_ref || '').toLowerCase().trim() === _t4JobCat);
+                  if (_t4Cand) _intrCand = _t4Cand;
+                }
+              }
+            }
             if (!_intrCand) continue;
             let _capturedForNpc = 0;
             for (const _hItem of (_intrCand.held_objects || [])) {
