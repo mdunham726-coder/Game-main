@@ -389,6 +389,10 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
     for (const m of top) dedup_candidates.push(m);
   }
 
+  // v1.90.01: TLS fission normalization — convert CB fission_events[] to ORS-compatible fission_operations[]
+  const _fissionEvts = Array.isArray(phaseBResult.fission_events) ? phaseBResult.fission_events : [];
+  const fission_operations = _normalizeFissionEvents(_fissionEvts, activeObjects, gateRefs, apStampIds, gameState);
+
   return {
     tsl: {
       version:              '1.0',
@@ -397,7 +401,8 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
       acquisition_signals,
       transfer_signals,
       warnings,
-      dedup_candidates
+      dedup_candidates,
+      fission_operations
     },
     processing_time_ms: Date.now() - t0
   };
@@ -582,6 +587,87 @@ function _acquisitionConfidence(signals) {
   if (signals.includes('ap_executed_transfer'))                       score += 0.20;
   if (signals.includes('cb.transfer_origin=environment_interaction')) score += 0.05;
   return Math.min(1.0, score);
+}
+
+// ── Fission normalization helpers (v1.90.01) ─────────────────────────────────
+
+/**
+ * Normalize CB fission_events[] into ORS-compatible fission_operations[].
+ * Each entry resolves source_ref → object_id via existing alias logic and builds
+ * typed successor shapes from products[] + destination_hint.
+ * confidence is always emitted (0 for unresolved) to support future ambiguity handling.
+ */
+function _normalizeFissionEvents(fissionEvents, activeObjects, gateRefs, apStampIds, gameState) {
+  const operations = [];
+  if (!Array.isArray(fissionEvents) || fissionEvents.length === 0) return operations;
+
+  for (const evt of fissionEvents) {
+    if (!evt || !evt.source_ref) continue;
+
+    const matches         = _resolveAlias(evt.source_ref, null, activeObjects, gateRefs, apStampIds);
+    const bestMatch       = matches.length > 0 ? matches[0] : null;
+    const source_object_id = bestMatch ? bestMatch.object_id : null;
+    const confidence      = bestMatch ? bestMatch.confidence : 0;
+    const unresolved      = source_object_id === null;
+    const ambiguous       = matches.length > 1;
+
+    const products   = Array.isArray(evt.products) ? evt.products : [];
+    const dest       = _resolveDestinationHint(evt.destination_hint, gameState);
+    const successors = [];
+    for (let i = 0; i < products.length; i++) {
+      const prod = products[i];
+      if (!prod || typeof prod !== 'string') continue;
+      successors.push({
+        name:           prod,
+        quantity:       1,
+        unit:           null,
+        container_type: dest.container_type,
+        container_id:   dest.container_id,
+        temp_ref:       `tsl_fission_${i}`
+      });
+    }
+
+    operations.push({
+      source_ref:       evt.source_ref,
+      source_object_id,
+      retire_source:    true,
+      successors,
+      verb:             evt.verb      || null,
+      actor_ref:        evt.actor_ref || null,
+      evidence:         evt.evidence  || null,
+      confidence,
+      unresolved,
+      ambiguous
+    });
+  }
+  return operations;
+}
+
+/**
+ * Resolve CB destination_hint to a container_type/container_id pair.
+ * Kept minimal — provenance needs to mature before adding more destinations.
+ */
+function _resolveDestinationHint(hint, gameState) {
+  if (hint === 'player_hands') {
+    return { container_type: 'player', container_id: 'player' };
+  }
+  if (hint === 'table' || hint === 'ground') {
+    const ls   = gameState?.world?.active_local_space;
+    const site = gameState?.world?.active_site;
+    if (ls?.local_space_id) {
+      return { container_type: 'localspace', container_id: ls.local_space_id };
+    }
+    if (site) {
+      const siteId = site.id || site.site_id;
+      const px     = gameState?.player?.position?.x;
+      const py     = gameState?.player?.position?.y;
+      if (siteId != null && px != null && py != null) {
+        return { container_type: 'site', container_id: `${siteId}:${px},${py}` };
+      }
+    }
+  }
+  // 'unknown' or unrecognized — default: pieces in player hands
+  return { container_type: 'player', container_id: 'player' };
 }
 
 module.exports = { analyze };
