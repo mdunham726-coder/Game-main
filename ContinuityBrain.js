@@ -125,7 +125,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "object_candidates": [],
   "object_transfers": [],
   "object_condition_updates": [],
-  "object_retirements": []${isFoundingTurn ? `,
+  "object_retirements": [],
+  "fission_events": []${isFoundingTurn ? `,
   "founding_premise": {
     "form": null,
     "location_premise": null,
@@ -628,6 +629,29 @@ successors rules:
 - Omit the successors field entirely (or emit [] ) when no successor objects emerge.
 
 If none, emit: "object_retirements": []
+
+---
+
+FISSION EVENTS (optional)
+
+When a split or division verb is applied to a tracked physical object in the narration, emit an entry in fission_events. This is a witness report only — do not attempt to resolve object IDs or containers.
+
+Split verbs that trigger fission_events: tear, rip, split, halve, divide, separate, slice, cut, chop, carve, break, snap, shatter, crack, fracture
+
+{
+  "source_ref": "<prose name of the object that was split — as named in narration>",
+  "verb": "<the split verb>",
+  "products": ["<prose description of each resulting piece type>"],
+  "actor_ref": "<entity ref who performed the split — player or npc_id>",
+  "destination_hint": "<player_hands | table | ground | unknown>",
+  "evidence": "<exact phrase from narration that describes the split>"
+}
+
+Rules:
+- source_ref: the object's prose name as it appears in narration. Never an object_id.
+- products: one entry per distinct piece type described in narration.
+- destination_hint: where the pieces end up immediately after the split.
+- Emit one entry per fission event. If no split verb applies to a tracked object this turn, emit: "fission_events": []
 
 ${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
