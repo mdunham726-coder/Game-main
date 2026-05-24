@@ -126,7 +126,8 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "object_transfers": [],
   "object_condition_updates": [],
   "object_retirements": [],
-  "fission_events": []${isFoundingTurn ? `,
+  "fission_events": [],
+  "extraction_events": []${isFoundingTurn ? `,
   "founding_premise": {
     "form": null,
     "location_premise": null,
@@ -654,6 +655,33 @@ Rules:
 - products[].destination_hint: where this specific piece ends up immediately after the split.
 - destination_hint (top-level): where most or all pieces end up; used as fallback when a product entry omits its own destination_hint.
 - Emit one entry per fission event. If no split verb applies to a tracked object this turn, emit: "fission_events": []
+
+---
+
+EXTRACTION EVENTS (optional)
+
+When a portion of a tracked object is removed while the SOURCE PERSISTS with altered quantity or state, emit an entry in extraction_events. This is a witness report only — do not attempt to resolve object IDs.
+
+Verb examples: take from, pull from, pour from, draw from, remove from, scoop from, tear off, slice off, cut off, pluck, snap off
+
+Key distinction from fission_events: fission = source is fully split or destroyed; extraction = source survives with reduced quantity or state.
+
+{
+  "source_ref": "<prose name of the object being extracted from — as named in narration>",
+  "verb": "<the extraction verb>",
+  "extracted_quantity": <integer count of items extracted, or null if not a discrete count>,
+  "extracted_unit": "<unit of measure if applicable, or null>",
+  "product_name": "<noun phrase naming the extracted portion — include the source material in the name>",
+  "destination_hint": "<player_hands | table | ground | unknown>",
+  "actor_ref": "<entity ref who performed the extraction — player or npc_id>",
+  "evidence": "<exact phrase from narration that describes the extraction>"
+}
+
+Rules:
+- source_ref: the source object's prose name as it appears in narration. Never an object_id.
+- extracted_quantity: emit only when the narration makes the count explicit as a discrete integer. Null otherwise.
+- product_name: a noun phrase referencing the source material — not just a bare count or generic word.
+- Emit one entry per extraction event. If no extraction applies this turn, emit: "extraction_events": []
 
 ${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
 }
@@ -1243,6 +1271,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],
     object_retirements:       Array.isArray(extracted.object_retirements)       ? extracted.object_retirements       : [],
     fission_events:           Array.isArray(extracted.fission_events)           ? extracted.fission_events           : [],
+    extraction_events:        Array.isArray(extracted.extraction_events)        ? extracted.extraction_events        : [],
   };
 }
 
