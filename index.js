@@ -4582,7 +4582,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
 
         if (_quarantine.length > 0) {
-          const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
+          const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber, _tslR?.tsl || null);
           console.log(`[NARRATE] ObjectHelper: promoted=${_ohResult.promoted} transferred=${_ohResult.transferred} errors=${_ohResult.errors} | pre_rejected=${_preRejected}`);
           _objectRealityDebug.ran          = true;
           _objectRealityDebug.promoted     = _ohResult.promoted;
@@ -4770,7 +4770,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _objectRealityDebug.fission_retired++;
         }
         if (_fissionQuarantine.length > 0) {
-          const _fissionResult = await ObjectHelper.run(gameState, _fissionQuarantine, turnNumber);
+          const _fissionResult = await ObjectHelper.run(gameState, _fissionQuarantine, turnNumber, null);
           console.log(`[NARRATE] FissionPass: promoted=${_fissionResult.promoted} errors=${_fissionResult.errors}`);
           _objectRealityDebug.promoted    += _fissionResult.promoted;
           _objectRealityDebug.transferred += _fissionResult.transferred;

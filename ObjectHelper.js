@@ -244,10 +244,31 @@ function _pushError(gameState, entry) {
   }
 }
 
+// ── TSL dedup index ─────────────────────────────────────────────────────────
+// v1.88.86: Builds a fast-lookup Map from the TSL dedup_candidates surface.
+// Only indexes entries with action_recommendation === 'recommend_suppress_promote'.
+// Primary key: cb_candidate_ref (temp_ref — safer identity anchor).
+// Fallback key: proposed_name.toLowerCase() — used when cb_candidate_ref is absent.
+// First-match-wins: dedup_candidates are confidence-sorted desc; first qualifying
+// entry per key wins. Returns empty Map when tslResult is absent — promote loop
+// runs entirely unchanged and there is no regression risk.
+function _buildTslDedupIndex(tslResult) {
+  const _map = new Map();
+  if (!tslResult || !Array.isArray(tslResult.dedup_candidates)) return _map;
+  for (const _dc of tslResult.dedup_candidates) {
+    if (_dc.action_recommendation !== 'recommend_suppress_promote') continue;
+    const _primaryKey  = _dc.cb_candidate_ref ? String(_dc.cb_candidate_ref) : null;
+    const _fallbackKey = _dc.proposed_name    ? String(_dc.proposed_name).toLowerCase() : null;
+    if (_primaryKey  && !_map.has(_primaryKey))  _map.set(_primaryKey,  _dc);
+    if (_fallbackKey && !_map.has(_fallbackKey)) _map.set(_fallbackKey, _dc);
+  }
+  return _map;
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 /**
- * run(gameState, quarantine, turnNumber)
+ * run(gameState, quarantine, turnNumber, tslResult)
  *
  * Processes a quarantine array (built by index.js from CB result fields) in two passes:
  *   Pass 1 — promotions ('promote' action)
@@ -256,7 +277,7 @@ function _pushError(gameState, entry) {
  * Returns { promoted, transferred, errors, audit, reconciled }.
  * Does NOT modify the quarantine array or gameState.object_quarantine.
  */
-async function run(gameState, quarantine, turnNumber) {
+async function run(gameState, quarantine, turnNumber, tslResult = null) {
   if (!Array.isArray(quarantine) || quarantine.length === 0) {
     return { promoted: 0, transferred: 0, errors: 0, audit: [], reconciled: 0 };
   }
@@ -300,6 +321,10 @@ async function run(gameState, quarantine, turnNumber) {
   // v1.84.61: track which existing object IDs have already been claimed this pass
   // so that two same-named objects in the same container each claim a distinct slot.
   const _claimedObjectIds = new Set();
+
+  // v1.88.86: build TSL dedup index from SemanticNormalizer dedup_candidates.
+  // Empty map when tslResult is null — promote loop runs unchanged.
+  const _tslDedupMap = _buildTslDedupIndex(tslResult);
 
   // v1.88.76: build cross-ref transfer-destination quota pool.
   // Handles the case where CB emits a transfer keyed by object_id (existing tracked object)
@@ -462,6 +487,36 @@ async function run(gameState, quarantine, turnNumber) {
       _claimedObjectIds.add(_tokenSubsetMatch.id);
       audit.push({ turn: turnNumber, action: 'promote_skipped_token_subset', object_id: _tokenSubsetMatch.id, object_name: name, matched_to: _tokenSubsetMatch.name, tokens_candidate: _candidateTokens, tokens_existing: String(_tokenSubsetMatch.name).toLowerCase().trim().split(/\s+/).filter(Boolean), container_type, container_id, temp_ref, ts });
       continue;
+    }
+
+    // v1.88.86: TSL dedup guard — suppress promote when TSL confirms AP already moved this
+    // object this turn and CB is attempting to promote it again (re-description duplication).
+    // Narrowest authority bridge: only fires on action_recommendation === 'recommend_suppress_promote'
+    // (confidence ≥ 0.9, ap_executed_transfer provenance, exact match, no vetoes, no ambiguity).
+    // Primary lookup: temp_ref. Fallback: normalized name.
+    // Binds tempRefMap[temp_ref] = existing_id to preserve Pass 2 transfer continuity.
+    if (_tslDedupMap.size > 0) {
+      const _tslEntry = _tslDedupMap.get(temp_ref) || _tslDedupMap.get(_nameLower);
+      if (_tslEntry) {
+        tempRefMap[temp_ref] = _tslEntry.probable_existing_id;
+        _claimedObjectIds.add(_tslEntry.probable_existing_id);
+        audit.push({
+          turn: turnNumber,
+          action: 'promote_skipped_tsl_dedup',
+          object_id: _tslEntry.probable_existing_id,
+          object_name: name,
+          container_type,
+          container_id,
+          temp_ref,
+          tsl_match_id: _tslEntry.probable_existing_id,
+          tsl_match_name: _tslEntry.existing_name,
+          tsl_confidence: _tslEntry.confidence,
+          tsl_source_signals: _tslEntry.source_signals,
+          ts
+        });
+        console.log(`[ObjectHelper] TSL dedup suppress: ${name} \u2192 ${_tslEntry.probable_existing_id} (${_tslEntry.existing_name}) conf=${_tslEntry.confidence}`);
+        continue;
+      }
     }
 
     const objectId = _generateObjectId(name, container_type, container_id, temp_ref);
