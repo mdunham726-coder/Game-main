@@ -37,6 +37,7 @@ const CB = require('./ContinuityBrain'); // v1.70.0
 const ObjectHelper = require('./ObjectHelper'); // v1.84.52
 const ConditionBot = require('./conditionbot'); // v1.84.19
 const AuthorityGate = require('./authoritygate'); // v1.88.0
+const SemanticNormalizer = require('./SemanticNormalizer'); // v1.88.78: TSL Stage 1
 const diag = require('./diagnostics');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -4167,7 +4168,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         if (Array.isArray(_phaseBResult.entity_candidates)) {
           for (const _intrNpc of _visibleNpcsForCapture) {
             if (_intrNpc.object_capture_turn !== null && _intrNpc.object_capture_turn !== undefined) continue;
-            const _intrCand = _phaseBResult.entity_candidates.find(ec => {
+            let _intrCand = _phaseBResult.entity_candidates.find(ec => {
               if (ec.entity_ref === _intrNpc.id) return true;
               // v1.88.9 Patch 1C: Turn 1 only — resolve prose founding labels via registry
               if (turnNumber === 1 && _t1Registry.length) {
@@ -4178,6 +4179,21 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               }
               return false;
             });
+            // v1.88.89 Tier 4: job_category prose label resolution.
+            // CB sometimes emits entity_ref as a prose job_category label (e.g. "gate warden") instead of
+            // the engine NPC ID. Only fires when Tiers 1–3 all missed. Uniqueness guard: if two or more
+            // visible NPCs share the same job_category, skip both rather than guess (ambiguous).
+            // Applies on any turn (not Turn-1-gated).
+            if (!_intrCand) {
+              const _t4JobCat = _intrNpc.job_category?.toLowerCase?.()?.trim() || null;
+              if (_t4JobCat) {
+                const _t4ShareCount = _visibleNpcsForCapture.filter(n => n.job_category?.toLowerCase?.()?.trim() === _t4JobCat).length;
+                if (_t4ShareCount === 1) {
+                  const _t4Cand = _phaseBResult.entity_candidates.find(ec => String(ec.entity_ref || '').toLowerCase().trim() === _t4JobCat);
+                  if (_t4Cand) _intrCand = _t4Cand;
+                }
+              }
+            }
             if (!_intrCand) continue;
             let _capturedForNpc = 0;
             for (const _hItem of (_intrCand.held_objects || [])) {
@@ -4275,6 +4291,16 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               return true;
             });
           }
+        }
+
+        // v1.88.78: TSL Stage 1 — observe-only semantic normalization (Point B)
+        // Reads CB output + existing pipeline signals. Does NOT mutate _phaseBResult, gameState, or ORS state.
+        // v1.88.87: hoisted to function scope so line 4585 (ObjectHelper.run) can read _tslR?.tsl outside the block.
+        let _tslR = null;
+        {
+          _tslR = SemanticNormalizer.analyze(_phaseBResult, _rawInput, _parsedAction, _authorityGateResult, gameState);
+          _objectRealityDebug.tsl    = _tslR.tsl;
+          _objectRealityDebug.tsl_ms = _tslR.processing_time_ms;
         }
 
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
@@ -4573,7 +4599,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
 
         if (_quarantine.length > 0) {
-          const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber);
+          const _ohResult = await ObjectHelper.run(gameState, _quarantine, turnNumber, _tslR?.tsl || null);
           console.log(`[NARRATE] ObjectHelper: promoted=${_ohResult.promoted} transferred=${_ohResult.transferred} errors=${_ohResult.errors} | pre_rejected=${_preRejected}`);
           _objectRealityDebug.ran          = true;
           _objectRealityDebug.promoted     = _ohResult.promoted;
@@ -4761,7 +4787,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _objectRealityDebug.fission_retired++;
         }
         if (_fissionQuarantine.length > 0) {
-          const _fissionResult = await ObjectHelper.run(gameState, _fissionQuarantine, turnNumber);
+          const _fissionResult = await ObjectHelper.run(gameState, _fissionQuarantine, turnNumber, null);
           console.log(`[NARRATE] FissionPass: promoted=${_fissionResult.promoted} errors=${_fissionResult.errors}`);
           _objectRealityDebug.promoted    += _fissionResult.promoted;
           _objectRealityDebug.transferred += _fissionResult.transferred;

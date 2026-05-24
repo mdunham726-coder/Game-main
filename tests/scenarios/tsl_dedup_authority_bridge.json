@@ -1,0 +1,56 @@
+{
+  "name": "tsl_dedup_authority_bridge",
+  "stability": "probe",
+  "description": "[v1.88.86 Authority Bridge] TSL dedup guard in ObjectHelper: player takes an object (AP executes transfer, ObjectRecord created), then re-observes it on the next turn. CB may re-emit a promote candidate for the already-tracked object. Verifies that no phantom duplicate is created and that the ObjectHelper audit shows a suppression guard firing (promote_skipped_tsl_dedup preferred, or any promote_skipped_* if string guards caught it first).",
+  "tsl_expected": {
+    "target_turn": "reobserve_key",
+    "notes": "MB TEST PROTOCOL — v1.88.86 authority bridge verification.\n\nSCENARIO GOAL: Verify promote_skipped_tsl_dedup fires when CB re-promotes an AP-transferred object.\n\nSTEP 1 — Run the scenario (2 turns: take_key + reobserve_key).\n\nSTEP 2 — After take_key turn: use get_turn_data for that turn. Confirm:\n  (a) object_reality.transferred >= 1  (AP moved the iron key to player)\n  (b) gameState.objects has exactly ONE active iron key record in player container\n  (c) object_reality.tsl.dedup_candidates has an entry for the iron key with action_recommendation = 'recommend_suppress_promote' and source_signals includes 'ap_executed_transfer'\n\nSTEP 3 — After reobserve_key turn: use get_turn_data. Check object_reality.audit[].\n  SUCCESS PATH A — TSL dedup fired: audit contains an entry with action: 'promote_skipped_tsl_dedup'. Confirm: tsl_match_id matches the iron key ObjectRecord ID from Step 2; tsl_confidence >= 0.9; tsl_source_signals includes 'ap_executed_transfer'; object_reality.promoted === 0; exactly ONE iron key in gameState.objects.\n  SUCCESS PATH B — String guard caught it first: audit contains 'promote_skipped_name_match' or 'promote_skipped_soft_match' or 'promote_skipped_token_subset' for the iron key. TSL dedup didn't need to fire because an earlier guard caught the exact/variant name match. Also valid — system is working correctly. object_reality.promoted === 0 expected.\n  SUCCESS PATH C — CB didn't emit a promote at all: object_reality.promoted === 0, no suppression entry needed. AP-mediated turns with empty quarantine skip the promote loop entirely. This is fine — narration did not re-describe the key as a new object.\n  FAILURE — If object_reality.promoted > 0 and a second iron key ObjectRecord appears in gameState.objects, the authority bridge failed to catch a phantom. Check dedup_candidates.action_recommendation for the key: if it says 'recommend_suppress_promote' but no promote_skipped_tsl_dedup appeared in audit, that is a bridge miss and should be reported.\n\nSTEP 4 — Verify overall object count: gameState.objects should have exactly ONE active ObjectRecord with name matching 'iron key' (or variant), current_container_type === 'player'. If two records exist, it's a duplication bug.",
+    "dedup_candidates": [
+      {
+        "proposed_name_pattern": "key|iron key",
+        "expected_action_recommendation": "recommend_suppress_promote",
+        "expected_source_signals_include": ["ap_executed_transfer"],
+        "expected_confidence_gte": 0.9,
+        "notes": "Conditional: this entry only appears in dedup_candidates on the reobserve_key turn if CB emits a promote candidate for the key. If CB does not emit (AP skip_reason=empty_quarantine or CB correctly omits), dedup_candidates may be empty for this object — that is also a passing outcome."
+      }
+    ],
+    "transfer_signals": [
+      {
+        "object_name_pattern": "key|iron key",
+        "expected_source_signals_include": ["ap_executed_transfer"],
+        "notes": "take_key turn: AP executes the transfer; TSL transfer_signals should show ap_executed_transfer provenance."
+      }
+    ],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am inside a dim stone gatehouse. An iron key hangs from a hook on the wall beside a heavy wooden door.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the gatehouse.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_key",
+      "action": "I take the iron key from the hook.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "object_reality.tsl", "op": "present" }
+      ]
+    },
+    {
+      "label": "reobserve_key",
+      "action": "I look at what I am carrying.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "op": "eq", "path": "object_reality.promoted", "value": 0 },
+        { "path": "object_reality.tsl", "op": "present" }
+      ]
+    }
+  ]
+}

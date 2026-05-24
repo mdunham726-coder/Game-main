@@ -37,14 +37,15 @@ If it does not exist, prepend it below the top `---` separator line.
 
 ## DOCUMENTATION FORMAT (`c:\Users\daddy\Desktop\ULTIMATE_DUNGEON_MASTER_GAME_DOCUMENTATION_PART2.md`)
 
-The `**Development Status**` line contains a chain of compact one-sentence version entries separated by ` -- `.
+The file contains a `**Development History**` bullet list, one line per version, newest first.
 
 Each entry follows this pattern:
 ```
-X.XX.XX complete -- summary of what changed; root cause if applicable; no changes to X, Y, Z. Package X.XX.XX. --
+- X.XX.XX complete -- summary of what changed; root cause if applicable; no changes to X, Y, Z. Package X.XX.XX.
 ```
 
-Find the existing entry for the current version in the `Development Status` line and **replace it** with the new entry text. The chain format and all adjacent entries must be preserved exactly.
+To add a new version entry: **prepend** a new bullet immediately after the `**Development History** (newest first):` heading line.
+If an entry for the current version already exists, replace that bullet line in place.
 
 ---
 

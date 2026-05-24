@@ -1,0 +1,42 @@
+{
+  "name": "tsl_alias_token_subset",
+  "stability": "probe",
+  "description": "[TSL S2 / Class C] Lexical alias drift: object established as 'iron dagger' in turn 1; player references it as 'dagger' in turn 2. TSL must resolve the partial name to the existing ObjectRecord via token_subset matching.",
+  "tsl_expected": {
+    "turn": "take_dagger_alias",
+    "status": "needs_redesign",
+    "notes": "NEEDS REDESIGN: Class C lexical alias drift. Current take action is AP-mediated — AP resolves the transfer before CB runs (skip_reason: empty_quarantine), so CB never emits a 'dagger' candidate for TSL alias resolution to process. Token_subset matching requires CB to produce the candidate. Redesign needed: use a multi-turn examine/look path that triggers CB mediation without AP interception, then verify TSL bridges 'dagger' to 'iron dagger' ObjectRecord via token_subset. Original truth table preserved: token_subset match_method expected, confidence ~0.72, resolved_name contains 'iron dagger', unresolved_ambiguity null (only one dagger in scene).",
+    "alias_candidates": [
+      {
+        "raw_name_pattern": "dagger",
+        "expected_match_method": "token_subset",
+        "expected_resolved_name_contains": "iron dagger",
+        "expected_confidence_gte": 0.7,
+        "expected_unresolved_ambiguity": null
+      }
+    ],
+    "acquisition_signals": [],
+    "transfer_signals": [],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am in a blacksmith's workshop. An iron dagger rests on the wooden workbench in front of me.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the workshop.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_dagger_alias",
+      "action": "I pick up the dagger.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "object_reality.tsl", "op": "present" }
+      ]
+    }
+  ]
+}

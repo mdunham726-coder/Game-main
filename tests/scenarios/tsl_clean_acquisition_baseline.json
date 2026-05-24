@@ -1,0 +1,49 @@
+{
+  "name": "tsl_clean_acquisition_baseline",
+  "stability": "probe",
+  "description": "[TSL S1] Baseline: explicit player acquisition with take verb produces grounded acquisition_signal with parser and gate evidence. No warnings expected. If TSL cannot report clean provenance for a simple explicit take, all other TSL probes are unreliable.",
+  "tsl_expected": {
+    "turn": "take_key",
+    "notes": "AP-mediated take: brass key transferred by AP before CB runs (skip_reason: empty_quarantine). TSL produces transfer_signal with provenance parser.action=take + ap_executed_transfer. acquisition_signals is correctly empty — CB never sees a player-container candidate on AP-dominated takes. transfer_signals confidence 0.80. warnings[] empty. Positive baseline for AP-mediated acquisitions — all transfer_grounded assertions depend on this path being demonstrably clean.",
+    "alias_candidates": [
+      {
+        "raw_name_pattern": "brass key",
+        "expected_match_method": "exact",
+        "expected_confidence": 1.0,
+        "expected_unresolved_ambiguity": null
+      }
+    ],
+    "acquisition_signals": [],
+    "transfer_signals": [
+      {
+        "object_name_pattern": "brass key",
+        "expected_source_signals_include": ["parser.action=take", "ap_executed_transfer"],
+        "expected_confidence_gte": 0.6,
+        "expected_unresolved_ambiguity": null,
+        "notes": "Standard AP-mediated transfer: ap_executed_transfer + parser.action=take are the dual-provenance pair for explicit player takes"
+      }
+    ],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am in a small stone room with bare walls. A brass key rests on the stone floor near my feet.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the room.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_key",
+      "action": "I pick up the brass key.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "object_reality.tsl", "op": "present" },
+        { "path": "object_reality.tsl.transfer_signals", "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}

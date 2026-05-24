@@ -613,6 +613,44 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     }
   }
 
+  // === TSL SEMANTIC LAYER (last turn) — Stage 1 observe-only ===
+  {
+    const _tslOr  = (gameState.turn_history || []).slice(-1)[0]?.object_reality ?? null;
+    const _tslData = _tslOr?.tsl ?? null;
+    if (_tslData) {
+      const _tslMs   = _tslOr?.tsl_ms ?? null;
+      const _aliases = Array.isArray(_tslData.alias_candidates)    ? _tslData.alias_candidates    : [];
+      const _acqs    = Array.isArray(_tslData.acquisition_signals)  ? _tslData.acquisition_signals  : [];
+      const _xfers   = Array.isArray(_tslData.transfer_signals)     ? _tslData.transfer_signals     : [];
+      const _warns   = Array.isArray(_tslData.warnings)             ? _tslData.warnings             : [];
+      context += `\n=== TSL SEMANTIC LAYER (last turn, observe-only) ===\n`;
+      if (_tslMs != null) context += `processing: ${_tslMs}ms\n`;
+      if (_aliases.length === 0) {
+        context += `aliases: (none)\n`;
+      } else {
+        for (const a of _aliases) {
+          const amb = a.unresolved_ambiguity ? ` [!${a.unresolved_ambiguity}]` : '';
+          context += `  alias: "${a.raw_name}" → ${a.resolved_object_id} ("${a.resolved_name}") via ${a.match_method} conf:${(a.confidence||0).toFixed(2)}${amb}\n`;
+        }
+      }
+      if (_acqs.length > 0) {
+        for (const q of _acqs) {
+          const amb = q.unresolved_ambiguity ? ` [!${q.unresolved_ambiguity}]` : '';
+          context += `  acq: "${q.object_name}" actor:${q.actor} conf:${(q.confidence||0).toFixed(2)} signals:[${(q.source_signals||[]).join(',')}]${amb}\n`;
+        }
+      }
+      if (_xfers.length > 0) {
+        for (const x of _xfers) {
+          const amb = x.unresolved_ambiguity ? ` [!${x.unresolved_ambiguity}]` : '';
+          context += `  xfer: "${x.object_name}" ${x.from_actor}→${x.to_actor} conf:${(x.confidence||0).toFixed(2)} signals:[${(x.source_signals||[]).join(',')}]${amb}\n`;
+        }
+      }
+      if (_warns.length > 0) {
+        for (const w of _warns) context += `  warn: ${w.type} — ${w.detail}\n`;
+      }
+    }
+  }
+
   // === FULL LEVEL ===
   if (debugLevel === "full") {
     context += `\n=== WORLD STATE (Entries Summary) ===\n`;
@@ -1014,7 +1052,8 @@ const _SOURCE_ALLOWLIST = new Set([
   'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
   'test-harness.js',                                                           // v1.85.53
   'scripts/probe-runner.js', 'scripts/probe-metrics.js',                      // v1.85.75
-  'diagnostics.js'                                                             // v1.88.56
+  'diagnostics.js',                                                            // v1.88.56
+  'SemanticNormalizer.js'                                                      // v1.88.78: TSL Stage 1
 ]);
 // Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
 // OR any probe spec: tests/probes/<name>.probe.json

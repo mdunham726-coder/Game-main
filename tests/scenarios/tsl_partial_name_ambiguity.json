@@ -1,0 +1,41 @@
+{
+  "name": "tsl_partial_name_ambiguity",
+  "stability": "probe",
+  "description": "[TSL S5] Partial-name ambiguity: two distinct objects sharing a common token are both established in turn 1; player uses the generic shared token as the acquisition target. TSL alias resolution must annotate unresolved_ambiguity when multiple ObjectRecords match.",
+  "tsl_expected": {
+    "turn": "take_ambiguous_cup",
+    "status": "needs_redesign",
+    "notes": "NEEDS REDESIGN: Class C partial-name ambiguity. Current take action is AP-mediated — AP resolves the transfer before CB runs (skip_reason: empty_quarantine), so CB never emits a 'cup' candidate for TSL to evaluate. TSL token_subset ambiguity detection requires CB to produce the candidate. Redesign needed: use a multi-turn examine/look path that triggers CB mediation with both cups described, so TSL sees 'cup' matched to multiple ObjectRecords and annotates unresolved_ambiguity. Original truth table preserved: token_subset expected, unresolved_ambiguity non-null (two cups share token 'cup'), CB must not silently collapse to one.",
+    "alias_candidates": [
+      {
+        "raw_name_pattern": "cup",
+        "expected_match_method": "token_subset",
+        "expected_unresolved_ambiguity_non_null": true,
+        "notes": "Multiple ObjectRecords match 'cup' — TSL must annotate ambiguity rather than silently picking one"
+      }
+    ],
+    "acquisition_signals": [],
+    "transfer_signals": [],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am in a small kitchen. On the wooden counter sit two cups side by side: a red clay cup and a blue ceramic cup.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the kitchen.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_ambiguous_cup",
+      "action": "I pick up the cup.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "object_reality.tsl", "op": "present" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "name": "tsl_cross_container_grounded",
+  "stability": "probe",
+  "description": "[TSL S6] Cross-container reference, clean provenance: player explicitly names the object and its source surface in the take action. TSL must report acquisition_signal grounded by both gate.referenced_objects and parser.action=take. No warnings expected. This is the named cross-container positive case.",
+  "tsl_expected": {
+    "turn": "take_compass",
+    "notes": "AP-mediated take with explicit cross-container reference. Brass compass transferred by AP before CB runs (skip_reason: empty_quarantine). TSL produces transfer_signal with provenance parser.action=take + ap_executed_transfer; gate.referenced_objects may additionally appear in source_signals if gate populated referenced_objects before AP acted. acquisition_signals is correctly empty. transfer_signals confidence 0.80. warnings[] empty. This verifies that explicitly-named cross-container takes produce grounded transfer provenance — gate.referenced_objects is the distinguishing evidence for this class versus generic takes.",
+    "alias_candidates": [],
+    "acquisition_signals": [],
+    "transfer_signals": [
+      {
+        "object_name_pattern": "brass compass",
+        "expected_source_signals_include": ["parser.action=take", "ap_executed_transfer"],
+        "expected_confidence_gte": 0.6,
+        "expected_unresolved_ambiguity": null,
+        "notes": "gate.referenced_objects may additionally appear in source_signals for named cross-container takes"
+      }
+    ],
+    "warnings_expected": []
+  },
+  "world_prompt": "I am at a traveler's supply post. A brass compass sits on the wooden display shelf along the wall.",
+  "turns": [
+    {
+      "label": "founding",
+      "action": "I look around the supply post.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" }
+      ]
+    },
+    {
+      "label": "take_compass",
+      "action": "I grab the brass compass from the shelf.",
+      "intent_channel": "do",
+      "assert": [
+        { "op": "no_error" },
+        { "path": "object_reality.tsl", "op": "present" },
+        { "path": "object_reality.tsl.transfer_signals", "op": "array_len_gt", "value": 0 }
+      ]
+    }
+  ]
+}
