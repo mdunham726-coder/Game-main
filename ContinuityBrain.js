@@ -588,6 +588,12 @@ EMIT for: object split into distinct sub-objects, object fully consumed/eaten, o
 DO NOT EMIT for: damage or condition change, movement, picking up, dropping, or any interaction that leaves the object intact.
 Only use object_ids from "Tracked objects in scene" above — exact IDs only, never by name.
 
+SPLIT VERB RECOGNITION: The following verbs, when applied to a tracked physical object and when the narration implies resulting pieces or transformed material, normally indicate fission/transformative operations and require a retirement entry with successors[]:
+- Separation verbs: tear, rip, split, halve, divide, separate
+- Cutting verbs: slice, cut, chop, carve
+- Breaking verbs: break, snap, shatter, crack, fracture
+When one of these verbs applies to a tracked object AND the narration describes resulting pieces (halves, slices, chunks, shards, fragments, portions), emit the retirement with successors[]. Each distinct named stack is one successor entry — use quantity when a count is stated. If the object_id is uncertain, emit object_id: null rather than guessing. Omit successors[] only when the verb produces no trackable pieces (e.g. "snapped the twig and discarded both pieces" with no further scene presence, or "cut the rope" where no rope pieces appear in narration).
+
 OBJECT_ID BINDING RULE: Before selecting an object_id, verify that the tracked object's name directly matches what is physically undergoing the transformation in the narration. The retirement must target the object itself — not its container, not a co-located inventory item, not a nearby object in the same space. If the player splits or tears an object, select the ID of that object — not the container it came from, not the surface it rests on. If you cannot find a tracked object whose name clearly matches the transformation target, omit the retirement entry entirely. Omission is always safer than retiring the wrong object.
 
 {
