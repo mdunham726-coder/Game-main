@@ -1052,7 +1052,8 @@ const _SOURCE_ALLOWLIST = new Set([
   'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
   'test-harness.js',                                                           // v1.85.53
   'scripts/probe-runner.js', 'scripts/probe-metrics.js',                      // v1.85.75
-  'diagnostics.js'                                                             // v1.88.56
+  'diagnostics.js',                                                            // v1.88.56
+  'SemanticNormalizer.js'                                                      // v1.88.78: TSL Stage 1
 ]);
 // Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
 // OR any probe spec: tests/probes/<name>.probe.json
