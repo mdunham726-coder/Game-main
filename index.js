@@ -4414,6 +4414,35 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             return true;
           });
         }
+        // v1.91.04: extraction gate — suppress CB object_candidates whose name is already covered by
+        // a successfully resolved TLS extraction_operation. When TLS resolves an extraction cleanly
+        // (unresolved:false, quantity_unresolved:false), TLS owns the successor via partial_split.
+        // CB's parallel candidate for the same product name is redundant and produces a duplicate
+        // object without parent lineage.
+        // Matching: exact normalized (toLowerCase+trim) only — false-positive suppression (silent
+        // deletion) is worse than a missed suppression (visible duplicate).
+        // FALLBACK: ops with unresolved:true are excluded from the suppression set — CB candidate
+        // survives as the resilience fallback when TLS normalization fails for that product.
+        if (Array.isArray(_tslR?.tsl?.extraction_operations) && _tslR.tsl.extraction_operations.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
+          const _extractionProductNames = new Set(
+            _tslR.tsl.extraction_operations
+              .filter(op => !op.unresolved && !op.quantity_unresolved)
+              .map(op => (op.product?.name || '').toLowerCase().trim())
+              .filter(Boolean)
+          );
+          if (_extractionProductNames.size > 0) {
+            let _cbExtSuppressed = 0;
+            _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+              if (_extractionProductNames.has((c.name || '').toLowerCase().trim())) {
+                _turnLog(_objectRealityDebug, 'info', 'EXTRACTION-GATE', `CB candidate suppressed — covered by TLS extraction: "${c.name}"`, {name: c.name});
+                _cbExtSuppressed++;
+                return false;
+              }
+              return true;
+            });
+            if (_cbExtSuppressed > 0) _objectRealityDebug.cb_extraction_suppressed = _cbExtSuppressed;
+          }
+        }
         const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
         const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];
         _objectRealityDebug.cb_candidates = _cbCandidates;

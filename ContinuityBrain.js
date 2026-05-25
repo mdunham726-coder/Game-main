@@ -484,6 +484,8 @@ If no qualifying objects are present, emit: "object_candidates": []
 
 FISSION EXCEPTION: Do not emit object_candidates for pieces, portions, fragments, or halves that are the direct result of splitting, tearing, or dividing a tracked object. Those resulting pieces belong exclusively in the successors[] array of the parent's object_retirement entry. Emitting them as candidates alongside a retirement creates duplicate records and is always wrong when the parent is being retired.
 
+EXTRACTION EXCEPTION: Do not emit object_candidates for items that are the direct product of an extraction_events entry. The extracted product belongs exclusively in extraction_events[].product_name. Emitting the same item as both an extraction product and an object_candidates entry creates duplicate records — the extraction pipeline handles successor promotion and tracking.
+
   Emit actor_npc_ref when the narration signals EITHER of the following:
 
   TRIGGER 1 — Active physical interaction:
