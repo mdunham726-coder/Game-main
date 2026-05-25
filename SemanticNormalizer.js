@@ -725,6 +725,16 @@ function _normalizeExtractionEvents(extractionEvents, activeObjects, gateRefs, a
         degrades_to_fission = true;
         new_source_quantity = 0;
       }
+      // v1.91.08: uncalibrated-quantity guard — quantity:1 + unit:null is the ORS default
+      // for any unquantified object (loaf, jar, cake). It does NOT mean "exactly one
+      // indivisible unit". Do not retire the source; route through partial_split instead.
+      // Bridge state: source survives at quantity:1 until calibrated divisible capacity
+      // arc assigns explicit serving counts. Distinct from quantity:1 + unit!==null (e.g.
+      // "one apple"), which correctly degrades to fission.
+      if (degrades_to_fission && current_quantity === 1 && !_sourceRec.unit) {
+        degrades_to_fission = false;
+        new_source_quantity = 1;
+      }
     }
 
     const dest        = _resolveDestinationHint(evt.destination_hint, gameState);
