@@ -393,6 +393,10 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
   const _fissionEvts = Array.isArray(phaseBResult.fission_events) ? phaseBResult.fission_events : [];
   const fission_operations = _normalizeFissionEvents(_fissionEvts, activeObjects, gateRefs, apStampIds, gameState);
 
+  // v1.91.01: TLS extraction normalization — convert CB extraction_events[] to extraction_operations[]
+  const _extractionEvts = Array.isArray(phaseBResult.extraction_events) ? phaseBResult.extraction_events : [];
+  const extraction_operations = _normalizeExtractionEvents(_extractionEvts, activeObjects, gateRefs, apStampIds, gameState);
+
   return {
     tsl: {
       version:              '1.0',
@@ -402,7 +406,8 @@ function analyze(phaseBResult, rawInput, parsedAction, gateResult, gameState) {
       transfer_signals,
       warnings,
       dedup_candidates,
-      fission_operations
+      fission_operations,
+      extraction_operations
     },
     processing_time_ms: Date.now() - t0
   };
@@ -679,6 +684,81 @@ function _resolveDestinationHint(hint, gameState) {
   }
   // 'unknown' or unrecognized — default: pieces in player hands
   return { container_type: 'player', container_id: 'player' };
+}
+
+/**
+ * v1.91.01: Normalize CB extraction_events[] into ORS-compatible extraction_operations[].
+ * Extraction = source persists with reduced quantity; only the delta portion becomes a new object.
+ * Fires when CB witnesses a partial split where the source object survives.
+ */
+function _normalizeExtractionEvents(extractionEvents, activeObjects, gateRefs, apStampIds, gameState) {
+  const operations = [];
+  if (!Array.isArray(extractionEvents) || extractionEvents.length === 0) return operations;
+
+  for (const evt of extractionEvents) {
+    if (!evt || !evt.source_ref) continue;
+
+    const opIndex          = operations.length;
+    const matches          = _resolveAlias(evt.source_ref, null, activeObjects, gateRefs, apStampIds);
+    const bestMatch        = matches.length > 0 ? matches[0] : null;
+    const source_object_id = bestMatch ? bestMatch.object_id : null;
+    const confidence       = bestMatch ? bestMatch.confidence : 0;
+    const unresolved       = source_object_id === null;
+    const ambiguous        = matches.length > 1;
+
+    // Read current source quantity from gameState (must be a positive integer)
+    const _sourceRec       = source_object_id ? (gameState?.objects?.[source_object_id] ?? null) : null;
+    const current_quantity = (_sourceRec && Number.isInteger(_sourceRec.quantity) && _sourceRec.quantity >= 1)
+                             ? _sourceRec.quantity : null;
+
+    // extracted_quantity: only valid when CB emits an explicit positive integer
+    const extracted_quantity = (Number.isInteger(evt.extracted_quantity) && evt.extracted_quantity >= 1)
+                               ? evt.extracted_quantity : null;
+    const quantity_unresolved = extracted_quantity === null;
+
+    // Compute new source quantity; degrade to fission if result <= 0
+    let new_source_quantity = null;
+    let degrades_to_fission = false;
+    if (!quantity_unresolved && current_quantity !== null) {
+      new_source_quantity = current_quantity - extracted_quantity;
+      if (new_source_quantity <= 0) {
+        degrades_to_fission = true;
+        new_source_quantity = 0;
+      }
+    }
+
+    const dest        = _resolveDestinationHint(evt.destination_hint, gameState);
+    const prodName    = (typeof evt.product_name === 'string' && evt.product_name.trim())
+                        ? evt.product_name.trim() : evt.source_ref;
+    const prodUnit    = (typeof evt.extracted_unit === 'string' && evt.extracted_unit.trim())
+                        ? evt.extracted_unit.trim() : null;
+
+    operations.push({
+      source_ref:          evt.source_ref,
+      source_object_id,
+      current_quantity,
+      extracted_quantity,
+      extracted_unit:      prodUnit,
+      new_source_quantity,
+      degrades_to_fission,
+      quantity_unresolved,
+      product: {
+        name:           prodName,
+        quantity:       extracted_quantity ?? 1,
+        unit:           prodUnit,
+        container_type: dest.container_type,
+        container_id:   dest.container_id,
+        temp_ref:       `tsl_extraction_${opIndex}`
+      },
+      verb:       evt.verb      || null,
+      actor_ref:  evt.actor_ref || null,
+      evidence:   evt.evidence  || null,
+      confidence,
+      unresolved: unresolved || quantity_unresolved,
+      ambiguous
+    });
+  }
+  return operations;
 }
 
 module.exports = { analyze };
