@@ -4414,29 +4414,48 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             return true;
           });
         }
-        // v1.91.04: extraction gate — suppress CB object_candidates whose name is already covered by
-        // a successfully resolved TLS extraction_operation. When TLS resolves an extraction cleanly
-        // (unresolved:false, quantity_unresolved:false), TLS owns the successor via partial_split.
-        // CB's parallel candidate for the same product name is redundant and produces a duplicate
-        // object without parent lineage.
-        // Matching: exact normalized (toLowerCase+trim) only — false-positive suppression (silent
-        // deletion) is worse than a missed suppression (visible duplicate).
-        // FALLBACK: ops with unresolved:true are excluded from the suppression set — CB candidate
-        // survives as the resilience fallback when TLS normalization fails for that product.
+        // v1.91.04: extraction gate — suppress CB object_candidates covered by a successfully resolved
+        // TLS extraction_operation. TLS owns the successor via partial_split; CB's parallel candidate
+        // is redundant and produces a duplicate object without parent lineage.
+        // v1.91.05: added second match path — unit+container scope. CB may emit individual unit objects
+        // (e.g. "arrow" ×3) while TLS emits an aggregate successor ("three arrows", unit:"arrow").
+        // Unit match: c.name === product.unit AND c.container_type/id === product destination.
+        // Container scope prevents false positives (e.g. floor arrow ≠ player container).
+        // FALLBACK: ops with unresolved:true excluded from both match structures — CB candidate
+        // survives as resilience fallback when TLS normalization fails for that product.
         if (Array.isArray(_tslR?.tsl?.extraction_operations) && _tslR.tsl.extraction_operations.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
+          const _resolvedExtractionOps = _tslR.tsl.extraction_operations
+            .filter(op => !op.unresolved && !op.quantity_unresolved);
+          // Match 1: aggregate product name (exact normalized)
           const _extractionProductNames = new Set(
-            _tslR.tsl.extraction_operations
-              .filter(op => !op.unresolved && !op.quantity_unresolved)
+            _resolvedExtractionOps
               .map(op => (op.product?.name || '').toLowerCase().trim())
               .filter(Boolean)
           );
-          if (_extractionProductNames.size > 0) {
+          // Match 2: unit name scoped to same destination container
+          const _extractionUnitEntries = _resolvedExtractionOps
+            .filter(op => op.product?.unit)
+            .map(op => ({
+              unitNorm:      (op.product.unit || '').toLowerCase().trim(),
+              containerType: op.product.container_type || null,
+              containerId:   op.product.container_id   || null
+            }))
+            .filter(e => e.unitNorm);
+          if (_extractionProductNames.size > 0 || _extractionUnitEntries.length > 0) {
             let _cbExtSuppressed = 0;
             _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
-              if (_extractionProductNames.has((c.name || '').toLowerCase().trim())) {
-                _turnLog(_objectRealityDebug, 'info', 'EXTRACTION-GATE', `CB candidate suppressed — covered by TLS extraction: "${c.name}"`, {name: c.name});
+              const _cNameNorm = (c.name || '').toLowerCase().trim();
+              if (_extractionProductNames.has(_cNameNorm)) {
+                _turnLog(_objectRealityDebug, 'info', 'EXTRACTION-GATE', `CB candidate suppressed — name match: "${c.name}"`, {name: c.name, match: 'name'});
                 _cbExtSuppressed++;
                 return false;
+              }
+              for (const _e of _extractionUnitEntries) {
+                if (_cNameNorm === _e.unitNorm && c.container_type === _e.containerType && c.container_id === _e.containerId) {
+                  _turnLog(_objectRealityDebug, 'info', 'EXTRACTION-GATE', `CB candidate suppressed — unit+container match: "${c.name}"`, {name: c.name, match: 'unit', containerType: c.container_type});
+                  _cbExtSuppressed++;
+                  return false;
+                }
               }
               return true;
             });
