@@ -763,8 +763,103 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
     console.log(`[ObjectHelper] Transferred: ${objectId} (${record.name}) ${prevType}/${prevId} → ${to_container_type}/${to_container_id}`);
   }
 
-  console.log(`[ObjectHelper] Turn ${turnNumber}: promoted=${promoted} transferred=${transferred} errors=${errors} reconciled=${reconciled}`);
-  return { promoted, transferred, errors, audit, reconciled };
+  // ── Pass 3: Partial Splits ────────────────────────────────────────────────
+  // partial_split: source survives with reduced quantity; extracted successor is promoted.
+  // HARD CONSTRAINT: only source.quantity and source.events[] may be written on the source. No other mutations.
+  let partial_splits = 0;
+  for (const entry of quarantine) {
+    if (entry.action !== 'partial_split') continue;
+
+    const { source_object_id, new_source_quantity, name, quantity, unit,
+            container_type, container_id, temp_ref, parent_object_id, reason } = entry;
+
+    // Guard: source must exist and be active
+    const sourceRecord = source_object_id ? gameState.objects[source_object_id] : null;
+    if (!sourceRecord || sourceRecord.status !== 'active') {
+      _pushError(gameState, {
+        turn: turnNumber, action: 'partial_split', source_object_id,
+        reason: sourceRecord ? 'source_not_active' : 'source_not_found', ts
+      });
+      errors++;
+      continue;
+    }
+
+    // Guard: new_source_quantity must be a positive integer (index.js filters degrades_to_fission before this point)
+    if (!Number.isInteger(new_source_quantity) || new_source_quantity < 1) {
+      _pushError(gameState, {
+        turn: turnNumber, action: 'partial_split', source_object_id,
+        reason: 'invalid_new_source_quantity', new_source_quantity, ts
+      });
+      errors++;
+      continue;
+    }
+
+    const priorQty = typeof sourceRecord.quantity === 'number' ? sourceRecord.quantity : 1;
+    const delta    = new_source_quantity - priorQty;   // negative
+
+    // HARD CONSTRAINT: mutate source.quantity and events[] ONLY — no other field writes
+    sourceRecord.quantity = new_source_quantity;
+    if (!Array.isArray(sourceRecord.events)) sourceRecord.events = [];
+    sourceRecord.events.push({
+      type:         'quantity_modified',
+      turn:         turnNumber,
+      delta,
+      new_quantity: new_source_quantity,
+      reason:       reason || null,
+      ts
+    });
+    if (sourceRecord.events.length > 10) sourceRecord.events.shift();
+
+    // Promote extracted successor (inline promotion — mirrors Pass 1 critical path)
+    if (!name || !container_type || !container_id) {
+      audit.push({ turn: turnNumber, action: 'partial_split_source_mutated_no_successor', source_object_id, ts });
+      partial_splits++;
+      continue;
+    }
+
+    const successorId = _generateObjectId(name, container_type, container_id, temp_ref);
+    const destIds     = _resolveContainerIds(gameState, container_type, container_id);
+    if (!destIds) {
+      _pushError(gameState, {
+        turn: turnNumber, action: 'partial_split_successor', source_object_id, successor_name: name,
+        reason: 'container_not_found', container_type, container_id, ts
+      });
+      errors++;
+      // Source mutation already committed — log but do not roll back
+      audit.push({ turn: turnNumber, action: 'partial_split_successor_failed', source_object_id, ts });
+      continue;
+    }
+
+    if (!gameState.objects[successorId]) {
+      const successorRecord = {
+        id:                     successorId,
+        name:                   String(name).trim(),
+        description:            '',
+        created_turn:           turnNumber,
+        current_container_type: container_type,
+        current_container_id:   container_id,
+        associated_actor_id:    null,
+        source:                 'partial_split',
+        status:                 'active',
+        quantity:               (Number.isInteger(quantity) && quantity >= 1) ? quantity : 1,
+        unit:                   (typeof unit === 'string' && unit.trim()) ? unit.trim() : null,
+        conditions:             [],
+        events:                 [{ turn: turnNumber, action: 'promoted', container_type, container_id, reason: 'partial_split_extraction', ts }],
+        parent_object_id:       parent_object_id || source_object_id
+      };
+      gameState.objects[successorId] = successorRecord;
+      destIds.push(successorId);
+      if (temp_ref) tempRefMap[temp_ref] = successorId;
+      promoted++;
+    }
+
+    partial_splits++;
+    audit.push({ turn: turnNumber, action: 'partial_split', source_object_id, new_source_quantity, successor_id: successorId, successor_name: name, ts });
+    console.log(`[ObjectHelper] partial_split: ${source_object_id} qty→${new_source_quantity}; promoted ${successorId} (${name}) → ${container_type}/${container_id}`);
+  }
+
+  console.log(`[ObjectHelper] Turn ${turnNumber}: promoted=${promoted} transferred=${transferred} partial_splits=${partial_splits} errors=${errors} reconciled=${reconciled}`);
+  return { promoted, transferred, partial_splits, errors, audit, reconciled };
 }
 
 // ── transferObjectDirect ──────────────────────────────────────────────────────
