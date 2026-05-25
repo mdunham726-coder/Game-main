@@ -327,8 +327,12 @@ container — do not let the reason an object was extracted determine its contai
 narration shows a specific instance being held, eaten, drunk, used, carried, grabbed, lifted,
 bitten, unwrapped, or otherwise physically manipulated by the player or an NPC, that specific
 instance belongs in the player or npc container even if similar objects are also present in the
-scene. Passive surface/pile/table presence applies only to objects that are not actively
-possessed or manipulated.
+scene. Sensory contact also signals possession: phrases such as "soft under my fingers" or
+"warm in my hand" indicate physical handling — assign to the actor's container. Passive
+surface/pile/table presence applies only to objects that are not actively possessed or
+manipulated. When the same object is described as a scene or surface item earlier in the
+narration and later picked up or manipulated by the player or NPC in the same narration, the
+manipulation state is authoritative for container assignment — override the earlier placement.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
 Figurative or embellished prose does not disqualify extraction. Apply this test: is there a
