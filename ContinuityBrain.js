@@ -338,6 +338,7 @@ existence. If no concrete portable noun is named — only a metaphor, impression
 quality — do not invent an object.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
 Objects annotated with "nearby (1 tile)" in TRACKED OBJECTS are placed objects at a fixed floor location adjacent to the player — treat them as tracked and do not emit promote candidates for them.
+Exception: a named portion or sub-unit physically separated from a tracked divisible object this turn — a slice cut from a loaf, a piece broken from a cake, a wedge taken from a wheel of cheese — is a new discrete object, not the same object as the tracked parent. Do not suppress it via the tracked-objects rule. Emit it as a candidate.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
