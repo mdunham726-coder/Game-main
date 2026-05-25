@@ -4965,6 +4965,17 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             _objectRealityDebug.transferred += _extractionResult.transferred;
             _objectRealityDebug.errors      += _extractionResult.errors;
             _objectRealityDebug.audit        = (_objectRealityDebug.audit || []).concat(_extractionResult.audit || []);
+            // v1.91.09: extraction pass ran and produced meaningful results — override the
+            // main-ORS skip_reason/ran=false that was set when the main quarantine was empty.
+            // "Meaningful" = any promoted, transferred, errors, or audit entries. Covers
+            // partial_split success, fission-via-extraction retirement, and error-only turns.
+            const _extractionDidWork = _extractionResult.promoted > 0 || _extractionResult.transferred > 0
+                                    || _extractionResult.errors > 0
+                                    || (_extractionResult.audit && _extractionResult.audit.length > 0);
+            if (_extractionDidWork) {
+              _objectRealityDebug.ran         = true;
+              _objectRealityDebug.skip_reason = null;
+            }
           }
           _objectRealityDebug.tsl_extraction_injected     = _tslExtractionInjected;
           _objectRealityDebug.tsl_extraction_unresolvable = _tslExtractionUnresolvable;

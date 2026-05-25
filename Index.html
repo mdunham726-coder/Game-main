@@ -2538,6 +2538,9 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       while (logDom.children.length > 100) logDom.removeChild(logDom.lastChild);
     }
 
+    // v1.91.09: ORS log modernized — TLS section, per-object source/qty/unit/parent lineage,
+    // CB extraction-suppressed count, actor resolution, condition updates, fission/partial_split
+    // disambiguation, retirement name resolution.
     function appendObjectRealityLog(data, turnNumber) {
       const orDom = document.getElementById('object-reality-log');
       if (!orDom) return;
@@ -2557,92 +2560,147 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         return;
       }
 
-      const or = data.object_reality;
-      const cands    = Array.isArray(or.cb_candidates) ? or.cb_candidates : [];
-      const xfers    = Array.isArray(or.cb_transfers)  ? or.cb_transfers  : [];
-      const audit    = Array.isArray(or.audit)         ? or.audit         : [];
-      const errs     = Array.isArray(or.error_entries) ? or.error_entries : [];
+      const or   = data.object_reality;
+      const cands = Array.isArray(or.cb_candidates) ? or.cb_candidates : [];
+      const xfers = Array.isArray(or.cb_transfers)  ? or.cb_transfers  : [];
+      const audit = Array.isArray(or.audit)         ? or.audit         : [];
+      const errs  = Array.isArray(or.error_entries) ? or.error_entries : [];
 
       const lines = [label];
 
-      // CB summary
-      lines.push(`  CB: ${cands.length} candidate(s), ${xfers.length} transfer(s)`);
+      // ── 1. CB section ───────────────────────────────────────────────────────
+      const _cbSupp    = or.cb_extraction_suppressed || 0;
+      const _suppSufx  = _cbSupp > 0 ? `, ${_cbSupp} extraction-suppressed` : '';
+      lines.push(`  CB: ${cands.length} candidate(s), ${xfers.length} transfer(s)${_suppSufx}`);
       for (const c of cands) {
-        const name = c.name || '?';
+        const name    = c.name || '?';
+        const qtyTag  = (c.quantity && c.quantity > 1) ? ` ×${c.quantity}` : '';
+        const unitTag = c.unit ? ` ${c.unit}` : '';
         if (c.transfer_origin === 'npc_introduction') {
-          const _niCtype  = c.container_type || 'npc';
-          const _niCid    = c.container_id   || '?';
           const _niPhrase = c._source_phrase ? `  phrase:"${c._source_phrase}"` : '';
-          lines.push(`    [synthetic: npc-intro]  "${name}"  ${_niCtype}:${_niCid}${_niPhrase}`);
+          lines.push(`    [synthetic: npc-intro]  "${name}"${qtyTag}${unitTag}  ${c.container_type||'npc'}:${c.container_id||'?'}${_niPhrase}`);
         } else {
-          const ctype = c.container_type || '?';
-          const cid   = c.container_id   || '?';
-          const ref   = c.temp_ref       || '?';
-          lines.push(`    + candidate  "${name}"  ${ctype}:${cid}  temp_ref:${ref}`);
+          lines.push(`    + candidate  "${name}"${qtyTag}${unitTag}  ${c.container_type||'?'}:${c.container_id||'?'}  temp_ref:${c.temp_ref||'?'}`);
         }
       }
       for (const t of xfers) {
-        const ref    = t.temp_ref    || t.object_id || '?';
-        const from   = `${t.from_container_type || '?'}:${t.from_container_id || '?'}`;
-        const to     = `${t.to_container_type   || '?'}:${t.to_container_id   || '?'}`;
-        lines.push(`    > transfer   ${from} -> ${to}  ref:${ref}`);
+        const from = `${t.from_container_type||'?'}:${t.from_container_id||'?'}`;
+        const to   = `${t.to_container_type||'?'}:${t.to_container_id||'?'}`;
+        lines.push(`    > transfer   ${from} -> ${to}  ref:${t.temp_ref||t.object_id||'?'}`);
       }
 
-      // ObjectHelper quarantine pass result
-      // v1.85.10: audit rows filtered to exclude fission entries (parent_object_id present) to prevent duplication.
-      // Fission rows are rendered separately in the always-evaluated section below.
-      if (!or.ran) {
-        const reason = or.skip_reason === 'no_phaseB_result'        ? 'CB did not produce output'
-                     : or.skip_reason === 'empty_quarantine'        ? 'CB produced no candidates or transfers'
-                     : or.skip_reason === 'ap_dedup_all_transfers'  ? 'transfers handled by ActionProcessor (AP-dedup)'
-                     : or.skip_reason || 'unknown reason';
-        const fissionSuffix = (or.fission_retired > 0) ? ' | fission pass ran separately' : '';
-        lines.push(`  ObjectHelper: skipped (${reason})${fissionSuffix}`);
-        if ((or.visible_objects_count || 0) > 0) {
-          lines.push(`  visible_objects: ${or.visible_objects_count} extracted (barrier-inaccessible, not in ORS)`);
+      // ── 2. TLS section ──────────────────────────────────────────────────────
+      const _tslExtrInj = or.tsl_extraction_injected     || 0;
+      const _tslExtrUnr = or.tsl_extraction_unresolvable || 0;
+      const _tslFissInj = or.tsl_fission_injected        || 0;
+      const _tslFissUnr = or.tsl_fission_unresolvable    || 0;
+      if (_tslExtrInj > 0 || _tslFissInj > 0 || _tslExtrUnr > 0 || _tslFissUnr > 0) {
+        const _extrStr = `extraction:${_tslExtrInj}${_tslExtrUnr > 0 ? ` unresolvable:${_tslExtrUnr}` : ''}`;
+        const _fissStr = `fission:${_tslFissInj}${_tslFissUnr > 0 ? ` unresolvable:${_tslFissUnr}` : ''}`;
+        lines.push(`  TLS: ${_extrStr} | ${_fissStr}`);
+        const _extrOps = Array.isArray(or.tsl?.extraction_operations) ? or.tsl.extraction_operations : [];
+        for (const op of _extrOps) {
+          const _opLabel  = op.degrades_to_fission ? '[fission]' : '[partial_split]';
+          const _prodName = op.product?.name || op.source_ref || '?';
+          const _qtyStr   = op.extracted_quantity != null ? `${op.extracted_quantity}` : '?';
+          const _unitStr  = op.extracted_unit ? ` ${op.extracted_unit}` : '';
+          const _srcName  = op.source_ref || op.source_object_id || '?';
+          const _srcQty   = (op.current_quantity != null && op.new_source_quantity != null)
+                          ? `qty:${op.current_quantity}→${op.new_source_quantity}` : '';
+          const _dest     = op.product ? `${op.product.container_type||'?'}:${op.product.container_id||'?'}` : '?';
+          const _unres    = op.quantity_unresolved ? ' [qty-unresolved]' : '';
+          lines.push(`    ${_opLabel} "${_prodName}" (${_qtyStr}${_unitStr}) <- "${_srcName}" (${_srcQty}) -> ${_dest}${_unres}`);
         }
+      }
+
+      // partial_split successor ID set — used to distinguish partial_split from fission in audit
+      const _psSuccIds = new Set(
+        audit.filter(a => a.action === 'partial_split').map(a => a.successor_id).filter(Boolean)
+      );
+
+      // ── 3. ObjectHelper section ─────────────────────────────────────────────
+      if (!or.ran) {
+        const reason = or.skip_reason === 'no_phaseB_result'       ? 'CB did not produce output'
+                     : or.skip_reason === 'empty_quarantine'       ? 'CB produced no candidates or transfers'
+                     : or.skip_reason === 'ap_dedup_all_transfers' ? 'transfers handled by ActionProcessor (AP-dedup)'
+                     : or.skip_reason || 'unknown reason';
+        const _fissSufx = (or.fission_retired > 0) ? ' | fission pass ran separately' : '';
+        lines.push(`  ObjectHelper: skipped (${reason})${_fissSufx}`);
+        if ((or.visible_objects_count || 0) > 0)
+          lines.push(`  visible_objects: ${or.visible_objects_count} extracted (barrier-inaccessible)`);
       } else {
-        const _orSuffix = [
-          (or.npc_intro_materialized > 0) ? `  npc_intro:${or.npc_intro_materialized}` : '',
-          (or.visible_objects_count  > 0) ? `  visible:${or.visible_objects_count}`     : ''
+        const _ohSufx = [
+          or.npc_intro_materialized > 0 ? `  npc_intro:${or.npc_intro_materialized}` : '',
+          or.visible_objects_count  > 0 ? `  visible:${or.visible_objects_count}`     : ''
         ].join('');
-        lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}  pre_rejected:${or.pre_rejected || 0}${_orSuffix}`);
-        // Normal (non-fission) audit rows only — fission rows rendered below
-        for (const a of audit.filter(a => !a.parent_object_id)) {
-          if (a.action === 'promoted') {
+        lines.push(`  ObjectHelper: promoted:${or.promoted}  transferred:${or.transferred}  errors:${or.errors}  pre_rejected:${or.pre_rejected||0}${_ohSufx}`);
+        for (const a of audit) {
+          if (a.action === 'promoted' && !a.parent_object_id) {
+            // Standard main-ORS promotion
             lines.push(`    [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}`);
+          } else if (a.action === 'partial_split') {
+            // TLS extraction — source quantity mutation record
+            const _srcShort = (a.source_object_id||'').slice(0,14) + '…';
+            lines.push(`    [partial_split] ${_srcShort} source qty -> ${a.new_source_quantity}  successor:"${a.successor_name}"`);
+          } else if (a.action === 'promoted' && a.parent_object_id && _psSuccIds.has(a.object_id)) {
+            // Partial_split successor — source survived
+            const _pShort = (a.parent_object_id||'').slice(0,14) + '…';
+            lines.push(`    [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}  [partial_split <- ${_pShort}]`);
           } else if (a.action === 'transferred') {
             lines.push(`    [${a.object_id}] "${a.object_name}" moved ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
           } else if (a.action === 'promote_skipped_existing') {
             lines.push(`    [${a.object_id}] "${a.object_name}" already exists — skipped`);
+          } else if (a.action && a.action.startsWith('promote_suppressed')) {
+            lines.push(`    [suppressed] "${a.object_name||'?'}" — ${a.action}`);
+          } else if (a.action && a.action.startsWith('promote_skipped')) {
+            lines.push(`    [skipped] "${a.object_name||'?'}" — ${a.action}`);
           }
+          // Fission-successor 'promoted' entries (parent_object_id set, not in _psSuccIds) rendered in §5
         }
         for (const e of errs) {
-          lines.push(`    ERROR  ${e.action || '?'} | "${e.object_name || '?'}" | ${e.reason || '?'}`);
+          lines.push(`    ERROR  ${e.action||'?'} | "${e.object_name||e.source_object_id||'?'}" | ${e.reason||'?'}`);
         }
-        // v1.84.66: initial condition display
         const _icUpdates = Array.isArray(or.initial_condition_updates) ? or.initial_condition_updates : [];
         for (const ic of _icUpdates) {
-          if (ic.applied) {
-            lines.push(`    [init_cond] ${ic.objectId}  "${ic.condition || ''}"`)
+          if (ic.applied) lines.push(`    [init_cond] ${ic.objectId}  "${ic.condition||''}"`);
+        }
+      }
+
+      // ── 4. Retirement section ────────────────────────────────────────────────
+      const _retUpdates = Array.isArray(or.retirement_updates) ? or.retirement_updates : [];
+      for (const r of _retUpdates) {
+        if (r.retired) {
+          const _rAudit = audit.find(a => a.object_id === r.objectId);
+          const _rName  = _rAudit?.object_name ? ` "${_rAudit.object_name}"` : '';
+          lines.push(`    [retired]  ${r.objectId}${_rName}`);
+        }
+      }
+
+      // ── 5. Fission section ───────────────────────────────────────────────────
+      if ((or.fission_retired || 0) > 0) {
+        lines.push(`  Fission: retired:${or.fission_retired}  successors:${or.fission_successors_injected||0}`);
+        for (const a of audit) {
+          if (a.action === 'promoted' && a.parent_object_id && !_psSuccIds.has(a.object_id)) {
+            lines.push(`    [fission] [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}  (parent:${a.parent_object_id})`);
           }
         }
       }
 
-      // v1.85.10: Always-evaluated retirement + fission section.
-      // Fires on every turn regardless of whether the quarantine pass ran.
-      // Retirement rows
-      const _retUpdates = Array.isArray(or.retirement_updates) ? or.retirement_updates : [];
-      for (const r of _retUpdates) {
-        if (r.retired) lines.push(`    [retired]  ${r.objectId}`);
+      // ── 6. Actor resolution section ──────────────────────────────────────────
+      const _actorRes = Array.isArray(or.actor_resolution) ? or.actor_resolution : [];
+      if (_actorRes.length > 0) {
+        lines.push(`  Actor Resolution: ${_actorRes.length} resolved`);
+        for (const ar of _actorRes) {
+          lines.push(`    [actor] "${ar.object_name||'?'}" -> ${ar.resolved_to||'?'}  (${ar.status||'resolved'})`);
+        }
       }
-      // Fission stats + fission audit rows (discriminated by parent_object_id in audit entry)
-      if ((or.fission_retired || 0) > 0) {
-        lines.push(`  Fission: retired:${or.fission_retired}  successors:${or.fission_successors_injected || 0}`);
-        for (const a of audit.filter(a => a.parent_object_id)) {
-          if (a.action === 'promoted') {
-            lines.push(`    [fission] [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}  (parent:${a.parent_object_id})`);
-          }
+
+      // ── 7. Condition updates section ─────────────────────────────────────────
+      const _condUpdates = Array.isArray(or.condition_updates) ? or.condition_updates : [];
+      if (_condUpdates.length > 0) {
+        lines.push(`  Conditions: ${_condUpdates.length} update(s)`);
+        for (const cu of _condUpdates) {
+          if (cu.applied) lines.push(`    [condition] ${cu.objectId||'?'}  + "${cu.condition||'?'}"`);
         }
       }
 
