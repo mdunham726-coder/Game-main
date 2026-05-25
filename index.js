@@ -4855,6 +4855,73 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _objectRealityDebug.tsl_fission_unresolvable = _tslFissionUnresolvable;
         }
 
+        // v1.91.03: TLS extraction injection — build partial_split quarantine from extraction_operations.
+        // Non-degenerate ops: partial_split entries → ObjectHelper Pass 3.
+        // degrades_to_fission ops: retire source → push to _retirementPairs (fission second pass promotes successor).
+        {
+          const _tslExtractionOps = Array.isArray(_tslR?.tsl?.extraction_operations) ? _tslR.tsl.extraction_operations : [];
+          let _tslExtractionInjected     = 0;
+          let _tslExtractionUnresolvable = 0;
+          const _extractionQuarantine = [];
+          if (_tslExtractionOps.length > 0) {
+            for (const _eop of _tslExtractionOps) {
+              if (!_eop.source_object_id || _eop.unresolved || _eop.quantity_unresolved) {
+                _tslExtractionUnresolvable++;
+                continue;
+              }
+              if (_eop.degrades_to_fission) {
+                // Source fully consumed by extraction — retire and route successor through fission second pass
+                const _tslRetResult = ObjectHelper.retireObject(gameState, _eop.source_object_id, `tsl_extraction_degrade: ${_eop.verb || 'extract'}`, turnNumber);
+                if (_tslRetResult.retired) {
+                  _retirementPairs.push({
+                    entry: {
+                      object_id:  _eop.source_object_id,
+                      reason:     `tsl_extraction_degrade: ${_eop.verb || 'extract'}`,
+                      successors: _eop.product ? [{
+                        name:           _eop.product.name,
+                        quantity:       _eop.product.quantity,
+                        unit:           _eop.product.unit,
+                        container_type: _eop.product.container_type,
+                        container_id:   _eop.product.container_id,
+                        temp_ref:       _eop.product.temp_ref || 'ext_frag'
+                      }] : []
+                    },
+                    result:     _tslRetResult,
+                    resolvedId: _eop.source_object_id
+                  });
+                  _tslExtractionInjected++;
+                }
+              } else {
+                // Normal extraction — partial_split (source survives with reduced quantity)
+                _extractionQuarantine.push({
+                  action:             'partial_split',
+                  source_object_id:   _eop.source_object_id,
+                  new_source_quantity: _eop.new_source_quantity,
+                  name:               _eop.product?.name           || null,
+                  quantity:           _eop.product?.quantity       ?? _eop.extracted_quantity ?? 1,
+                  unit:               _eop.product?.unit           || null,
+                  container_type:     _eop.product?.container_type || 'player',
+                  container_id:       _eop.product?.container_id   || 'player',
+                  temp_ref:           _eop.product?.temp_ref       || `ext_${_eop.source_object_id}`,
+                  parent_object_id:   _eop.source_object_id,
+                  reason:             `tsl_extraction: ${_eop.verb || 'extract'}`
+                });
+                _tslExtractionInjected++;
+              }
+            }
+          }
+          if (_extractionQuarantine.length > 0) {
+            const _extractionResult = await ObjectHelper.run(gameState, _extractionQuarantine, turnNumber, null);
+            console.log(`[NARRATE] ExtractionPass: partial_splits=${_extractionResult.partial_splits} promoted=${_extractionResult.promoted} errors=${_extractionResult.errors}`);
+            _objectRealityDebug.promoted    += _extractionResult.promoted;
+            _objectRealityDebug.transferred += _extractionResult.transferred;
+            _objectRealityDebug.errors      += _extractionResult.errors;
+            _objectRealityDebug.audit        = (_objectRealityDebug.audit || []).concat(_extractionResult.audit || []);
+          }
+          _objectRealityDebug.tsl_extraction_injected     = _tslExtractionInjected;
+          _objectRealityDebug.tsl_extraction_unresolvable = _tslExtractionUnresolvable;
+        }
+
         // v1.85.8: Fission second pass — promote successor objects from successfully-retired parents.
         // Atomicity gate: successors are only injected when parent retirement returned retired:true.
         // No state can exist where the original object and its fragments are simultaneously active.
