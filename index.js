@@ -78,6 +78,7 @@ let _activeTurnDebug = null;         // v1.88.67: module-level fallback — neve
 // ── Session TTL eviction ─────────────────────────────────────────────────────
 // Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
 const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
+const _divCheckCache = new Map();    // v1.91.11: divisibility check cache — (sourceLabel::label) -> bool
 const SESSION_PROBE_MAX_AGE_MS = 5 * 60 * 1000;       // 5 min  — probes/harness are throw-aways
 const SESSION_GAME_MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24 hrs — browser game sessions survive overnight
 setInterval(() => {
@@ -3126,6 +3127,9 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // RC must not fire: narrator prompt already routes this to state_claim rejection — an RC advisory would
       // contradict that instruction and give the narrator a concrete consequence to follow instead.
       _rcSkippedReason = 'target_not_found_in_cell';
+    } else if (gameState._environmentGatherIntent?.sourceObjectId) {
+      // v1.91.11: source-bound extraction — divisibility LLM validator fires below; RC is not needed.
+      _rcSkippedReason = 'source_object_gather';
     } else if (gameState._environmentGatherIntent?.synthetic) {
       // v1.85.6: take action forwarded to narrator for plausibility resolution (ORS had no prior record).
       // RC must not fire: the narrator already receives a targeted plausibility-judgment block.
@@ -3399,12 +3403,58 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // v1.84.80: preserve the attempted label for the quarantine-time failure gate below.
     // If the narrator describes failure the label is used to block spurious grid promotions.
     const _envGatherLabel = _envGatherIntent ? _envGatherIntent.label.toLowerCase() : null;
+    // v1.91.11: LLM divisibility validator — fires when AP set sourceObjectId (partial-token extraction path).
+    // Checks: can [label] be non-destructively extracted from [sourceLabel]?
+    // Cached by (sourceLabel::label) so the same pair never calls the LLM twice per server session.
+    // On LLM failure or 'no': downgrades to synthetic:true (conservative — narrator handles plausibility).
+    if (_envGatherIntent?.sourceObjectId) {
+      const _divCacheKey = `${(_envGatherIntent.sourceLabel || '').toLowerCase()}::${(_envGatherIntent.label || '').toLowerCase()}`;
+      if (_divCheckCache.has(_divCacheKey)) {
+        if (!_divCheckCache.get(_divCacheKey)) {
+          _envGatherIntent.sourceObjectId = null;
+          _envGatherIntent.synthetic = true;
+        }
+      } else {
+        try {
+          const _divResp = await axios.post(
+            'https://api.deepseek.com/v1/chat/completions',
+            {
+              model: 'deepseek-chat',
+              messages: [
+                { role: 'system', content: 'You are a semantic validator for a game engine. Reply with exactly one word: yes or no.' },
+                { role: 'user', content: `Can "${_envGatherIntent.label}" be non-destructively extracted from "${_envGatherIntent.sourceLabel}"? yes or no` }
+              ],
+              temperature: 0,
+              max_tokens: 5
+            },
+            {
+              headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+              timeout: 8000
+            }
+          );
+          const _divAnswer = (_divResp?.data?.choices?.[0]?.message?.content || '').trim().toLowerCase();
+          const _divOk = _divAnswer.includes('yes');
+          _divCheckCache.set(_divCacheKey, _divOk);
+          console.log(`[DIV-CHECK] "${_envGatherIntent.label}" from "${_envGatherIntent.sourceLabel}" -> ${_divOk ? 'allowed' : 'blocked'}`);
+          if (!_divOk) {
+            _envGatherIntent.sourceObjectId = null;
+            _envGatherIntent.synthetic = true;
+          }
+        } catch (_divErr) {
+          console.warn('[DIV-CHECK] validator call failed, downgrading to synthetic:', _divErr.message);
+          _envGatherIntent.sourceObjectId = null;
+          _envGatherIntent.synthetic = true;
+        }
+      }
+    }
     const _environmentGatherBlock = _envGatherIntent
-      ? (_envGatherIntent.synthetic
+      ? (_envGatherIntent.sourceObjectId
+        ? `\nSCENE CONTEXT: "${_envGatherIntent.sourceLabel}" is present in the current location.\n`
+        : (_envGatherIntent.synthetic
         ? `\nENVIRONMENTAL GATHER ATTEMPT: The player is physically attempting to grab or pick up "${_envGatherIntent.label}". The engine has no prior record of this item. Narrate the player's physical search or reach using established scene details.\n`
         : (_envGatherIntent.featureValue
             ? `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item was established as a feature of the current scene by the engine: "${_envGatherIntent.featureValue}". This is a legitimate physical interaction with the narrated world — the POSSESSION RULE's item-instantiation prohibition and the FOUNDING TURN RULE do not apply to this attempt. The item pre-exists in the narrated scene; the player is not asserting something from thin air. Narrate the gather based on the physical nature of the item: if it is detachable or collectable (a plant, a flower, loose material, scattered debris, something lying on the ground), narrate the player successfully gathering it. If it is a permanent feature (a cliff face, a carved structure, a flowing stream), narrate clearly that it cannot be taken. Do not deny this attempt on the basis that the item is not yet listed in INVENTORY.\n`
-            : `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item has not been confirmed as an established feature of the current scene by the engine. Narrate based on whether the current scene plausibly contains such an item given prior narration — if the environment would naturally include it, the player may find and gather it; if it is implausible given the current scene, narrate that nothing of that kind is found here. The POSSESSION RULE's item-instantiation prohibition does not apply if the item is plausibly present in the current scene.\n`))
+            : `\nENVIRONMENTAL GATHER ATTEMPT: The player is attempting to pick up or gather "${_envGatherIntent.label}" from the environment. This item has not been confirmed as an established feature of the current scene by the engine. Narrate based on whether the current scene plausibly contains such an item given prior narration — if the environment would naturally include it, the player may find and gather it; if it is implausible given the current scene, narrate that nothing of that kind is found here. The POSSESSION RULE's item-instantiation prohibition does not apply if the item is plausibly present in the current scene.\n`)))
       : '';
     const _conditionBlock = (() => {
       const _activeConds = gameState.player?.conditions;

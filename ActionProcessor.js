@@ -367,7 +367,13 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     const target = actions?.target||'';
     const found  = resolveCellItemByName(state, target);
     let takeSucceeded = false;
-    if (found && found.objectId) {
+    if (found && found.objectId && found._partialToken) {
+      // v1.91.11: partial-token source match — extraction intent, do not transfer whole object.
+      // Forwards to narrator with source object context; LLM divisibility validator fires in index.js.
+      state._environmentGatherIntent = { label: target, sourceObjectId: found.objectId, sourceLabel: found.label, synthetic: false };
+      if (logger) logger.action_resolved('take', null, `source-bound extraction forwarded: ${target} (source: ${found.label})`);
+      return;
+    } else if (found && found.objectId) {
       // v1.84.55: Object Reality object (npcHeldObject or gridObject)
       const turnNum = actions?._turn || 0;
       const result  = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'player_take');
@@ -996,6 +1002,23 @@ function resolveCellItemByName(state, query){
           }
         }
       }
+      // v1.91.11: Pass C — source-bound partial-token match for extraction queries.
+      // Fires only for multi-word queries with structural extraction/quantity language
+      // (digit or count word). Matches when any filtered name token appears in query tokens.
+      // Returns _partialToken:true so take handler routes to divisibility validation, not transferObjectDirect.
+      if (q && q.includes(' ') && /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|some|few|several|half|quarter)\b/i.test(q)) {
+        const _pcStop = new Set(['a','an','the','some','of','and','or','in','on','at','by','to','with','for']);
+        const _pcQTokens = new Set(q.split(/\s+/));
+        for (const rec of Object.values(state.objects)) {
+          if (rec.status !== 'active') continue;
+          if (rec.current_container_type !== 'localspace') continue;
+          if (rec.current_container_id !== _lsId) continue;
+          const _pcNameToks = String(rec.name || '').toLowerCase().split(/\s+/).filter(t => t.length >= 3 && !_pcStop.has(t));
+          if (_pcNameToks.length > 0 && _pcNameToks.some(t => _pcQTokens.has(t))) {
+            return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true, _partialToken: true };
+          }
+        }
+      }
     }
   }
   // v1.84.92: check Object Reality site floor objects when player is at L1 inside a site.
@@ -1025,6 +1048,20 @@ function resolveCellItemByName(state, query){
           const _recTokens92 = String(rec.name || '').toLowerCase().split(' ');
           if (_recTokens92.includes(q)) {
             return { targetType: 'siteObject', siteKey: _siteKey92, label: rec.name, objectId: rec.id, _found: true };
+          }
+        }
+      }
+      // v1.91.11: Pass C — same partial-token extraction guard for site floor objects
+      if (q && q.includes(' ') && /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|some|few|several|half|quarter)\b/i.test(q)) {
+        const _pcStop92 = new Set(['a','an','the','some','of','and','or','in','on','at','by','to','with','for']);
+        const _pcQTokens92 = new Set(q.split(/\s+/));
+        for (const rec of Object.values(state.objects)) {
+          if (rec.status !== 'active') continue;
+          if (rec.current_container_type !== 'site') continue;
+          if (rec.current_container_id !== _siteKey92) continue;
+          const _pcNameToks92 = String(rec.name || '').toLowerCase().split(/\s+/).filter(t => t.length >= 3 && !_pcStop92.has(t));
+          if (_pcNameToks92.length > 0 && _pcNameToks92.some(t => _pcQTokens92.has(t))) {
+            return { targetType: 'siteObject', siteKey: _siteKey92, label: rec.name, objectId: rec.id, _found: true, _partialToken: true };
           }
         }
       }
