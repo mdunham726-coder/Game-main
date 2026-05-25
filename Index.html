@@ -2369,6 +2369,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           return `<div style="margin-bottom:4px;"><span style="color:#e67e22;">[unresolved: ${_escHtml(id)}]</span></div>`;
         }
         const name   = _escHtml(rec.name || '(unnamed)');
+        const qtyTag = (Number.isInteger(rec.quantity) && rec.quantity > 1) ? ` (${rec.quantity})` : '';
         const status = rec.status || 'unknown';
         const isActive = status === 'active';
         const nameColor  = isActive ? '#e5e5e5' : '#888';
@@ -2383,7 +2384,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const descLine = (rec.description && rec.description.trim())
           ? `<div style="color:#888; font-size:10px;">${_escHtml(rec.description)}</div>`
           : '';
-        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${condLine}${descLine}${idLine}</div>`;
+        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}${qtyTag}</span>${statusTag}${condLine}${descLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }
@@ -2411,6 +2412,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           return `<div style="margin-bottom:4px;"><span style="color:#e67e22;">[unresolved: ${_escHtml(id)}]</span></div>`;
         }
         const name     = _escHtml(rec.name || '(unnamed)');
+        const qtyTag   = (Number.isInteger(rec.quantity) && rec.quantity > 1) ? ` (${rec.quantity})` : '';
         const status   = rec.status || 'unknown';
         const isActive = status === 'active';
         const nameColor  = isActive ? '#e5e5e5' : '#888';
@@ -2424,7 +2426,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const descLine = (rec.description && rec.description.trim())
           ? `<div style="color:#888; font-size:10px;">${_escHtml(rec.description)}</div>`
           : '';
-        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}</span>${statusTag}${baselineTag}${condLine}${descLine}${idLine}</div>`;
+        return `<div style="margin-bottom:6px;"><span style="color:${nameColor};">${name}${qtyTag}</span>${statusTag}${baselineTag}${condLine}${descLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }
@@ -2454,6 +2456,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       if (cellItems.length === 0) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
       const lines = cellItems.map(rec => {
         const name = _escHtml(rec.name || '(unnamed)');
+        const qtyTag = (Number.isInteger(rec.quantity) && rec.quantity > 1) ? ` (${rec.quantity})` : '';
         const _conds = Array.isArray(rec.conditions) ? rec.conditions : [];
         const condLine = _conds.length > 0
           ? `<div style="color:#aaa; font-size:10px; font-style:italic;">${_escHtml(_conds[_conds.length - 1].description)}</div>`
@@ -2463,7 +2466,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           ? `<div style="color:#888; font-size:10px;">${_escHtml(rec.description)}</div>`
           : '';
         const idLine = `<div style="color:#777; font-size:10px;">${_escHtml(rec.id || '')}</div>`;
-        return `<div style="margin-bottom:6px;"><span style="color:#e5e5e5;">${name}</span>${condLine}${descLine}${idLine}</div>`;
+        return `<div style="margin-bottom:6px;"><span style="color:#e5e5e5;">${name}${qtyTag}</span>${condLine}${descLine}${idLine}</div>`;
       });
       dom.innerHTML = lines.join('');
     }
