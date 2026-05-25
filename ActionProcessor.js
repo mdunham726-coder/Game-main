@@ -376,6 +376,11 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     } else if (found && found.objectId) {
       // v1.84.55: Object Reality object (npcHeldObject or gridObject)
       const turnNum = actions?._turn || 0;
+      // v1.91.13: capture pre-transfer container info for ORS audit visibility
+      const _preObj = state.objects?.[found.objectId];
+      const _fromContainerType = _preObj?.current_container_type || '?';
+      const _fromContainerId   = _preObj?.current_container_id   || '?';
+      const _fromObjName       = _preObj?.name || found.label || target;
       const result  = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'player_take');
       if (result.success) {
         deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
@@ -384,6 +389,18 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         // v1.84.57: proof of AP-executed transfer — index.js uses this to suppress CB duplicate
         if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
         state._apExecutedTransfers.push(found.objectId);
+        // v1.91.13: surface AP direct transfer in ORS audit so it appears in diagnostics panel
+        if (Array.isArray(state._objectRealityDebug?.audit)) {
+          state._objectRealityDebug.audit.push({
+            action: 'ap_direct_transfer',
+            object_id: found.objectId,
+            object_name: _fromObjName,
+            from_container_type: _fromContainerType,
+            from_container_id:   _fromContainerId,
+            to_container_type:   'player',
+            to_container_id:     'player'
+          });
+        }
       } else {
         console.warn(`[ACTIONS] take OR object failed: ${result.error} (${found.objectId})`);
       }

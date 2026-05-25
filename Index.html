@@ -2651,6 +2651,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
             lines.push(`    [${a.object_id}] "${a.object_name}" promoted -> ${a.container_type}:${a.container_id}  [partial_split <- ${_pShort}]`);
           } else if (a.action === 'transferred') {
             lines.push(`    [${a.object_id}] "${a.object_name}" moved ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
+          } else if (a.action === 'ap_direct_transfer') {
+            lines.push(`    [AP-DIRECT] "${a.object_name}" ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
           } else if (a.action === 'promote_skipped_existing') {
             lines.push(`    [${a.object_id}] "${a.object_name}" already exists — skipped`);
           } else if (a.action && a.action.startsWith('promote_suppressed')) {
