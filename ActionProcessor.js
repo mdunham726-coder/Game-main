@@ -925,37 +925,6 @@ function resolveCellItemByName(state, query){
   // body descriptors or condition flags as takable targets.
   // Score per token of multi-word values (e.g. query "newspaper" matches "folded newspaper").
   const q = String(query || '').trim().toLowerCase();
-  if (q && typeof aliasScore === 'function') {
-    // v1.84.52: prefer engine.objects (Object Reality System) when initialised
-    if (state.objects && typeof state.objects === 'object') {
-      for (const record of Object.values(state.objects)) {
-        if (record.status !== 'active') continue;
-        if (record.current_container_type !== 'npc') continue;
-        const npcId = record.current_container_id;
-        const score = aliasScore(query, record.name || '', [], 2);
-        if (score >= 6) {
-          return { targetType: 'npcHeldObject', npcId, label: record.name, objectId: record.id, _found: true };
-        }
-      }
-    }
-    // Legacy fallback: npc.attributes["object:*"] — covers pre-v1.84.52 saves
-    for (const npc of npcs) {
-      const attrs = npc?.attributes || {};
-      for (const [key, attr] of Object.entries(attrs)) {
-        if (!key.startsWith('object:')) continue;
-        const val = typeof attr === 'string' ? attr : (attr?.value || '');
-        if (!val) continue;
-        const tokens = val.toLowerCase().split(/\s+/);
-        const topScore = Math.max(
-          aliasScore(query, val, [], 2),
-          ...tokens.map(tok => aliasScore(query, tok, [], 2))
-        );
-        if (topScore >= 6) {
-          return { targetType: 'npcHeldObject', npcId: npc.id || npc._id, label: val, _found: true };
-        }
-      }
-    }
-  }
   // v1.84.55: check Object Reality grid objects in current cell
   if (state?.objects && typeof state.objects === 'object') {
     const pos = state.world?.position;
@@ -1063,6 +1032,46 @@ function resolveCellItemByName(state, query){
           if (_pcNameToks92.length > 0 && _pcNameToks92.some(t => _pcQTokens92.has(t))) {
             return { targetType: 'siteObject', siteKey: _siteKey92, label: rec.name, objectId: rec.id, _found: true, _partialToken: true };
           }
+        }
+      }
+    }
+  }
+  // v1.91.12: NPC-held object scan — moved after all spatial scans (L0 grid, L2 localspace, L1 site-floor)
+  // so that objects the player can directly see/reach always take priority over NPC-held items.
+  // Token-count guard (_nTok - _qTok) <= 1 prevents superset-name false positives:
+  // "slice of bread" will not match "slice of bread with peanut butter" (diff 3 > 1).
+  // "knife" still matches "butter knife" (diff 1 <= 1).
+  if (q && typeof aliasScore === 'function') {
+    // ORS container_type:'npc' — v1.84.52+
+    if (state.objects && typeof state.objects === 'object') {
+      const _npcQTok = q.split(/\s+/).length;
+      for (const record of Object.values(state.objects)) {
+        if (record.status !== 'active') continue;
+        if (record.current_container_type !== 'npc') continue;
+        const npcId = record.current_container_id;
+        const score = aliasScore(query, record.name || '', [], 2);
+        const _npcNTok = (record.name || '').trim().split(/\s+/).length;
+        if (score >= 6 && (_npcNTok - _npcQTok) <= 1) {
+          return { targetType: 'npcHeldObject', npcId, label: record.name, objectId: record.id, _found: true };
+        }
+      }
+    }
+    // Legacy fallback: npc.attributes["object:*"] — covers pre-v1.84.52 saves
+    for (const npc of npcs) {
+      const attrs = npc?.attributes || {};
+      for (const [key, attr] of Object.entries(attrs)) {
+        if (!key.startsWith('object:')) continue;
+        const val = typeof attr === 'string' ? attr : (attr?.value || '');
+        if (!val) continue;
+        const tokens = val.toLowerCase().split(/\s+/);
+        const _legQTok = q.split(/\s+/).length;
+        const _legNTok = val.trim().split(/\s+/).length;
+        const topScore = Math.max(
+          aliasScore(query, val, [], 2),
+          ...tokens.map(tok => aliasScore(query, tok, [], 2))
+        );
+        if (topScore >= 6 && (_legNTok - _legQTok) <= 1) {
+          return { targetType: 'npcHeldObject', npcId: npc.id || npc._id, label: val, _found: true };
         }
       }
     }
