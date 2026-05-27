@@ -497,7 +497,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         const successorId = 'obj_' + crypto.createHash('sha256').update(
           [rec.name.toLowerCase().trim(), 'player', 'player', `ap_split_${rec.id}`].join('|'), 'utf8'
         ).digest('hex').slice(0, 12);
-        if (!gameState.objects[successorId]) {
+        if (!state.objects[successorId]) {
           const successorRecord = {
             id:                     successorId,
             name:                   rec.name,
@@ -514,7 +514,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
             events:                 [{ turn: turnNum, action: 'promoted', container_type: 'player', container_id: 'player', reason: 'ap_partial_split_drop', ts }],
             parent_object_id:       rec.id
           };
-          gameState.objects[successorId] = successorRecord;
+          state.objects[successorId] = successorRecord;
           if (!Array.isArray(state.player.object_ids)) state.player.object_ids = [];
           state.player.object_ids.push(successorId);
         }
