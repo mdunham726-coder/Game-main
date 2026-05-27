@@ -76,6 +76,18 @@ If an entry for the current version already exists, replace that bullet line in 
 
 ---
 
+## CROSS-REFERENCE VERIFICATION (MANDATORY BEFORE COMMIT)
+
+When writing new code blocks that mirror or parallel existing code (e.g., identical guards in drop/throw, copied patterns across functions):
+
+1. **Grep every variable reference** in the new code against the function signature. If the function takes `state`, every reference must be `state` — never `gameState`, `gs`, or any other name. One mismatched variable in a rarely-hit branch can ship undetected.
+2. **Diff identical blocks.** If two blocks claim to be "structurally identical" (e.g., the drop and throw partial-stack guards), diff them line-by-line before committing. A difference in variable naming, reason strings, or log verbs is expected; a difference in core references is a bug.
+3. **Never assume.** "Throw looked right so drop must be the same" is not verification. Read both blocks independently.
+
+These steps take seconds and prevent the most common class of post-commit hotfixes.
+
+---
+
 ## NO LITERAL EXAMPLES IN LLM PROMPTS
 
 Never embed specific object names, NPC names, turn details, locations, or scenario specifics inside prompt strings in the codebase. Instructions must describe the pattern, not exemplify a specific case. Applies to all files containing LLM prompt text.
