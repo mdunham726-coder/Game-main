@@ -1931,6 +1931,9 @@ app.post('/narrate', async (req, res) => {
           // v1.91.15: thread raw input through to AP execution so throw/drop handlers
           // can detect partial-stack quantity prefixes ("one of the", "a", etc.)
           mapped.player_intent.raw_input = parseResult?.intent?.rawInput || userInput;
+          // v1.91.16: thread parser-emitted selection_mode per-action (replaces AP-side
+          // regex on raw_input for partial-stack intent detection — root fix)
+          if (queuedAction.selection_mode) mapped.player_intent.selection_mode = queuedAction.selection_mode;
           
           if (queuedAction.action === 'move' && queuedAction.dir) {
             // Pass direction through unchanged as long-form (north/south/east/west)

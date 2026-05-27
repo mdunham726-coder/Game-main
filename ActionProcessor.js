@@ -482,13 +482,10 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     } else if (res && res[0] === 'object_ids') {
       // v1.84.55: OR system object — route through ObjectHelper (sole mutation authority)
       const rec = res[1];
-      // v1.91.15: partial-stack guard — if the player used a quantity prefix ("one of the",
-      // "a", etc.) and the held object is a stack (quantity > 1), extract one unit instead
-      // of transferring the entire stack. Creates a single-unit successor and transfers
-      // it via the proven transferObjectDirect path; source is decremented in place.
-      const _rawInput = String(actions?.raw_input || '').toLowerCase().trim();
-      const _hasQtyPrefix = /^(one of the|some of the|a couple of|a few of|a |an )/.test(_rawInput);
-      if (_hasQtyPrefix && typeof rec.quantity === 'number' && rec.quantity > 1) {
+      // v1.91.16: partial-stack guard — reads parser-emitted selection_mode (per-action,
+      // root fix replacing v1.91.15 regex on raw_input). Extracts one unit via direct split
+      // when the parser detected a quantity prefix on this specific action.
+      if (actions?.selection_mode === 'partial_from_stack' && typeof rec.quantity === 'number' && rec.quantity > 1) {
         const turnNum = actions?._turn || 0;
         const ts = new Date().toISOString();
         // Decrement source quantity (HARD CONSTRAINT: only quantity + events)
@@ -545,6 +542,15 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           logger.action_resolved('drop', dropSucceeded, dropSucceeded ? `dropped one ${target} (partial split from stack of ${rec.quantity + 1})` : `could not drop ${target}`);
         }
         return;
+      }
+      // v1.91.16: observability — log when a stack is dropped without selection_mode
+      // so parser misses become visible during testing (soft fallback, no behavior change)
+      if (
+        typeof rec.quantity === 'number' &&
+        rec.quantity > 1 &&
+        (actions?.selection_mode === undefined || actions?.selection_mode === null)
+      ) {
+        console.log(`[ACTIONS] drop: stack (qty:${rec.quantity}) but no selection_mode — parser may have missed quantity prefix`);
       }
       const pos = state.world?.position;
       const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
@@ -645,10 +651,9 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       }
     } else if (res && res[0] === 'object_ids') {
       const rec = res[1];
-      // v1.91.15: partial-stack guard (same pattern as drop, reason string differs)
-      const _rawInput = String(actions?.raw_input || '').toLowerCase().trim();
-      const _hasQtyPrefix = /^(one of the|some of the|a couple of|a few of|a |an )/.test(_rawInput);
-      if (_hasQtyPrefix && typeof rec.quantity === 'number' && rec.quantity > 1) {
+      // v1.91.16: partial-stack guard (same pattern as drop, reads parser-emitted
+      // selection_mode; reason string differs)
+      if (actions?.selection_mode === 'partial_from_stack' && typeof rec.quantity === 'number' && rec.quantity > 1) {
         const turnNum = actions?._turn || 0;
         const ts = new Date().toISOString();
         rec.quantity -= 1;
@@ -702,6 +707,14 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           logger.action_resolved('throw', throwSucceeded, throwSucceeded ? `threw one ${target} (partial split from stack of ${rec.quantity + 1})` : `could not throw ${target}`);
         }
         return;
+      }
+      // v1.91.16: observability — log when a stack is thrown without selection_mode
+      if (
+        typeof rec.quantity === 'number' &&
+        rec.quantity > 1 &&
+        (actions?.selection_mode === undefined || actions?.selection_mode === null)
+      ) {
+        console.log(`[ACTIONS] throw: stack (qty:${rec.quantity}) but no selection_mode — parser may have missed quantity prefix`);
       }
       const pos = state.world?.position;
       const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
