@@ -1928,6 +1928,9 @@ app.post('/narrate', async (req, res) => {
           // POPULATE PLAYER_INTENT FIELDS BEFORE DIAGNOSTIC LOG (data integrity fix)
           mapped.player_intent.action = queuedAction.action;
           if (queuedAction.target) mapped.player_intent.target = queuedAction.target;
+          // v1.91.15: thread raw input through to AP execution so throw/drop handlers
+          // can detect partial-stack quantity prefixes ("one of the", "a", etc.)
+          mapped.player_intent.raw_input = parseResult?.intent?.rawInput || userInput;
           
           if (queuedAction.action === 'move' && queuedAction.dir) {
             // Pass direction through unchanged as long-form (north/south/east/west)
