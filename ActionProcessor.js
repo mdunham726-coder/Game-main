@@ -30,6 +30,41 @@ function levenshtein(a,b){
   return dp[m];
 }
 
+// v1.91.18: bounded English noun singularizer for token normalization in aliasScore.
+// Collapses surface plurals to canonical singular for comparison, enabling "fries"→"fry",
+// "cokes"→"coke", etc. Protects non-plural -ss endings (dress, glass, boss).
+// Lexical only — no semantic interpretation, packaging stripping, or quantity handling.
+function _lexicalNormalizeToken(token) {
+  let t = String(token || '').toLowerCase().trim();
+  // Strip leading/trailing boundary punctuation only (preserves internal hyphens/apostrophes)
+  t = t.replace(/^[,.!?;:'"]+|[,.!?;:'"]+$/g, '');
+  if (!t) return t;
+  // Irregular plural → singular (bounded English map)
+  const IRREGULAR = {
+    fries:'fry', cokes:'coke', loaves:'loaf', knives:'knife', berries:'berry',
+    tomatoes:'tomato', potatoes:'potato', men:'man', women:'woman', children:'child',
+    people:'person', teeth:'tooth', feet:'foot', mice:'mouse', oxen:'ox'
+  };
+  if (IRREGULAR[t]) return IRREGULAR[t];
+  // -ies → -y (berries→berry, ladies→lady)
+  if (t.length > 3 && t.endsWith('ies')) return t.slice(0, -3) + 'y';
+  // -es where stem ends in s/x/z or sh/ch (boxes→box, bushes→bush)
+  if (t.length > 3 && t.endsWith('es')) {
+    const stem = t.slice(0, -2);
+    const last = stem.charAt(stem.length - 1);
+    const last2 = stem.length >= 2 ? stem.slice(-2) : '';
+    if (last === 's' || last === 'x' || last === 'z' || last2 === 'sh' || last2 === 'ch') {
+      return stem;
+    }
+    return t; // not a plural -es (species, axes)
+  }
+  // Strip trailing 's' but NOT when it's 'ss' (protects dress, glass, boss)
+  if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) {
+    return t.slice(0, -1);
+  }
+  return t;
+}
+
 function aliasScore(query, name, aliases, ctxBonus=0){
   const q = String(query||'').trim().toLowerCase();
   const nNorm = String(name||'').trim().toLowerCase();
@@ -48,6 +83,13 @@ function aliasScore(query, name, aliases, ctxBonus=0){
     if (qTokens.every(t => nTokens.has(t))) {
       score += 10; // Tier 1: exact token containment
     } else {
+      // v1.91.18: normalized token containment — symmetric lexical normalization
+      // (plural-aware: "fries"→"fry", "cokes"→"coke"). Fallback before fuzzy Tier 2.
+      const _normQTokens = qTokens.map(_lexicalNormalizeToken);
+      const _normNSet = new Set(nTokenArr.map(_lexicalNormalizeToken));
+      if (_normQTokens.every(t => _normNSet.has(t))) {
+        score += 10;
+      } else {
       // Tier 2: fuzzy token containment
       const fuzzyMatch = qTokens.every(t => {
         if (nTokens.has(t)) return true;
@@ -56,6 +98,7 @@ function aliasScore(query, name, aliases, ctxBonus=0){
         return nTokenArr.some(nt => levenshtein(t, nt) <= tol);
       });
       if (fuzzyMatch) score += 10;
+      }
     }
   }
   const dists = [levenshtein(q, nNorm)];
