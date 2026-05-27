@@ -67,6 +67,20 @@ function aliasScore(query, name, aliases, ctxBonus=0){
   score += Math.max(0, Math.min(ctxBonus, 4));
   return score;
 }
+// v1.91.14: strip narrow quantity-determiner prefixes so "one of the small fries"
+// resolves against the stored ObjectRecord name "small fries".
+// Only strips quantity-leading determiners; never touches identifying nouns/adjectives.
+function _stripQuantityPrefix(query) {
+  const q = String(query || '').trim();
+  // Match quantity-group prefixes: "one of the", "some of the", "a couple of", "a few of"
+  const stripped = q.replace(/^(one|some|a couple|a few)(\s+of\s+the\s+|\s+of\s+|\s+)/i, '');
+  if (stripped !== q) return stripped.trim();
+  // Match bare articles/numerals: "a", "an", "the", "one", "some" (only if followed by space)
+  const bareStripped = q.replace(/^(a|an|the|one|some)\s+/i, '');
+  if (bareStripped !== q) return bareStripped.trim();
+  return q;
+}
+
 function resolveItemByName(state, query){
   const inv = (((state||{}).player||{}).inventory)||[];
   const cands = [];
@@ -95,6 +109,35 @@ function resolveItemByName(state, query){
   }
   if (best[0] >= 20 && (best[0] - (typeof second[0]==='number'?second[0]:-9999)) >= 10){
     return [best[1], best[2]];
+  }
+  // v1.91.14: quantity-prefix fallback — if raw query failed all candidates,
+  // strip quantity determiners and re-score with the cleaned query.
+  // Only fires when raw query produced no match; conservative, no change to
+  // existing exact-match behavior.
+  const _strippedQuery = _stripQuantityPrefix(query);
+  if (_strippedQuery && _strippedQuery !== query) {
+    const _strippedCands = [];
+    for (const it of inv) {
+      const sc = aliasScore(_strippedQuery, it?.name||'', it?.aliases||[], 2);
+      _strippedCands.push([sc, 'inventory', it]);
+    }
+    for (const id of orIds) {
+      const rec = orReg[id];
+      if (!rec || rec.status !== 'active') continue;
+      const sc = aliasScore(_strippedQuery, rec.name || '', [], 2);
+      _strippedCands.push([sc, 'object_ids', rec]);
+    }
+    if (_strippedCands.length > 0) {
+      _strippedCands.sort((a,b)=>b[0]-a[0]);
+      const _sBest = _strippedCands[0];
+      const _sSecond = _strippedCands[1] || [-9999,'',{}];
+      if (_sBest[0] >= 10) {
+        return [_sBest[1], _sBest[2]];
+      }
+      if (_sBest[0] >= 20 && (_sBest[0] - (typeof _sSecond[0]==='number'?_sSecond[0]:-9999)) >= 10) {
+        return [_sBest[1], _sBest[2]];
+      }
+    }
   }
   return null;
 }
