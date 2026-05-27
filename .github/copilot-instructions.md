@@ -79,3 +79,21 @@ If an entry for the current version already exists, replace that bullet line in 
 ## NO LITERAL EXAMPLES IN LLM PROMPTS
 
 Never embed specific object names, NPC names, turn details, locations, or scenario specifics inside prompt strings in the codebase. Instructions must describe the pattern, not exemplify a specific case. Applies to all files containing LLM prompt text.
+
+---
+
+## TEMPORARY INSTRUMENTATION
+
+- Temporary diagnostic `console.log` lines are allowed during investigation.
+- If a diagnostic is added to **prove** a hypothesis, the observed output must be captured and cited before the instrument is removed.
+- Do NOT declare a proof step complete based on instrumentation alone — the evidence must have been actually observed and retained.
+- Clean up all temporary instrumentation before committing. No diagnostic logs in shipped code.
+
+---
+
+## TESTING & HARNESS
+
+- **Mother Brain** owns harness execution and regression sweeps. Do NOT run `node test-harness.js` or probe commands directly — Mother Brain will run them when requested.
+- Do NOT start the game server (`node index.js`) unless explicitly asked. Mother Brain or the user manages the live server.
+- Long-running verification sweeps may be delegated to Mother Brain. Only Mother Brain may declare them complete after reviewing results.
+- Syntax checks (`node --check`) are the exception — run those locally after every JS edit.
