@@ -1,6 +1,6 @@
 // ActionProcessor.js — extracted from v103-1/v118 (no refactors; same behavior)
 const crypto = require('crypto');
-const { transferObjectDirect } = require('./ObjectHelper'); // v1.84.55: OR system bridge
+const { transferObjectDirect, splitObjectDirect } = require('./ObjectHelper'); // v1.84.55: OR system bridge
 
 // Keep defaults for consistency (not used heavily here but stable)
 const DEFAULTS = {
@@ -525,64 +525,48 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     } else if (res && res[0] === 'object_ids') {
       // v1.84.55: OR system object — route through ObjectHelper (sole mutation authority)
       const rec = res[1];
-      // v1.91.16: partial-stack guard — reads parser-emitted selection_mode (per-action,
-      // root fix replacing v1.91.15 regex on raw_input). Extracts one unit via direct split
-      // when the parser detected a quantity prefix on this specific action.
+      // v1.91.19: partial-stack guard — reads parser-emitted selection_mode (per-action,
+      // root fix). Delegates to splitObjectDirect so ObjectHelper owns all split arithmetic.
       if (actions?.selection_mode === 'partial_from_stack' && typeof rec.quantity === 'number' && rec.quantity > 1) {
         const turnNum = actions?._turn || 0;
-        const ts = new Date().toISOString();
-        // Decrement source quantity (HARD CONSTRAINT: only quantity + events)
-        rec.quantity -= 1;
-        if (!Array.isArray(rec.events)) rec.events = [];
-        rec.events.push({ type: 'quantity_modified', turn: turnNum, delta: -1, new_quantity: rec.quantity, reason: 'ap_partial_split_drop', ts });
-        if (rec.events.length > 10) rec.events.shift();
-        // Create single-unit successor in player container (mirrors ObjectHelper partial_split successor shape)
-        const successorId = 'obj_' + crypto.createHash('sha256').update(
-          [rec.name.toLowerCase().trim(), 'player', 'player', `ap_split_${rec.id}`].join('|'), 'utf8'
-        ).digest('hex').slice(0, 12);
-        if (!state.objects[successorId]) {
-          const successorRecord = {
-            id:                     successorId,
-            name:                   rec.name,
-            description:            rec.description || '',
-            created_turn:           turnNum,
-            current_container_type: 'player',
-            current_container_id:   'player',
-            associated_actor_id:    null,
-            source:                 'ap_partial_split',
-            status:                 'active',
-            quantity:               1,
-            unit:                   rec.unit || null,
-            conditions:             [],
-            events:                 [{ turn: turnNum, action: 'promoted', container_type: 'player', container_id: 'player', reason: 'ap_partial_split_drop', ts }],
-            parent_object_id:       rec.id
-          };
-          state.objects[successorId] = successorRecord;
-          if (!Array.isArray(state.player.object_ids)) state.player.object_ids = [];
-          state.player.object_ids.push(successorId);
-        }
-        // Transfer successor to destination via proven export
         const pos = state.world?.position;
         const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
-        if (cellKey) {
-          const tResult = transferObjectDirect(state, successorId, 'grid', cellKey, turnNum, 'ap_partial_split_drop');
-          if (tResult.success) {
-            deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
-            flags.inventory_rev = true;
-            dropSucceeded = true;
-            if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
-            state._apExecutedTransfers.push(successorId);
-            if (state._objectRealityDebug && Array.isArray(state._objectRealityDebug.audit)) {
-              state._objectRealityDebug.audit.push({ turn: turnNum, action: 'ap_partial_split', source_object_id: rec.id, successor_id: successorId, ts });
-            }
-          } else {
-            console.warn(`[ACTIONS] drop partial-split successor transfer failed: ${tResult.error} (${successorId})`);
+        if (!cellKey) {
+          console.warn('[ACTIONS] drop partial-split: could not derive cell key (no world.position)');
+          if (logger) logger.action_resolved('drop', false, `could not drop ${target}: no position`);
+          return;
+        }
+        const splitResult = splitObjectDirect(
+          state, rec.id, 1, 'grid', cellKey, turnNum, 'ap_partial_split_drop'
+        );
+        if (splitResult.ok) {
+          deltas.push({ op: 'set', path: '/player/object_ids', value: state.player.object_ids });
+          flags.inventory_rev = true;
+          dropSucceeded = true;
+          if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+          state._apExecutedTransfers.push(splitResult.successor_object_id);
+          if (state._objectRealityDebug && Array.isArray(state._objectRealityDebug.audit)) {
+            state._objectRealityDebug.audit.push({
+              turn:                   turnNum,
+              action:                 'ap_partial_split',
+              source_object_id:       rec.id,
+              successor_id:           splitResult.successor_object_id,
+              split_key:              splitResult.split_key,
+              source_quantity_before: splitResult.source_quantity_before,
+              source_quantity_after:  splitResult.source_quantity_after,
+              requested_quantity:     splitResult.requested_quantity,
+              applied_quantity:       splitResult.applied_quantity
+            });
           }
         } else {
-          console.warn('[ACTIONS] drop partial-split: could not derive cell key (no world.position)');
+          console.warn(`[ACTIONS] drop partial-split failed: ${splitResult.error} (${rec.id})`);
         }
         if (logger) {
-          logger.action_resolved('drop', dropSucceeded, dropSucceeded ? `dropped one ${target} (partial split from stack of ${rec.quantity + 1})` : `could not drop ${target}`);
+          logger.action_resolved('drop', dropSucceeded,
+            dropSucceeded
+              ? `dropped one ${target} (partial split, ${splitResult.source_quantity_after} remain)`
+              : `could not drop ${target}: ${splitResult.error}`
+          );
         }
         return;
       }
@@ -694,60 +678,47 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       }
     } else if (res && res[0] === 'object_ids') {
       const rec = res[1];
-      // v1.91.16: partial-stack guard (same pattern as drop, reads parser-emitted
-      // selection_mode; reason string differs)
+      // v1.91.19: partial-stack guard (same pattern as drop, delegates to splitObjectDirect)
       if (actions?.selection_mode === 'partial_from_stack' && typeof rec.quantity === 'number' && rec.quantity > 1) {
         const turnNum = actions?._turn || 0;
-        const ts = new Date().toISOString();
-        rec.quantity -= 1;
-        if (!Array.isArray(rec.events)) rec.events = [];
-        rec.events.push({ type: 'quantity_modified', turn: turnNum, delta: -1, new_quantity: rec.quantity, reason: 'ap_partial_split_throw', ts });
-        if (rec.events.length > 10) rec.events.shift();
-        const successorId = 'obj_' + crypto.createHash('sha256').update(
-          [rec.name.toLowerCase().trim(), 'player', 'player', `ap_split_${rec.id}`].join('|'), 'utf8'
-        ).digest('hex').slice(0, 12);
-        if (!state.objects[successorId]) {
-          const successorRecord = {
-            id:                     successorId,
-            name:                   rec.name,
-            description:            rec.description || '',
-            created_turn:           turnNum,
-            current_container_type: 'player',
-            current_container_id:   'player',
-            associated_actor_id:    null,
-            source:                 'ap_partial_split',
-            status:                 'active',
-            quantity:               1,
-            unit:                   rec.unit || null,
-            conditions:             [],
-            events:                 [{ turn: turnNum, action: 'promoted', container_type: 'player', container_id: 'player', reason: 'ap_partial_split_throw', ts }],
-            parent_object_id:       rec.id
-          };
-          state.objects[successorId] = successorRecord;
-          if (!Array.isArray(state.player.object_ids)) state.player.object_ids = [];
-          state.player.object_ids.push(successorId);
-        }
         const pos = state.world?.position;
         const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
-        if (cellKey) {
-          const tResult = transferObjectDirect(state, successorId, 'grid', cellKey, turnNum, 'ap_partial_split_throw');
-          if (tResult.success) {
-            deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
-            flags.inventory_rev = true;
-            throwSucceeded = true;
-            if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
-            state._apExecutedTransfers.push(successorId);
-            if (state._objectRealityDebug && Array.isArray(state._objectRealityDebug.audit)) {
-              state._objectRealityDebug.audit.push({ turn: turnNum, action: 'ap_partial_split', source_object_id: rec.id, successor_id: successorId, ts });
-            }
-          } else {
-            console.warn(`[ACTIONS] throw partial-split successor transfer failed: ${tResult.error} (${successorId})`);
+        if (!cellKey) {
+          console.warn('[ACTIONS] throw partial-split: could not derive cell key (no world.position)');
+          if (logger) logger.action_resolved('throw', false, `could not throw ${target}: no position`);
+          return;
+        }
+        const splitResult = splitObjectDirect(
+          state, rec.id, 1, 'grid', cellKey, turnNum, 'ap_partial_split_throw'
+        );
+        if (splitResult.ok) {
+          deltas.push({ op: 'set', path: '/player/object_ids', value: state.player.object_ids });
+          flags.inventory_rev = true;
+          throwSucceeded = true;
+          if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+          state._apExecutedTransfers.push(splitResult.successor_object_id);
+          if (state._objectRealityDebug && Array.isArray(state._objectRealityDebug.audit)) {
+            state._objectRealityDebug.audit.push({
+              turn:                   turnNum,
+              action:                 'ap_partial_split',
+              source_object_id:       rec.id,
+              successor_id:           splitResult.successor_object_id,
+              split_key:              splitResult.split_key,
+              source_quantity_before: splitResult.source_quantity_before,
+              source_quantity_after:  splitResult.source_quantity_after,
+              requested_quantity:     splitResult.requested_quantity,
+              applied_quantity:       splitResult.applied_quantity
+            });
           }
         } else {
-          console.warn('[ACTIONS] throw partial-split: could not derive cell key (no world.position)');
+          console.warn(`[ACTIONS] throw partial-split failed: ${splitResult.error} (${rec.id})`);
         }
         if (logger) {
-          logger.action_resolved('throw', throwSucceeded, throwSucceeded ? `threw one ${target} (partial split from stack of ${rec.quantity + 1})` : `could not throw ${target}`);
+          logger.action_resolved('throw', throwSucceeded,
+            throwSucceeded
+              ? `threw one ${target} (partial split, ${splitResult.source_quantity_after} remain)`
+              : `could not throw ${target}: ${splitResult.error}`
+          );
         }
         return;
       }

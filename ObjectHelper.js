@@ -29,6 +29,11 @@ const crypto = require('crypto');
 
 const OH_VERSION = '1.0.0';
 
+// v1.91.19: per-turn extraction nonce — increments on every _executePartialSplit()
+// call within a turn, guaranteeing unique split_key per extraction regardless of
+// whether the caller is AP (splitObjectDirect) or Pass 3 (run).
+let _splitNonce = 0;
+
 // ── ID generation ─────────────────────────────────────────────────────────────
 // Deterministic, ordering-insensitive (uses temp_ref not seq).
 // Same narrated object with same temp_ref produces same ID.
@@ -765,7 +770,7 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
 
   // ── Pass 3: Partial Splits ────────────────────────────────────────────────
   // partial_split: source survives with reduced quantity; extracted successor is promoted.
-  // HARD CONSTRAINT: only source.quantity and source.events[] may be written on the source. No other mutations.
+  // Delegates to _executePartialSplit() — single arithmetic site shared with splitObjectDirect.
   let partial_splits = 0;
   for (const entry of quarantine) {
     if (entry.action !== 'partial_split') continue;
@@ -773,18 +778,7 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
     const { source_object_id, new_source_quantity, name, quantity, unit,
             container_type, container_id, temp_ref, parent_object_id, reason } = entry;
 
-    // Guard: source must exist and be active
-    const sourceRecord = source_object_id ? gameState.objects[source_object_id] : null;
-    if (!sourceRecord || sourceRecord.status !== 'active') {
-      _pushError(gameState, {
-        turn: turnNumber, action: 'partial_split', source_object_id,
-        reason: sourceRecord ? 'source_not_active' : 'source_not_found', ts
-      });
-      errors++;
-      continue;
-    }
-
-    // Guard: new_source_quantity must be a positive integer (index.js filters degrades_to_fission before this point)
+    // Guard: new_source_quantity must be a positive integer
     if (!Number.isInteger(new_source_quantity) || new_source_quantity < 1) {
       _pushError(gameState, {
         turn: turnNumber, action: 'partial_split', source_object_id,
@@ -794,68 +788,50 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
       continue;
     }
 
-    const priorQty = typeof sourceRecord.quantity === 'number' ? sourceRecord.quantity : 1;
-    const delta    = new_source_quantity - priorQty;   // negative
+    // Compute extractQty from source current quantity
+    const sourceRecord = gameState.objects?.[source_object_id];
+    const priorQty = (sourceRecord && typeof sourceRecord.quantity === 'number') ? sourceRecord.quantity : 1;
+    const extractQty = priorQty - new_source_quantity;
 
-    // HARD CONSTRAINT: mutate source.quantity and events[] ONLY — no other field writes
-    sourceRecord.quantity = new_source_quantity;
-    if (!Array.isArray(sourceRecord.events)) sourceRecord.events = [];
-    sourceRecord.events.push({
-      type:         'quantity_modified',
-      turn:         turnNumber,
-      delta,
-      new_quantity: new_source_quantity,
-      reason:       reason || null,
-      ts
-    });
-    if (sourceRecord.events.length > 10) sourceRecord.events.shift();
-
-    // Promote extracted successor (inline promotion — mirrors Pass 1 critical path)
-    if (!name || !container_type || !container_id) {
-      audit.push({ turn: turnNumber, action: 'partial_split_source_mutated_no_successor', source_object_id, ts });
-      partial_splits++;
-      continue;
-    }
-
-    const successorId = _generateObjectId(name, container_type, container_id, temp_ref);
-    const destIds     = _resolveContainerIds(gameState, container_type, container_id);
-    if (!destIds) {
+    if (extractQty <= 0) {
       _pushError(gameState, {
-        turn: turnNumber, action: 'partial_split_successor', source_object_id, successor_name: name,
-        reason: 'container_not_found', container_type, container_id, ts
+        turn: turnNumber, action: 'partial_split', source_object_id,
+        reason: 'extract_quantity_not_positive', extractQty, new_source_quantity, priorQty, ts
       });
       errors++;
-      // Source mutation already committed — log but do not roll back
-      audit.push({ turn: turnNumber, action: 'partial_split_successor_failed', source_object_id, ts });
       continue;
     }
 
-    if (!gameState.objects[successorId]) {
-      const successorRecord = {
-        id:                     successorId,
-        name:                   String(name).trim(),
-        description:            '',
-        created_turn:           turnNumber,
-        current_container_type: container_type,
-        current_container_id:   container_id,
-        associated_actor_id:    null,
-        source:                 'partial_split',
-        status:                 'active',
-        quantity:               (Number.isInteger(quantity) && quantity >= 1) ? quantity : 1,
-        unit:                   (typeof unit === 'string' && unit.trim()) ? unit.trim() : null,
-        conditions:             [],
-        events:                 [{ turn: turnNumber, action: 'promoted', container_type, container_id, reason: 'partial_split_extraction', ts }],
-        parent_object_id:       parent_object_id || source_object_id
-      };
-      gameState.objects[successorId] = successorRecord;
-      destIds.push(successorId);
-      if (temp_ref) tempRefMap[temp_ref] = successorId;
-      promoted++;
+    const splitResult = _executePartialSplit(
+      gameState, source_object_id, extractQty,
+      container_type, container_id,
+      turnNumber, reason || 'partial_split_extraction',
+      temp_ref, tempRefMap
+    );
+
+    if (!splitResult.ok) {
+      _pushError(gameState, { turn: turnNumber, action: 'partial_split', ...splitResult, ts });
+      errors++;
+      continue;
     }
 
     partial_splits++;
-    audit.push({ turn: turnNumber, action: 'partial_split', source_object_id, new_source_quantity, successor_id: successorId, successor_name: name, ts });
-    console.log(`[ObjectHelper] partial_split: ${source_object_id} qty→${new_source_quantity}; promoted ${successorId} (${name}) → ${container_type}/${container_id}`);
+    if (splitResult.successor_object_id) promoted++;
+    audit.push({
+      turn:                   turnNumber,
+      action:                 'partial_split',
+      split_key:              splitResult.split_key,
+      source_object_id:       splitResult.source_object_id,
+      successor_object_id:    splitResult.successor_object_id,
+      requested_quantity:     splitResult.requested_quantity,
+      applied_quantity:       splitResult.applied_quantity,
+      source_quantity_before: splitResult.source_quantity_before,
+      source_quantity_after:  splitResult.source_quantity_after,
+      dest_container_type:    splitResult.dest_container_type,
+      dest_container_id:      splitResult.dest_container_id,
+      ts
+    });
+    console.log(`[ObjectHelper] partial_split: ${source_object_id} qty→${splitResult.source_quantity_after}; promoted ${splitResult.successor_object_id} → ${container_type}/${container_id}`);
   }
 
   console.log(`[ObjectHelper] Turn ${turnNumber}: promoted=${promoted} transferred=${transferred} partial_splits=${partial_splits} errors=${errors} reconciled=${reconciled}`);
@@ -932,6 +908,144 @@ function transferObjectDirect(gameState, objectId, toContainerType, toContainerI
   return { success: true };
 }
 
+// ── _executePartialSplit ──────────────────────────────────────────────────────
+// Internal shared implementation for partial-stack extraction. Single authority
+// for all split arithmetic — called by both splitObjectDirect (AP path) and
+// run() Pass 3 (CB/TLS pipeline path).
+//
+// Fail-closed: all guards must pass before any source mutation occurs.
+// Returns { ok: true/false, ... } with full before/after quantities and lineage.
+function _executePartialSplit(
+  gameState, sourceObjectId, extractQty,
+  destContainerType, destContainerId,
+  turnNumber, reason, temp_ref, tempRefMap
+) {
+  const ts = new Date().toISOString();
+  const sourceRecord = gameState?.objects?.[sourceObjectId];
+
+  // ── GUARDS (fail-closed, no mutation before this point) ──────────────────
+  if (!sourceRecord)
+    return { ok: false, error: 'source_not_found', source_object_id: sourceObjectId };
+
+  if (sourceRecord.status !== 'active')
+    return { ok: false, error: 'source_not_active', source_object_id: sourceObjectId };
+
+  if (typeof extractQty !== 'number' || extractQty <= 0)
+    return { ok: false, error: 'invalid_extract_quantity', requested_quantity: extractQty };
+
+  const source_quantity_before = typeof sourceRecord.quantity === 'number' ? sourceRecord.quantity : 1;
+  const source_quantity_after = source_quantity_before - extractQty;
+
+  if (source_quantity_after < 1)
+    return {
+      ok: false,
+      error: 'whole_stack_required',
+      source_object_id: sourceObjectId,
+      requested_quantity: extractQty,
+      available: source_quantity_before
+    };
+
+  // Destination resolution — must succeed before mutating source
+  const destIds = _resolveContainerIds(gameState, destContainerType, destContainerId);
+  if (!destIds) {
+    _pushError(gameState, {
+      turn: turnNumber, action: 'partial_split', source_object_id: sourceObjectId,
+      reason: 'destination_not_found', dest_container_type: destContainerType,
+      dest_container_id: destContainerId, ts
+    });
+    return { ok: false, error: 'destination_not_found', source_object_id: sourceObjectId };
+  }
+
+  // ── MUTATION (all guards passed) ─────────────────────────────────────────
+  const nonce = ++_splitNonce;
+  const split_key = `split_${sourceObjectId}_T${turnNumber}_${nonce}`;
+
+  // 1. Decrement source quantity (HARD CONSTRAINT: only quantity + events)
+  sourceRecord.quantity = source_quantity_after;
+  if (!Array.isArray(sourceRecord.events)) sourceRecord.events = [];
+  sourceRecord.events.push({
+    type: 'quantity_modified',
+    turn: turnNumber,
+    delta: -extractQty,
+    new_quantity: source_quantity_after,
+    reason: reason || null,
+    split_key,
+    ts
+  });
+  if (sourceRecord.events.length > 10) sourceRecord.events.shift();
+
+  // 2. Generate successor ID (per-turn uniqueness via nonce in split_key)
+  const successorId = _generateObjectId(
+    sourceRecord.name, destContainerType, destContainerId, split_key
+  );
+
+  // 3. Create successor record (mirrors Pass 3 successor shape)
+  if (!gameState.objects[successorId]) {
+    gameState.objects[successorId] = {
+      id:                     successorId,
+      name:                   sourceRecord.name,
+      description:            sourceRecord.description || '',
+      created_turn:           turnNumber,
+      current_container_type: destContainerType,
+      current_container_id:   destContainerId,
+      associated_actor_id:    null,
+      source:                 'partial_split',
+      status:                 'active',
+      quantity:               extractQty,
+      unit:                   sourceRecord.unit || null,
+      conditions:             [],
+      events: [{
+        turn: turnNumber,
+        action: 'promoted',
+        container_type: destContainerType,
+        container_id: destContainerId,
+        reason: reason || 'partial_split_extraction',
+        split_key,
+        ts
+      }],
+      parent_object_id: sourceObjectId
+    };
+  }
+
+  // 4. Push successor into destination container
+  destIds.push(successorId);
+
+  // 5. Bind temp_ref if provided (Pass 3 pipeline path)
+  if (temp_ref && tempRefMap) {
+    tempRefMap[temp_ref] = successorId;
+  }
+
+  return {
+    ok: true,
+    source_object_id:       sourceObjectId,
+    successor_object_id:    successorId,
+    requested_quantity:     extractQty,
+    applied_quantity:       extractQty,
+    source_quantity_before,
+    source_quantity_after,
+    dest_container_type:    destContainerType,
+    dest_container_id:      destContainerId,
+    split_key,
+    reason:                 reason || null
+  };
+}
+
+// ── splitObjectDirect ─────────────────────────────────────────────────────────
+// Public export for ActionProcessor partial-stack operations (drop, throw).
+// AP supplies intent and context; OH executes all mutation. Same implementation
+// as run() Pass 3 — single arithmetic site.
+function splitObjectDirect(
+  gameState, sourceObjectId, extractQty,
+  destContainerType, destContainerId,
+  turnNumber, reason
+) {
+  return _executePartialSplit(
+    gameState, sourceObjectId, extractQty,
+    destContainerType, destContainerId,
+    turnNumber, reason, null, {}
+  );
+}
+
 // ── applyConditionUpdate ─────────────────────────────────────────────────────
 // Writes a condition entry to an ObjectRecord. Deduplicates by description
 // (case-insensitive). Caps at 10 entries FIFO. Safe to call multiple times per
@@ -1001,4 +1115,4 @@ function retireObject(gameState, objectId, reason, turnNumber) {
   return { retired: true, objectId, reason: 'consumed' };
 }
 
-module.exports = { run, transferObjectDirect, applyConditionUpdate, retireObject, OH_VERSION };
+module.exports = { run, transferObjectDirect, splitObjectDirect, applyConditionUpdate, retireObject, OH_VERSION };
