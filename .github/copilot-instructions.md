@@ -1,5 +1,83 @@
 # Copilot Instructions — Game-main
 
+## REASONING & PLANNING DOCTRINE (OVERRIDES ALL ELSE)
+
+This section is the highest-priority instruction set. When it conflicts with any other instruction, this section wins.
+
+### Core Doctrine
+- Research before planning. Trace the real failing path before suggesting a fix.
+- Fix root causes, not just the immediate symptom.
+- Preserve existing behavior unless a behavior change is explicitly intended.
+- Minimize blast radius. Prefer surgical edits over broad rewrites.
+- Do not manufacture new abstractions, helper layers, normalization passes, schema fields, or architectural refactors unless the existing structure provably cannot support the fix safely.
+- A narrow localized fix is preferred over a theoretically cleaner redesign if the redesign increases blast radius.
+- Do not broaden ontology, semantics, or matching rules unless the evidence proves that is required.
+- Do not silently reinterpret ambiguous user language into stronger semantics than the current contract already supports.
+- Do not infer semantic meaning from null, defaults, or omissions unless the contract explicitly says so.
+- Do not guess ownership of fields, state, helpers, or write paths. Verify them in source first.
+- Distinguish observed facts from inference from uncertainty. Label every claim.
+- Check for contradictions in your own plan, assumptions, and verification matrix.
+- State explicit scope exclusions so the task does not silently expand.
+- If the true root is not yet proven, stop and ask for the missing evidence rather than inventing confidence.
+
+### Required Workflow
+1. Read the relevant source files and trace the execution or data path end to end.
+2. Report the exact failing branch, handoff, contract break, or ambiguity with receipts.
+3. Identify the semantic authority for the behavior in question. State which layer is supposed to know the truth.
+4. Before proposing any semantic change, explicitly state:
+   - current behavior,
+   - intended new behavior,
+   - behaviors that must remain unchanged.
+5. List the invariants that must remain true after the fix.
+6. List scope exclusions: what this task will NOT change.
+7. Only then propose the minimal safe plan.
+8. Before coding, provide a verification matrix covering:
+   - intended fixed behavior,
+   - unchanged existing behavior,
+   - edge cases,
+   - negative cases,
+   - contradiction checks.
+9. If coding is requested, implement in small bounded steps and verify each step before proceeding.
+
+### Output Format (Plan Mode)
+- Observed facts
+- Inferences
+- Uncertainties
+- Semantic authority
+- Current behavior
+- Intended new behavior
+- Unchanged behavior
+- Invariants to preserve
+- Scope exclusions
+- Minimal safe plan
+- Verification matrix
+- Implementation steps (only if requested)
+
+### Evidence Rules
+- Cite file names, function names, and line ranges whenever possible.
+- If something is inferred rather than observed, label it explicitly as inference.
+- If you have not verified a path in source, say you have not verified it.
+- Do not present guesses as findings.
+
+### Planning Quality Rules
+- Describe the problem precisely before prescribing the fix.
+- If multiple fixes are possible, prefer the one with the narrowest semantic impact.
+- If a proposed fix changes behavior outside the target bug, call that out explicitly.
+- If the true root is not yet proven, stop and ask for the missing evidence.
+- If a helper or abstraction is being reused outside its original semantic direction, examine that as a possible smell before endorsing reuse.
+- Do not default to subsystem redesign because a bug was found. First prove that the existing structure cannot safely support a localized fix.
+
+### Implementation Rules
+- Make the smallest change that solves the proven problem.
+- Keep names, contracts, and behavior stable unless change is necessary and explicitly justified.
+- Do not mix cleanup, refactor, and bugfix work in the same patch unless required for correctness.
+- After edits, re-check that the implementation matches the plan and did not silently drift.
+
+### Speed vs. Correctness
+Never optimize for speed over correctness. Disciplined reasoning, preserved behavior, narrow scope, and verified claims are valued above all else.
+
+---
+
 ## POST-PATCH MANDATORY SEQUENCE
 Every patch to this codebase must complete ALL six steps before it is considered done.
 Do NOT wait for the user to ask — execute automatically after every commit.
