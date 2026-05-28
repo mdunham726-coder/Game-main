@@ -148,7 +148,7 @@ Do NOT wait for the user to ask — execute automatically after every commit.
 1. **Version bump** — update `package.json` `"version"` field to the new version number
 2. **Syntax check** — run `node --check index.js` (and any other edited JS files); fix before proceeding
 3. **Commit** — `git commit -m "vX.XX.XX: brief description"`
-4. **Push** — `git push origin main` immediately; no batching, no exceptions
+4. **Push** — `git push origin object-op-redesign` immediately; no batching, no exceptions
 5. **Update CHANGELOG** — `c:\Users\daddy\Desktop\CHANGELOG.md`
 6. **Update Documentation** — `c:\Users\daddy\Desktop\ULTIMATE_DUNGEON_MASTER_GAME_DOCUMENTATION_PART2.md`
 
@@ -194,7 +194,7 @@ If an entry for the current version already exists, replace that bullet line in 
 
 - Always commit before starting any editing session
 - `git checkout Index.html` is the emergency rollback for that file
-- **MANDATORY: `git push origin main` immediately after every `git commit`** — no exceptions, no batching
+- **MANDATORY: `git push origin object-op-redesign` immediately after every `git commit`** — no exceptions, no batching
 - The sequence is commit → push → CHANGELOG → docs → done. Never declare a patch complete before all four post-code steps are finished.
 
 ---
