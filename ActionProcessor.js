@@ -1158,6 +1158,27 @@ function resolveCellItemByName(state, query){
   if (state?.objects && typeof state.objects === 'object' && state.world?.active_local_space) {
     const _lsId = state.world.active_local_space.local_space_id;
     if (_lsId) {
+      // v1.91.20: whole-stack "all [N] <item>" pre-pass guard.
+      // Strips "all" / "all <number>" prefix from queries like "all 15 tortillas"
+      // or "all tortillas" so aliasScore sees just the item name. Prevents these
+      // whole-stack pick-up commands from falling through to Pass C's partial-token
+      // extraction path (which would set _partialToken:true and bypass transferObjectDirect
+      // in the take handler). Returns clean result (no _partialToken) on match.
+      const _wsMatch = /^all(?:\s+\d+)?\s+(.+)$/i.exec(query.trim());
+      if (_wsMatch) {
+        const _wsStripped = _wsMatch[1].trim();
+        for (const rec of Object.values(state.objects)) {
+          if (rec.status !== 'active') continue;
+          if (rec.current_container_type !== 'localspace') continue;
+          if (rec.current_container_id !== _lsId) continue;
+          const _wsScore = aliasScore(_wsStripped, rec.name || '', [], 2);
+          if (_wsScore >= 6) {
+            console.log(`[RESOLVE] whole-stack guard: "${query}" → "${_wsStripped}" matched "${rec.name}" (score ${_wsScore})`);
+            return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true };
+          }
+        }
+        // _wsMatch hit but aliasScore missed — fall through to Pass A with original query
+      }
       // Pass A: aliasScore exact/alias match
       for (const rec of Object.values(state.objects)) {
         if (rec.status !== 'active') continue;
