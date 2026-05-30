@@ -1944,7 +1944,22 @@ app.post('/narrate', async (req, res) => {
             // ActionProcessor delta table is the canonical direction contract
             mapped.player_intent.dir = String(queuedAction.dir).toLowerCase();
           }
-          
+
+          // Phase 2: thread enrichment fields from _enrichPrimaryAction into player_intent.
+          // These fields are populated by SemanticParser._enrichPrimaryAction on every parse result
+          // (LLM path and all fast paths). They were produced correctly in Phase 1 (v1.91.23) but
+          // were never threaded past this loop because the loop predates Phase 1.
+          // Null-guard style matches selection_mode assignment above.
+          if (queuedAction.requested_quantity    != null) mapped.player_intent.requested_quantity    = queuedAction.requested_quantity;
+          if (queuedAction.quantity_word         != null) mapped.player_intent.quantity_word         = queuedAction.quantity_word;
+          if (queuedAction.quantity_mode         != null) mapped.player_intent.quantity_mode         = queuedAction.quantity_mode;
+          if (queuedAction.normalized_target     != null) mapped.player_intent.normalized_target     = queuedAction.normalized_target;
+          if (queuedAction.source_container_hint != null) mapped.player_intent.source_container_hint = queuedAction.source_container_hint;
+          // operation_family is always a string from the enricher — assign unconditionally with action fallback
+          mapped.player_intent.operation_family = queuedAction.operation_family ?? mapped.player_intent.action;
+          // NOTE: secondaryActions in compound commands are not enriched. If "take 3 and drop 1" is issued,
+          // the second action's queuedAction will have no enrichment metadata. Future work — not Phase 2.
+
           // [POINT-C] Log mapped input structure for movement diagnosis (now with complete data)
           console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
 
@@ -3125,7 +3140,18 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       witness_epistemic_hint:          null,
       witness_operation_family_hint:   null,
       witness_confidence_hint:         null,
-      witness_notes:                   []
+      witness_notes:                   [],
+
+      // Phase 2 observer fields — sourced from parser enrichment, not re-derived from parsed_action.
+      // witness_operation_family_hint is preserved above for divergence forensics.
+      // When parser_operation_family and witness_operation_family_hint agree: baseline is healthy.
+      // When they diverge: the input that caused it is a forensic signal worth examining.
+      parser_operation_family:     inputObj?.player_intent?.operation_family       ?? null,
+      requested_quantity:          inputObj?.player_intent?.requested_quantity      ?? null,
+      quantity_word:               inputObj?.player_intent?.quantity_word           ?? null,
+      quantity_mode:               inputObj?.player_intent?.quantity_mode           ?? null,
+      normalized_target:           inputObj?.player_intent?.normalized_target       ?? null,
+      source_container_hint:       inputObj?.player_intent?.source_container_hint   ?? null
     };
     // Derive witness hints from observed evidence (diagnostic labels only — no authority)
     const _w = debug.itemOperationWitness;
