@@ -79,6 +79,9 @@ let _activeTurnDebug = null;         // v1.88.67: module-level fallback — neve
 // Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
 const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
 const _divCheckCache = new Map();    // v1.91.11: divisibility check cache — (sourceLabel::label) -> bool
+// v1.91.22: witness store — one packet per session, replaced each turn
+// Read by GET /debug/witness. Evicted with session in the TTL sweep.
+const _witnessStore = new Map(); // sessionId -> witnessPacket
 const SESSION_PROBE_MAX_AGE_MS = 5 * 60 * 1000;       // 5 min  — probes/harness are throw-aways
 const SESSION_GAME_MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24 hrs — browser game sessions survive overnight
 setInterval(() => {
@@ -91,6 +94,7 @@ setInterval(() => {
       sessionStates.delete(_sid);
       _sessionLastUsed.delete(_sid);
       _consultHistory.delete(_sid);
+      _witnessStore.delete(_sid);      // v1.91.22
       _evictCount++;
     }
   }
@@ -3144,6 +3148,24 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     } else {
       _w.witness_epistemic_hint = 'ambiguous';
       _w.witness_confidence_hint = 'low';
+    }
+
+    // v1.91.22: capture witness for Mother's GET /debug/witness tool
+    if (debug.itemOperationWitness) {
+      _witnessStore.set(resolvedSessionId, {
+        turn: turnNumber,
+        ts: new Date().toISOString(),
+        witness: debug.itemOperationWitness
+      });
+    }
+
+    // v1.91.22: capture witness for Mother's GET /debug/witness tool
+    if (debug.itemOperationWitness) {
+      _witnessStore.set(resolvedSessionId, {
+        turn: turnNumber,
+        ts: new Date().toISOString(),
+        witness: debug.itemOperationWitness
+      });
     }
 
     // [REALITY-CHECK] Arbiter Phase 0 — pre-narration reality adjudication (v1.84.2)
@@ -6890,6 +6912,22 @@ app.get('/harness/result/last', (req, res) => {
   if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
   if (!_lastHarnessResult) return res.status(404).json({ error: 'no_result', message: 'No harness run completed yet in this server session.' });
   res.json(_lastHarnessResult);
+});
+
+// v1.91.22: ItemOperationWitness bridge — Mother read surface
+app.get('/debug/witness', (req, res) => {
+  const _sid = req.headers['x-session-id'];
+  if (!_sid) {
+    return res.status(400).json({ error: 'MISSING_SESSION_ID' });
+  }
+  const _packet = _witnessStore.get(_sid);
+  if (!_packet) {
+    return res.status(404).json({
+      error: 'NO_WITNESS',
+      message: 'No ItemOperationWitness recorded for this session yet. Run a turn that involves item operations.'
+    });
+  }
+  return res.json(_packet);
 });
 
 // Allow heavy prompts (e.g. "critique my game") to complete before Node kills the socket.
