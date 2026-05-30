@@ -185,6 +185,77 @@ function safeParseJSON(text) {
   }
 }
 
+// v1.91.23: deterministic parser enrichment — adds structured metadata to primaryAction
+// before return. Pure function: returns enriched copy, never mutates input. All fields
+// are hints only — no mechanical interpretation, no object-operation authority.
+// Quantity extraction is target-scoped. rawInput used only for source_container_hint.
+function _enrichPrimaryAction(primaryAction, rawInput) {
+  if (!primaryAction || typeof primaryAction !== 'object') return primaryAction;
+
+  const enriched = { ...primaryAction };
+  const target = typeof enriched.target === 'string' ? enriched.target.trim() : '';
+  const raw    = typeof rawInput === 'string' ? rawInput.trim() : '';
+
+  // ── requested_quantity: integer from target-leading digits ────────────────
+  const _qtyMatch = target.match(/^(\d+)\s+/);
+  enriched.requested_quantity = _qtyMatch ? parseInt(_qtyMatch[1], 10) : null;
+
+  // ── quantity_word: leading quantity-signal word ───────────────────────────
+  const _wordMatch = target.match(/^(a|an|some|all)\s+/i);
+  enriched.quantity_word = _wordMatch ? _wordMatch[1].toLowerCase() : null;
+
+  // ── quantity_mode: controlled classification ─────────────────────────────
+  if (enriched.requested_quantity !== null && enriched.quantity_word === 'all') {
+    enriched.quantity_mode = 'all';            // "all 15 tortillas"
+  } else if (enriched.requested_quantity !== null) {
+    enriched.quantity_mode = 'exact';          // "5 arrows"
+  } else if (enriched.quantity_word === 'all') {
+    enriched.quantity_mode = 'all';            // "all tortillas"
+  } else if (enriched.quantity_word === 'some') {
+    enriched.quantity_mode = 'some';           // "some arrows"
+  } else if (enriched.quantity_word === 'a' || enriched.quantity_word === 'an') {
+    enriched.quantity_mode = 'article';        // "a sword"
+  } else {
+    enriched.quantity_mode = 'unspecified';
+  }
+
+  // ── normalized_target: strip quantity/ determiner prefix ──────────────────
+  // Strips: digits, a/an/the/my/some/all/all N. Never strips identifying nouns.
+  // "the" and "my" stripped only from normalized_target — NOT quantity signals.
+  if (target) {
+    let _norm = target
+      .replace(/^(all\s+\d+)\s+/i, '')     // "all 15 tortillas" → "tortillas"
+      .replace(/^(all)\s+/i, '')            // "all tortillas" → "tortillas"
+      .replace(/^(\d+)\s+/, '')             // "5 arrows" → "arrows"
+      .replace(/^(a|an|the|some|my)\s+/i, '') // "a sword" → "sword"
+      .trim();
+    enriched.normalized_target = _norm || target; // fallback to original if stripped empty
+  } else {
+    enriched.normalized_target = null;
+  }
+
+  // ── operation_family: deterministic action→family mapping ─────────────────
+  const _familyMap = {
+    take:'take', drop:'drop', throw:'throw', remove:'remove',
+    enter:'enter', exit:'exit', move:'move', examine:'examine',
+    talk:'talk', smash:'smash', attack:'attack', cast:'cast'
+  };
+  enriched.operation_family = _familyMap[enriched.action] || enriched.action || null;
+
+  // ── source_container_hint: "from X" pattern in rawInput ──────────────────
+  if (raw) {
+    const _fromMatch = raw.match(/\bfrom\s+(?:the\s+)?(\S+(?:\s+\S+){0,2})\s*$/i);
+    enriched.source_container_hint = _fromMatch ? _fromMatch[1].replace(/[,.!?;:'"]+$/g, '').trim().toLowerCase() : null;
+  } else {
+    enriched.source_container_hint = null;
+  }
+
+  // ── selection_mode: preserve LLM-emitted value, do not overwrite ──────────
+  // (already preserved via spread — no action needed)
+
+  return enriched;
+}
+
 /**
  * Normalize free-form user input into structured intent.
  * @param {string} userInput
@@ -209,9 +280,10 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
       const _targetRaw = _fastMatch[2].replace(/^(a|an|the)\s+/i, '').trim();
       if (_targetRaw.length > 0) {
         log('fast_path', `verb="${_verb}" -> action=take target="${_targetRaw}"`);
+        const _pa = _enrichPrimaryAction({ action: 'take', target: _targetRaw, dir: null }, raw);
         const _fastResult = {
           success: true,
-          intent: { primaryAction: { action: 'take', target: _targetRaw, dir: null }, secondaryActions: [], compound: false },
+          intent: { primaryAction: _pa, secondaryActions: [], compound: false },
           confidence: 0.97
         };
         const _fastKey = hashKey(`${channel}|${raw}|fast_path`);
@@ -224,9 +296,10 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
     // Targeted enters (e.g. "enter the tavern") fall through to LLM path.
     if (/^(enter|go in|go inside|go back in|head inside|head back in|get inside)$/i.test(raw)) {
       log('fast_path', `bare_entry raw="${raw}" -> action=enter target=null`);
+      const _paEnter = _enrichPrimaryAction({ action: 'enter', target: null, dir: null }, raw);
       const _bareEntryResult = {
         success: true,
-        intent: { primaryAction: { action: 'enter', target: null, dir: null }, secondaryActions: [], compound: false },
+        intent: { primaryAction: _paEnter, secondaryActions: [], compound: false },
         confidence: 0.97
       };
       const _bareEntryKey = hashKey(`${channel}|${raw}|fast_path`);
@@ -239,9 +312,10 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
     // Bare "strip" intentionally excluded (too ambiguous — routes to LLM).
     if (/^(?:take\s+off|remove|unequip|strip\s+off)\s+(?:all|everything)(?:\s.*)?$|^(?:undress|strip(?:\s+naked)?|strip\s+down|get\s+(?:undressed|naked))$/i.test(raw)) {
       log('fast_path', `aggregate remove -> action=remove target=__all_worn__`);
+      const _paAggRemove = _enrichPrimaryAction({ action: 'remove', target: '__all_worn__', dir: null }, raw);
       const _aggRemoveResult = {
         success: true,
-        intent: { primaryAction: { action: 'remove', target: '__all_worn__', dir: null }, secondaryActions: [], compound: false },
+        intent: { primaryAction: _paAggRemove, secondaryActions: [], compound: false },
         confidence: 0.97
       };
       const _aggRemoveKey = hashKey(`${channel}|${raw}|fast_path`);
@@ -255,9 +329,10 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
       const _removeTargetRaw = _removeFastMatch[1].replace(/^(a|an|the|my)\s+/i, '').trim();
       if (_removeTargetRaw.length > 0) {
         log('fast_path', `remove verb -> action=remove target="${_removeTargetRaw}"`);
+        const _paRemove = _enrichPrimaryAction({ action: 'remove', target: _removeTargetRaw, dir: null }, raw);
         const _removeResult = {
           success: true,
-          intent: { primaryAction: { action: 'remove', target: _removeTargetRaw, dir: null }, secondaryActions: [], compound: false },
+          intent: { primaryAction: _paRemove, secondaryActions: [], compound: false },
           confidence: 0.97
         };
         const _removeKey = hashKey(`${channel}|${raw}|fast_path`);
@@ -309,8 +384,11 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
     return out;
   }
 
+  // v1.91.23: enrich with structured metadata before building intent
+  const enrichedPrimary = _enrichPrimaryAction(primaryAction, raw);
+
   const intent = {
-    primaryAction,
+    primaryAction: enrichedPrimary,
     secondaryActions: Array.isArray(v.secondaryActions) ? v.secondaryActions : undefined,
     compound: Boolean(v.compound),
     rawInput: raw
