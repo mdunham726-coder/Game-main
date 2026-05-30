@@ -3084,6 +3084,68 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     let _cbPayloadSnapshot          = null;
     let _conditionBotPayloadSnapshot = null;
 
+    // v1.91.21: ItemOperationWitness — observe-only diagnostics packet.
+    // Assembled from post-AP, pre-RC evidence only. No hoists. No behavior change.
+    // All derived fields are _hint suffixed — witness observes, does not classify.
+    // Stored on debug (write-only diagnostics surface, never read by gameplay logic).
+    debug.itemOperationWitness = {
+      raw_input:               _rawInput,
+      channel:                 resolvedChannel,
+      turn_number:             turnNumber,
+      actor_id:                'player',
+      player_container_type:   gameState.world?.active_local_space ? 'localspace'
+                             : gameState.world?.active_site ? 'site'
+                             : 'grid',
+      player_container_id:     gameState.world?.active_local_space?.local_space_id
+                             || (gameState.world?.active_site
+                                ? `${gameState.world.active_site.site_id || gameState.world.active_site.id?.replace(/\/l2$/,'')}:${gameState.player?.position?.x},${gameState.player?.position?.y}`
+                                : null),
+      parsed_action:           inputObj?.player_intent?.action || null,
+      parsed_target:           inputObj?.player_intent?.target || null,
+      selection_mode:          inputObj?.player_intent?.selection_mode || null,
+      gate_decision:           _authorityGateResult?.decision || null,
+      gate_reason_code:        _authorityGateResult?.reason_code || null,
+      gate_referenced_objects: _authorityGateResult?.referenced_objects || [],
+      gate_engine_supported:   _authorityGateResult?.evidence?.engine_supported ?? null,
+      ap_env_gather_label:             gameState._environmentGatherIntent?.label || null,
+      ap_env_gather_source_object_id:  gameState._environmentGatherIntent?.sourceObjectId || null,
+      ap_env_gather_synthetic:         gameState._environmentGatherIntent?.synthetic ?? null,
+      ap_executed_transfer_ids:        Array.isArray(gameState._apExecutedTransfers)
+                                        ? [...gameState._apExecutedTransfers] : [],
+      ap_executed_transfer_count:      Array.isArray(gameState._apExecutedTransfers)
+                                        ? gameState._apExecutedTransfers.length : 0,
+      player_held_object_ids:          Array.isArray(gameState.player?.object_ids)
+                                        ? [...gameState.player.object_ids] : [],
+      player_held_count:               Array.isArray(gameState.player?.object_ids)
+                                        ? gameState.player.object_ids.length : 0,
+      witness_epistemic_hint:          null,
+      witness_operation_family_hint:   null,
+      witness_confidence_hint:         null,
+      witness_notes:                   []
+    };
+    // Derive witness hints from observed evidence (diagnostic labels only — no authority)
+    const _w = debug.itemOperationWitness;
+    // Operation family hint
+    const _act = _w.parsed_action;
+    _w.witness_operation_family_hint = (_act === 'take' || _act === 'drop' || _act === 'throw') ? _act : 'unknown';
+    // Epistemic hint
+    if (_w.ap_executed_transfer_count > 0) {
+      _w.witness_epistemic_hint = 'known_ors_transfer_executed';
+      _w.witness_confidence_hint = 'high';
+    } else if (_w.ap_env_gather_source_object_id && !_w.ap_env_gather_synthetic) {
+      _w.witness_epistemic_hint = 'known_ors_source_object_env_gather';
+      _w.witness_confidence_hint = 'medium';
+    } else if (_w.ap_env_gather_synthetic) {
+      _w.witness_epistemic_hint = 'synthetic_env_gather';
+      _w.witness_confidence_hint = 'medium';
+    } else if (_w.gate_decision === 'freeform') {
+      _w.witness_epistemic_hint = 'unsupported_or_denied';
+      _w.witness_confidence_hint = 'low';
+    } else {
+      _w.witness_epistemic_hint = 'ambiguous';
+      _w.witness_confidence_hint = 'low';
+    }
+
     // [REALITY-CHECK] Arbiter Phase 0 — pre-narration reality adjudication (v1.84.2)
     // Awaited and blocking. Fires before narrationContent is built. On failure: hard stop — narrator never called.
     // Skip conditions: Turn 1 (founding premise), move, look, wait.
