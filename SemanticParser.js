@@ -196,12 +196,18 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   const target = typeof enriched.target === 'string' ? enriched.target.trim() : '';
   const raw    = typeof rawInput === 'string' ? rawInput.trim() : '';
 
-  // ── requested_quantity: integer from target-leading digits ────────────────
-  const _qtyMatch = target.match(/^(\d+)\s+/);
+  // ── Phase 3.5A: extract object phrase from rawInput (verb-stripped) ──────
+  // rawInput is authoritative for player wording — target is canonicalized by
+  // the LLM and fast paths, which strip articles/quantity words before enrichment
+  // ever sees them. Extracting from rawInput recovers what canonicalization lost.
+  const _body = raw.replace(/^\S+\s+/, '').trim();
+
+  // ── requested_quantity: integer from leading digits in object phrase ──────
+  const _qtyMatch = _body.match(/^(\d+)\s+/);
   enriched.requested_quantity = _qtyMatch ? parseInt(_qtyMatch[1], 10) : null;
 
-  // ── quantity_word: leading quantity-signal word ───────────────────────────
-  const _wordMatch = target.match(/^(a|an|some|all)\s+/i);
+  // ── quantity_word: leading quantity-signal word in object phrase ──────────
+  const _wordMatch = _body.match(/^(a|an|some|all)\s+/i);
   enriched.quantity_word = _wordMatch ? _wordMatch[1].toLowerCase() : null;
 
   // ── quantity_mode: controlled classification ─────────────────────────────
