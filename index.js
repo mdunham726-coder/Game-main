@@ -2115,6 +2115,7 @@ app.post('/narrate', async (req, res) => {
         inputObj = mapActionToInput(action, inferredKind);
         inputObj.player_intent.channel = resolvedChannel;
         if (parsed) inputObj.player_intent.action = parsed.action; // mirror what semantic path sets explicitly
+        if (parsed?.target) inputObj.player_intent.target = parsed.target;
         if (parsed && parsed.action === "move" && parsed.dir) {
           inputObj.player_intent.dir = parsed.dir;
         }
