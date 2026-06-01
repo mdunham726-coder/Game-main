@@ -7,7 +7,7 @@
 
 ## Overview
 
-This branch implements the **ItemOperationWitness** system — a passive, diagnostics-only observation lane that captures a complete per-turn snapshot of every object operation the engine executes. The witness packet feeds a future **TLS (Trusted Layer System)** normalization pass (Phase 4) without mutating any game state.
+This branch implements the **ItemOperationWitness** system — a passive, diagnostics-only observation lane that captures a complete per-turn snapshot of every object operation the engine executes. The witness packet feeds a **TLS (Trusted Layer System)** normalization pipeline across Phases 4 and 5. Phase 4 is observe-only. Phase 5 is where TLS gains mutation authority for the first narrow case.
 
 ---
 
@@ -17,8 +17,9 @@ This branch implements the **ItemOperationWitness** system — a passive, diagno
 |---|---|---|---|
 | Phase 1 | Parser enrichment — operation_family, quantity fields | ✅ Complete | v1.91.25 |
 | Phase 2 | Authority Gate integration | ✅ Complete | v1.91.28 |
-| Phase 3 | ItemOperationWitness observe-only skeleton | ✅ Complete / Runtime Validated | v1.91.31 |
-| Phase 4 | TLS observe-only normalization from witness packet | 🔓 Unblocked — Not Started | — |
+| Phase 3 | ItemOperationWitness observe-only skeleton + ORS target snapshot | ✅ Complete / Runtime Validated | v1.91.31 |
+| Phase 4 | TLS observe-only normalization — propose canonical operation, no execution | 🔓 Unblocked — Not Started | — |
+| Phase 5 | Whole-object take: ORS execution lane — TLS drives ObjectHelper for first narrow case | ⏳ Blocked on Phase 4 | — |
 
 ---
 
@@ -125,19 +126,88 @@ On `drop`/`throw` with `selection_mode: partial_from_stack`, the ID pushed to `_
 
 ## Phase 4 — Next Up
 
-**Title:** TLS Observe-Only Normalization from Witness Packet  
+**Title:** TLS Observe-Only Normalization — Propose Canonical Operation, No Execution  
 **Status:** 🔓 Unblocked  
 **Prerequisite:** Phase 3 complete ✅
 
-**What Phase 4 is:**
-- TLS reads the witness packet (specifically `target_object_id`, `target_object_exists`, `target_object_container_type`, `epistemic_hint`, `operation_family`) and performs normalization logic
-- Observe-only first pass — TLS identifies what *should* have happened but does not mutate state yet
-- No ObjectHelper calls, no game state writes
-- Output is a TLS observation record (separate from the witness packet)
+### What Phase 4 Is
 
-**What Phase 4 is NOT:**
-- Not a mutation pass
-- Not a replacement for AP or CB
+TLS reads the completed witness packet and proposes a **canonical normalized operation** describing what it believes happened. This proposal is emitted to diagnostics only. AP still executes the actual mechanics. ORS/ObjectHelper is not driven by TLS yet.
+
+Example — for `take every arrow`, Phase 4 TLS output should look like:
+
+```json
+{
+  "operation_type": "whole_object_transfer",
+  "verb": "take",
+  "actor_id": "player",
+  "source_object_id": "obj_774efda01a55",
+  "source_object_name": "arrows",
+  "quantity_mode": "all",
+  "from_container_type": "localspace",
+  "from_container_id": "site_a304c407/l2_ls_0",
+  "to_container_type": "player",
+  "to_container_id": "player",
+  "confidence": "high",
+  "mode": "observe_only"
+}
+```
+
+This proposal is surfaced in the diagnostics panel as a `TLS ITEM OPERATION` block, e.g.:
+
+```
+TLS ITEM OPERATION
+mode:               observe_only
+normalized_op:      whole_object_transfer
+source_object_id:   obj_774efda01a55
+from:               localspace:site_a304c407/l2_ls_0
+to:                 player:player
+requested_quantity: null
+resolved_quantity:  1
+warnings:           []
+```
+
+### What Phase 4 Is NOT
+- Not a mutation pass — no state changes, no ObjectHelper calls
+- Not a replacement for AP or CB — AP still executes everything
+- Not Phase 5 — TLS does not drive `transferObjectDirect` yet
 - Not a new game mechanic
 
-**Phase 4 entry condition:** Witness packet is complete and runtime-validated ✅ (met as of v1.91.31)
+### Why Phase 4 Exists
+
+Phase 4 proves TLS can correctly interpret the witness packet before it is trusted with mutation authority. If TLS proposes the wrong canonical operation on a known input, that is caught here at zero cost — no broken game state, no player-visible side effects. Only after Phase 4 validation does TLS earn the right to drive ObjectHelper in Phase 5.
+
+### Phase 4 Deliverable
+- A `tls_proposed_operation` block emitted per turn when `target_object_exists === true`
+- Stored alongside or adjacent to the witness packet in diagnostics
+- Readable via `GET /debug/witness` or a new `GET /debug/tls` endpoint
+- All fields are proposals only — `mode: "observe_only"` is non-negotiable for this phase
+
+### Phase 4 Entry Condition
+Witness packet complete and runtime-validated ✅ (met as of v1.91.31)
+
+---
+
+## Phase 5 — On Deck (Blocked on Phase 4)
+
+**Title:** Whole-Object Take — ORS Execution Lane  
+**Status:** ⏳ Blocked on Phase 4  
+
+### What Phase 5 Is
+
+For the narrow case of **known accessible ORS object + take + whole-object intent**, TLS's normalized operation proposal is allowed to drive `ObjectHelper.transferObjectDirect` directly. AP remains the fallback for all other cases.
+
+Transition:
+```
+known accessible ORS object
++ take
++ whole-object intent
+→ TLS normalized operation
+→ ObjectHelper.transferObjectDirect
+→ narrator describes resolved reality
+```
+
+This is the first point at which TLS has mutation authority. All other object operation types remain on the AP path until subsequent phases extend the execution lane.
+
+### Phase 5 Entry Condition
+Phase 4 TLS normalization validated on known cases — TLS proposals match expected canonical operations.
