@@ -1034,11 +1034,7 @@ function _executePartialSplit(
   }
 
   // 4. Push successor into destination container
-  // DIAG v1.91.28 — remove on revert
-  const _beforeDestIds = [...destIds];
   destIds.push(successorId);
-  // DIAG v1.91.28 — remove on revert
-  _auditObjIds('_executePartialSplit:dest', _beforeDestIds, destIds, successorId);
 
   // 5. Bind temp_ref if provided (Pass 3 pipeline path)
   if (temp_ref && tempRefMap) {
