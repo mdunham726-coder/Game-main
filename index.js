@@ -3157,7 +3157,20 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       quantity_word:               inputObj?.player_intent?.quantity_word           ?? null,
       quantity_mode:               inputObj?.player_intent?.quantity_mode           ?? null,
       normalized_target:           inputObj?.player_intent?.normalized_target       ?? null,
-      source_container_hint:       inputObj?.player_intent?.source_container_hint   ?? null
+      source_container_hint:       inputObj?.player_intent?.source_container_hint   ?? null,
+
+      // Phase 3 alignment: trusted ORS target snapshot — derived from post-AP evidence.
+      // Reflects the object AP actually operated on, not necessarily the pre-execution
+      // intended target. All fields read-only from existing ObjectRecord — no mutation.
+      target_object_exists:         false,
+      target_object_id:             null,
+      target_object_name:           null,
+      target_object_status:         null,
+      target_object_quantity:       null,
+      target_object_unit:           null,
+      target_object_container_type: null,
+      target_object_container_id:   null,
+      target_object_accessible:     null
     };
     // Derive witness hints from observed evidence (diagnostic labels only — no authority)
     const _w = debug.itemOperationWitness;
@@ -3180,6 +3193,25 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     } else {
       _w.witness_epistemic_hint = 'ambiguous';
       _w.witness_confidence_hint = 'low';
+    }
+
+    // Phase 3 alignment: derive ORS target object from post-AP evidence
+    const _targetId = _w.ap_executed_transfer_ids?.length > 0
+      ? _w.ap_executed_transfer_ids[_w.ap_executed_transfer_ids.length - 1]
+      : _w.ap_env_gather_source_object_id || null;
+    if (_targetId && gameState.objects?.[_targetId]) {
+      const _t = gameState.objects[_targetId];
+      _w.target_object_exists = true;
+      _w.target_object_id = _targetId;
+      _w.target_object_name = _t.name || null;
+      _w.target_object_status = _t.status || null;
+      _w.target_object_quantity = typeof _t.quantity === 'number' ? _t.quantity : null;
+      _w.target_object_unit = _t.unit || null;
+      _w.target_object_container_type = _t.current_container_type || null;
+      _w.target_object_container_id = _t.current_container_id || null;
+      // Accessible here means AP resolved this object as interactable in the current turn;
+      // it is not a general world-reachability calculation.
+      _w.target_object_accessible = true;
     }
 
     // v1.91.22: capture witness for Mother's GET /debug/witness tool
