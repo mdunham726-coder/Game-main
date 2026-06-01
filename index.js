@@ -1012,6 +1012,11 @@ app.post('/narrate', async (req, res) => {
     reconciliation_count: 0  // v1.85.91: ObjectRecords annotated with reconciled_from_rejection this turn
   };
 
+  // v1.91.29: bridge _objectRealityDebug to gameState so ActionProcessor can push
+  // ap_direct_transfer audit entries during Engine.buildOutput. Without this bridge,
+  // the optional-chain guard in AP (state._objectRealityDebug?.audit) silently fails.
+  gameState._objectRealityDebug = _objectRealityDebug;
+
   // v1.85.39: turn_stage SSE — parsing start
   diag.emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
   let parseResult = null;
