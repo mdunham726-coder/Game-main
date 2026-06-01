@@ -79,6 +79,9 @@ let _activeTurnDebug = null;         // v1.88.67: module-level fallback — neve
 // Sessions accumulate ~50 MB each. Evict sessions idle > 20 min to prevent OOM.
 const _sessionLastUsed = new Map();  // sessionId -> last-access timestamp
 const _divCheckCache = new Map();    // v1.91.11: divisibility check cache — (sourceLabel::label) -> bool
+// v1.91.22: witness store — one packet per session, replaced each turn
+// Read by GET /debug/witness. Evicted with session in the TTL sweep.
+const _witnessStore = new Map(); // sessionId -> witnessPacket
 const SESSION_PROBE_MAX_AGE_MS = 5 * 60 * 1000;       // 5 min  — probes/harness are throw-aways
 const SESSION_GAME_MAX_AGE_MS  = 24 * 60 * 60 * 1000; // 24 hrs — browser game sessions survive overnight
 setInterval(() => {
@@ -91,6 +94,7 @@ setInterval(() => {
       sessionStates.delete(_sid);
       _sessionLastUsed.delete(_sid);
       _consultHistory.delete(_sid);
+      _witnessStore.delete(_sid);      // v1.91.22
       _evictCount++;
     }
   }
@@ -1007,6 +1011,11 @@ app.post('/narrate', async (req, res) => {
     error_entries: [],
     reconciliation_count: 0  // v1.85.91: ObjectRecords annotated with reconciled_from_rejection this turn
   };
+
+  // v1.91.29: bridge _objectRealityDebug to gameState so ActionProcessor can push
+  // ap_direct_transfer audit entries during Engine.buildOutput. Without this bridge,
+  // the optional-chain guard in AP (state._objectRealityDebug?.audit) silently fails.
+  gameState._objectRealityDebug = _objectRealityDebug;
 
   // v1.85.39: turn_stage SSE — parsing start
   diag.emitDiagnostics({ type: 'turn_stage', stage: 'parsing', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
@@ -1940,7 +1949,22 @@ app.post('/narrate', async (req, res) => {
             // ActionProcessor delta table is the canonical direction contract
             mapped.player_intent.dir = String(queuedAction.dir).toLowerCase();
           }
-          
+
+          // Phase 2: thread enrichment fields from _enrichPrimaryAction into player_intent.
+          // These fields are populated by SemanticParser._enrichPrimaryAction on every parse result
+          // (LLM path and all fast paths). They were produced correctly in Phase 1 (v1.91.23) but
+          // were never threaded past this loop because the loop predates Phase 1.
+          // Null-guard style matches selection_mode assignment above.
+          if (queuedAction.requested_quantity    != null) mapped.player_intent.requested_quantity    = queuedAction.requested_quantity;
+          if (queuedAction.quantity_word         != null) mapped.player_intent.quantity_word         = queuedAction.quantity_word;
+          if (queuedAction.quantity_mode         != null) mapped.player_intent.quantity_mode         = queuedAction.quantity_mode;
+          if (queuedAction.normalized_target     != null) mapped.player_intent.normalized_target     = queuedAction.normalized_target;
+          if (queuedAction.source_container_hint != null) mapped.player_intent.source_container_hint = queuedAction.source_container_hint;
+          // operation_family is always a string from the enricher — assign unconditionally with action fallback
+          mapped.player_intent.operation_family = queuedAction.operation_family ?? mapped.player_intent.action;
+          // NOTE: secondaryActions in compound commands are not enriched. If "take 3 and drop 1" is issued,
+          // the second action's queuedAction will have no enrichment metadata. Future work — not Phase 2.
+
           // [POINT-C] Log mapped input structure for movement diagnosis (now with complete data)
           console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
 
@@ -2091,6 +2115,7 @@ app.post('/narrate', async (req, res) => {
         inputObj = mapActionToInput(action, inferredKind);
         inputObj.player_intent.channel = resolvedChannel;
         if (parsed) inputObj.player_intent.action = parsed.action; // mirror what semantic path sets explicitly
+        if (parsed?.target) inputObj.player_intent.target = parsed.target;
         if (parsed && parsed.action === "move" && parsed.dir) {
           inputObj.player_intent.dir = parsed.dir;
         }
@@ -3083,6 +3108,129 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     let _narratorPayloadSnapshot    = null;
     let _cbPayloadSnapshot          = null;
     let _conditionBotPayloadSnapshot = null;
+
+    // v1.91.21: ItemOperationWitness — observe-only diagnostics packet.
+    // Assembled from post-AP, pre-RC evidence only. No hoists. No behavior change.
+    // All derived fields are _hint suffixed — witness observes, does not classify.
+    // Stored on debug (write-only diagnostics surface, never read by gameplay logic).
+    debug.itemOperationWitness = {
+      raw_input:               _rawInput,
+      channel:                 resolvedChannel,
+      turn_number:             turnNumber,
+      actor_id:                'player',
+      player_container_type:   gameState.world?.active_local_space ? 'localspace'
+                             : gameState.world?.active_site ? 'site'
+                             : 'grid',
+      player_container_id:     gameState.world?.active_local_space?.local_space_id
+                             || (gameState.world?.active_site
+                                ? `${gameState.world.active_site.site_id || gameState.world.active_site.id?.replace(/\/l2$/,'')}:${gameState.player?.position?.x},${gameState.player?.position?.y}`
+                                : null),
+      parsed_action:           inputObj?.player_intent?.action || null,
+      parsed_target:           inputObj?.player_intent?.target || null,
+      selection_mode:          inputObj?.player_intent?.selection_mode || null,
+      gate_decision:           _authorityGateResult?.decision || null,
+      gate_reason_code:        _authorityGateResult?.reason_code || null,
+      gate_referenced_objects: _authorityGateResult?.referenced_objects || [],
+      gate_engine_supported:   _authorityGateResult?.evidence?.engine_supported ?? null,
+      ap_env_gather_label:             gameState._environmentGatherIntent?.label || null,
+      ap_env_gather_source_object_id:  gameState._environmentGatherIntent?.sourceObjectId || null,
+      ap_env_gather_synthetic:         gameState._environmentGatherIntent?.synthetic ?? null,
+      ap_executed_transfer_ids:        Array.isArray(gameState._apExecutedTransfers)
+                                        ? [...gameState._apExecutedTransfers] : [],
+      ap_executed_transfer_count:      Array.isArray(gameState._apExecutedTransfers)
+                                        ? gameState._apExecutedTransfers.length : 0,
+      player_held_object_ids:          Array.isArray(gameState.player?.object_ids)
+                                        ? [...gameState.player.object_ids] : [],
+      player_held_count:               Array.isArray(gameState.player?.object_ids)
+                                        ? gameState.player.object_ids.length : 0,
+      witness_epistemic_hint:          null,
+      witness_operation_family_hint:   null,
+      witness_confidence_hint:         null,
+      witness_notes:                   [],
+
+      // Phase 2 observer fields — sourced from parser enrichment, not re-derived from parsed_action.
+      // witness_operation_family_hint is preserved above for divergence forensics.
+      // When parser_operation_family and witness_operation_family_hint agree: baseline is healthy.
+      // When they diverge: the input that caused it is a forensic signal worth examining.
+      parser_operation_family:     inputObj?.player_intent?.operation_family       ?? null,
+      requested_quantity:          inputObj?.player_intent?.requested_quantity      ?? null,
+      quantity_word:               inputObj?.player_intent?.quantity_word           ?? null,
+      quantity_mode:               inputObj?.player_intent?.quantity_mode           ?? null,
+      normalized_target:           inputObj?.player_intent?.normalized_target       ?? null,
+      source_container_hint:       inputObj?.player_intent?.source_container_hint   ?? null,
+
+      // Phase 3 alignment: trusted ORS target snapshot — derived from post-AP evidence.
+      // Reflects the object AP actually operated on, not necessarily the pre-execution
+      // intended target. All fields read-only from existing ObjectRecord — no mutation.
+      target_object_exists:         false,
+      target_object_id:             null,
+      target_object_name:           null,
+      target_object_status:         null,
+      target_object_quantity:       null,
+      target_object_unit:           null,
+      target_object_container_type: null,
+      target_object_container_id:   null,
+      target_object_accessible:     null
+    };
+    // Derive witness hints from observed evidence (diagnostic labels only — no authority)
+    const _w = debug.itemOperationWitness;
+    // Operation family hint
+    const _act = _w.parsed_action;
+    _w.witness_operation_family_hint = (_act === 'take' || _act === 'drop' || _act === 'throw') ? _act : 'unknown';
+    // Epistemic hint
+    if (_w.ap_executed_transfer_count > 0) {
+      _w.witness_epistemic_hint = 'known_ors_transfer_executed';
+      _w.witness_confidence_hint = 'high';
+    } else if (_w.ap_env_gather_source_object_id && !_w.ap_env_gather_synthetic) {
+      _w.witness_epistemic_hint = 'known_ors_source_object_env_gather';
+      _w.witness_confidence_hint = 'medium';
+    } else if (_w.ap_env_gather_synthetic) {
+      _w.witness_epistemic_hint = 'synthetic_env_gather';
+      _w.witness_confidence_hint = 'medium';
+    } else if (_w.gate_decision === 'freeform') {
+      _w.witness_epistemic_hint = 'unsupported_or_denied';
+      _w.witness_confidence_hint = 'low';
+    } else {
+      _w.witness_epistemic_hint = 'ambiguous';
+      _w.witness_confidence_hint = 'low';
+    }
+
+    // Phase 3 alignment: derive ORS target object from post-AP evidence
+    const _targetId = _w.ap_executed_transfer_ids?.length > 0
+      ? _w.ap_executed_transfer_ids[_w.ap_executed_transfer_ids.length - 1]
+      : _w.ap_env_gather_source_object_id || null;
+    if (_targetId && gameState.objects?.[_targetId]) {
+      const _t = gameState.objects[_targetId];
+      _w.target_object_exists = true;
+      _w.target_object_id = _targetId;
+      _w.target_object_name = _t.name || null;
+      _w.target_object_status = _t.status || null;
+      _w.target_object_quantity = typeof _t.quantity === 'number' ? _t.quantity : null;
+      _w.target_object_unit = _t.unit || null;
+      _w.target_object_container_type = _t.current_container_type || null;
+      _w.target_object_container_id = _t.current_container_id || null;
+      // Accessible here means AP resolved this object as interactable in the current turn;
+      // it is not a general world-reachability calculation.
+      _w.target_object_accessible = true;
+    }
+
+    // v1.91.22: capture witness for Mother's GET /debug/witness tool
+    if (debug.itemOperationWitness) {
+      _witnessStore.set(resolvedSessionId, {
+        turn: turnNumber,
+        ts: new Date().toISOString(),
+        witness: debug.itemOperationWitness
+      });
+    }
+
+    // v1.91.22: capture witness for Mother's GET /debug/witness tool
+    if (debug.itemOperationWitness) {
+      _witnessStore.set(resolvedSessionId, {
+        turn: turnNumber,
+        ts: new Date().toISOString(),
+        witness: debug.itemOperationWitness
+      });
+    }
 
     // [REALITY-CHECK] Arbiter Phase 0 — pre-narration reality adjudication (v1.84.2)
     // Awaited and blocking. Fires before narrationContent is built. On failure: hard stop — narrator never called.
@@ -6828,6 +6976,22 @@ app.get('/harness/result/last', (req, res) => {
   if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
   if (!_lastHarnessResult) return res.status(404).json({ error: 'no_result', message: 'No harness run completed yet in this server session.' });
   res.json(_lastHarnessResult);
+});
+
+// v1.91.22: ItemOperationWitness bridge — Mother read surface
+app.get('/debug/witness', (req, res) => {
+  const _sid = req.headers['x-session-id'];
+  if (!_sid) {
+    return res.status(400).json({ error: 'MISSING_SESSION_ID' });
+  }
+  const _packet = _witnessStore.get(_sid);
+  if (!_packet) {
+    return res.status(404).json({
+      error: 'NO_WITNESS',
+      message: 'No ItemOperationWitness recorded for this session yet. Run a turn that involves item operations.'
+    });
+  }
+  return res.json(_packet);
 });
 
 // Allow heavy prompts (e.g. "critique my game") to complete before Node kills the socket.

@@ -2628,7 +2628,17 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
                      : or.skip_reason === 'ap_dedup_all_transfers' ? 'transfers handled by ActionProcessor (AP-dedup)'
                      : or.skip_reason || 'unknown reason';
         const _fissSufx = (or.fission_retired > 0) ? ' | fission pass ran separately' : '';
-        lines.push(`  ObjectHelper: skipped (${reason})${_fissSufx}`);
+
+        // v1.91.29: surface AP direct transfers even when post-narration CB/ORS is skipped
+        const _apAudit = (or.audit || []).filter(a => a.action === 'ap_direct_transfer');
+        if (_apAudit.length > 0) {
+          lines.push(`  Object operations: ${_apAudit.length} AP transfer${_apAudit.length !== 1 ? 's' : ''}`);
+          for (const a of _apAudit) {
+            lines.push(`    [AP-DIRECT] "${a.object_name}" ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
+          }
+        }
+
+        lines.push(`  Post-narration CB/ORS: skipped (${reason})${_fissSufx}`);
         if ((or.visible_objects_count || 0) > 0)
           lines.push(`  visible_objects: ${or.visible_objects_count} extracted (barrier-inaccessible)`);
       } else {

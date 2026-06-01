@@ -78,6 +78,69 @@ Never optimize for speed over correctness. Disciplined reasoning, preserved beha
 
 ---
 
+## PATCH WORKFLOW PIPELINE
+
+Every fix to this codebase must flow through ALL eight stages. Stages may be delegated (Perplexity for research/spec, GPT for adversarial review, Mother Brain for runtime QA and regression), but no stage may be skipped.
+
+### Stage 1 — Research
+**Owner**: Perplexity, DeepSeek, or manual code inspection.
+- Read the relevant source files and trace execution paths end to end.
+- Report the exact failing branch, handoff, contract break, or ambiguity with receipts.
+- Identify the semantic authority for the behavior. State which layer is supposed to know the truth.
+- Distinguish observed facts from inference. Do not present guesses as findings.
+- Output: research findings with file/line citations.
+
+### Stage 2 — Spec
+**Owner**: Perplexity or DeepSeek (based on research findings).
+- Produce a locked implementation spec with exact code locations, exact changes, and exact verification steps.
+- Include a "what is NOT changing" list to bound scope.
+- Include a regression table: before/after behavior for every affected input class.
+- No implementation until this spec is approved.
+
+### Stage 3 — Spec-to-Source Verification
+**Owner**: The implementer (DeepSeek) or a reviewer (GPT/Perplexity).
+- Grep the codebase to confirm every assumption in the spec against actual source.
+- Verify: function signatures match spec expectations, exports exist, helper functions are available, variables are in scope, no naming collisions.
+- Flag any spec assumption that contradicts source reality.
+- Output: verified assumptions list + any corrections needed.
+
+### Stage 4 — Adversarial Review
+**Owner**: GPT or another independent reviewer.
+- Challenge the spec: is the root cause correctly identified? Is the fix surface minimal? Are there edge cases not covered?
+- Check for scope creep, semantic contamination, or invariant violations.
+- Output: approved, rejected, or changes-requested with specific critique.
+
+### Stage 5 — Greenlight
+**Owner**: The reviewer (GPT) or the user (Matt).
+- Issue an explicit authorization letter approving the implementation.
+- Letter must restate: approved objective, approved scope, locked invariants, required verification steps, and constraints.
+- No code edits begin before this letter.
+
+### Stage 6 — Implementation
+**Owner**: DeepSeek.
+- Execute the spec exactly as approved. No scope drift, no bonus refactors, no cleanup mixed in.
+- Work in small sections — one edit at a time, verify each before the next.
+- Syntax check after every JS edit. Cross-reference identical blocks before committing.
+- After edits, re-read touched sections to confirm the implementation matches the plan.
+
+### Stage 7 — Runtime QA
+**Owner**: Matt and/or Mother Brain.
+- Run the affected commands in a live game session.
+- Verify intended behavior across the regression table.
+- Check narration_debug, Object Reality logs, and ORS state for correctness.
+- Report any anomalies back to the implementer.
+
+### Stage 8 — Forensic Regression Review
+**Owner**: Mother Brain.
+- Run harness sweep A for regression detection.
+- Verify invariants: no new object_errors, no unexpected promotions/transfers, no container violations.
+- If regression detected, stop and trace before any further work.
+
+### No Parallelization
+Stages must execute sequentially. Stage 2 cannot begin before Stage 1 is complete. Stage 6 cannot begin before Stage 5 is issued. Exceptions: Stages 3 and 4 may run concurrently.
+
+---
+
 ## POST-PATCH MANDATORY SEQUENCE
 Every patch to this codebase must complete ALL six steps before it is considered done.
 Do NOT wait for the user to ask — execute automatically after every commit.
@@ -85,7 +148,7 @@ Do NOT wait for the user to ask — execute automatically after every commit.
 1. **Version bump** — update `package.json` `"version"` field to the new version number
 2. **Syntax check** — run `node --check index.js` (and any other edited JS files); fix before proceeding
 3. **Commit** — `git commit -m "vX.XX.XX: brief description"`
-4. **Push** — `git push origin main` immediately; no batching, no exceptions
+4. **Push** — `git push origin object-op-redesign` immediately; no batching, no exceptions
 5. **Update CHANGELOG** — `c:\Users\daddy\Desktop\CHANGELOG.md`
 6. **Update Documentation** — `c:\Users\daddy\Desktop\ULTIMATE_DUNGEON_MASTER_GAME_DOCUMENTATION_PART2.md`
 
@@ -131,7 +194,7 @@ If an entry for the current version already exists, replace that bullet line in 
 
 - Always commit before starting any editing session
 - `git checkout Index.html` is the emergency rollback for that file
-- **MANDATORY: `git push origin main` immediately after every `git commit`** — no exceptions, no batching
+- **MANDATORY: `git push origin object-op-redesign` immediately after every `git commit`** — no exceptions, no batching
 - The sequence is commit → push → CHANGELOG → docs → done. Never declare a patch complete before all four post-code steps are finished.
 
 ---

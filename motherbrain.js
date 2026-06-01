@@ -878,6 +878,18 @@ const MB_TOOLS = [
         required: ['query']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_witness',
+      description: 'Retrieve the latest ItemOperationWitness packet for the current session. Returns the witness object from the most recent turn that involved item operations. Returns an error if no turn with item operations has run yet.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    }
   }
 ];
 
@@ -2243,6 +2255,17 @@ async function executeToolCall(name, args) {
         }));
         return JSON.stringify({ total_count: _ghResp.data.total_count, results: _ghItems });
       } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
+    } else if (name === 'get_witness') {
+      try {
+        const resp = await axios.get(`http://${HOST}:${PORT}/debug/witness`, {
+          timeout: 10000,
+          httpAgent: _toolHttpAgent,
+          headers: { 'x-session-id': _activeSessionId }
+        });
+        return JSON.stringify(resp.data);
+      } catch (err) {
+        return JSON.stringify({ error: err.message, status: err.response?.status ?? null });
+      }
     } else {
       return JSON.stringify({ error: 'unknown_tool', name });
     }
