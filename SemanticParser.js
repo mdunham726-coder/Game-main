@@ -207,7 +207,7 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   enriched.requested_quantity = _qtyMatch ? parseInt(_qtyMatch[1], 10) : null;
 
   // ── quantity_word: leading quantity-signal word in object phrase ──────────
-  const _wordMatch = _body.match(/^(a|an|some|all)\s+/i);
+  const _wordMatch = _body.match(/^(a|an|some|all|every)\s+/i);
   enriched.quantity_word = _wordMatch ? _wordMatch[1].toLowerCase() : null;
 
   // ── quantity_mode: controlled classification ─────────────────────────────
@@ -215,8 +215,8 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
     enriched.quantity_mode = 'all';            // "all 15 tortillas"
   } else if (enriched.requested_quantity !== null) {
     enriched.quantity_mode = 'exact';          // "5 arrows"
-  } else if (enriched.quantity_word === 'all') {
-    enriched.quantity_mode = 'all';            // "all tortillas"
+  } else if (enriched.quantity_word === 'all' || enriched.quantity_word === 'every') {
+    enriched.quantity_mode = 'all';            // "all tortillas" / "every arrow"
   } else if (enriched.quantity_word === 'some') {
     enriched.quantity_mode = 'some';           // "some arrows"
   } else if (enriched.quantity_word === 'a' || enriched.quantity_word === 'an') {
@@ -233,7 +233,7 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
       .replace(/^(all\s+\d+)\s+/i, '')     // "all 15 tortillas" → "tortillas"
       .replace(/^(all)\s+/i, '')            // "all tortillas" → "tortillas"
       .replace(/^(\d+)\s+/, '')             // "5 arrows" → "arrows"
-      .replace(/^(a|an|the|some|my)\s+/i, '') // "a sword" → "sword"
+      .replace(/^(a|an|the|some|my|every)\s+/i, '') // "a sword" → "sword", "every arrow" → "arrow"
       .trim();
     enriched.normalized_target = _norm || target; // fallback to original if stripped empty
   } else {
