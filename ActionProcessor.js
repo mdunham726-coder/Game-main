@@ -1164,7 +1164,7 @@ function resolveCellItemByName(state, query){
       // whole-stack pick-up commands from falling through to Pass C's partial-token
       // extraction path (which would set _partialToken:true and bypass transferObjectDirect
       // in the take handler). Returns clean result (no _partialToken) on match.
-      const _wsMatch = /^all(?:\s+\d+)?\s+(.+)$/i.exec(query.trim());
+      const _wsMatch = /^(?:all|every)(?:\s+\d+)?\s+(.+)$/i.exec(query.trim());
       if (_wsMatch) {
         const _wsStripped = _wsMatch[1].trim();
         for (const rec of Object.values(state.objects)) {
