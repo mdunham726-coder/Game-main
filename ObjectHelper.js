@@ -34,17 +34,6 @@ const OH_VERSION = '1.0.0';
 // whether the caller is AP (splitObjectDirect) or Pass 3 (run).
 let _splitNonce = 0;
 
-// DIAG v1.91.28 — remove on revert
-function _auditObjIds(label, before, after, objectId) {
-  console.log('[OBJIDS_AUDIT]', label,
-    '| obj:', objectId,
-    '| before_len:', before?.length,
-    '| after_len:', after?.length,
-    '| added:', (after||[]).filter(x => !(before||[]).includes(x)),
-    '| removed:', (before||[]).filter(x => !(after||[]).includes(x)),
-    '| stack:', new Error().stack.split('\n').slice(1,4).join(' | '));
-}
-
 // ── ID generation ─────────────────────────────────────────────────────────────
 // Deterministic, ordering-insensitive (uses temp_ref not seq).
 // Same narrated object with same temp_ref produces same ID.
@@ -791,8 +780,6 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
 
     // Guard: new_source_quantity must be a positive integer
     if (!Number.isInteger(new_source_quantity) || new_source_quantity < 1) {
-      // DIAG v1.91.28 — remove on revert
-      console.log('[PARTIAL_SPLIT_DIAG] guard: invalid_new_source_quantity | entry:', JSON.stringify({ source_object_id, new_source_quantity, name }));
       _pushError(gameState, {
         turn: turnNumber, action: 'partial_split', source_object_id,
         reason: 'invalid_new_source_quantity', new_source_quantity, ts
@@ -807,8 +794,6 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
     const extractQty = priorQty - new_source_quantity;
 
     if (extractQty <= 0) {
-      // DIAG v1.91.28 — remove on revert
-      console.log('[PARTIAL_SPLIT_DIAG] guard: extract_quantity_not_positive | priorQty:', priorQty, '| new_source_quantity:', new_source_quantity, '| extractQty:', extractQty, '| source:', source_object_id);
       _pushError(gameState, {
         turn: turnNumber, action: 'partial_split', source_object_id,
         reason: 'extract_quantity_not_positive', extractQty, new_source_quantity, priorQty, ts
@@ -817,8 +802,6 @@ async function run(gameState, quarantine, turnNumber, tslResult = null) {
       continue;
     }
 
-    // DIAG v1.91.28 — remove on revert
-    console.log('[PARTIAL_SPLIT_DIAG] calling _executePartialSplit | source:', source_object_id, '| extractQty:', extractQty);
     const splitResult = _executePartialSplit(
       gameState, source_object_id, extractQty,
       container_type, container_id,
@@ -901,15 +884,9 @@ function transferObjectDirect(gameState, objectId, toContainerType, toContainerI
   }
 
   // Perform transfer
-  // DIAG v1.91.28 — remove on revert
-  const _beforeFrom = [...fromIds];
-  const _beforeTo   = [...toIds];
   const fromIdx = fromIds.indexOf(objectId);
   fromIds.splice(fromIdx, 1);
   toIds.push(objectId);
-  // DIAG v1.91.28 — remove on revert
-  _auditObjIds('transferObjectDirect:from', _beforeFrom, fromIds, objectId);
-  _auditObjIds('transferObjectDirect:to', _beforeTo, toIds, objectId);
 
   // One-container enforcement
   const allContainers = _findAllContainers(gameState, objectId);
@@ -945,9 +922,6 @@ function _executePartialSplit(
 ) {
   const ts = new Date().toISOString();
   const sourceRecord = gameState?.objects?.[sourceObjectId];
-
-  // DIAG v1.91.28 — remove on revert
-  console.log('[EXEC_PARTIAL_SPLIT_DIAG] entry | source:', sourceObjectId, '| extractQty:', extractQty, '| sourceRecord exists:', !!sourceRecord, '| sourceRecord.quantity:', sourceRecord?.quantity, '| status:', sourceRecord?.status);
 
   // ── GUARDS (fail-closed, no mutation before this point) ──────────────────
   if (!sourceRecord)

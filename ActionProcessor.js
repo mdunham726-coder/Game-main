@@ -7,17 +7,6 @@ const DEFAULTS = {
   STREAM: { R: 2, P: 1 },
 };
 
-// DIAG v1.91.28 — remove on revert
-function _auditObjIds(label, before, after, objectId) {
-  console.log('[OBJIDS_AUDIT]', label,
-    '| obj:', objectId,
-    '| before_len:', before?.length,
-    '| after_len:', after?.length,
-    '| added:', (after||[]).filter(x => !(before||[]).includes(x)),
-    '| removed:', (before||[]).filter(x => !(after||[]).includes(x)),
-    '| stack:', new Error().stack.split('\n').slice(1,4).join(' | '));
-}
-
 function sha256Hex(s) { return crypto.createHash('sha256').update(String(s),'utf8').digest('hex'); }
 function parseISO(ts) { const d=new Date(ts); if (Number.isNaN(d.getTime())) throw new Error("INVALID_ISO_TIMESTAMP"); return d; }
 function toISO(d) { return new Date(d).toISOString(); }
@@ -478,8 +467,6 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       const _fromContainerType = _preObj?.current_container_type || '?';
       const _fromContainerId   = _preObj?.current_container_id   || '?';
       const _fromObjName       = _preObj?.name || found.label || target;
-      // DIAG v1.91.28 — remove on revert
-      console.log('[TAKE_TRACE] found:', JSON.stringify(found ?? null), '| has objectId:', !!found?.objectId, '| _partialToken:', !!found?._partialToken);
       const result  = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'player_take');
       if (result.success) {
         deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
@@ -1141,8 +1128,7 @@ function resolveCellItemByName(state, query){
       : (String(it?.name||'').toLowerCase() === String(query||'').trim().toLowerCase() ? 10 : 0);
     if (score > bestScore){ bestScore = score; best = it; }
   }
-  // DIAG v1.91.28 — remove on revert
-  if (bestScore >= 6) { console.log('[RESOLVE_TRACE] returning: name-scan-early | score:', bestScore); return best; }
+  if (bestScore >= 6) return best;
   // Fallback: scan NPC object: bucket attributes for narration-promoted held objects.
   // Only the object: bucket is checked — not state: or physical: — to avoid matching
   // body descriptors or condition flags as takable targets.
@@ -1159,8 +1145,6 @@ function resolveCellItemByName(state, query){
         if (rec.current_container_id !== cellKey) continue;
         const score = aliasScore(query, rec.name || '', [], 2);
         if (score >= 6) {
-          // DIAG v1.91.28 — remove on revert
-          console.log('[RESOLVE_TRACE] returning: grid-object | obj:', rec.id, '| name:', rec.name);
           return { targetType: 'gridObject', cellKey, label: rec.name, objectId: rec.id, _found: true };
         }
       }
@@ -1174,14 +1158,6 @@ function resolveCellItemByName(state, query){
   if (state?.objects && typeof state.objects === 'object' && state.world?.active_local_space) {
     const _lsId = state.world.active_local_space.local_space_id;
     if (_lsId) {
-      // DIAG v1.91.28 — remove on revert
-      console.log('[RESOLVE_TRACE] query:', query);
-      console.log('[RESOLVE_TRACE] active_ls exists:', !!state?.world?.active_local_space);
-      console.log('[RESOLVE_TRACE] active_ls id:', _lsId);
-      console.log('[RESOLVE_TRACE] objects count:', state?.objects ? Object.keys(state.objects).length : 0);
-      const _diagWsMatch = /^(?:all|every)(?:\s+\d+)?\s+(.+)$/i.exec(query.trim());
-      console.log('[RESOLVE_TRACE] ws_match:', !!_diagWsMatch, '| stripped:', _diagWsMatch?.[1]);
-
       // v1.91.20: whole-stack "all [N] <item>" pre-pass guard.
       // Strips "all" / "all <number>" prefix from queries like "all 15 tortillas"
       // or "all tortillas" so aliasScore sees just the item name. Prevents these
@@ -1196,15 +1172,8 @@ function resolveCellItemByName(state, query){
           if (rec.current_container_type !== 'localspace') continue;
           if (rec.current_container_id !== _lsId) continue;
           const _wsScore = aliasScore(_wsStripped, rec.name || '', [], 2);
-          // DIAG v1.91.28 — remove on revert
-          console.log('[RESOLVE_TRACE] candidate:', rec.id, '|', rec.name,
-            '| container_type:', rec.current_container_type,
-            '| container_id:', rec.current_container_id,
-            '| aliasScore("' + _wsStripped + '", "' + rec.name + '"):', _wsScore);
           if (_wsScore >= 6) {
             console.log(`[RESOLVE] whole-stack guard: "${query}" → "${_wsStripped}" matched "${rec.name}" (score ${_wsScore})`);
-            // DIAG v1.91.28 — remove on revert
-            console.log('[RESOLVE_TRACE] returning: whole-stack-match | obj:', rec.id, '| name:', rec.name);
             return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true };
           }
         }
@@ -1217,8 +1186,6 @@ function resolveCellItemByName(state, query){
         if (rec.current_container_id !== _lsId) continue;
         const score = aliasScore(query, rec.name || '', [], 2);
         if (score >= 6) {
-          // DIAG v1.91.28 — remove on revert
-          console.log('[RESOLVE_TRACE] returning: pass-a-alias | obj:', rec.id, '| name:', rec.name, '| score:', score);
           return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true };
         }
       }
@@ -1230,8 +1197,6 @@ function resolveCellItemByName(state, query){
           if (rec.current_container_id !== _lsId) continue;
           const _recTokens = String(rec.name || '').toLowerCase().split(' ');
           if (_recTokens.includes(q)) {
-            // DIAG v1.91.28 — remove on revert
-            console.log('[RESOLVE_TRACE] returning: pass-b-token | obj:', rec.id, '| name:', rec.name);
             return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true };
           }
         }
@@ -1249,8 +1214,6 @@ function resolveCellItemByName(state, query){
           if (rec.current_container_id !== _lsId) continue;
           const _pcNameToks = String(rec.name || '').toLowerCase().split(/\s+/).filter(t => t.length >= 3 && !_pcStop.has(t));
           if (_pcNameToks.length > 0 && _pcNameToks.some(t => _pcQTokens.has(t))) {
-            // DIAG v1.91.28 — remove on revert
-            console.log('[RESOLVE_TRACE] returning: pass-c-partial | obj:', rec.id, '| name:', rec.name);
             return { targetType: 'localspaceObject', lsId: _lsId, label: rec.name, objectId: rec.id, _found: true, _partialToken: true };
           }
         }
@@ -1365,8 +1328,6 @@ function resolveCellItemByName(state, query){
       }
     }
   }
-  // DIAG v1.91.28 — remove on revert
-  console.log('[RESOLVE_TRACE] returning: null-fallthrough (end of resolveCellItemByName)');
   return null;
 }
 
