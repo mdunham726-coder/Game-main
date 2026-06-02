@@ -1966,7 +1966,19 @@ app.post('/narrate', async (req, res) => {
           // the second action's queuedAction will have no enrichment metadata. Future work — not Phase 2.
 
           // [POINT-C] Log mapped input structure for movement diagnosis (now with complete data)
-          console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', { action: mapped.player_intent?.action, dir: mapped.player_intent?.dir });
+          console.log('[POINT-C-MAPPED] action:', queuedAction.action, 'mapped.player_intent:', {
+            action: mapped.player_intent?.action,
+            dir: mapped.player_intent?.dir,
+            target: mapped.player_intent?.target,
+            selection_mode: mapped.player_intent?.selection_mode ?? null,
+            requested_quantity: mapped.player_intent?.requested_quantity ?? null,
+            quantity_word: mapped.player_intent?.quantity_word ?? null,
+            quantity_mode: mapped.player_intent?.quantity_mode ?? null,
+            normalized_target: mapped.player_intent?.normalized_target ?? null,
+            operation_family: mapped.player_intent?.operation_family ?? null,
+            source_container_hint: mapped.player_intent?.source_container_hint ?? null,
+            raw_input: mapped.player_intent?.raw_input ?? null
+          });
 
           // ── CHANNEL STAMP ─────────────────────────────────────────────────────────
           mapped.player_intent.channel = resolvedChannel;
