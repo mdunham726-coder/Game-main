@@ -2117,6 +2117,29 @@ app.post('/narrate', async (req, res) => {
         }
         engineOutput = allResponses[allResponses.length - 1];
         debug = { ...debug, parser: "semantic", queue_length: validation.queue.length };
+        // v1.91.37A: AP audit capture proof — reads _objectRealityDebug.audit after Engine.buildOutput,
+        // before narration/CB/ObjectHelper pass. Confirms AP-prefixed entries exist at this point in
+        // the turn lifecycle. Read-only diagnostic only — no state mutation, no turn_history change.
+        {
+          const _apAuditEntries = Array.isArray(gameState._objectRealityDebug?.audit)
+            ? gameState._objectRealityDebug.audit.filter(e => typeof e.action === 'string' && e.action.startsWith('ap_'))
+            : [];
+          if (_apAuditEntries.length > 0) {
+            console.log(`[OR-AP-PROOF] Turn ${turnNumber}: ${_apAuditEntries.length} AP audit entry(ies) captured before narration:`,
+              _apAuditEntries.map(e => ({
+                action: e.action,
+                source_object_id: e.source_object_id ?? e.object_id ?? null,
+                successor_id: e.successor_id ?? e.successor_object_id ?? null,
+                source_quantity_before: e.source_quantity_before ?? null,
+                source_quantity_after: e.source_quantity_after ?? null,
+                requested_quantity: e.requested_quantity ?? null,
+                applied_quantity: e.applied_quantity ?? null
+              }))
+            );
+          } else {
+            console.log(`[OR-AP-PROOF] Turn ${turnNumber}: no AP audit entries in _objectRealityDebug.audit after Engine.buildOutput`);
+          }
+        }
         } // end if (!_degradedToFreeform)
       } else {
         // Fallback to legacy parser
