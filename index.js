@@ -1830,7 +1830,7 @@ app.post('/narrate', async (req, res) => {
       if (parseResult && parseResult.success === true && typeof normalizedConfidence === 'number' && normalizedConfidence >= 0.5) {
         console.log('[PARSER] semantic_ok input="%s" action="%s" confidence=%s', userInput, parseResult.intent?.primaryAction?.action, parseResult.confidence);
         // [POINT-A] Log parseResult details for movement diagnosis
-        console.log('[POINT-A-PARSE] parseResult:', { success: parseResult.success, confidence: parseResult.confidence, action: parseResult.intent?.primaryAction?.action, dir: parseResult.intent?.primaryAction?.dir });
+        console.log('[POINT-A-PARSE] parseResult:', { success: parseResult.success, confidence: parseResult.confidence, action: parseResult.intent?.primaryAction?.action, dir: parseResult.intent?.primaryAction?.dir, selection_mode: parseResult.intent?.primaryAction?.selection_mode ?? null, requested_quantity: parseResult.intent?.primaryAction?.requested_quantity ?? null, quantity_word: parseResult.intent?.primaryAction?.quantity_word ?? null, quantity_mode: parseResult.intent?.primaryAction?.quantity_mode ?? null, normalized_target: parseResult.intent?.primaryAction?.normalized_target ?? null, operation_family: parseResult.intent?.primaryAction?.operation_family ?? null, source_container_hint: parseResult.intent?.primaryAction?.source_container_hint ?? null });
         debug.parser = "semantic";
         // Post-parse normalization: catch known LLM contract violations before validation
         const _pa = parseResult.intent?.primaryAction;
@@ -1895,7 +1895,7 @@ app.post('/narrate', async (req, res) => {
         console.log('[POINT-B-QUEUE] validation.valid:', validation.valid, 'queue.length:', validation.queue?.length);
         if (validation.queue && validation.queue.length > 0) {
           validation.queue.forEach((qa, i) => {
-            console.log(`[POINT-B-QUEUE] queue[${i}]:`, { action: qa.action, dir: qa.dir, target: qa.target });
+            console.log(`[POINT-B-QUEUE] queue[${i}]:`, { action: qa.action, dir: qa.dir, target: qa.target, selection_mode: qa.selection_mode ?? null, requested_quantity: qa.requested_quantity ?? null, quantity_word: qa.quantity_word ?? null, quantity_mode: qa.quantity_mode ?? null, normalized_target: qa.normalized_target ?? null, operation_family: qa.operation_family ?? null, source_container_hint: qa.source_container_hint ?? null });
           });
         }
         if (!_degradedToFreeform && !validation.valid) {
