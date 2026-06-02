@@ -467,6 +467,59 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       const _fromContainerType = _preObj?.current_container_type || '?';
       const _fromContainerId   = _preObj?.current_container_id   || '?';
       const _fromObjName       = _preObj?.name || found.label || target;
+      // v1.91.35 TEMP BRIDGE — pending TLS object-operation execution lane.
+      // Consumes selection_mode/requested_quantity from enriched parser intent.
+      // Mirrors drop handler partial-stack guard (same splitObjectDirect shape).
+      // Three-way quantity: requested < source → split; === source → whole transfer;
+      // > source → fail safely (no mutation).
+      if (
+        actions?.selection_mode === 'partial_from_stack' &&
+        typeof actions?.requested_quantity === 'number' &&
+        actions.requested_quantity >= 1 &&
+        typeof _preObj?.quantity === 'number'
+      ) {
+        if (_preObj.quantity > actions.requested_quantity) {
+          const splitResult = splitObjectDirect(
+            state, found.objectId, actions.requested_quantity,
+            'player', 'player', turnNum, 'ap_partial_split_take'
+          );
+          if (splitResult.ok) {
+            deltas.push({ op: 'set', path: '/player/object_ids', value: state.player.object_ids });
+            flags.inventory_rev = true;
+            takeSucceeded = true;
+            if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+            state._apExecutedTransfers.push(splitResult.successor_object_id);
+            if (Array.isArray(state._objectRealityDebug?.audit)) {
+              state._objectRealityDebug.audit.push({
+                turn:                   turnNum,
+                action:                 'ap_partial_split',
+                source_object_id:       found.objectId,
+                successor_id:           splitResult.successor_object_id,
+                split_key:              splitResult.split_key,
+                source_quantity_before: splitResult.source_quantity_before,
+                source_quantity_after:  splitResult.source_quantity_after,
+                requested_quantity:     splitResult.requested_quantity,
+                applied_quantity:       splitResult.applied_quantity
+              });
+            }
+            if (logger) {
+              logger.action_resolved('take', true,
+                `took ${actions.requested_quantity} ${target} (partial split, ${splitResult.source_quantity_after} remain)`
+              );
+            }
+          } else {
+            console.warn(`[ACTIONS] take partial-split failed: ${splitResult.error} (${found.objectId})`);
+            if (logger) logger.action_resolved('take', false, `could not take ${target}: ${splitResult.error}`);
+          }
+          return;
+        }
+        if (_preObj.quantity < actions.requested_quantity) {
+          console.warn(`[ACTIONS] take partial-split: not enough — requested ${actions.requested_quantity}, available ${_preObj.quantity} (${found.objectId})`);
+          if (logger) logger.action_resolved('take', false, `not enough ${target}: requested ${actions.requested_quantity}, have ${_preObj.quantity}`);
+          return;
+        }
+        // _preObj.quantity === requested_quantity — fall through to transferObjectDirect
+      }
       const result  = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'player_take');
       if (result.success) {
         deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
