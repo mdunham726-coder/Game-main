@@ -492,7 +492,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
             if (Array.isArray(state._objectRealityDebug?.audit)) {
               state._objectRealityDebug.audit.push({
                 turn:                   turnNum,
-                action:                 'ap_partial_split',
+                action:                 'ap_partial_split_take',
                 source_object_id:       found.objectId,
                 successor_id:           splitResult.successor_object_id,
                 split_key:              splitResult.split_key,
@@ -511,12 +511,12 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
             console.warn(`[ACTIONS] take partial-split failed: ${splitResult.error} (${found.objectId})`);
             if (logger) logger.action_resolved('take', false, `could not take ${target}: ${splitResult.error}`);
           }
-          return;
+          return; // Bridge handled — skips generic bottom-of-function logger
         }
         if (_preObj.quantity < actions.requested_quantity) {
           console.warn(`[ACTIONS] take partial-split: not enough — requested ${actions.requested_quantity}, available ${_preObj.quantity} (${found.objectId})`);
           if (logger) logger.action_resolved('take', false, `not enough ${target}: requested ${actions.requested_quantity}, have ${_preObj.quantity}`);
-          return;
+          return; // Bridge handled failure — skips generic bottom-of-function logger
         }
         // _preObj.quantity === requested_quantity — fall through to transferObjectDirect
       }
