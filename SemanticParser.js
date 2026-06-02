@@ -83,7 +83,7 @@ function buildPrompt(userInput, contextStr, channel = 'do') {
     "Use action='smash' for phrases like: 'smash [item] on/against [target]', 'slam [item] against [target]', 'bash [item] on [target]', 'crush [item] against [target]', 'pound [item] on/against [target]', 'ram [item] into [target]', or any phrase where the player drives, strikes, or impacts an object against a surface or target with destructive/impact intent. Also captures the reverse frame: 'smash the apple with a rock' where the named target is the object being acted upon and the instrument is specified. Key distinction: throw = item leaves hand and travels through the air; smash = item or target is struck with impact intent, item does not necessarily leave the player's hand. Target should be the primary object being smashed or struck.",
     "Use action='exit' for phrases like: 'out of', 'go out', 'leave', 'exit', 'get out'. exit is an action, not a direction value. Never use dir='exit'.",
     "Use action='remove' for phrases like: 'take off [item]', 'remove [item]', 'unequip [item]', 'strip off [item]'. Applies when the player is removing clothing or equipment from their own body. Target should be the worn item name. For aggregate phrases that mean removing ALL worn items at once ('take off everything', 'take off all my clothes', 'undress', 'strip naked', 'strip down', 'get undressed', 'get naked'), set target to '__all_worn__' (the literal string).",
-    "For action='take': when the player specifies a quantity or unit of a sub-part (e.g. 'take 5 slices of bread', 'take some milk', 'take a piece of cake', 'take three cups of water'), preserve the FULL noun phrase including quantity, unit, and object name in target — do NOT reduce to just the base object name. When the player names a whole discrete object with no unit word (e.g. 'take the loaf', 'take the knife', 'take a loaf of bread'), return the canonical object name without leading article (e.g. target='loaf of bread', target='knife').",
+    "For action='take': when the player specifies a quantity or unit of a sub-part (e.g. 'take 5 slices of bread', 'take some milk', 'take a piece of cake', 'take three cups of water'), preserve the FULL noun phrase including quantity, unit, and object name in target — do NOT reduce to just the base object name. When the player names a whole discrete object with no unit word (e.g. 'take the loaf', 'take the knife', 'take a loaf of bread'), return the canonical object name without leading article (e.g. target='loaf of bread', target='knife'). When the player uses a quantity prefix to select from a known stack ('one of the', 'two of the', 'some of the', 'a few of the'), strip the prefix — return only the core object name, AND set selection_mode to \"partial_from_stack\" on the primaryAction to indicate partial-stack intent. For all other take actions, leave selection_mode as null.",
     "If the player's input is expressive, theatrical, or physical-performance language with no clear mechanical intent (e.g., dancing, spinning, performing, celebrating), set action to 'wait' and confidence to 0.3.",
     "",
     // === PHASE 3C: Quest-specific parsing context ===
@@ -200,15 +200,34 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   // rawInput is authoritative for player wording — target is canonicalized by
   // the LLM and fast paths, which strip articles/quantity words before enrichment
   // ever sees them. Extracting from rawInput recovers what canonicalization lost.
-  const _body = raw.replace(/^\S+\s+/, '').trim();
+  // v1.91.32: strip known multi-word verbs first, then fall back to single-token.
+  const _body = raw
+    .replace(/^(pick up|put down|set down)\s+/i, '')
+    .replace(/^\S+\s+/, '').trim();
 
   // ── requested_quantity: integer from leading digits in object phrase ──────
   const _qtyMatch = _body.match(/^(\d+)\s+/);
   enriched.requested_quantity = _qtyMatch ? parseInt(_qtyMatch[1], 10) : null;
 
   // ── quantity_word: leading quantity-signal word in object phrase ──────────
-  const _wordMatch = _body.match(/^(a|an|some|all|every)\s+/i);
-  enriched.quantity_word = _wordMatch ? _wordMatch[1].toLowerCase() : null;
+  // v1.91.32: added word-number recognition (one-ten) with requested_quantity mapping.
+  // "a few" is checked before bare "a" to prevent "a few" from being classified as article.
+  let _qWord;
+  if (/^a few\s+/i.test(_body)) {
+    _qWord = 'a few';
+  } else {
+    const _wordMatch = _body.match(/^(a|an|some|all|every|one|two|three|four|five|six|seven|eight|nine|ten)\s+/i);
+    _qWord = _wordMatch ? _wordMatch[1].toLowerCase() : null;
+  }
+  enriched.quantity_word = _qWord;
+
+  // Map word-number quantity_word to requested_quantity (digits handled above)
+  if (enriched.quantity_word && enriched.requested_quantity === null) {
+    const _wordNumMap = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10 };
+    if (_wordNumMap[enriched.quantity_word] !== undefined) {
+      enriched.requested_quantity = _wordNumMap[enriched.quantity_word];
+    }
+  }
 
   // ── quantity_mode: controlled classification ─────────────────────────────
   if (enriched.requested_quantity !== null && enriched.quantity_word === 'all') {
@@ -217,12 +236,23 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
     enriched.quantity_mode = 'exact';          // "5 arrows"
   } else if (enriched.quantity_word === 'all' || enriched.quantity_word === 'every') {
     enriched.quantity_mode = 'all';            // "all tortillas" / "every arrow"
-  } else if (enriched.quantity_word === 'some') {
-    enriched.quantity_mode = 'some';           // "some arrows"
+  } else if (enriched.quantity_word === 'some' || enriched.quantity_word === 'a few') {
+    enriched.quantity_mode = 'some';           // "some arrows" / "a few coins"
   } else if (enriched.quantity_word === 'a' || enriched.quantity_word === 'an') {
     enriched.quantity_mode = 'article';        // "a sword"
   } else {
     enriched.quantity_mode = 'unspecified';
+  }
+
+  // ── v1.91.32: deterministic selection_mode fill for stack-selection take ──
+  // Recovers partial-stack intent from rawInput when LLM omits it. Only fills
+  // for 'take' action family. Does NOT override LLM-emitted selection_mode.
+  // Article-safety: "take an apple" / "take the apple" are NOT partial-stack.
+  if (!enriched.selection_mode && enriched.action === 'take') {
+    const _bodyLower = _body.toLowerCase();
+    if (/\b(one|two|three|four|five|six|seven|eight|nine|ten|some|a few)\s+of\s+the\b/i.test(_bodyLower)) {
+      enriched.selection_mode = 'partial_from_stack';
+    }
   }
 
   // ── normalized_target: strip quantity/ determiner prefix ──────────────────
