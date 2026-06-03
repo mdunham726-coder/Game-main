@@ -190,6 +190,32 @@ Default path:
 
 Do not create alternate planning files, duplicate plans, or task-specific plan documents unless the user explicitly requests that.
 
+## plan.md Integrity and Reconciliation Rule
+
+Before using `plan.md`, the Planning Agent must determine whether it is present, readable, current, and relevant to the active task.
+
+If `plan.md` is missing, create it before proceeding with non-trivial planning.
+
+If `plan.md` exists but appears stale, contradictory, unrelated, partially overwritten, externally edited, or inconsistent with the current user instruction, the Planning Agent must reconcile it before producing or revising a plan.
+
+Reconciliation means:
+
+- identify the current active task
+- identify the active plan, if any
+- identify stale, superseded, paused, or unrelated plan content
+- preserve useful historical decisions when relevant
+- mark stale or superseded content explicitly
+- update plan status if needed
+- record a revision note explaining the reconciliation
+
+Do not silently trust `plan.md` merely because it exists.
+
+Do not silently overwrite `plan.md` merely because it is inconvenient.
+
+Do not proceed from a contradictory `plan.md` state.
+
+If `plan.md` cannot be reconciled safely, mark the plan BLOCKED, NEEDS USER DECISION, or NEEDS SOURCE RE-VERIFICATION and stop.
+
 ## Required plan.md Behavior
 
 For any non-trivial planning task, the Planning Agent MUST:
@@ -722,6 +748,7 @@ Before finalizing a plan, answer these internally and resolve any failure:
 - Is `plan.md` updated and internally consistent?
 - Are all 12 required plan elements present?
 - Are open questions and blockers visible instead of hidden?
+- Is `plan.md` present, current, relevant, and reconciled with the active task?
 
 If any answer reveals ambiguity or missing evidence, do not finalize as READY.
 
@@ -771,6 +798,7 @@ Branch/source state:
 Evidence collected:
 Evidence freshness:
 Re-verification triggers:
+Working-memory status:
 Approval:
 
 ## Objective
