@@ -194,28 +194,14 @@ Do not create alternate planning files, duplicate plans, or task-specific plan d
 
 For any non-trivial planning task, the Planning Agent MUST:
 
-1. Check whether `plan.md` exists.
-2. Read existing `plan.md` before producing or revising a plan.
-3. Determine whether the existing plan is active, stale, superseded, blocked, paused, or unrelated to the current task.
-4. Create `plan.md` if it does not exist.
-5. Update `plan.md` when the plan changes materially.
-6. Record the current objective.
-7. Record the research basis.
-8. Record source state, branch, commit, or evidence freshness when known.
-9. Record semantic authority.
-10. Record current behavior, intended behavior, and unchanged behavior.
-11. Record invariants and scope exclusions.
-12. Record blast radius classification.
-13. Record implementation phases or steps.
-14. Record a binary verification matrix.
-15. Record stop conditions.
-16. Record Coding handoff notes.
-17. Record QA handoff notes.
-18. Record open questions and blockers.
-19. Record decisions and rejected alternatives.
-20. Record revision history when the plan changes.
-21. Reference `plan.md` when answering planning follow-ups.
-22. Update `plan.md` when new evidence invalidates or modifies the plan.
+1. Check for root `./plan.md`, read it if present, or create it if absent.
+2. Determine whether the existing plan is active, stale, superseded, blocked, paused, or unrelated to the current task.
+3. Maintain exactly one active plan unless the user explicitly requests parallel plans.
+4. Record the current objective, plan status, approval state, source state, evidence freshness, and re-verification triggers.
+5. Record the research basis, semantic authority, current behavior, intended behavior, unchanged behavior, invariants, scope exclusions, and blast radius.
+6. Record active decisions, superseded decisions, rejected alternatives, open questions, blockers, implementation steps, verification matrix, stop conditions, Coding handoff, QA handoff, and revision history.
+7. Reference `plan.md` when answering planning follow-ups.
+8. Update `plan.md` when new evidence, source changes, user decisions, QA findings, or Coding stop conditions invalidate or modify the plan.
 
 For trivial planning questions that do not produce an implementation contract, the agent may state that `plan.md` was not updated because no active implementation plan was created.
 
@@ -231,7 +217,7 @@ Do not silently mix old and new plans.
 
 Do not preserve stale decisions as active.
 
-## Plan Status Doctrine
+## Plan Status and Coding Gate
 
 Allowed plan statuses:
 
@@ -249,22 +235,24 @@ Allowed plan statuses:
 
 Only the user may authorize APPROVED.
 
-The Planning Agent may mark a plan READY FOR REVIEW.
+The Planning Agent may mark a plan READY FOR REVIEW, BLOCKED, NEEDS MORE RESEARCH, NEEDS USER DECISION, NEEDS SOURCE RE-VERIFICATION, PARTIAL PLAN ONLY, QA ONLY / NO CODE CHANGE, SUPERSEDED, or PAUSED.
 
 The Planning Agent must not mark a plan APPROVED unless the user explicitly approves it.
-
-READY FOR REVIEW is not approval.
-DRAFT is not approval.
-BLOCKED is not approval.
-PARTIAL PLAN ONLY is not approval.
-
-## Coding Gate
 
 The Coding Agent must not implement from `plan.md` unless the active plan status is APPROVED or the user explicitly gives a greenlight in chat.
 
 If the plan is READY FOR REVIEW, the Coding Agent may inspect it but must not implement.
 
-If the plan is DRAFT, BLOCKED, NEEDS MORE RESEARCH, NEEDS USER DECISION, NEEDS SOURCE RE-VERIFICATION, PARTIAL PLAN ONLY, SUPERSEDED, or PAUSED, the Coding Agent must not implement.
+READY FOR REVIEW is not approval.
+DRAFT is not approval.
+BLOCKED is not approval.
+NEEDS MORE RESEARCH is not approval.
+NEEDS USER DECISION is not approval.
+NEEDS SOURCE RE-VERIFICATION is not approval.
+PARTIAL PLAN ONLY is not approval.
+QA ONLY / NO CODE CHANGE is not approval.
+SUPERSEDED is not approval.
+PAUSED is not approval.
 
 This doctrine exists even if VS Code does not mechanically enforce it.
 
@@ -375,6 +363,23 @@ A plan becomes stale if:
 - runtime evidence contradicts the plan
 
 When stale, update status to NEEDS SOURCE RE-VERIFICATION, NEEDS USER DECISION, NEEDS MORE RESEARCH, BLOCKED, or SUPERSEDED as appropriate.
+
+## Insufficient Evidence Stop Rule
+
+Planning must stop and return NEEDS MORE RESEARCH or NEEDS SOURCE RE-VERIFICATION if the evidence is not sufficient to make implementation deterministic.
+
+Do not produce a READY plan when:
+
+- root-cause status is unclear
+- semantic authority is unresolved
+- current behavior is not grounded in evidence
+- intended behavior requires user interpretation
+- unchanged behavior cannot be named
+- verification rows cannot be made binary
+- the Coding Agent would need to choose between plausible implementation targets
+- evidence is stale and cannot be re-verified within planning scope
+
+A blocked plan is a successful safety outcome, not a failure.
 
 ## Plan Validity Gate
 
@@ -763,6 +768,9 @@ Status:
 Active plan:
 Last updated:
 Branch/source state:
+Evidence collected:
+Evidence freshness:
+Re-verification triggers:
 Approval:
 
 ## Objective
