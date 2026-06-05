@@ -3144,6 +3144,58 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     let _cbPayloadSnapshot          = null;
     let _conditionBotPayloadSnapshot = null;
 
+    // v1.91.35: Phase 4 — TLS observe-only normalization helpers.
+    // Pure functions — no state access, no ObjectHelper calls, no mutation.
+    function _inferSourceContainerType(op) {
+      if (op === 'take')                    return 'grid';
+      if (op === 'drop' || op === 'throw')  return 'player';
+      if (op === 'remove')                  return 'player_worn';
+      return null;
+    }
+    function _generateTlsWarnings(w) {
+      const _w = [];
+      if (w.target_object_exists) {
+        _w.push('source_container_id: pre-transfer container not captured in witness');
+      }
+      if (w.gate_decision === 'freeform' && w.ap_executed_transfer_count > 0) {
+        _w.push('gate_denied_but_executed: AP executed despite freeform gate decision');
+      }
+      if (w.parser_operation_family && w.ap_executed_transfer_count === 0) {
+        const _objOps = ['take','drop','throw','remove'];
+        if (_objOps.includes(w.parser_operation_family)) {
+          _w.push('parser_verb_divergence: parser classified as object operation but no AP transfer occurred');
+        }
+      }
+      return _w;
+    }
+    function _normalizeWitness(w) {
+      let op = null;
+      if (w.ap_executed_transfer_count > 0 && w.selection_mode === 'partial_from_stack') {
+        op = 'partial_object_transfer';
+      } else if (w.ap_executed_transfer_count > 0) {
+        op = 'whole_object_transfer';
+      } else if (w.ap_env_gather_source_object_id && !w.ap_env_gather_synthetic) {
+        op = 'narrator_resolved';
+      } else {
+        return null;
+      }
+      const _verb = w.parser_operation_family || w.parsed_action || 'unknown';
+      return {
+        normalized_op:        op,
+        verb:                 _verb,
+        source_object_id:     w.target_object_id,
+        source_object_name:   w.target_object_name,
+        from_container_type:  _inferSourceContainerType(_verb),
+        from_container_id:    null,
+        to_container_type:    w.target_object_container_type,
+        to_container_id:      w.target_object_container_id,
+        resolved_quantity:    w.target_object_quantity,
+        quantity_mode:        w.quantity_mode,
+        warnings:             _generateTlsWarnings(w),
+        mode:                 'observe_only'
+      };
+    }
+
     // v1.91.21: ItemOperationWitness — observe-only diagnostics packet.
     // Assembled from post-AP, pre-RC evidence only. No hoists. No behavior change.
     // All derived fields are _hint suffixed — witness observes, does not classify.
@@ -3205,7 +3257,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       target_object_unit:           null,
       target_object_container_type: null,
       target_object_container_id:   null,
-      target_object_accessible:     null
+      target_object_accessible:     null,
+      // v1.91.35: pre-transfer container fields (observation-only, set by AP take handler)
+      target_object_prior_container_type: gameState?._apFromContainerType ?? null,
+      target_object_prior_container_id:   gameState?._apFromContainerId   ?? null
     };
     // Derive witness hints from observed evidence (diagnostic labels only — no authority)
     const _w = debug.itemOperationWitness;
@@ -3248,6 +3303,12 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // it is not a general world-reachability calculation.
       _w.target_object_accessible = true;
     }
+
+    // v1.91.35: Phase 4 — TLS observe-only normalization proposal.
+    // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
+    debug.tls_proposed_operation = _w.target_object_exists
+      ? _normalizeWitness(debug.itemOperationWitness)
+      : null;
 
     // v1.91.22: capture witness for Mother's GET /debug/witness tool
     if (debug.itemOperationWitness) {

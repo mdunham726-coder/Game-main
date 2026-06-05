@@ -467,6 +467,9 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       const _fromContainerType = _preObj?.current_container_type || '?';
       const _fromContainerId   = _preObj?.current_container_id   || '?';
       const _fromObjName       = _preObj?.name || found.label || target;
+      // v1.91.35: expose pre-transfer container to gameState for witness/tls prior-container fields
+      state._apFromContainerType = _fromContainerType;
+      state._apFromContainerId   = _fromContainerId;
       // v1.91.35 TEMP BRIDGE — pending TLS object-operation execution lane.
       // Consumes selection_mode/requested_quantity from enriched parser intent.
       // Mirrors drop handler partial-stack guard (same splitObjectDirect shape).
