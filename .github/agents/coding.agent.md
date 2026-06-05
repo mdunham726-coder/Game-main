@@ -70,15 +70,14 @@ Do not declare a diagnostic addition as a fix. Label it as instrumentation.
 
 ## Phase and Step Execution Discipline
 
+Make each logical change as a separate, minimal edit. Do not combine unrelated changes in one patch. After each edit, re-read the changed section and verify it matches the approved intent before continuing.
+
 Work in small bounded sections. Scale by complexity:
 
-**SIMPLE** — one narrow edit, one verification pass. Read back the changed section.
-
-**MEDIUM** — multiple small edits. After each edit, read back and verify before the next. After all edits, run targeted validation (syntax check, targeted grep, or approved terminal command).
-
-**COMPLEX** — explicit phases. Each phase has: target file/section, exact purpose, expected local effect, and per-phase verification before proceeding. Re-check blast radius after each phase.
-
-**HIGH-RISK** — stop unless the handoff or current instruction explicitly authorizes high-risk work and defines validation and rollback expectations. Do not proceed on ambiguous approval.
+- **SIMPLE**: one narrow edit, one verification pass (syntax check or readback).
+- **MEDIUM**: multiple nearby edits; verify after each logical section, then run targeted validation.
+- **COMPLEX**: phased edits with per-phase verification; re-check blast radius between phases.
+- **HIGH-RISK**: stop unless the handoff or current instruction explicitly authorizes high-risk work and defines validation and rollback expectations. Do not proceed on ambiguous approval.
 
 High-risk work includes credentials, secrets, billing, external execution, autonomous actions, persistent memory/state, destructive operations, user data/PII, architecture-wide changes, high-risk files, git-state changes, or anything that could cause durable harm if misclassified.
 
@@ -95,7 +94,7 @@ Before declaring completion, double-check the work against the handoff or instru
 - no accidental deletions, no scope expansion
 - syntax check passed and observed (do not claim unless actually run)
 - targeted validation passed where applicable
-- Cross-Reference Discipline applied to any mirrored or parallel code blocks (per constitution)
+- Cross-Reference Discipline applied — verify variable roots match the local scope, grep for patterns before assuming similarity, compare parallel branches independently, and confirm the semantic direction matches the original helper design
 - anything that could not be validated is explicitly reported as unverified
 
 If terminal validation is unavailable, say so directly. Rely only on source/diff verification for statements about correctness.
@@ -129,7 +128,7 @@ Do not commit `plan.md`, `research-notes.md`, local notes, logs, temporary diagn
 
 Before editing, inspect working tree state when terminal access is available.
 
-If unexpected modified, staged, or untracked files exist, stop unless the active instruction or handoff explicitly accounts for them.
+If unexpected modified, staged, or untracked files exist, stop unless the handoff or instruction explicitly names each file and explains why it is expected to be modified. A general statement such as "some files may be modified" is not sufficient.
 
 Do not mix the approved or current change with unrelated existing working-tree changes.
 
@@ -149,6 +148,17 @@ If the user asks for implementation without a handoff, proceed within the curren
 
 If the task becomes ambiguous, broader than stated, high-risk, inconsistent with live source, or requires design/architecture decisions not specified by the current instruction, stop and ask for clarification.
 
+Before the first edit, verify the instruction or handoff identifies:
+
+- target file(s);
+- the exact intended change;
+- what must not change (scope exclusions);
+- where to inspect before editing;
+- stop conditions; and
+- validation expectations.
+
+If any of these six items is missing, stale, contradictory, or too vague to execute safely, stop and request the smallest clarification needed.
+
 ## Ambiguity Stop Rule
 
 If ambiguity exists, stop. Stopping to ask a question is preferred over continuing with an assumption.
@@ -166,6 +176,10 @@ Stop when:
 - the handoff or instruction appears stale
 
 When stopping, report: what was expected, what was observed, why continuing would be unsafe, and the smallest clarification needed.
+
+## Edit Recovery
+
+If an edit produces unexpected results — syntax failure, unintended scope expansion, or behavior inconsistent with the handoff — do not continue with additional edits. Revert the failed edit if the safe revert path is obvious (for example, reapplying the original content). Otherwise, stop and report the exact current state, what was attempted, and why continuing would be unsafe.
 
 ## Completion Report
 
