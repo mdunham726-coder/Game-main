@@ -3315,16 +3315,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _witnessStore.set(resolvedSessionId, {
         turn: turnNumber,
         ts: new Date().toISOString(),
-        witness: debug.itemOperationWitness
-      });
-    }
-
-    // v1.91.22: capture witness for Mother's GET /debug/witness tool
-    if (debug.itemOperationWitness) {
-      _witnessStore.set(resolvedSessionId, {
-        turn: turnNumber,
-        ts: new Date().toISOString(),
-        witness: debug.itemOperationWitness
+        witness: debug.itemOperationWitness,
+        tls_proposed_operation: debug.tls_proposed_operation  // v1.91.35
       });
     }
 
