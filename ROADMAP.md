@@ -1,7 +1,7 @@
 # Game-Main — Object Operation Redesign Roadmap
 
-> Branch: `object-op-redesign`  
-> Last updated: v1.91.31 (June 1, 2026)
+> Branch: `phase-4-tls-observe-only`  
+> Last updated: v1.91.36 (June 5, 2026)
 
 ---
 
@@ -18,8 +18,8 @@ This branch implements the **ItemOperationWitness** system — a passive, diagno
 | Phase 1 | Parser enrichment — operation_family, quantity fields | ✅ Complete | v1.91.25 |
 | Phase 2 | Authority Gate integration | ✅ Complete | v1.91.28 |
 | Phase 3 | ItemOperationWitness observe-only skeleton + ORS target snapshot | ✅ Complete / Runtime Validated | v1.91.31 |
-| Phase 4 | TLS observe-only normalization — propose canonical operation, no execution | 🔓 Unblocked — Not Started | — |
-| Phase 5 | Whole-object take: ORS execution lane — TLS drives ObjectHelper for first narrow case | ⏳ Blocked on Phase 4 | — |
+| Phase 4 | TLS observe-only normalization — propose canonical operation, no execution | ✅ Complete / Runtime Validated | v1.91.35 / v1.91.36 |
+| Phase 5 | Whole-object take: ORS execution lane — TLS drives ObjectHelper for first narrow case | 🔓 Unblocked | — |
 
 ---
 
@@ -124,74 +124,56 @@ On `drop`/`throw` with `selection_mode: partial_from_stack`, the ID pushed to `_
 
 ---
 
-## Phase 4 — Next Up
+## Phase 4 — Complete ✅
 
 **Title:** TLS Observe-Only Normalization — Propose Canonical Operation, No Execution  
-**Status:** 🔓 Unblocked  
-**Prerequisite:** Phase 3 complete ✅
+**Status:** ✅ Complete / Runtime Validated  
+**Versions:** v1.91.35 (implementation), v1.91.36 (diagnostics surface)
 
-### What Phase 4 Is
+### What Was Built
 
 TLS reads the completed witness packet and proposes a **canonical normalized operation** describing what it believes happened. This proposal is emitted to diagnostics only. AP still executes the actual mechanics. ORS/ObjectHelper is not driven by TLS yet.
 
-Example — for `take every arrow`, Phase 4 TLS output should look like:
+Three pure helper functions were added inline in `index.js` (~75 lines):
 
-```json
-{
-  "operation_type": "whole_object_transfer",
-  "verb": "take",
-  "actor_id": "player",
-  "source_object_id": "obj_774efda01a55",
-  "source_object_name": "arrows",
-  "quantity_mode": "all",
-  "from_container_type": "localspace",
-  "from_container_id": "site_a304c407/l2_ls_0",
-  "to_container_type": "player",
-  "to_container_id": "player",
-  "confidence": "high",
-  "mode": "observe_only"
-}
-```
+| Function | Purpose |
+|---|---|
+| `_normalizeWitness(w)` | Decision tree: whole_object_transfer, partial_object_transfer, narrator_resolved, or null |
+| `_inferSourceContainerType(op)` | Maps operation family to source container type (pure string mapping) |
+| `_generateTlsWarnings(w)` | Three warning classes: source_container_id missing, gate_denied_but_executed, parser_verb_divergence |
 
-This proposal is surfaced in the diagnostics panel as a `TLS ITEM OPERATION` block, e.g.:
+The TLS proposal is attached to `debug.tls_proposed_operation` after ORS target derivation, automatically readable via `GET /debug/witness`. Prior-container witness fields (`target_object_prior_container_type`/`_id`) were added, sourced from existing AP-captured data.
 
-```
-TLS ITEM OPERATION
-mode:               observe_only
-normalized_op:      whole_object_transfer
-source_object_id:   obj_774efda01a55
-from:               localspace:site_a304c407/l2_ls_0
-to:                 player:player
-requested_quantity: null
-resolved_quantity:  1
-warnings:           []
-```
+### Runtime Validation (Mother Brain, June 5, 2026)
 
-### What Phase 4 Is NOT
-- Not a mutation pass — no state changes, no ObjectHelper calls
-- Not a replacement for AP or CB — AP still executes everything
-- Not Phase 5 — TLS does not drive `transferObjectDirect` yet
-- Not a new game mechanic
+| Test | Input | Result |
+|---|---|---|
+| Whole-object take | `take the sword` | `normalized_op: "whole_object_transfer"` ✅ |
+| Partial-stack take | `take some bread` | `normalized_op: "narrator_resolved"` ✅ |
+| Non-object turn | `look around` | `tls_proposed_operation: null` ✅ |
+| Drop directionality | `drop sword` | `from: player, to: grid` ✅ |
+| No gameplay regression | Existing Phase 3 cases | Identical narrative/state ✅ |
+| No mutation authority | Source review | Pure functions, debug surface only ✅ |
 
-### Why Phase 4 Exists
+### Commits
 
-Phase 4 proves TLS can correctly interpret the witness packet before it is trusted with mutation authority. If TLS proposes the wrong canonical operation on a known input, that is caught here at zero cost — no broken game state, no player-visible side effects. Only after Phase 4 validation does TLS earn the right to drive ObjectHelper in Phase 5.
+| Version | Commit | Description |
+|---|---|---|
+| v1.91.35 | `55dc673` | Core TLS normalization: helpers, witness fields, proposal attachment, prior-container exposure |
+| v1.91.36 | `878bd95` | Diagnostics surface: expose tls_proposed_operation in witness store, remove duplicate store call |
 
-### Phase 4 Deliverable
-- A `tls_proposed_operation` block emitted per turn when `target_object_exists === true`
-- Stored alongside or adjacent to the witness packet in diagnostics
-- Readable via `GET /debug/witness` or a new `GET /debug/tls` endpoint
-- All fields are proposals only — `mode: "observe_only"` is non-negotiable for this phase
+### Known Limitations (Phase 5 Follow-ups)
 
-### Phase 4 Entry Condition
-Witness packet complete and runtime-validated ✅ (met as of v1.91.31)
+- `_inferSourceContainerType` is a pure function — always returns `"grid"` for take regardless of actual source (localspace, site). Real prior-container data available in `target_object_prior_container_type/_id`.
+- Partial-stack successor tracking: witness records successor ID, not source stack. TLS can identify the operation but cannot reconstruct pre-split source quantity.
+- Compound actions (e.g., take 3 and drop 1): witness shows only last action's target.
 
 ---
 
-## Phase 5 — On Deck (Blocked on Phase 4)
+## Phase 5 — On Deck
 
 **Title:** Whole-Object Take — ORS Execution Lane  
-**Status:** ⏳ Blocked on Phase 4  
+**Status:** 🔓 Unblocked  
 
 ### What Phase 5 Is
 
