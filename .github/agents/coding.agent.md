@@ -101,6 +101,24 @@ If terminal validation is unavailable, say so directly. Rely only on source/diff
 
 Do not claim "fixed" unless runtime behavior was verified. Say "implemented" if only the code was changed.
 
+## Post-Edit Verification Rule
+
+After any edit tool reports success, independently verify that the target file on disk actually changed before claiming the edit succeeded.
+
+Tool success messages, rendered patch previews, or "Made changes" responses are not evidence of mutation.
+
+Acceptable verification includes at least one of:
+- reading the affected file at the edited location;
+- searching for a unique inserted or modified string;
+- inspecting `git diff` for the target file;
+- running a syntax or test command that depends on the changed file.
+
+For every changed file, verify at least one unique marker from the intended edit.
+
+If verification fails, treat the edit as not applied, do not claim success, and retry using a more reliable edit method.
+
+Prefer exact replace/diff-based edits over insertion tools that can silently no-op. If an insertion tool is used, immediately verify the inserted text exists at the intended location.
+
 ## Git and Terminal Discipline
 
 The Coding Agent must not commit, push, branch, cherry-pick, merge, or alter git state unless explicitly authorized in the current user instruction.
