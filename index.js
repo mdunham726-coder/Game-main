@@ -3196,6 +3196,78 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       };
     }
 
+    // v1.91.XX: Phase 5 — TLS observe-only instruction assembly (Goal 2 diagnostic).
+    // Pure function — no state access, no ObjectHelper calls, no mutation.
+    // Maps witness + proposal into a structured v0 tls_instruction contract.
+    function _assembleTlsInstruction(w, proposal) {
+      const turnNumber = w.turn_number;
+      const opFamily   = w.parser_operation_family || null;
+      const opType = (
+        proposal?.normalized_op === 'whole_object_transfer' ? 'whole_object_transfer' :
+        proposal?.normalized_op === 'partial_object_transfer' ? 'partial_object_transfer' :
+        proposal?.normalized_op === 'narrator_resolved'      ? 'narrator_resolved' :
+        null
+      );
+
+      return {
+        schema_version: 'tls_ors_instruction_v0',
+
+        operation_id:     `tls_op_${turnNumber}`,
+        operation_family: opFamily,
+        operation_type:   opType,
+
+        actor: {
+          id:   w.actor_id || null,
+          type: w.actor_id === 'player' ? 'player' : null
+        },
+
+        object: {
+          id:               w.target_object_id        || null,
+          name:             w.target_object_name      || null,
+          match_confidence: (
+            w.witness_confidence_hint === 'high'   ? 'exact'     :
+            w.witness_confidence_hint === 'medium' ? 'probable'  :
+            'ambiguous'
+          )
+        },
+
+        source: {
+          layer:           w.player_container_type === 'localspace' ? 'L2'
+                         : w.player_container_type === 'site'       ? 'L1'
+                         : 'L0',
+          layer_basis:     'derived_from_player_container_type',
+          container_type:  w.target_object_prior_container_type ?? proposal?.from_container_type ?? null,
+          container_id:    w.target_object_prior_container_id   ?? null
+        },
+
+        destination: {
+          container_type: w.target_object_container_type ?? proposal?.to_container_type ?? null,
+          owner_type:     opFamily === 'take' ? 'player' : null,
+          owner_id:       opFamily === 'take' ? 'player' : null
+        },
+
+        quantity: {
+          mode:               w.quantity_mode        ?? 'unspecified',
+          requested_quantity: w.requested_quantity   ?? null,
+          unit:               w.target_object_unit   ?? null
+        },
+
+        mutation: {
+          requires_fission:     false,
+          requires_transfer:    opType === 'whole_object_transfer' || opType === 'partial_object_transfer',
+          retires_source:       false,
+          creates_successor:    opType === 'partial_object_transfer'
+        },
+
+        execution: {
+          mode:               'observe_only',
+          allowed_to_execute: false,
+          refusal_reason:     proposal ? 'observe_only' : 'no_tls_proposal',
+          gate_decision:      w.gate_decision ?? null
+        }
+      };
+    }
+
     // v1.91.21: ItemOperationWitness — observe-only diagnostics packet.
     // Assembled from post-AP, pre-RC evidence only. No hoists. No behavior change.
     // All derived fields are _hint suffixed — witness observes, does not classify.
@@ -3310,13 +3382,18 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       ? _normalizeWitness(debug.itemOperationWitness)
       : null;
 
+    // v1.91.XX: Phase 5 — TLS observe-only instruction diagnostic (Goal 2).
+    // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
+    debug.tls_instruction = _assembleTlsInstruction(debug.itemOperationWitness, debug.tls_proposed_operation);
+
     // v1.91.22: capture witness for Mother's GET /debug/witness tool
     if (debug.itemOperationWitness) {
       _witnessStore.set(resolvedSessionId, {
         turn: turnNumber,
         ts: new Date().toISOString(),
         witness: debug.itemOperationWitness,
-        tls_proposed_operation: debug.tls_proposed_operation  // v1.91.35
+        tls_proposed_operation: debug.tls_proposed_operation,  // v1.91.35
+        tls_instruction: debug.tls_instruction
       });
     }
 
