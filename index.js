@@ -3268,6 +3268,145 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       };
     }
 
+    // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment helper (Goal 3 diagnostic).
+    // Pure function — no state access, no ObjectHelper calls, no mutation.
+    // Compares TLS prediction against same-turn AP/ORS evidence.
+    function _assembleTlsOrsAlignment(w, instruction) {
+      const opType = instruction?.operation_type ?? null;
+      const opFamily = instruction?.operation_family ?? null;
+
+      // ── Status decision tree ────────────────────────────────────────────
+      let status, reason;
+
+      // Synthetic env gather: must check BEFORE generic null/no-transfer
+      if (w.ap_env_gather_synthetic === true && (w.ap_executed_transfer_count ?? 0) === 0) {
+        status = 'skipped_non_transfer';
+        reason = 'synthetic_environmental_gather_no_transfer';
+      }
+      // Non-object turn: no TLS proposal, no AP transfer
+      else if (opType === null && (w.ap_executed_transfer_count ?? 0) === 0) {
+        status = 'not_applicable';
+        reason = 'non_object_turn_no_transfer_expected';
+      }
+      // Partial-stack: deferred to future phase
+      else if (opType === 'partial_object_transfer') {
+        status = 'unsupported_operation_type';
+        reason = 'partial_stack_alignment_deferred';
+      }
+      // Unsupported operation type (drop, give, put, etc.)
+      else if (opType !== null && opType !== 'whole_object_transfer') {
+        status = 'unsupported_operation_type';
+        reason = `unsupported_operation_type_${opType}`;
+      }
+      // Whole-object take: compare prediction vs observed
+      else if (opType === 'whole_object_transfer') {
+        const predId = instruction?.object?.id ?? null;
+        const obsId  = w.target_object_id ?? null;
+        const predSrcType = instruction?.source?.container_type ?? null;
+        const obsSrcType  = w.target_object_prior_container_type ?? null;
+        const predSrcId   = instruction?.source?.container_id ?? null;
+        const obsSrcId    = w.target_object_prior_container_id ?? null;
+        const predDstType = instruction?.destination?.container_type ?? null;
+        const obsDstType  = w.target_object_container_type ?? null;
+        const transferOk  = (w.ap_executed_transfer_count ?? 0) === 1;
+
+        // Insufficient evidence: missing required fields
+        if (!predId || !obsId || !predSrcType || !obsSrcType || !predDstType || !obsDstType) {
+          status = 'insufficient_evidence';
+          reason = !predId || !obsId ? 'missing_object_id_for_comparison'
+                 : !predSrcType || !obsSrcType ? 'missing_source_container_type'
+                 : 'missing_destination_container_type';
+        } else {
+          const sameObj  = predId === obsId;
+          const srcMatch = predSrcType === obsSrcType;
+          const srcIdMatch = predSrcId && obsSrcId ? predSrcId === obsSrcId : null;
+          const dstMatch = predDstType === obsDstType;
+
+          const allPassed = sameObj && srcMatch && (srcIdMatch === true || srcIdMatch === null) && dstMatch && transferOk;
+
+          status = allPassed ? 'matched' : 'mismatched';
+          reason = allPassed ? null : (
+            !sameObj ? 'object_id_mismatch' :
+            !srcMatch ? 'source_container_type_mismatch' :
+            srcIdMatch === false ? 'source_container_id_mismatch' :
+            !dstMatch ? 'destination_container_type_mismatch' :
+            !transferOk ? 'unexpected_transfer_count' : null
+          );
+        }
+      }
+      // Fallback: no TLS proposal or witness
+      else {
+        status = 'not_applicable';
+        reason = 'no_tls_proposal_or_witness';
+      }
+
+      // ── Build alignment packet ──────────────────────────────────────────
+      const predicted = {
+        operation_type:       opType,
+        operation_family:     opFamily,
+        object_id:            instruction?.object?.id ?? null,
+        source_container_type: instruction?.source?.container_type ?? null,
+        source_container_id:   instruction?.source?.container_id ?? null,
+        dest_container_type:   instruction?.destination?.container_type ?? null,
+        dest_owner_type:       instruction?.destination?.owner_type ?? null,
+        quantity_mode:         instruction?.quantity?.mode ?? null
+      };
+
+      const observed = {
+        object_id:             w.target_object_id ?? null,
+        object_name:           w.target_object_name ?? null,
+        transfer_count:        w.ap_executed_transfer_count ?? 0,
+        transfer_ids:          w.ap_executed_transfer_ids ?? [],
+        prior_container_type:  w.target_object_prior_container_type ?? null,
+        prior_container_id:    w.target_object_prior_container_id ?? null,
+        post_container_type:   w.target_object_container_type ?? null,
+        post_container_id:     w.target_object_container_id ?? null,
+        env_gather_synthetic:  w.ap_env_gather_synthetic ?? null
+      };
+
+      const checks = {
+        same_object_id:               predicted.object_id && observed.object_id
+                                        ? predicted.object_id === observed.object_id : null,
+        source_container_type_matches: predicted.source_container_type && observed.prior_container_type
+                                        ? predicted.source_container_type === observed.prior_container_type : null,
+        source_container_id_matches:   predicted.source_container_id && observed.prior_container_id
+                                        ? predicted.source_container_id === observed.prior_container_id : null,
+        dest_container_type_matches:   predicted.dest_container_type && observed.post_container_type
+                                        ? predicted.dest_container_type === observed.post_container_type : null,
+        transfer_count_matches:        opType === 'whole_object_transfer'
+                                        ? observed.transfer_count === 1 : null,
+        no_duplicate_evidence:         null  // v0: no reliable same-turn duplicate check exists
+      };
+
+      const warnings = [];
+      if (opType === 'whole_object_transfer') {
+        if (!observed.prior_container_type) warnings.push('missing_prior_container_type');
+        if (!observed.prior_container_id)   warnings.push('missing_prior_container_id');
+        if (!observed.post_container_type)  warnings.push('missing_post_container_type');
+        if (!observed.object_id)            warnings.push('missing_object_id');
+        if (observed.transfer_count !== 1)  warnings.push('unexpected_transfer_count');
+      }
+      if (w.ap_env_gather_synthetic)        warnings.push('synthetic_env_gather_detected');
+      if (opType === 'partial_object_transfer') warnings.push('partial_stack_alignment_deferred');
+      else if (opType && opType !== 'whole_object_transfer')
+        warnings.push(`unsupported_operation_type_${opType}`);
+
+      return {
+        schema_version:     'tls_ors_alignment_v0',
+        operation_id:       instruction?.operation_id ?? null,
+        mode:               'diagnostic_only',
+        non_authoritative:  true,
+        status,
+        reason,
+        predicted,
+        observed,
+        checks,
+        warnings,
+        evidence_basis:     (status === 'insufficient_evidence') ? 'insufficient' : 'same_turn',
+        scope:              'whole_object_take_known_ors_only'
+      };
+    }
+
     // v1.91.21: ItemOperationWitness — observe-only diagnostics packet.
     // Assembled from post-AP, pre-RC evidence only. No hoists. No behavior change.
     // All derived fields are _hint suffixed — witness observes, does not classify.
@@ -3386,6 +3525,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
     debug.tls_instruction = _assembleTlsInstruction(debug.itemOperationWitness, debug.tls_proposed_operation);
 
+    // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment diagnostic (Goal 3).
+    // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
+    debug.tls_ors_alignment = _assembleTlsOrsAlignment(debug.itemOperationWitness, debug.tls_instruction);
+
     // v1.91.22: capture witness for Mother's GET /debug/witness tool
     if (debug.itemOperationWitness) {
       _witnessStore.set(resolvedSessionId, {
@@ -3393,7 +3536,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         ts: new Date().toISOString(),
         witness: debug.itemOperationWitness,
         tls_proposed_operation: debug.tls_proposed_operation,  // v1.91.35
-        tls_instruction: debug.tls_instruction
+        tls_instruction: debug.tls_instruction,
+        tls_ors_alignment: debug.tls_ors_alignment
       });
     }
 
@@ -5918,7 +6062,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       // v1.91.XX: Phase 5 — frozen witness/TLS diagnostic archive
       item_operation_witness:   _cloneForArchive(debug.itemOperationWitness),
       tls_proposed_operation:   _cloneForArchive(debug.tls_proposed_operation),
-      tls_instruction:          _cloneForArchive(debug.tls_instruction)
+      tls_instruction:          _cloneForArchive(debug.tls_instruction),
+      tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment)
     };
     
     // Store turn object in turn history
