@@ -2097,6 +2097,10 @@ app.post('/narrate', async (req, res) => {
             lsId:   gameState.world?.active_local_space?.local_space_id ?? null,
             posKey: `${gameState.world?.position?.mx},${gameState.world?.position?.my}:${gameState.world?.position?.lx},${gameState.world?.position?.ly}`
           };
+
+          // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic before AP runs
+          gameState._tlsExecutionResult = null;
+
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
@@ -4989,7 +4993,6 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // Temp-ref-only entries (no object_id) pass through unfiltered; destination idempotency in ObjectHelper catches any duplicates.
         const _apDoneIds = new Set(Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : []);
         gameState._apExecutedTransfers = []; // consume and clear for next turn
-        gameState._tlsExecutionResult = null;  // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic
         const _cbTransfersFiltered = _cbTransfers.filter(t => !t.object_id || !_apDoneIds.has(t.object_id));
         // v1.85.9: detect ap_dedup_all_transfers — CB produced transfers but all were AP-claimed.
         // Distinct from empty_quarantine (CB produced nothing) — improves diagnostic clarity.
