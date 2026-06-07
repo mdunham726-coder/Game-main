@@ -3529,6 +3529,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
     debug.tls_ors_alignment = _assembleTlsOrsAlignment(debug.itemOperationWitness, debug.tls_instruction);
 
+    // v1.91.XX: Phase D — TLS execution result (live mutation diagnostic).
+    // Authoritative for execution trace only — ORS/ObjectHelper owns object state.
+    debug.tls_execution_result = gameState._tlsExecutionResult ?? null;
+
     // v1.91.22: capture witness for Mother's GET /debug/witness tool
     if (debug.itemOperationWitness) {
       _witnessStore.set(resolvedSessionId, {
@@ -3537,7 +3541,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         witness: debug.itemOperationWitness,
         tls_proposed_operation: debug.tls_proposed_operation,  // v1.91.35
         tls_instruction: debug.tls_instruction,
-        tls_ors_alignment: debug.tls_ors_alignment
+        tls_ors_alignment: debug.tls_ors_alignment,
+        tls_execution_result: debug.tls_execution_result
       });
     }
 
@@ -4984,6 +4989,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // Temp-ref-only entries (no object_id) pass through unfiltered; destination idempotency in ObjectHelper catches any duplicates.
         const _apDoneIds = new Set(Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : []);
         gameState._apExecutedTransfers = []; // consume and clear for next turn
+        gameState._tlsExecutionResult = null;  // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic
         const _cbTransfersFiltered = _cbTransfers.filter(t => !t.object_id || !_apDoneIds.has(t.object_id));
         // v1.85.9: detect ap_dedup_all_transfers — CB produced transfers but all were AP-claimed.
         // Distinct from empty_quarantine (CB produced nothing) — improves diagnostic clarity.
@@ -6063,7 +6069,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       item_operation_witness:   _cloneForArchive(debug.itemOperationWitness),
       tls_proposed_operation:   _cloneForArchive(debug.tls_proposed_operation),
       tls_instruction:          _cloneForArchive(debug.tls_instruction),
-      tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment)
+      tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
+      tls_execution_result:     _cloneForArchive(debug.tls_execution_result)
     };
     
     // Store turn object in turn history
