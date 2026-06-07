@@ -5843,6 +5843,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     const _nbMovementFlavor = _movementFlavorBlock !== '';
     const _nbNarratorMode = !!_narratorModeBlock;
     const _nbSoliloquy = _soliloquyBlock !== '';
+    // v1.91.XX: Phase 5 — safe deep-clone for per-turn diagnostic archive.
+    // Returns null on failure — never throws, never returns live reference.
+    function _cloneForArchive(val) {
+      try { return JSON.parse(JSON.stringify(val ?? null)); } catch (_) { return null; }
+    }
     const turnObject = {
       turn_number: turnNumber,
       timestamp: new Date().toISOString(),
@@ -5909,7 +5914,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         narrator_start: _narratorStart,
         narrator_end: _narratorEnd
       },
-      object_reality: _objectRealityDebug   // v1.84.54: frozen for get_turn_data + trace_object
+      object_reality: _objectRealityDebug,  // v1.84.54: frozen for get_turn_data + trace_object
+      // v1.91.XX: Phase 5 — frozen witness/TLS diagnostic archive
+      item_operation_witness:   _cloneForArchive(debug.itemOperationWitness),
+      tls_proposed_operation:   _cloneForArchive(debug.tls_proposed_operation),
+      tls_instruction:          _cloneForArchive(debug.tls_instruction)
     };
     
     // Store turn object in turn history
