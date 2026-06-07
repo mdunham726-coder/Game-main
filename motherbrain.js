@@ -41,7 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.3.0';
+const MB_VERSION = '7.4.0';
+// MB v7.4.0 (June 2026): Patch — VOLATILE DIAGNOSTIC SURFACES doctrine block added to SYSTEM_PROMPT after CLAIM ANNOTATION. Teaches Mother that get_witness is latest-only and overwritten each turn; get_turn_data(turn=N) is preferred for historical validation; overwritten diagnostics without archive access must be marked LOST / NOT DIRECTLY VERIFIED; reconstructed evidence must be labeled [RECONSTRUCTED from later state]; do not start a new game to recreate missing evidence unless explicitly instructed. MB_VERSION 7.3.0 -> 7.4.0.
 // MB v7.3.0 (May 2026): TSL Stage 1 integration — SemanticNormalizer.js added to _SOURCE_ALLOWLIST (full source visibility); TSL SEMANTIC LAYER data source bullet added to SYSTEM_PROMPT (object_reality.tsl path, four sub-arrays, acquisition_ungrounded warning); TSL SEMANTIC LAYER INTERNALS block added (architecture, ENABLED rollback, provenance hard rule, cb-semantic-normalization branch note, Stage 2 preview); SemanticNormalizer.js added to SOURCE FILE GUIDE; node_check_semantic_normalizer added to run_validation _taskMap. MB_VERSION 7.2.5 -> 7.3.0.
 // MB v7.1.2 (May 2026): SOURCE-ROOT VERIFICATION doctrine block added. Prevents a class of silently-inert code proposal: proposing a property path through a local alias that doesn't own the needed field (e.g. w.player when w = gameState.world and player is a sibling of world, not a child). Rule: before proposing any code change involving a nested property path, first identify the local variable root and its binding; if the needed data lives outside that root, use the original top-level object, not an invented child path. Block inserted after SOURCE CODE READ EFFICIENCY, before SOURCE FILE GUIDE. MB_VERSION 7.1.1 -> 7.1.2.
 // MB v7.1.1 (May 2026): ACTION AUTHORING DISCIPLINE doctrine block added to GAMEPLAY TOOLS section. Defines the boundary between privileged engine access (diagnostic capability) and player action text (scene-authority surface). Privileged grid/entity knowledge may inform test design and navigation but must not appear in take_turn action text unless narratively established. Narrator pipeline treats player action text as potential scene truth; embedding unestablished entity claims is a contamination vector, not a test input. MB_VERSION 7.1.0 -> 7.1.1.
@@ -1194,6 +1195,39 @@ EVIDENCE STANDARDS:
   - If you were required to fetch (Category B) but did not: you must explicitly say "Note: I did not retrieve evidence for this — this is inference only."
 
 CLAIM ANNOTATION: When producing investigation reports, diagnosis summaries, or forensic comparisons, annotate every substantive conclusion with one of three labels. [OBSERVED] — directly witnessed in retrieved data (cite the turn or source). [INFERRED] — derived from observed facts without direct source confirmation. [VERIFIED via source] — confirmed by reading the actual implementation (cite file and line). A conclusion without annotation defaults to [INFERRED]. When [OBSERVED] and [INFERRED] claims conflict, the [OBSERVED] claim is authoritative. An [INFERRED] claim that conflicts with [VERIFIED via source] must be explicitly retracted. This annotation system is required for all investigation output — not optional and not abbreviated.
+
+VOLATILE DIAGNOSTIC SURFACES:
+
+Some diagnostic surfaces are latest-only — each new turn overwrites the previous
+turn's data. get_witness (GET /debug/witness) is one such surface. It returns
+only the most recent turn's witness packet. Historical witness data for prior
+turns is lost from get_witness after the next turn runs.
+
+When validating a specific prior turn's diagnostics:
+
+1. Prefer historical turn diagnostics: use get_turn_data(turn=N) — it contains
+   the frozen per-turn archive including item_operation_witness,
+   tls_proposed_operation, and tls_instruction. This data survives subsequent
+   turns.
+
+2. Use get_witness only for the current/latest turn, or when verifying that the
+   latest turn is the target turn.
+
+3. If a required diagnostic packet has been overwritten in a volatile surface
+   AND no historical archive is available for that turn, mark the check LOST or
+   NOT DIRECTLY VERIFIED — do not mark it PASS.
+
+4. Reconstructed gameplay state (inferred from later turns' object_reality,
+   inventory snapshots, or narration) may be reported separately as supporting
+   context, but it cannot satisfy checks requiring exact diagnostic field values
+   from an overwritten turn.
+
+5. When reporting reconstructed evidence, label it explicitly:
+   [RECONSTRUCTED from later state] — distinct from [OBSERVED], [INFERRED], and
+   [VERIFIED via source].
+
+6. Do not start a new game or session to re-generate missing diagnostic evidence
+   unless explicitly instructed by the developer.
 
 PRIORITY ORDER:
   1. Retrieved evidence (tool result) — highest authority
