@@ -2630,11 +2630,29 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         const _fissSufx = (or.fission_retired > 0) ? ' | fission pass ran separately' : '';
 
         // v1.91.29: surface AP direct transfers even when post-narration CB/ORS is skipped
-        const _apAudit = (or.audit || []).filter(a => a.action === 'ap_direct_transfer');
+        const _apAudit = (or.audit || []).filter(a => a.action === 'ap_direct_transfer' || a.action === 'tls_whole_object_transfer');
         if (_apAudit.length > 0) {
-          lines.push(`  Object operations: ${_apAudit.length} AP transfer${_apAudit.length !== 1 ? 's' : ''}`);
+          const _tlsCount = _apAudit.filter(a => a.action === 'tls_whole_object_transfer').length;
+          const _apCount = _apAudit.length - _tlsCount;
+          const _parts = [];
+          if (_tlsCount > 0) _parts.push(`${_tlsCount} TLS`);
+          if (_apCount > 0) _parts.push(`${_apCount} AP`);
+          lines.push(`  Object operations: ${_parts.join(' + ')} transfer${_apAudit.length !== 1 ? 's' : ''}`);
           for (const a of _apAudit) {
-            lines.push(`    [AP-DIRECT] "${a.object_name}" ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
+            const _tag = a.action === 'tls_whole_object_transfer' ? '[TLS-DIRECT]' : '[AP-DIRECT]';
+            const _toStr = a.to_container_type ? ` -> ${a.to_container_type}:${a.to_container_id}` : ' → player';
+            lines.push(`    ${_tag} "${a.object_name}" ${a.from_container_type}:${a.from_container_id}${_toStr}`);
+          }
+        }
+
+        // v1.91.43: surface TLS execution result when available
+        const _tlsEr = data.state?._tlsExecutionResult;
+        if (_tlsEr && _tlsEr.transfer?.result === 'success') {
+          lines.push(`  TLS execution:  transferred=1  executor=${_tlsEr.authority?.executor||'?'}  engine=${_tlsEr.authority?.mutation_engine||'?'}  AP_bypass=${_tlsEr.ap_bypass?.take_bypassed?'true':'false'}`);
+          if (_tlsEr.object?.id) {
+            const _src = _tlsEr.source?.container_type ? `${_tlsEr.source.container_type}:${_tlsEr.source.container_id||'?'}` : '?';
+            const _dst = _tlsEr.destination?.container_type ? `${_tlsEr.destination.container_type}:${_tlsEr.destination.container_id||'?'}` : '?';
+            lines.push(`    "${_tlsEr.object.name||_tlsEr.object.id}"  ${_src} → ${_dst}`);
           }
         }
 
@@ -2663,6 +2681,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
             lines.push(`    [${a.object_id}] "${a.object_name}" moved ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
           } else if (a.action === 'ap_direct_transfer') {
             lines.push(`    [AP-DIRECT] "${a.object_name}" ${a.from_container_type}:${a.from_container_id} -> ${a.to_container_type}:${a.to_container_id}`);
+          } else if (a.action === 'tls_whole_object_transfer') {
+            lines.push(`    [TLS-DIRECT] "${a.object_name}" ${a.from_container_type}:${a.from_container_id} → player`);
           } else if (a.action === 'promote_skipped_existing') {
             lines.push(`    [${a.object_id}] "${a.object_name}" already exists — skipped`);
           } else if (a.action && a.action.startsWith('promote_suppressed')) {
