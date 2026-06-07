@@ -3552,6 +3552,24 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // Authoritative for execution trace only — ORS/ObjectHelper owns object state.
     debug.tls_execution_result = gameState._tlsExecutionResult ?? null;
 
+    // Phase F: correct stale observe_only/diagnostic_only labels for successful TLS takes.
+    // Guard is lane-specific: only known-ORS whole-object player take (the only live TLS lane).
+    // Uses available tls_execution_result fields — no operation_family/mutation_type exists.
+    if (gameState._tlsExecutionResult?.mode === 'live_execution' &&
+        gameState._tlsExecutionResult?.executed_by === 'tls' &&
+        gameState._tlsExecutionResult?.transfer?.result === 'success' &&
+        gameState._tlsExecutionResult?.destination?.container_type === 'player') {
+      if (debug.tls_instruction?.execution) {
+        debug.tls_instruction.execution.mode = 'default';
+        debug.tls_instruction.execution.allowed_to_execute = true;
+        debug.tls_instruction.execution.refusal_reason = null;
+      }
+      if (debug.tls_ors_alignment) {
+        debug.tls_ors_alignment.mode = 'default_execution_confirmed';
+        debug.tls_ors_alignment.non_authoritative = false;
+      }
+    }
+
     // v1.91.22: capture witness for Mother's GET /debug/witness tool
     if (debug.itemOperationWitness) {
       _witnessStore.set(resolvedSessionId, {
