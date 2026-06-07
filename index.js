@@ -3134,6 +3134,21 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _agDurationMs = Date.now() - _agStart;
       diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId, decision: _authorityGateResult.decision, rc_allowed: _authorityGateResult.rc_allowed });
     }
+    // v1.91.44: AG payload snapshot — captured immediately after gate returns, before any downstream mutation.
+    // Includes prompt, evidence bundle, raw LLM response, and final post-validator result.
+    const _agPayloadSnapshot = _authorityGateResult ? {
+      prompt:              _authorityGateResult._ag_prompt || null,
+      evidence:            _authorityGateResult.evidence || null,
+      raw_response:        _authorityGateResult._ag_raw_response || null,
+      result_decision:     _authorityGateResult.decision,
+      result_route:        _authorityGateResult.route,
+      result_rc_allowed:   _authorityGateResult.rc_allowed,
+      result_reason_code:  _authorityGateResult.reason_code,
+      result_input_type:   _authorityGateResult.input_type,
+      validator_applied:   _authorityGateResult.evidence?.validator_applied || false,
+      _llm_called:         _authorityGateResult._llm_called,
+      gate_fast_path_hit:  _authorityGateResult.gate_fast_path_hit
+    } : null;
     delete gameState._lastParsedTarget;
     console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} fast_path:${_authorityGateResult.gate_fast_path_hit ? 'L1' : 'L2'} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'} dur:${_agDurationMs}ms`);
     if (_authorityGateResult.decision === 'freeform') {
@@ -3840,6 +3855,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       }
       if (_rc === 'unsupported_entity_spawn' || _authorityGateResult.input_type === 'unsupported_entity_spawn') {
         return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted to introduce or summon a new entity — person, creature, or living thing — without an established ability that grants this. Do not treat this as true. Do not create, name, or describe any entity not already present in confirmed engine state. The denial must be explicit in the narration.)\n`;
+      }
+      if (_rc === 'unsupported_referenced_object') {
+        const _unsupportedList = (_authorityGateResult?.evidence?.unsupported_referenced_objects || []).join(', ') || 'unknown';
+        return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player referenced an object — "${_unsupportedList}" — that does not exist in their inventory, worn items, the current location, or prior continuity. Do not treat this object as real, held, present, or accessible. Do not embody it, describe it, instantiate it, or allow any interaction with it. Do not grant the player ownership of it. Do not substitute a similar object. Do not describe the player picking it up, opening it, drinking from it, using it, or manipulating it in any way. The denial must be explicit in the narration — the player must be able to read that the referenced object is not present and the attempted action failed for that reason. Do not silently skip the attempt.)\n`;
       }
       // Default: unsupported world authoring or external event — use state_claim denial text
       return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`;
@@ -6103,6 +6122,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       turn: turnNumber,
       timestamp: new Date().toISOString(),
       pipeline: {
+        authority_gate:   _agPayloadSnapshot          || null,
         reality_check:    _rcPayloadSnapshot          || null,
         narrator:         _narratorPayloadSnapshot    || null,
         continuity_brain: _cbPayloadSnapshot          || null,
