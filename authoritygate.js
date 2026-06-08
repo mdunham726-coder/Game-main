@@ -118,7 +118,15 @@ function _buildEvidence(gameState, rawInput, parsedAction, turnNumber) {
       : (depth >= 2)
         ? (gameState?.world?.active_site?._visible_npcs || [])
         : [];
-    return visNpcs.map(n => n.job_category || n.job || n.npc_name || 'unknown').slice(0, 5);
+    const aliasSet = new Set();
+    for (const n of (Array.isArray(visNpcs) ? visNpcs.slice(0, 5) : [])) {
+      for (const field of [n.job_category, n.job, n.npc_name, n.learned_name]) {
+        if (field && typeof field === 'string' && field.trim()) {
+          aliasSet.add(field.trim().toLowerCase());
+        }
+      }
+    }
+    return [...aliasSet];
   })();
 
   return {
@@ -291,7 +299,7 @@ PARSED ACTION (parser hint, may be wrong): ${JSON.stringify(parsedAction)}
 DECLARED ABILITIES: ${JSON.stringify(evidence.declaredAbilities)}
 INVENTORY (names): ${JSON.stringify(evidence.inventoryNames)}
 WORN (names): ${JSON.stringify(evidence.wornNames)}
-VISIBLE NPCS (roles): ${JSON.stringify(evidence.visibleNpcNames)}
+VISIBLE NPCS (roles/names): ${JSON.stringify(evidence.visibleNpcNames)}
 TURN: ${turnNumber}
 
 Return the JSON schema described in your instructions. No prose.`;
@@ -350,6 +358,10 @@ Return the JSON schema described in your instructions. No prose.`;
   // v1.91.44: Post-LLM evidence validator — deterministic cross-check of referenced_objects
   // against engine state. Must run after normalization, before return.
   result = _validateReferencedObjects(result, evidence, gameState, parsedAction);
+
+  // v1.91.47: Post-LLM entity validator — deterministic cross-check of referenced_entities
+  // against visible NPC evidence. Sibling to _validateReferencedObjects; preserves it exactly.
+  result = _validateReferencedEntities(result, evidence);
 
   return result;
 }
@@ -490,6 +502,69 @@ function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
     result.reason_code               = 'unsupported_referenced_object';
     result.evidence.engine_supported = false;
     result.evidence.validator_reason = `unsupported_refs: ${unsupported.join(', ')}`;
+  }
+
+  return result;
+}
+
+// ── Post-LLM entity evidence validator (v1.91.47) ───────────────────────────────
+// Deterministic. No LLM calls. No raw player input as evidence.
+// Checks referenced_entities against visible NPC aliases (job_category, job,
+// npc_name, learned_name) already in evidence.visibleNpcNames.
+// Mirror of _validateReferencedObjects guard and override pattern.
+function _validateReferencedEntities(result, evidence) {
+  // Only validate Layer-2 (LLM-called) allow_rc results with referenced entities
+  if (!result._llm_called) return result;
+  if (result.decision !== 'allow_rc') return result;
+
+  const refs = Array.isArray(result.referenced_entities) ? result.referenced_entities : [];
+  if (refs.length === 0) return result;
+
+  // Initialize evidence container
+  result.evidence = result.evidence || {};
+
+  const aliases = Array.isArray(evidence.visibleNpcNames) ? evidence.visibleNpcNames : [];
+  const supported   = [];
+  const unsupported = [];
+
+  for (const ref of refs) {
+    if (!ref || typeof ref !== 'string') continue;
+    const refLower = ref.toLowerCase().trim();
+    if (!refLower) continue;
+
+    // Two-way containment match (mirrors _validateReferencedObjects tier 1 style)
+    let matched = false;
+    for (const alias of aliases) {
+      if (!alias) continue;
+      if (alias.includes(refLower) || refLower.includes(alias)) {
+        matched = true;
+        break;
+      }
+    }
+
+    if (matched) {
+      supported.push(ref);
+    } else {
+      unsupported.push(ref);
+    }
+  }
+
+  // Stamp diagnostic fields
+  result.evidence.supported_referenced_entities   = supported;
+  result.evidence.unsupported_referenced_entities = unsupported;
+  result.evidence.entity_validator_applied        = true;
+  result.evidence.entity_support_basis            = 'deterministic_post_llm_check__entity_v1';
+
+  // If any referenced entity has zero evidence, override the turn
+  if (unsupported.length > 0) {
+    console.warn(`[AUTHORITY-GATE] Entity validator override — unsupported entities: ${unsupported.join(', ')} | supported: ${supported.join(', ') || 'none'}`);
+    result.decision                  = 'freeform';
+    result.route                     = 'freeform';
+    result.rc_allowed                = false;
+    result.input_type                = 'unsupported_world_authoring';
+    result.reason_code               = 'unsupported_referenced_entity';
+    result.evidence.engine_supported = false;
+    result.evidence.validator_reason = `unsupported_entities: ${unsupported.join(', ')}`;
   }
 
   return result;
