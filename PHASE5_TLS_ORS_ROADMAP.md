@@ -363,7 +363,7 @@ All of the above remain on the AP/old path or fail closed until explicitly migra
 - AG allows hallucinated NPC recipients; Layer 1 fast-path skips destination-container validation
 - ORS/ObjectHelper blocked the transfer (`to_container_not_found`), but ConditionBot was contaminated
 - **See:** `SIDEQUEST_ENTITY_CONTAINER_VALIDATION.md` for full details
-- **Do not start until Phase G is complete**
+- **Now unblocked after Phase G completion**
 
 ### Phase H — Future Migration Lanes
 Each one repeats the same ladder:
@@ -441,7 +441,7 @@ Two follow-up improvements discovered during Phase A/B validation:
 
 ## Status Block
 
-- **Status:** Phase A ✅ / Phase B ✅ / Phase C ✅ / Phase D ✅ / Phase E ✅ / Phase F ✅. Phase G unblocked.
+- **Status:** Phase A ✅ / Phase B ✅ / Phase C ✅ / Phase D ✅ / Phase E ✅ / Phase F ✅ / Phase G ✅. All phases complete.
 - **First live TLS mutation authority validated:** Take known-ORS whole-object. TLS → ObjectHelper. AP bypassed. No dual mutation.
 - **Phase E regression hardening:** Priority controls validated; partial-stack negative control COMPLETE; environment gather, unknown object, drop, inaccessible, give/put TLS negatives, and puppeting showed no TLS leakage. Compound remains supporting-only due to CB transfer-ref noise, not TLS leakage.
 - **Phase F normalization:** v1.91.45 — post-execution correction pass makes diagnostics truthful for successful TLS takes. `tls_instruction.execution.mode: 'default'`, `allowed_to_execute: true`, `refusal_reason: null`. `tls_ors_alignment.mode: 'default_execution_confirmed'`, `non_authoritative: false`. AP bypass evidence preserved. Validated by Mother Brain June 7, 2026.
