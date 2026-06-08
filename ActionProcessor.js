@@ -523,29 +523,90 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         }
         // _preObj.quantity === requested_quantity — fall through to transferObjectDirect
       }
-      const result  = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'player_take');
-      if (result.success) {
-        deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
-        flags.inventory_rev = true;
-        takeSucceeded = true;
-        // v1.84.57: proof of AP-executed transfer — index.js uses this to suppress CB duplicate
-        if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
-        state._apExecutedTransfers.push(found.objectId);
-        // v1.91.13: surface AP direct transfer in ORS audit so it appears in diagnostics panel
-        if (Array.isArray(state._objectRealityDebug?.audit)) {
-          state._objectRealityDebug.audit.push({
-            action: 'ap_direct_transfer',
-            object_id: found.objectId,
-            object_name: _fromObjName,
-            from_container_type: _fromContainerType,
-            from_container_id:   _fromContainerId,
-            to_container_type:   'player',
-            to_container_id:     'player'
-          });
+
+      // v1.91.XX: Phase D — TLS whole-object take execution lane.
+      // First mutation authority. Known-ORS whole-object take only.
+      // Eligibility: ORS object resolved, whole-object intent, not partial-stack,
+      // not partial-token, not synthetic env gather, source container known.
+      const _tlsEligible = (
+        act === 'take' &&
+        found && found.objectId &&
+        !found._partialToken &&
+        actions?.selection_mode !== 'partial_from_stack' &&
+        _fromContainerType && _fromContainerType !== '?' &&
+        !state._environmentGatherIntent?.synthetic
+      );
+
+      if (_tlsEligible) {
+        const _tlsResult = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'tls_whole_object_take');
+        if (_tlsResult.success) {
+          // Bucket B — AP diagnostic side effects
+          if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
+          state._apExecutedTransfers.push(found.objectId);
+          if (Array.isArray(state._objectRealityDebug?.audit)) {
+            state._objectRealityDebug.audit.push({
+              action: 'tls_whole_object_transfer',
+              object_id: found.objectId,
+              object_name: _fromObjName,
+              from_container_type: _fromContainerType,
+              from_container_id: _fromContainerId,
+              turn: turnNum
+            });
+          }
+          // Post-execution diagnostic
+          state._tlsExecutionResult = {
+            schema_version: 'tls_execution_result_v0',
+            operation_id: `tls_op_${turnNum}`,
+            mode: 'live_execution',
+            authority: {
+              executor: 'tls',
+              mutation_engine: 'ObjectHelper',
+              object_state_authority: 'ORS'
+            },
+            attempted: true,
+            executed_by: 'tls',
+            eligibility: { status: 'eligible', reason: null },
+            object: { id: found.objectId, name: _fromObjName || found.label || target },
+            source: { container_type: _fromContainerType, container_id: _fromContainerId },
+            destination: { container_type: 'player', container_id: 'player' },
+            transfer: { result: 'success', error: null },
+            ap_bypass: { take_bypassed: true, reason: 'tls_executed_transfer' },
+            fail_closed: false,
+            warnings: []
+          };
+          // Bucket C — control-flow / UI side effects
+          deltas.push({ op: 'set', path: '/player/object_ids', value: state.player.object_ids });
+          flags.inventory_rev = true;
+          takeSucceeded = true;
+          if (logger) logger.action_resolved('take', true, `took ${target} (TLS whole-object transfer)`);
+          return; // AP bypass — AP's own transferObjectDirect is not reached
         }
-      } else {
-        console.warn(`[ACTIONS] take OR object failed: ${result.error} (${found.objectId})`);
+        // TLS attempted but transferObjectDirect failed — fail closed
+        state._tlsExecutionResult = {
+          schema_version: 'tls_execution_result_v0',
+          operation_id: `tls_op_${turnNum}`,
+          mode: 'live_execution',
+          authority: {
+            executor: 'tls',
+            mutation_engine: 'ObjectHelper',
+            object_state_authority: 'ORS'
+          },
+          attempted: true,
+          executed_by: 'tls',
+          eligibility: { status: 'eligible', reason: null },
+          object: { id: found.objectId, name: _fromObjName || found.label || target },
+          source: { container_type: _fromContainerType, container_id: _fromContainerId },
+          destination: { container_type: 'player', container_id: 'player' },
+          transfer: { result: 'failure', error: _tlsResult.error || 'unknown_tls_transfer_failure' },
+          ap_bypass: { take_bypassed: false, reason: 'tls_transfer_failed' },
+          fail_closed: true,
+          warnings: []
+        };
+        takeSucceeded = false;
+        if (logger) logger.action_resolved('take', false, `could not take ${target}: ${_tlsResult.error || 'TLS transfer failed'}`);
+        return; // fail closed — no AP fallback
       }
+
     } else if (found && found.targetType === 'environmentFeature') {
       // v1.84.79: environmental gather — AP does not create the item.
       // Stamp intent on state so narrator receives a targeted block; CB/narrator own the outcome.

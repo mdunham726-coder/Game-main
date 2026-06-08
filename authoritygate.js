@@ -343,6 +343,155 @@ Return the JSON schema described in your instructions. No prose.`;
     result.reason_code = 'gate_failopen_bad_decision';
   }
 
+  // Attach AG debug fields for payload archive (v1.91.44)
+  result._ag_prompt       = userMessage;
+  result._ag_raw_response = raw;
+
+  // v1.91.44: Post-LLM evidence validator — deterministic cross-check of referenced_objects
+  // against engine state. Must run after normalization, before return.
+  result = _validateReferencedObjects(result, evidence, gameState, parsedAction);
+
+  return result;
+}
+
+// ── Post-LLM evidence validator (v1.91.44) ────────────────────────────────────
+// Deterministic. No LLM calls. No raw player input as evidence.
+// Three-tier check per referenced object:
+//   Tier 1: inventory names | worn names | current cell objects → supported
+//   Tier 2: prior turn_history extraction_packet mentions → continuity_backed (NOT overridden)
+//   Zero Tier 1 AND zero Tier 2 → unsupported → override turn to freeform deny.
+// Take exemption: parsedAction === 'take' without cell match → skip (AP env-gather path).
+function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
+  // Only validate Layer-2 (LLM-called) allow_rc results with referenced objects
+  if (!result._llm_called) return result;
+  if (result.decision !== 'allow_rc') return result;
+
+  const refs = Array.isArray(result.referenced_objects) ? result.referenced_objects : [];
+  if (refs.length === 0) return result;
+
+  // Initialize evidence container if LLM didn't provide one
+  result.evidence = result.evidence || {};
+
+  // Step 0: Take exemption — preserve AP env-gather path
+  const _target = gameState?._lastParsedTarget || null;
+  if (parsedAction === 'take' && _target && !_hasCellMatch(gameState, _target)) {
+    result.evidence.take_exemption_applied          = true;
+    result.evidence.referenced_object_support_basis  = 'deterministic_post_llm_check__tiered_v3';
+    result.evidence.validator_applied                = true;
+    result.evidence.supported_referenced_objects     = [];
+    result.evidence.unsupported_referenced_objects   = [];
+    result.evidence.continuity_backed_objects        = [];
+    return result;
+  }
+
+  const supported        = [];
+  const unsupported      = [];
+  const continuityBacked = [];
+
+  for (const ref of refs) {
+    if (!ref || typeof ref !== 'string') continue;
+    const refLower = ref.toLowerCase().trim();
+    if (!refLower) continue;
+
+    // ── Tier 1: Direct engine backing ──────────────────────────────────────
+    let tier1 = false;
+
+    // 1a. Inventory names (active-status objects held by player)
+    if (!tier1 && Array.isArray(evidence.inventoryNames)) {
+      for (const name of evidence.inventoryNames) {
+        if (!name) continue;
+        const nameLower = name.toLowerCase();
+        if (nameLower.includes(refLower) || refLower.includes(nameLower)) {
+          tier1 = true;
+          break;
+        }
+      }
+    }
+
+    // 1b. Worn names (active-status objects worn by player)
+    if (!tier1 && Array.isArray(evidence.wornNames)) {
+      for (const name of evidence.wornNames) {
+        if (!name) continue;
+        const nameLower = name.toLowerCase();
+        if (nameLower.includes(refLower) || refLower.includes(nameLower)) {
+          tier1 = true;
+          break;
+        }
+      }
+    }
+
+    // 1c. Current cell objects (via existing AP helper)
+    if (!tier1 && _hasCellMatch(gameState, ref)) {
+      tier1 = true;
+    }
+
+    if (tier1) {
+      supported.push(ref);
+      continue;
+    }
+
+    // ── Tier 2: Prior continuity evidence ──────────────────────────────────
+    let tier2 = false;
+    try {
+      const history = Array.isArray(gameState?.turn_history) ? gameState.turn_history : [];
+      for (const turn of history) {
+        const packet = turn?.narration_debug?.extraction_packet;
+        if (!packet) continue;
+
+        // Check object_candidates
+        const candidates = Array.isArray(packet.object_candidates) ? packet.object_candidates : [];
+        for (const c of candidates) {
+          if (c?.name && c.name.toLowerCase().includes(refLower)) { tier2 = true; break; }
+        }
+        if (tier2) break;
+
+        // Check visible_objects
+        const visObjs = Array.isArray(packet.visible_objects) ? packet.visible_objects : [];
+        for (const v of visObjs) {
+          if (v?.name && v.name.toLowerCase().includes(refLower)) { tier2 = true; break; }
+        }
+        if (tier2) break;
+
+        // Check environmental_features
+        const envFeatures = Array.isArray(packet.environmental_features) ? packet.environmental_features : [];
+        for (const ef of envFeatures) {
+          if (ef?.name && ef.name.toLowerCase().includes(refLower)) { tier2 = true; break; }
+        }
+        if (tier2) break;
+      }
+    } catch (_) {
+      // Tier 2 unavailable — do not fabricate support; treat as no continuity evidence
+    }
+
+    if (tier2) {
+      continuityBacked.push(ref);
+      continue;
+    }
+
+    // ── Zero evidence — pure exploit ───────────────────────────────────────
+    unsupported.push(ref);
+  }
+
+  // Stamp diagnostic fields
+  result.evidence.supported_referenced_objects     = supported;
+  result.evidence.unsupported_referenced_objects   = unsupported;
+  result.evidence.continuity_backed_objects        = continuityBacked;
+  result.evidence.referenced_object_support_basis  = 'deterministic_post_llm_check__tiered_v3';
+  result.evidence.validator_applied                = true;
+  result.evidence.take_exemption_applied           = false;
+
+  // Step 3: If any referenced object has zero evidence, override the turn
+  if (unsupported.length > 0) {
+    console.warn(`[AUTHORITY-GATE] Validator override — unsupported refs: ${unsupported.join(', ')} | supported: ${supported.join(', ') || 'none'} | continuity_backed: ${continuityBacked.join(', ') || 'none'}`);
+    result.decision                  = 'freeform';
+    result.route                     = 'freeform';
+    result.rc_allowed                = false;
+    result.input_type                = 'unsupported_world_authoring';
+    result.reason_code               = 'unsupported_referenced_object';
+    result.evidence.engine_supported = false;
+    result.evidence.validator_reason = `unsupported_refs: ${unsupported.join(', ')}`;
+  }
+
   return result;
 }
 

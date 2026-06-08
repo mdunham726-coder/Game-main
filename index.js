@@ -2097,6 +2097,10 @@ app.post('/narrate', async (req, res) => {
             lsId:   gameState.world?.active_local_space?.local_space_id ?? null,
             posKey: `${gameState.world?.position?.mx},${gameState.world?.position?.my}:${gameState.world?.position?.lx},${gameState.world?.position?.ly}`
           };
+
+          // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic before AP runs
+          gameState._tlsExecutionResult = null;
+
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
@@ -3130,6 +3134,21 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _agDurationMs = Date.now() - _agStart;
       diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId, decision: _authorityGateResult.decision, rc_allowed: _authorityGateResult.rc_allowed });
     }
+    // v1.91.44: AG payload snapshot — captured immediately after gate returns, before any downstream mutation.
+    // Includes prompt, evidence bundle, raw LLM response, and final post-validator result.
+    const _agPayloadSnapshot = _authorityGateResult ? {
+      prompt:              _authorityGateResult._ag_prompt || null,
+      evidence:            _authorityGateResult.evidence || null,
+      raw_response:        _authorityGateResult._ag_raw_response || null,
+      result_decision:     _authorityGateResult.decision,
+      result_route:        _authorityGateResult.route,
+      result_rc_allowed:   _authorityGateResult.rc_allowed,
+      result_reason_code:  _authorityGateResult.reason_code,
+      result_input_type:   _authorityGateResult.input_type,
+      validator_applied:   _authorityGateResult.evidence?.validator_applied || false,
+      _llm_called:         _authorityGateResult._llm_called,
+      gate_fast_path_hit:  _authorityGateResult.gate_fast_path_hit
+    } : null;
     delete gameState._lastParsedTarget;
     console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} fast_path:${_authorityGateResult.gate_fast_path_hit ? 'L1' : 'L2'} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'} dur:${_agDurationMs}ms`);
     if (_authorityGateResult.decision === 'freeform') {
@@ -3193,6 +3212,217 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         quantity_mode:        w.quantity_mode,
         warnings:             _generateTlsWarnings(w),
         mode:                 'observe_only'
+      };
+    }
+
+    // v1.91.XX: Phase 5 — TLS observe-only instruction assembly (Goal 2 diagnostic).
+    // Pure function — no state access, no ObjectHelper calls, no mutation.
+    // Maps witness + proposal into a structured v0 tls_instruction contract.
+    function _assembleTlsInstruction(w, proposal) {
+      const turnNumber = w.turn_number;
+      const opFamily   = w.parser_operation_family || null;
+      const opType = (
+        proposal?.normalized_op === 'whole_object_transfer' ? 'whole_object_transfer' :
+        proposal?.normalized_op === 'partial_object_transfer' ? 'partial_object_transfer' :
+        proposal?.normalized_op === 'narrator_resolved'      ? 'narrator_resolved' :
+        null
+      );
+
+      return {
+        schema_version: 'tls_ors_instruction_v0',
+
+        operation_id:     `tls_op_${turnNumber}`,
+        operation_family: opFamily,
+        operation_type:   opType,
+
+        actor: {
+          id:   w.actor_id || null,
+          type: w.actor_id === 'player' ? 'player' : null
+        },
+
+        object: {
+          id:               w.target_object_id        || null,
+          name:             w.target_object_name      || null,
+          match_confidence: (
+            w.witness_confidence_hint === 'high'   ? 'exact'     :
+            w.witness_confidence_hint === 'medium' ? 'probable'  :
+            'ambiguous'
+          )
+        },
+
+        source: {
+          layer:           w.player_container_type === 'localspace' ? 'L2'
+                         : w.player_container_type === 'site'       ? 'L1'
+                         : 'L0',
+          layer_basis:     'derived_from_player_container_type',
+          container_type:  w.target_object_prior_container_type ?? proposal?.from_container_type ?? null,
+          container_id:    w.target_object_prior_container_id   ?? null
+        },
+
+        destination: {
+          container_type: w.target_object_container_type ?? proposal?.to_container_type ?? null,
+          owner_type:     opFamily === 'take' ? 'player' : null,
+          owner_id:       opFamily === 'take' ? 'player' : null
+        },
+
+        quantity: {
+          mode:               w.quantity_mode        ?? 'unspecified',
+          requested_quantity: w.requested_quantity   ?? null,
+          unit:               w.target_object_unit   ?? null
+        },
+
+        mutation: {
+          requires_fission:     false,
+          requires_transfer:    opType === 'whole_object_transfer' || opType === 'partial_object_transfer',
+          retires_source:       false,
+          creates_successor:    opType === 'partial_object_transfer'
+        },
+
+        execution: {
+          mode:               'observe_only',
+          allowed_to_execute: false,
+          refusal_reason:     proposal ? 'observe_only' : 'no_tls_proposal',
+          gate_decision:      w.gate_decision ?? null
+        }
+      };
+    }
+
+    // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment helper (Goal 3 diagnostic).
+    // Pure function — no state access, no ObjectHelper calls, no mutation.
+    // Compares TLS prediction against same-turn AP/ORS evidence.
+    function _assembleTlsOrsAlignment(w, instruction) {
+      const opType = instruction?.operation_type ?? null;
+      const opFamily = instruction?.operation_family ?? null;
+
+      // ── Status decision tree ────────────────────────────────────────────
+      let status, reason;
+
+      // Synthetic env gather: must check BEFORE generic null/no-transfer
+      if (w.ap_env_gather_synthetic === true && (w.ap_executed_transfer_count ?? 0) === 0) {
+        status = 'skipped_non_transfer';
+        reason = 'synthetic_environmental_gather_no_transfer';
+      }
+      // Non-object turn: no TLS proposal, no AP transfer
+      else if (opType === null && (w.ap_executed_transfer_count ?? 0) === 0) {
+        status = 'not_applicable';
+        reason = 'non_object_turn_no_transfer_expected';
+      }
+      // Partial-stack: deferred to future phase
+      else if (opType === 'partial_object_transfer') {
+        status = 'unsupported_operation_type';
+        reason = 'partial_stack_alignment_deferred';
+      }
+      // Unsupported operation type (drop, give, put, etc.)
+      else if (opType !== null && opType !== 'whole_object_transfer') {
+        status = 'unsupported_operation_type';
+        reason = `unsupported_operation_type_${opType}`;
+      }
+      // Whole-object take: compare prediction vs observed
+      else if (opType === 'whole_object_transfer') {
+        const predId = instruction?.object?.id ?? null;
+        const obsId  = w.target_object_id ?? null;
+        const predSrcType = instruction?.source?.container_type ?? null;
+        const obsSrcType  = w.target_object_prior_container_type ?? null;
+        const predSrcId   = instruction?.source?.container_id ?? null;
+        const obsSrcId    = w.target_object_prior_container_id ?? null;
+        const predDstType = instruction?.destination?.container_type ?? null;
+        const obsDstType  = w.target_object_container_type ?? null;
+        const transferOk  = (w.ap_executed_transfer_count ?? 0) === 1;
+
+        // Insufficient evidence: missing required fields
+        if (!predId || !obsId || !predSrcType || !obsSrcType || !predDstType || !obsDstType) {
+          status = 'insufficient_evidence';
+          reason = !predId || !obsId ? 'missing_object_id_for_comparison'
+                 : !predSrcType || !obsSrcType ? 'missing_source_container_type'
+                 : 'missing_destination_container_type';
+        } else {
+          const sameObj  = predId === obsId;
+          const srcMatch = predSrcType === obsSrcType;
+          const srcIdMatch = predSrcId && obsSrcId ? predSrcId === obsSrcId : null;
+          const dstMatch = predDstType === obsDstType;
+
+          const allPassed = sameObj && srcMatch && (srcIdMatch === true || srcIdMatch === null) && dstMatch && transferOk;
+
+          status = allPassed ? 'matched' : 'mismatched';
+          reason = allPassed ? null : (
+            !sameObj ? 'object_id_mismatch' :
+            !srcMatch ? 'source_container_type_mismatch' :
+            srcIdMatch === false ? 'source_container_id_mismatch' :
+            !dstMatch ? 'destination_container_type_mismatch' :
+            !transferOk ? 'unexpected_transfer_count' : null
+          );
+        }
+      }
+      // Fallback: no TLS proposal or witness
+      else {
+        status = 'not_applicable';
+        reason = 'no_tls_proposal_or_witness';
+      }
+
+      // ── Build alignment packet ──────────────────────────────────────────
+      const predicted = {
+        operation_type:       opType,
+        operation_family:     opFamily,
+        object_id:            instruction?.object?.id ?? null,
+        source_container_type: instruction?.source?.container_type ?? null,
+        source_container_id:   instruction?.source?.container_id ?? null,
+        dest_container_type:   instruction?.destination?.container_type ?? null,
+        dest_owner_type:       instruction?.destination?.owner_type ?? null,
+        quantity_mode:         instruction?.quantity?.mode ?? null
+      };
+
+      const observed = {
+        object_id:             w.target_object_id ?? null,
+        object_name:           w.target_object_name ?? null,
+        transfer_count:        w.ap_executed_transfer_count ?? 0,
+        transfer_ids:          w.ap_executed_transfer_ids ?? [],
+        prior_container_type:  w.target_object_prior_container_type ?? null,
+        prior_container_id:    w.target_object_prior_container_id ?? null,
+        post_container_type:   w.target_object_container_type ?? null,
+        post_container_id:     w.target_object_container_id ?? null,
+        env_gather_synthetic:  w.ap_env_gather_synthetic ?? null
+      };
+
+      const checks = {
+        same_object_id:               predicted.object_id && observed.object_id
+                                        ? predicted.object_id === observed.object_id : null,
+        source_container_type_matches: predicted.source_container_type && observed.prior_container_type
+                                        ? predicted.source_container_type === observed.prior_container_type : null,
+        source_container_id_matches:   predicted.source_container_id && observed.prior_container_id
+                                        ? predicted.source_container_id === observed.prior_container_id : null,
+        dest_container_type_matches:   predicted.dest_container_type && observed.post_container_type
+                                        ? predicted.dest_container_type === observed.post_container_type : null,
+        transfer_count_matches:        opType === 'whole_object_transfer'
+                                        ? observed.transfer_count === 1 : null,
+        no_duplicate_evidence:         null  // v0: no reliable same-turn duplicate check exists
+      };
+
+      const warnings = [];
+      if (opType === 'whole_object_transfer') {
+        if (!observed.prior_container_type) warnings.push('missing_prior_container_type');
+        if (!observed.prior_container_id)   warnings.push('missing_prior_container_id');
+        if (!observed.post_container_type)  warnings.push('missing_post_container_type');
+        if (!observed.object_id)            warnings.push('missing_object_id');
+        if (observed.transfer_count !== 1)  warnings.push('unexpected_transfer_count');
+      }
+      if (w.ap_env_gather_synthetic)        warnings.push('synthetic_env_gather_detected');
+      if (opType === 'partial_object_transfer') warnings.push('partial_stack_alignment_deferred');
+      else if (opType && opType !== 'whole_object_transfer')
+        warnings.push(`unsupported_operation_type_${opType}`);
+
+      return {
+        schema_version:     'tls_ors_alignment_v0',
+        operation_id:       instruction?.operation_id ?? null,
+        mode:               'diagnostic_only',
+        non_authoritative:  true,
+        status,
+        reason,
+        predicted,
+        observed,
+        checks,
+        warnings,
+        evidence_basis:     (status === 'insufficient_evidence') ? 'insufficient' : 'same_turn',
+        scope:              'whole_object_take_known_ors_only'
       };
     }
 
@@ -3310,13 +3540,46 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       ? _normalizeWitness(debug.itemOperationWitness)
       : null;
 
+    // v1.91.XX: Phase 5 — TLS observe-only instruction diagnostic (Goal 2).
+    // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
+    debug.tls_instruction = _assembleTlsInstruction(debug.itemOperationWitness, debug.tls_proposed_operation);
+
+    // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment diagnostic (Goal 3).
+    // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
+    debug.tls_ors_alignment = _assembleTlsOrsAlignment(debug.itemOperationWitness, debug.tls_instruction);
+
+    // v1.91.XX: Phase D — TLS execution result (live mutation diagnostic).
+    // Authoritative for execution trace only — ORS/ObjectHelper owns object state.
+    debug.tls_execution_result = gameState._tlsExecutionResult ?? null;
+
+    // Phase F: correct stale observe_only/diagnostic_only labels for successful TLS takes.
+    // Guard is lane-specific: only known-ORS whole-object player take (the only live TLS lane).
+    // Uses available tls_execution_result fields — no operation_family/mutation_type exists.
+    if (gameState._tlsExecutionResult?.mode === 'live_execution' &&
+        gameState._tlsExecutionResult?.executed_by === 'tls' &&
+        gameState._tlsExecutionResult?.transfer?.result === 'success' &&
+        gameState._tlsExecutionResult?.destination?.container_type === 'player') {
+      if (debug.tls_instruction?.execution) {
+        debug.tls_instruction.execution.mode = 'default';
+        debug.tls_instruction.execution.allowed_to_execute = true;
+        debug.tls_instruction.execution.refusal_reason = null;
+      }
+      if (debug.tls_ors_alignment) {
+        debug.tls_ors_alignment.mode = 'default_execution_confirmed';
+        debug.tls_ors_alignment.non_authoritative = false;
+      }
+    }
+
     // v1.91.22: capture witness for Mother's GET /debug/witness tool
     if (debug.itemOperationWitness) {
       _witnessStore.set(resolvedSessionId, {
         turn: turnNumber,
         ts: new Date().toISOString(),
         witness: debug.itemOperationWitness,
-        tls_proposed_operation: debug.tls_proposed_operation  // v1.91.35
+        tls_proposed_operation: debug.tls_proposed_operation,  // v1.91.35
+        tls_instruction: debug.tls_instruction,
+        tls_ors_alignment: debug.tls_ors_alignment,
+        tls_execution_result: debug.tls_execution_result
       });
     }
 
@@ -3610,6 +3873,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       }
       if (_rc === 'unsupported_entity_spawn' || _authorityGateResult.input_type === 'unsupported_entity_spawn') {
         return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted to introduce or summon a new entity — person, creature, or living thing — without an established ability that grants this. Do not treat this as true. Do not create, name, or describe any entity not already present in confirmed engine state. The denial must be explicit in the narration.)\n`;
+      }
+      if (_rc === 'unsupported_referenced_object') {
+        const _unsupportedList = (_authorityGateResult?.evidence?.unsupported_referenced_objects || []).join(', ') || 'unknown';
+        return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player referenced an object — "${_unsupportedList}" — that does not exist in their inventory, worn items, the current location, or prior continuity. Do not treat this object as real, held, present, or accessible. Do not embody it, describe it, instantiate it, or allow any interaction with it. Do not grant the player ownership of it. Do not substitute a similar object. Do not describe the player picking it up, opening it, drinking from it, using it, or manipulating it in any way. The denial must be explicit in the narration — the player must be able to read that the referenced object is not present and the attempted action failed for that reason. Do not silently skip the attempt.)\n`;
       }
       // Default: unsupported world authoring or external event — use state_claim denial text
       return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`;
@@ -5766,6 +6033,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     const _nbMovementFlavor = _movementFlavorBlock !== '';
     const _nbNarratorMode = !!_narratorModeBlock;
     const _nbSoliloquy = _soliloquyBlock !== '';
+    // v1.91.XX: Phase 5 — safe deep-clone for per-turn diagnostic archive.
+    // Returns null on failure — never throws, never returns live reference.
+    function _cloneForArchive(val) {
+      try { return JSON.parse(JSON.stringify(val ?? null)); } catch (_) { return null; }
+    }
     const turnObject = {
       turn_number: turnNumber,
       timestamp: new Date().toISOString(),
@@ -5832,7 +6104,13 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         narrator_start: _narratorStart,
         narrator_end: _narratorEnd
       },
-      object_reality: _objectRealityDebug   // v1.84.54: frozen for get_turn_data + trace_object
+      object_reality: _objectRealityDebug,  // v1.84.54: frozen for get_turn_data + trace_object
+      // v1.91.XX: Phase 5 — frozen witness/TLS diagnostic archive
+      item_operation_witness:   _cloneForArchive(debug.itemOperationWitness),
+      tls_proposed_operation:   _cloneForArchive(debug.tls_proposed_operation),
+      tls_instruction:          _cloneForArchive(debug.tls_instruction),
+      tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
+      tls_execution_result:     _cloneForArchive(debug.tls_execution_result)
     };
     
     // Store turn object in turn history
@@ -5862,6 +6140,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       turn: turnNumber,
       timestamp: new Date().toISOString(),
       pipeline: {
+        authority_gate:   _agPayloadSnapshot          || null,
         reality_check:    _rcPayloadSnapshot          || null,
         narrator:         _narratorPayloadSnapshot    || null,
         continuity_brain: _cbPayloadSnapshot          || null,
