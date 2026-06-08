@@ -607,29 +607,6 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         return; // fail closed — no AP fallback
       }
 
-      const result  = transferObjectDirect(state, found.objectId, 'player', 'player', turnNum, 'player_take');
-      if (result.success) {
-        deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
-        flags.inventory_rev = true;
-        takeSucceeded = true;
-        // v1.84.57: proof of AP-executed transfer — index.js uses this to suppress CB duplicate
-        if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
-        state._apExecutedTransfers.push(found.objectId);
-        // v1.91.13: surface AP direct transfer in ORS audit so it appears in diagnostics panel
-        if (Array.isArray(state._objectRealityDebug?.audit)) {
-          state._objectRealityDebug.audit.push({
-            action: 'ap_direct_transfer',
-            object_id: found.objectId,
-            object_name: _fromObjName,
-            from_container_type: _fromContainerType,
-            from_container_id:   _fromContainerId,
-            to_container_type:   'player',
-            to_container_id:     'player'
-          });
-        }
-      } else {
-        console.warn(`[ACTIONS] take OR object failed: ${result.error} (${found.objectId})`);
-      }
     } else if (found && found.targetType === 'environmentFeature') {
       // v1.84.79: environmental gather — AP does not create the item.
       // Stamp intent on state so narrator receives a targeted block; CB/narrator own the outcome.
