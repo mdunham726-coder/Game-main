@@ -1,7 +1,7 @@
 # Game-Main — Object Operation Redesign Roadmap
 
-> Branch: `phase-4-tls-observe-only`  
-> Last updated: v1.91.36 (June 5, 2026)
+> Branch: `phase-5-tls-object-operation-lane`  
+> Last updated: v1.91.46 (June 7, 2026)
 
 ---
 
@@ -19,7 +19,7 @@ This branch implements the **ItemOperationWitness** system — a passive, diagno
 | Phase 2 | Authority Gate integration | ✅ Complete | v1.91.28 |
 | Phase 3 | ItemOperationWitness observe-only skeleton + ORS target snapshot | ✅ Complete / Runtime Validated | v1.91.31 |
 | Phase 4 | TLS observe-only normalization — propose canonical operation, no execution | ✅ Complete / Runtime Validated | v1.91.35 / v1.91.36 |
-| Phase 5 | Whole-object take: ORS execution lane — TLS drives ObjectHelper for first narrow case | 🔓 Unblocked | — |
+| Phase 5 | Whole-object take: ORS execution lane — TLS drives ObjectHelper for first narrow case | ✅ Complete / Validated | v1.91.38–v1.91.46 |
 
 ---
 
@@ -170,26 +170,47 @@ The TLS proposal is attached to `debug.tls_proposed_operation` after ORS target 
 
 ---
 
-## Phase 5 — On Deck
+## Phase 5 — Complete ✅
 
 **Title:** Whole-Object Take — ORS Execution Lane  
-**Status:** 🔓 Unblocked  
+**Status:** ✅ Complete / Validated  
+**Versions:** v1.91.38–v1.91.46  
+**Branch:** `phase-5-tls-object-operation-lane`
 
-### What Phase 5 Is
+### What Phase 5 Achieved
 
-For the narrow case of **known accessible ORS object + take + whole-object intent**, TLS's normalized operation proposal is allowed to drive `ObjectHelper.transferObjectDirect` directly. AP remains the fallback for all other cases.
+The known-ORS whole-object take migration completed the full ladder:
+```
+observe → normalize → diagnose → compare → execute → bypass → remove
+  ✅        ✅           ✅          ✅         ✅        ✅        ✅
+```
 
-Transition:
+### Sub-Phase Delivery Summary
+
+| Sub-Phase | Title | Version | Validated |
+|---|---|---|---|
+| A/B | TLS observe-only instruction diagnostics | v1.91.38 | ✅ Mother Brain — 20/20 gates |
+| DIH-1 | Witness/TLS fields in turnObject history | v1.91.39 | ✅ Mother Brain |
+| DIH-2 | Mother evidence protocol (VOLATILE DIAGNOSTIC SURFACES) | MB v7.4.0 | ✅ |
+| C | TLS/ORS alignment diagnostics | v1.91.40 | ✅ Mother Brain |
+| D | TLS whole-object take execution | v1.91.41-42 | ✅ Mother Brain — live_execution, no dual mutation |
+| — | Object Reality panel TLS display | v1.91.43 | ✅ |
+| — | Unsupported-object exploit fix + AG payload archive | v1.91.44 | ✅ Mother Brain — 16/16 PASS |
+| E | Regression hardening | — | ✅ Mother Brain — all negative controls verified |
+| F | Default TLS whole-object take diagnostics | v1.91.45 | ✅ Mother Brain — corrected diagnostics in archived turnObject |
+| G | AP legacy fallback removal | v1.91.46 | ✅ Mother Brain — object-ID proof, no ap_direct_transfer, no dual mutation |
+
+### Transition Proven
 ```
 known accessible ORS object
 + take
 + whole-object intent
-→ TLS normalized operation
+→ TLS executes
 → ObjectHelper.transferObjectDirect
+→ AP bypassed
 → narrator describes resolved reality
 ```
 
-This is the first point at which TLS has mutation authority. All other object operation types remain on the AP path until subsequent phases extend the execution lane.
-
-### Phase 5 Entry Condition
-Phase 4 TLS normalization validated on known cases — TLS proposals match expected canonical operations.
+### Next Work
+1. **Deferred sidequest:** Entity/container validation (`SIDEQUEST_ENTITY_CONTAINER_VALIDATION.md`) — now unblocked after Phase G complete
+2. **Phase H:** Future migration lanes (partial-stack take, drop, put, give, etc.)
