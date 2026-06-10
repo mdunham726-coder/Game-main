@@ -117,7 +117,7 @@ function _buildEvidence(gameState, rawInput, parsedAction, turnNumber) {
       ? (gameState?.world?.active_local_space?._visible_npcs || [])
       : (depth >= 2)
         ? (gameState?.world?.active_site?._visible_npcs || [])
-        : [];
+        : (gameState?.world?._visible_npcs || []);
     const aliasSet = new Set();
     for (const n of (Array.isArray(visNpcs) ? visNpcs.slice(0, 5) : [])) {
       for (const field of [n.job_category, n.job, n.npc_name, n.learned_name]) {
