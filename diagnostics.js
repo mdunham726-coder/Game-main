@@ -1053,7 +1053,8 @@ const _SOURCE_ALLOWLIST = new Set([
   'test-harness.js',                                                           // v1.85.53
   'scripts/probe-runner.js', 'scripts/probe-metrics.js',                      // v1.85.75
   'diagnostics.js',                                                            // v1.88.56
-  'SemanticNormalizer.js'                                                      // v1.88.78: TSL Stage 1
+  'SemanticNormalizer.js',                                                     // v1.88.78: TSL Stage 1
+  'authoritygate.js'                                                            // v1.91.XX: Source access for MB
 ]);
 // Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
 // OR any probe spec: tests/probes/<name>.probe.json
@@ -1327,7 +1328,7 @@ function registerRoutes(app, opts = {}) {
     if (!stage) {
       return res.json(entry);
     }
-    const VALID_STAGES = ['reality_check', 'narrator', 'continuity_brain', 'condition_bot'];
+    const VALID_STAGES = ['authority_gate', 'reality_check', 'narrator', 'continuity_brain', 'condition_bot'];
     if (!VALID_STAGES.includes(stage)) {
       return res.status(400).json({ error: 'invalid_stage', valid: VALID_STAGES });
     }

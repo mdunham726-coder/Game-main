@@ -3147,7 +3147,13 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       result_input_type:   _authorityGateResult.input_type,
       validator_applied:   _authorityGateResult.evidence?.validator_applied || false,
       _llm_called:         _authorityGateResult._llm_called,
-      gate_fast_path_hit:  _authorityGateResult.gate_fast_path_hit
+      gate_fast_path_hit:  _authorityGateResult.gate_fast_path_hit,
+      // v1.91.XX: expanded AG observability for Mother Brain diagnostics
+      referenced_objects:  _authorityGateResult.referenced_objects ?? null,
+      referenced_entities: _authorityGateResult.referenced_entities ?? null,
+      referenced_abilities: _authorityGateResult.referenced_abilities ?? null,
+      llm_confidence:      _authorityGateResult.llm_confidence ?? null,
+      evidence_bundle:     _authorityGateResult._ag_evidence_bundle || null
     } : null;
     delete gameState._lastParsedTarget;
     console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} fast_path:${_authorityGateResult.gate_fast_path_hit ? 'L1' : 'L2'} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'} dur:${_agDurationMs}ms`);

@@ -203,7 +203,7 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'get_payload',
-      description: 'Fetch raw DeepSeek prompt+response pairs for a specific past turn from the payload archive. Pipeline stages in order: reality_check, narrator, continuity_brain, condition_bot. A null stage means that stage did not run that turn — not a crash. Use this when you need verbatim LLM input/output: exact extraction prompts, raw narrator responses, condition_bot JSON. Escalate to this after get_turn_data when the structured data is insufficient.',
+      description: 'Fetch raw DeepSeek prompt+response pairs for a specific past turn from the payload archive. Pipeline stages in order: authority_gate, reality_check, narrator, continuity_brain, condition_bot. A null stage means that stage did not run that turn — not a crash. Use this when you need verbatim LLM input/output: exact extraction prompts, raw narrator responses, condition_bot JSON. Escalate to this after get_turn_data when the structured data is insufficient.',
       parameters: {
         type: 'object',
         properties: {
@@ -213,7 +213,7 @@ const MB_TOOLS = [
           },
           stage: {
             type: 'string',
-            description: 'Optional: one of reality_check, narrator, continuity_brain, condition_bot. Omit to get all stages.'
+            description: 'Optional: one of authority_gate, reality_check, narrator, continuity_brain, condition_bot. Omit to get all stages.'
           },
           part: {
             type: 'string',
@@ -328,13 +328,13 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'get_source_slice',
-      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. Also allowed: tests/scenarios/<name>.json and tests/probes/<name>.probe.json — use the full relative path (e.g. tests/scenarios/arbiter_basic.json or tests/probes/worldgen-sites.probe.json), NOT the bare filename. Returns: file, from, to, total_lines, lines (the raw source text)',
+      description: 'Read a bounded line-range slice of a game source file for targeted implementation verification. Use this when you have a specific line number hypothesis from turn data or payload analysis — to verify a code path, cross-reference engine behavior against implementation, or confirm a bug root cause. Request narrow ranges (50–100 lines). NOT for exploratory browsing. Allowed files: index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js, authoritygate.js. Also allowed: tests/scenarios/<name>.json and tests/probes/<name>.probe.json — use the full relative path (e.g. tests/scenarios/arbiter_basic.json or tests/probes/worldgen-sites.probe.json), NOT the bare filename. Returns: file, from, to, total_lines, lines (the raw source text)',
       parameters: {
         type: 'object',
         properties: {
           file: {
             type: 'string',
-            description: 'For source files: filename only (no path) — e.g. index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js. For scripts/ files: use the FULL RELATIVE PATH — e.g. scripts/probe-runner.js or scripts/probe-metrics.js. For scenario JSON files: use the FULL RELATIVE PATH — e.g. tests/scenarios/arbiter_basic.json. For probe specs: use the FULL RELATIVE PATH — e.g. tests/probes/worldgen-sites.probe.json. Do NOT use a bare filename — it will be rejected.'
+            description: 'For source files: filename only (no path) — e.g. index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, test-harness.js, authoritygate.js. For scripts/ files: use the FULL RELATIVE PATH — e.g. scripts/probe-runner.js or scripts/probe-metrics.js. For scenario JSON files: use the FULL RELATIVE PATH — e.g. tests/scenarios/arbiter_basic.json. For probe specs: use the FULL RELATIVE PATH — e.g. tests/probes/worldgen-sites.probe.json. Do NOT use a bare filename — it will be rejected.'
           },
           from: {
             type: 'integer',
@@ -363,7 +363,7 @@ const MB_TOOLS = [
           },
           file: {
             type: 'string',
-            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html.'
+            description: 'Optional: scope search to a single file (filename only, no path). Must be one of the allowed files. Omit to search all allowlisted files. Allowed: index.js, diagnostics.js, Engine.js, ActionProcessor.js, NPCs.js, WorldGen.js, NarrativeContinuity.js, ContinuityBrain.js, SemanticParser.js, continuity.js, QuestSystem.js, logger.js, logging.js, flight-recorder.js, motherbrain.js, conditionbot.js, ObjectHelper.js, cbpanel.js, npcpanel.js, sitelens.js, motherwatch.js, summary.js, dmletter.js, Index.html, Map.html, authoritygate.js.'
           }
         },
         required: ['query']

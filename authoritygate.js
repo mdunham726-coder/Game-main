@@ -231,10 +231,13 @@ async function runAuthorityGate(rawInput, gameState, parsedAction, apiKey) {
 
   const evidence = _buildEvidence(gameState, rawInput, parsedAction, turnNumber);
 
+  // v1.91.XX: diagnostics-only evidence bundle stamp for AG payload archive
+  const _agStamp = (r) => { r._ag_evidence_bundle = evidence; return r; };
+
   // ── Layer 1: known safe actions (pure navigation / observation) ───────────
   const _LOW_RISK_ACTIONS = new Set(['move', 'look', 'wait', 'enter', 'exit']);
   if (_LOW_RISK_ACTIONS.has(parsedAction)) {
-    return _fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'valid_low_risk_action');
+    return _agStamp(_fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'valid_low_risk_action'));
   }
 
   // ── Layer 1: object-verb existence checks ─────────────────────────────────
@@ -243,21 +246,21 @@ async function runAuthorityGate(rawInput, gameState, parsedAction, apiKey) {
 
   if (parsedAction === 'remove') {
     if (_hasWornMatch(gameState, _target)) {
-      return _fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'worn_item_confirmed');
+      return _agStamp(_fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'worn_item_confirmed'));
     }
     // No worn match — escalate to LLM (could be legitimate edge case)
   }
 
   if (parsedAction === 'take') {
     if (_hasCellMatch(gameState, _target)) {
-      return _fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'cell_item_confirmed');
+      return _agStamp(_fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'cell_item_confirmed'));
     }
     // No cell match — escalate to LLM
   }
 
   if (parsedAction === 'drop' || parsedAction === 'throw') {
     if (_hasInventoryMatch(gameState, _target)) {
-      return _fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'inventory_item_confirmed');
+      return _agStamp(_fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'inventory_item_confirmed'));
     }
     // No inventory match — escalate to LLM
   }
@@ -265,31 +268,31 @@ async function runAuthorityGate(rawInput, gameState, parsedAction, apiKey) {
   if (parsedAction === 'examine') {
     // examine with a confirmed inventory, worn, or cell match → low risk
     if (_target && (_hasInventoryMatch(gameState, _target) || _hasWornMatch(gameState, _target) || _hasCellMatch(gameState, _target))) {
-      return _fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'examine_target_confirmed');
+      return _agStamp(_fastResult('allow_no_rc', 'narrator', false, 'valid_low_risk', 'examine_target_confirmed'));
     }
     // No confirmed match — escalate to LLM
   }
 
   // ── Layer 1: attack → always allow_rc ────────────────────────────────────
   if (parsedAction === 'attack') {
-    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'attack_action');
+    return _agStamp(_fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'attack_action'));
   }
 
   // ── Layer 1: meta-authority keyword fast deny ─────────────────────────────
   if (_isMetaAuthorityAttempt(rawInput, evidence.declaredAbilities)) {
-    return _fastResult('freeform', 'freeform', false, 'unsupported_world_authoring', 'unsupported_meta_authority');
+    return _agStamp(_fastResult('freeform', 'freeform', false, 'unsupported_world_authoring', 'unsupported_meta_authority'));
   }
 
   // ── Layer 1: clear third-party emote subject fast deny ────────────────────
   if (_isWorldAuthoringEmote(rawInput)) {
-    return _fastResult('freeform', 'freeform', false, 'unsupported_world_authoring', 'unsupported_emote_world_event');
+    return _agStamp(_fastResult('freeform', 'freeform', false, 'unsupported_world_authoring', 'unsupported_emote_world_event'));
   }
 
   // ── Layer 2: LLM classifier for everything else ───────────────────────────
   if (!apiKey) {
     // No API key — fail open (allow_rc) so gameplay is never blocked by gate misconfiguration
     console.warn('[AUTHORITY-GATE] No API key — fail open: allow_rc');
-    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_no_key', false);
+    return _agStamp(_fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_no_key', false));
   }
 
   const userMessage = `Classify this player input.
@@ -322,7 +325,7 @@ Return the JSON schema described in your instructions. No prose.`;
     raw = resp?.data?.choices?.[0]?.message?.content || null;
   } catch (err) {
     console.error('[AUTHORITY-GATE] LLM call failed:', err.message, '— fail open: allow_rc');
-    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_llm_error', false);
+    return _agStamp(_fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_llm_error', false));
   }
 
   let result = null;
@@ -332,7 +335,7 @@ Return the JSON schema described in your instructions. No prose.`;
     if (!result || typeof result.decision !== 'string') throw new Error('Missing decision field');
   } catch (parseErr) {
     console.error('[AUTHORITY-GATE] JSON parse failed:', parseErr.message, '| raw:', (raw || '').slice(0, 200), '— fail open: allow_rc');
-    return _fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_parse_error', false);
+    return _agStamp(_fastResult('allow_rc', 'reality_check', true, 'player_attempt', 'gate_failopen_parse_error', false));
   }
 
   // Normalize — ensure _llm_called, gate_fast_path_hit, and llm_confidence are set
@@ -362,6 +365,9 @@ Return the JSON schema described in your instructions. No prose.`;
   // v1.91.47: Post-LLM entity validator — deterministic cross-check of referenced_entities
   // against visible NPC evidence. Sibling to _validateReferencedObjects; preserves it exactly.
   result = _validateReferencedEntities(result, evidence);
+
+  // v1.91.XX: Stamp evidence bundle for diagnostics archive
+  result._ag_evidence_bundle = evidence;
 
   return result;
 }
