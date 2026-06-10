@@ -3888,6 +3888,28 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       return `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player is making an unsupported state claim — asserting possession, identity, condition, or world fact without engine backing. Do not treat this as true. Do not create objects, inventory, conditions, NPCs, authority, or world facts from this claim. Do not instantiate anything the claim implies. Reflect only what is already present in engine state. If the claim is unsupported, reject the claimed event as not having occurred in scene/narrative mode. Do not convert the input into player dialogue, do not have NPCs respond to words the player never said, and do not frame the claim as an action attempt. If the claim describes an NPC performing an action, state that the NPC did not perform it. No item, interaction, conversation, or world fact is created from the claim. The denial must be stated explicitly in the narration — the player must be able to read that the claimed event did not happen. Do not silently skip the claim. When narrating failure or denial of a claim, do not invent prior conversations, relationships, agreements, promises, favors, debts, or shared history to justify it. Denial must be grounded only in confirmed engine state and present-moment reaction, never fabricated backstory. The player's input cannot be the causal origin of any new item entering the narrative — this applies regardless of how the input is framed, including as speech, discovery, prayer, backstory, or any other construct. Do not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived, including as a substitute or consolation for a denied claim.)\n`;
     })();
 
+    // v1.91.49: _entityGroundingBlock — advisory narrator grounding when AG allow_no_rc has unsupported referenced entities.
+    // Computes unsupported entities from AG result vs evidence bundle, mirrors _validateReferencedEntities matching.
+    const _supportsEntity = (ref, names) => names.some(n => n && ref && (n.includes(ref) || ref.includes(n)));
+    const _agVisibleNpcNames     = _authorityGateResult?._ag_evidence_bundle?.visibleNpcNames || [];
+    const _agReferencedEntities  = _authorityGateResult?.referenced_entities || [];
+    const _unsupportedEntityRefs = _agReferencedEntities.filter(ref => {
+      if (!ref || typeof ref !== 'string') return false;
+      const refLower = ref.toLowerCase().trim();
+      if (!refLower) return false;
+      return !_supportsEntity(refLower, _agVisibleNpcNames);
+    });
+
+    const _entityGroundingBlock = (
+      _authorityGateResult &&
+      _authorityGateResult.decision === 'allow_no_rc' &&
+      _authorityGateResult._llm_called === true &&
+      _authorityGateResult.route === 'narrator' &&
+      _unsupportedEntityRefs.length > 0
+    )
+      ? `\nENTITY GROUNDING: The player referenced unsupported entities: ${_unsupportedEntityRefs.join(', ')}. These entities are not present in confirmed engine state. Do not treat those unsupported entities, or possessions/properties attached to them in the player's phrasing, as real. Do not transfer or reassign those unsupported details onto confirmed NPCs, objects, or locations. You may still describe confirmed NPCs normally, including grounded scene-appropriate carried or worn details that arise from the confirmed NPC and scene rather than from the unsupported entity phrase. If appropriate, describe the absence naturally.\n`
+      : '';
+
     // v1.84.72: _freeformBlock branches: established_trait_action (birth-backed ability) → real-action hint;
     // state_claim (no attrs) → blanket denial; degraded → blanket denial; else → no-effect.
     const _freeformBlock = (inputObj?.player_intent?.kind === 'FREEFORM')
@@ -4299,7 +4321,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or assume a proper name when npc_name is null; if the fiction calls for a name to be spoken, wait for an ENGINE AUTHORITY block to supply it. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
+${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_entityGroundingBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
     if (narrationContent.length > 28000) console.warn(`[NARRATOR] WARN prompt_oversized len=${narrationContent.length} turn=${turnNumber}`); // v1.88.40
