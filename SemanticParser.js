@@ -261,14 +261,19 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   }
 
   // ── normalized_target: strip quantity/ determiner prefix ──────────────────
-  // Strips: digits, a/an/the/my/some/all/all N. Never strips identifying nouns.
-  // "the" and "my" stripped only from normalized_target — NOT quantity signals.
+  // v1.91.45: added word-number, "more", and source-preposition stripping for
+  // resolver-only normalization. Strips leading quantity, modifier, and
+  // source-preposition tokens for resolver targeting only — does not change
+  // quantity signals or execution behavior.
   if (target) {
     let _norm = target
       .replace(/^(all\s+\d+)\s+/i, '')     // "all 15 tortillas" → "tortillas"
       .replace(/^(all)\s+/i, '')            // "all tortillas" → "tortillas"
       .replace(/^(\d+)\s+/, '')             // "5 arrows" → "arrows"
-      .replace(/^(a|an|the|some|my|every)\s+/i, '') // "a sword" → "sword", "every arrow" → "arrow"
+      .replace(/^(a|an|the|some|my|every)\s+/i, '') // "a sword" → "sword"
+      .replace(/^(one|two|three|four|five|six|seven|eight|nine|ten)\s+/i, '') // "two pinecones" → "pinecones"
+      .replace(/^more\s+/i, '')             // "more pinecones" → "pinecones"
+      .replace(/^(?:of|from|off)\s+(?:the\s+)?/i, '') // "of the pinecones" → "pinecones"
       .trim();
     enriched.normalized_target = _norm || target; // fallback to original if stripped empty
   } else {
