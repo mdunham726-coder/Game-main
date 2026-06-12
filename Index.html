@@ -2656,6 +2656,15 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           }
         }
 
+        // v1.91.44: surface AP partial-split operations when post-narration CB/ORS is skipped
+        const _apSplitAudit = (or.audit || []).filter(a => a.action === 'ap_partial_split_take');
+        if (_apSplitAudit.length > 0) {
+          lines.push(`  Object operations: ${_apSplitAudit.length} AP partial split(s)`);
+          for (const a of _apSplitAudit) {
+            lines.push(`    [AP-SPLIT] source:${a.source_object_id} qty:${a.source_quantity_before}→${a.source_quantity_after} successor:${a.successor_id} took:${a.applied_quantity}`);
+          }
+        }
+
         lines.push(`  Post-narration CB/ORS: skipped (${reason})${_fissSufx}`);
         if ((or.visible_objects_count || 0) > 0)
           lines.push(`  visible_objects: ${or.visible_objects_count} extracted (barrier-inaccessible)`);
@@ -2689,6 +2698,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
             lines.push(`    [suppressed] "${a.object_name||'?'}" — ${a.action}`);
           } else if (a.action && a.action.startsWith('promote_skipped')) {
             lines.push(`    [skipped] "${a.object_name||'?'}" — ${a.action}`);
+          } else if (a.action === 'ap_partial_split_take') {
+            lines.push(`    [AP-SPLIT] source:${a.source_object_id} qty:${a.source_quantity_before}→${a.source_quantity_after} successor:${a.successor_id} took:${a.applied_quantity}`);
           }
           // Fission-successor 'promoted' entries (parent_object_id set, not in _psSuccIds) rendered in §5
         }

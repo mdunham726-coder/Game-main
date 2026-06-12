@@ -4711,6 +4711,18 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       // v1.84.52: Object Reality System — build local quarantine from CB output, then process
       // index.js owns the quarantine write; CB is a pure interpreter; quarantine is never on gameState
       // _objectRealityDebug is hoisted above try/catch so catch can include it in error responses
+      // v1.91.44: preserve AP direct-mutation audit entries across the ORS pipeline rebuild.
+      // AP writes entries (ap_partial_split_take, tls_whole_object_transfer, etc.) to the old
+      // _objectRealityDebug before narration. The reassignment below would orphan them.
+      // Explicit allowlist — not a broad prefix filter.
+      const _preserveDirectAuditActions = new Set([
+        'ap_direct_transfer',
+        'tls_whole_object_transfer',
+        'ap_partial_split_take'
+      ]);
+      const _priorDirectAudit = Array.isArray(gameState._objectRealityDebug?.audit)
+        ? gameState._objectRealityDebug.audit.filter(e => _preserveDirectAuditActions.has(e?.action))
+        : [];
       _objectRealityDebug = {
         ran: false,
         skip_reason: null,
@@ -4734,6 +4746,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         console_log: [],
         actor_resolution: []
       };
+      // v1.91.44: merge preserved AP direct-mutation audit entries into the new audit array
+      if (_priorDirectAudit.length > 0) {
+        _objectRealityDebug.audit.push(..._priorDirectAudit);
+      }
       _activeTurnDebug = _objectRealityDebug;
       if (_phaseBResult) {
         // v1.85.28: NPC intro capture — materialize held/worn objects from entity_candidates as real ObjectRecords.
