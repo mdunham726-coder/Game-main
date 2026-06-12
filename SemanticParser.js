@@ -261,7 +261,7 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   }
 
   // ── normalized_target: strip quantity/ determiner prefix ──────────────────
-  // v1.91.45: added word-number, "more", and source-preposition stripping for
+  // v1.91.53: added word-number, "more", and source-preposition stripping for
   // resolver-only normalization. Strips leading quantity, modifier, and
   // source-preposition tokens for resolver targeting only — does not change
   // quantity signals or execution behavior.
