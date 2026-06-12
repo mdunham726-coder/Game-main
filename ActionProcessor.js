@@ -451,7 +451,8 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
   
   if (act === 'take'){
     const target = actions?.target||'';
-    const found  = resolveCellItemByName(state, target);
+    const resolveTarget = actions?.normalized_target || target;
+    const found  = resolveCellItemByName(state, resolveTarget);
     let takeSucceeded = false;
     if (found && found.objectId && found._partialToken) {
       // v1.91.11: partial-token source match — extraction intent, do not transfer whole object.
