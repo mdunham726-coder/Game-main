@@ -248,9 +248,14 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   // Recovers partial-stack intent from rawInput when LLM omits it. Only fills
   // for 'take' action family. Does NOT override LLM-emitted selection_mode.
   // Article-safety: "take an apple" / "take the apple" are NOT partial-stack.
+  // v1.91.36: bare quantity fallback — digit or word-number prefix on take is partial-stack intent
+  // when requested_quantity is explicit (quantity_mode === 'exact'). "all" and article
+  // forms are excluded by the quantity_mode guard.
   if (!enriched.selection_mode && enriched.action === 'take') {
     const _bodyLower = _body.toLowerCase();
     if (/\b(one|two|three|four|five|six|seven|eight|nine|ten|some|a few)\s+of\s+the\b/i.test(_bodyLower)) {
+      enriched.selection_mode = 'partial_from_stack';
+    } else if (enriched.requested_quantity !== null && enriched.quantity_mode === 'exact') {
       enriched.selection_mode = 'partial_from_stack';
     }
   }
