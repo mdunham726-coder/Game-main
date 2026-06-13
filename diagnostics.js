@@ -1054,7 +1054,8 @@ const _SOURCE_ALLOWLIST = new Set([
   'scripts/probe-runner.js', 'scripts/probe-metrics.js',                      // v1.85.75
   'diagnostics.js',                                                            // v1.88.56
   'SemanticNormalizer.js',                                                     // v1.88.78: TSL Stage 1
-  'authoritygate.js'                                                            // v1.91.XX: Source access for MB
+  'authoritygate.js',                                                          // v1.91.XX: Source access for MB
+  'ObjectOperationResolver.js'                                                 // v1.91.55: P1a resolver
 ]);
 // Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
 // OR any probe spec: tests/probes/<name>.probe.json

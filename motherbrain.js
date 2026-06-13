@@ -41,7 +41,7 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.4.0';
+const MB_VERSION = '7.5.0';
 // MB v7.4.0 (June 2026): Patch — VOLATILE DIAGNOSTIC SURFACES doctrine block added to SYSTEM_PROMPT after CLAIM ANNOTATION. Teaches Mother that get_witness is latest-only and overwritten each turn; get_turn_data(turn=N) is preferred for historical validation; overwritten diagnostics without archive access must be marked LOST / NOT DIRECTLY VERIFIED; reconstructed evidence must be labeled [RECONSTRUCTED from later state]; do not start a new game to recreate missing evidence unless explicitly instructed. MB_VERSION 7.3.0 -> 7.4.0.
 // MB v7.3.0 (May 2026): TSL Stage 1 integration — SemanticNormalizer.js added to _SOURCE_ALLOWLIST (full source visibility); TSL SEMANTIC LAYER data source bullet added to SYSTEM_PROMPT (object_reality.tsl path, four sub-arrays, acquisition_ungrounded warning); TSL SEMANTIC LAYER INTERNALS block added (architecture, ENABLED rollback, provenance hard rule, cb-semantic-normalization branch note, Stage 2 preview); SemanticNormalizer.js added to SOURCE FILE GUIDE; node_check_semantic_normalizer added to run_validation _taskMap. MB_VERSION 7.2.5 -> 7.3.0.
 // MB v7.1.2 (May 2026): SOURCE-ROOT VERIFICATION doctrine block added. Prevents a class of silently-inert code proposal: proposing a property path through a local alias that doesn't own the needed field (e.g. w.player when w = gameState.world and player is a sibling of world, not a child). Rule: before proposing any code change involving a nested property path, first identify the local variable root and its binding; if the needed data lives outside that root, use the original top-level object, not an invented child path. Block inserted after SOURCE CODE READ EFFICIENCY, before SOURCE FILE GUIDE. MB_VERSION 7.1.1 -> 7.1.2.
@@ -1253,6 +1253,7 @@ SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it
   ContinuityBrain.js — Phase B extraction, promotion filters, assembleContinuityPacket, mood/TRUTH blocks | read when CB produced wrong facts, missed a promotion, or emitted a wrong container
   ObjectHelper.js — object lifecycle: promotion, transfer, retirement, condition updates, dedup guard | read when investigating object_errors, container mismatches, or phantom duplicates
   SemanticNormalizer.js — TSL Stage 1 observe-only semantic normalization; analyze() reads CB output + parser/gate/AP signals and emits tsl diagnostic object attached to object_reality; does NOT mutate any state; result flows to object_reality.tsl in turn archive; read when investigating semantic evidence, alias resolution, acquisition intent, TSL warning patterns, or acquisition_ungrounded signals
+  ObjectOperationResolver.js — P1a observe-only LLM-backed evidence resolver for partial-stack TAKE; three-layer architecture: candidate enumeration (deterministic JS) → LLM evidence analysis (DeepSeek model call) → ORS fact validation (deterministic JS); exports resolvePartialStackTake(state, actions) returning resolver_evidence_v1; does NOT mutate state, does NOT call ObjectHelper, does NOT write _apExecutedTransfers or AP compatibility projections; NOT YET wired into witness or execution — standalone observe-only module; read when investigating resolver evidence contract, candidate enumeration rules, prompt payload schema, or ORS validation logic; expected success is evidence correctness, not game behavior change
   conditionbot.js — player condition lifecycle evaluation | read when a condition was not created, resolved, or updated correctly
   NarrativeContinuity.js — legacy continuity module (bypassed, preserved) | read only for legacy reference
   QuestSystem.js — quest tracking stubs | read when investigating quest state
@@ -1721,6 +1722,7 @@ async function executeToolCall(name, args) {
         probe_worldgen_sites_50:                'node scripts/probe-runner.js --spec tests/probes/worldgen-sites.probe.json --runs 50',
         run_probe_localspace:                   'node scripts/probe-runner.js --spec tests/probes/localspace-distribution.probe.json --runs 5',
         node_check_semantic_normalizer:         'node --check SemanticNormalizer.js',           // v1.88.78: TSL Stage 1
+        node_check_object_operation_resolver:   'node --check ObjectOperationResolver.js',      // v1.91.55: P1a resolver
       };
       const _timeoutMap = {
         node_check_index:                       15000,
@@ -1735,6 +1737,7 @@ async function executeToolCall(name, args) {
         probe_worldgen_sites_50:                2400000,
         run_probe_localspace:                   600000,
         node_check_semantic_normalizer:         15000,
+        node_check_object_operation_resolver:   15000,
       };
       const _task = args.task || '';
       // run_probe: dynamic path — validate spec_path, load spec for timeout, build command
