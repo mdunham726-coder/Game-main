@@ -2126,6 +2126,26 @@ app.post('/narrate', async (req, res) => {
           // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic before AP runs
           gameState._tlsExecutionResult = null;
 
+          // v1.91.58: P1b — pre-AP resolver evidence capture inside queue loop (observe-only, diagnostic only)
+          if (
+            mapped?.player_intent &&
+            mapped.player_intent.operation_family === 'take' &&
+            mapped.player_intent.selection_mode === 'partial_from_stack'
+          ) {
+            try {
+              objectOperationResolverEvidence = await ObjectOperationResolver.resolvePartialStackTake(
+                gameState,
+                mapped.player_intent
+              );
+            } catch (_rErr) {
+              objectOperationResolverEvidence = null;
+              objectOperationResolverError = {
+                error_type: 'unexpected_exception',
+                message: _rErr?.message || 'unknown'
+              };
+            }
+          }
+
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
@@ -2197,26 +2217,6 @@ app.post('/narrate', async (req, res) => {
         if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
         // v1.84.89: snapshot localspace ID before engine runs — used for state: boundary clear below
         const _preActionLsId = gameState.world?.active_local_space?.local_space_id ?? null;
-
-        // v1.91.57: P1b — pre-AP resolver evidence capture for normal turns (observe-only, diagnostic only)
-        if (
-          inputObj?.player_intent &&
-          inputObj.player_intent.operation_family === 'take' &&
-          inputObj.player_intent.selection_mode === 'partial_from_stack'
-        ) {
-          try {
-            objectOperationResolverEvidence = await ObjectOperationResolver.resolvePartialStackTake(
-              gameState,
-              inputObj.player_intent
-            );
-          } catch (_rErr) {
-            objectOperationResolverEvidence = null;
-            objectOperationResolverError = {
-              error_type: 'unexpected_exception',
-              message: _rErr?.message || 'unknown'
-            };
-          }
-        }
 
         engineOutput = Engine.buildOutput(gameState, inputObj, logger);
         // v1.84.89: if localspace boundary was crossed (any L2 transition), clear transient state: attributes
