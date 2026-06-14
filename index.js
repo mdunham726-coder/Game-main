@@ -1078,6 +1078,9 @@ app.post('/narrate', async (req, res) => {
   // No-op on non-first turns (token is null).
   let _progToken = null;
   let _reportProgress = () => {};
+  // v1.91.57: P1b hotfix — resolver evidence must be visible to common witness assembly
+  let objectOperationResolverEvidence = null;
+  let objectOperationResolverError = null;
   if (isFirstTurn === true) {
     isFirstTurn = false;
     const _sessionType = req.headers['x-progress-token'] ? 'game' : 'probe';
@@ -1629,8 +1632,6 @@ app.post('/narrate', async (req, res) => {
       if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
 
       // v1.91.56: P1b — pre-AP resolver evidence capture (observe-only, diagnostic only)
-      let objectOperationResolverEvidence = null;
-      let objectOperationResolverError = null;
       if (
         inputObj?.player_intent &&
         inputObj.player_intent.operation_family === 'take' &&
@@ -2196,6 +2197,27 @@ app.post('/narrate', async (req, res) => {
         if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
         // v1.84.89: snapshot localspace ID before engine runs — used for state: boundary clear below
         const _preActionLsId = gameState.world?.active_local_space?.local_space_id ?? null;
+
+        // v1.91.57: P1b — pre-AP resolver evidence capture for normal turns (observe-only, diagnostic only)
+        if (
+          inputObj?.player_intent &&
+          inputObj.player_intent.operation_family === 'take' &&
+          inputObj.player_intent.selection_mode === 'partial_from_stack'
+        ) {
+          try {
+            objectOperationResolverEvidence = await ObjectOperationResolver.resolvePartialStackTake(
+              gameState,
+              inputObj.player_intent
+            );
+          } catch (_rErr) {
+            objectOperationResolverEvidence = null;
+            objectOperationResolverError = {
+              error_type: 'unexpected_exception',
+              message: _rErr?.message || 'unknown'
+            };
+          }
+        }
+
         engineOutput = Engine.buildOutput(gameState, inputObj, logger);
         // v1.84.89: if localspace boundary was crossed (any L2 transition), clear transient state: attributes
         // so stale posture/position facts don't bleed into the narrator's TRUTH block on re-entry.
