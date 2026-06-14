@@ -39,6 +39,7 @@ const ConditionBot = require('./conditionbot'); // v1.84.19
 const AuthorityGate = require('./authoritygate'); // v1.88.0
 const SemanticNormalizer = require('./SemanticNormalizer'); // v1.88.78: TSL Stage 1
 const diag = require('./diagnostics');
+const ObjectOperationResolver = require('./ObjectOperationResolver'); // v1.91.56: P1b witness diagnostics
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -1626,6 +1627,29 @@ app.post('/narrate', async (req, res) => {
       
       // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
       if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
+
+      // v1.91.56: P1b — pre-AP resolver evidence capture (observe-only, diagnostic only)
+      let objectOperationResolverEvidence = null;
+      let objectOperationResolverError = null;
+      if (
+        inputObj?.player_intent &&
+        inputObj.player_intent.operation_family === 'take' &&
+        inputObj.player_intent.selection_mode === 'partial_from_stack'
+      ) {
+        try {
+          objectOperationResolverEvidence = await ObjectOperationResolver.resolvePartialStackTake(
+            gameState,
+            inputObj.player_intent
+          );
+        } catch (_rErr) {
+          objectOperationResolverEvidence = null;
+          objectOperationResolverError = {
+            error_type: 'unexpected_exception',
+            message: _rErr?.message || 'unknown'
+          };
+        }
+      }
+
       engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
@@ -3496,7 +3520,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       target_object_accessible:     null,
       // v1.91.35: pre-transfer container fields (observation-only, set by AP take handler)
       target_object_prior_container_type: gameState?._apFromContainerType ?? null,
-      target_object_prior_container_id:   gameState?._apFromContainerId   ?? null
+      target_object_prior_container_id:   gameState?._apFromContainerId   ?? null,
+      // v1.91.56: P1b — pre-AP resolver evidence (observe-only, captured before Engine.buildOutput)
+      resolver_evidence:       objectOperationResolverEvidence ?? null,
+      resolver_evidence_error: objectOperationResolverError ?? null
     };
     // Derive witness hints from observed evidence (diagnostic labels only — no authority)
     const _w = debug.itemOperationWitness;
