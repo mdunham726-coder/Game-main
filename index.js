@@ -3833,8 +3833,16 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       ? _normalizeWitness(debug.itemOperationWitness)
       : null;
 
-    // v1.91.XX: Phase 5 — TLS observe-only instruction diagnostic (Goal 2).
-    // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
+    // v0 TLS witness projection:
+    // Post-execution diagnostic surface for the live whole-object TAKE TLS lane.
+    // Whole-object mutation happens earlier in ActionProcessor.js, where the TLS
+    // branch calls ObjectHelper.transferObjectDirect(...) and writes
+    // gameState._tlsExecutionResult. This packet does NOT drive mutation.
+    // It projects the observed whole-object TLS result into the witness/debug
+    // contract consumed by Mother Brain and frontend diagnostics.
+    // Keep v0 alongside tls_instruction_v1:
+    //   v0 = whole-object TLS execution visibility
+    //   v1 = pre-AP partial-stack resolver/TLS candidate instruction
     debug.tls_instruction = _assembleTlsInstruction(debug.itemOperationWitness, debug.tls_proposed_operation);
 
     // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment diagnostic (Goal 3).
