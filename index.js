@@ -2146,7 +2146,7 @@ app.post('/narrate', async (req, res) => {
             }
           }
 
-          // v1.91.58: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
+          // v1.91.59: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
           debug.tls_instruction_v1 = _assembleTlsInstructionV1(
             objectOperationResolverEvidence,
             objectOperationResolverError,
@@ -3347,7 +3347,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       };
     }
 
-    // v1.91.58: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
+    // v1.91.59: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
     // Consumes resolver evidence + parser actions to produce a source-authoritative
     // tls_ors_instruction_v1. Pure function — no state access, no ObjectHelper calls.
     // Returns null when resolver evidence is absent; returns disabled instruction
@@ -3550,7 +3550,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           mode:               'observe_only',
           allowed_to_execute: false,
           refusal_reason:     routingBlocked ? 'routing_fail_closed' : 'observe_only',
-          gate_decision:      routingBlocked ? 'blocked' : null
+          gate_decision:      routingBlocked ? 'blocked' : 'observe_only'
         },
 
         executor: {
@@ -3570,7 +3570,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           candidate_ids_considered: resolverEvidence.candidate_ids_considered ?? null,
           reasoning_summary:        resolverEvidence.reasoning_summary ?? null,
           fail_closed_reason:       resolverEvidence.fail_closed_reason ?? null,
-          validation_errors:        resolverEvidence.validation_errors ?? []
+          validation_errors:        resolverEvidence.validation_errors ?? [],
+          resolver_error:           resolverError ?? null
         }
       };
     }
@@ -3869,7 +3870,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         witness: debug.itemOperationWitness,
         tls_proposed_operation: debug.tls_proposed_operation,  // v1.91.35
         tls_instruction: debug.tls_instruction,
-        tls_instruction_v1: debug.tls_instruction_v1,          // v1.91.58: P2 v1 sibling
+        tls_instruction_v1: debug.tls_instruction_v1,          // v1.91.59: P2 v1 sibling
         tls_ors_alignment: debug.tls_ors_alignment,
         tls_execution_result: debug.tls_execution_result
       });
@@ -6439,7 +6440,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       item_operation_witness:   _cloneForArchive(debug.itemOperationWitness),
       tls_proposed_operation:   _cloneForArchive(debug.tls_proposed_operation),
       tls_instruction:          _cloneForArchive(debug.tls_instruction),
-      tls_instruction_v1:       _cloneForArchive(debug.tls_instruction_v1),  // v1.91.58: P2 v1 sibling
+      tls_instruction_v1:       _cloneForArchive(debug.tls_instruction_v1),  // v1.91.59: P2 v1 sibling
       tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
       tls_execution_result:     _cloneForArchive(debug.tls_execution_result)
     };
