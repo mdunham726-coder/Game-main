@@ -41,7 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.5.0';
+const MB_VERSION = '7.5.1';
+// MB v7.5.1 (June 2026): Patch — P2 TLS v1 INSTRUCTION DIAGNOSTIC block added to SYSTEM_PROMPT after VOLATILE DIAGNOSTIC SURFACES. Teaches Mother about new pre-AP diagnostic sibling `tls_instruction_v1` — schema `tls_ors_instruction_v1`, observe-only, no mutation authority, null vs disabled semantics, compare v1 prediction against v0 outcome. No tools, FIELD_MAP, or runtime behavior changes. MB_VERSION 7.5.0 -> 7.5.1.
 // MB v7.4.0 (June 2026): Patch — VOLATILE DIAGNOSTIC SURFACES doctrine block added to SYSTEM_PROMPT after CLAIM ANNOTATION. Teaches Mother that get_witness is latest-only and overwritten each turn; get_turn_data(turn=N) is preferred for historical validation; overwritten diagnostics without archive access must be marked LOST / NOT DIRECTLY VERIFIED; reconstructed evidence must be labeled [RECONSTRUCTED from later state]; do not start a new game to recreate missing evidence unless explicitly instructed. MB_VERSION 7.3.0 -> 7.4.0.
 // MB v7.3.0 (May 2026): TSL Stage 1 integration — SemanticNormalizer.js added to _SOURCE_ALLOWLIST (full source visibility); TSL SEMANTIC LAYER data source bullet added to SYSTEM_PROMPT (object_reality.tsl path, four sub-arrays, acquisition_ungrounded warning); TSL SEMANTIC LAYER INTERNALS block added (architecture, ENABLED rollback, provenance hard rule, cb-semantic-normalization branch note, Stage 2 preview); SemanticNormalizer.js added to SOURCE FILE GUIDE; node_check_semantic_normalizer added to run_validation _taskMap. MB_VERSION 7.2.5 -> 7.3.0.
 // MB v7.1.2 (May 2026): SOURCE-ROOT VERIFICATION doctrine block added. Prevents a class of silently-inert code proposal: proposing a property path through a local alias that doesn't own the needed field (e.g. w.player when w = gameState.world and player is a sibling of world, not a child). Rule: before proposing any code change involving a nested property path, first identify the local variable root and its binding; if the needed data lives outside that root, use the original top-level object, not an invented child path. Block inserted after SOURCE CODE READ EFFICIENCY, before SOURCE FILE GUIDE. MB_VERSION 7.1.1 -> 7.1.2.
@@ -1228,6 +1229,9 @@ When validating a specific prior turn's diagnostics:
 
 6. Do not start a new game or session to re-generate missing diagnostic evidence
    unless explicitly instructed by the developer.
+
+P2 TLS v1 INSTRUCTION DIAGNOSTIC (v1.91.60):
+tls_instruction_v1 is a new pre-AP diagnostic sibling of existing tls_instruction. Schema version is tls_ors_instruction_v1. It is observe-only and has no mutation authority. Semantics: null means P2 was not applicable / resolver evidence was absent; a non-null disabled instruction means P2 was applicable but blocked, so inspect execution, routing.fail_closed_reason, and warnings[]; an execution-eligible classification still remains observe-only and should carry execution.gate_decision: 'observe_only'. Compare v1 as the pre-AP source-authoritative prediction against v0 tls_instruction as the post-AP diagnostic outcome. AP remains the mutation path in P2; v1 must not imply ObjectHelper execution, _apExecutedTransfers writes, or runtime behavior changes.
 
 PRIORITY ORDER:
   1. Retrieved evidence (tool result) — highest authority
