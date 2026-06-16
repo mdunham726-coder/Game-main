@@ -1081,6 +1081,236 @@ app.post('/narrate', async (req, res) => {
   // v1.91.57: P1b hotfix — resolver evidence must be visible to common witness assembly
   let objectOperationResolverEvidence = null;
   let objectOperationResolverError = null;
+
+  // v1.91.61: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
+  // Consumes resolver evidence + parser actions to produce a source-authoritative
+  // tls_ors_instruction_v1. Pure function — no state access, no ObjectHelper calls.
+  // Returns null when resolver evidence is absent; returns disabled instruction
+  // when trust gate or routing blocks execution.
+  function _assembleTlsInstructionV1(resolverEvidence, resolverError, actions, state) {
+    // ── Null gate: P2 not applicable if no resolver evidence ──────────────────
+    if (!resolverEvidence) return null;
+
+    // ── Trust gate: resolver must have selected a source ──────────────────────
+    const trusted = (
+      resolverEvidence.resolution_basis === 'model_selected' &&
+      resolverEvidence.source_object_id !== null &&
+      resolverEvidence.fail_closed_reason === null
+    );
+
+    // ── Quantity sanitation ──────────────────────────────────────────────────
+    const requestedQty = typeof actions.requested_quantity === 'number' &&
+                         actions.requested_quantity >= 1
+      ? actions.requested_quantity : null;
+    const availableQty = typeof resolverEvidence.source_quantity_before === 'number' &&
+                         resolverEvidence.source_quantity_before >= 1
+      ? resolverEvidence.source_quantity_before : null;
+
+    // ── Sanity checks against live ORS record ────────────────────────────────
+    const orsRecord = state?.objects?.[resolverEvidence.source_object_id];
+    const orsActive     = orsRecord && orsRecord.status === 'active';
+    const orsQuantityOk = availableQty !== null &&
+      typeof orsRecord?.quantity === 'number' &&
+      orsRecord.quantity === availableQty;
+    const orsContainerOk = (
+      String(orsRecord?.current_container_type || '') ===
+      String(resolverEvidence.source_container_type || '')
+    ) && (
+      String(orsRecord?.current_container_id || '') ===
+      String(resolverEvidence.source_container_id || '')
+    );
+
+    // ── Warning collector ────────────────────────────────────────────────────
+    const warnings = [];
+    const pushW = (code, severity, field, message) =>
+      warnings.push({ code, severity, field, message, detail: null });
+
+    // ── Blocking checks ──────────────────────────────────────────────────────
+    if (!trusted)
+      pushW('resolver_untrusted', 'blocking', 'resolution_basis',
+        'Resolver did not produce trusted source evidence.');
+    if (requestedQty === null)
+      pushW('missing_requested_quantity', 'blocking', 'requested_quantity',
+        'Requested quantity is missing, NaN, or less than 1.');
+    if (availableQty === null)
+      pushW('missing_available_quantity', 'blocking', 'source_quantity_before',
+        'Available source quantity is missing, NaN, or less than 1.');
+    if (trusted && !orsActive)
+      pushW('source_inactive', 'blocking', 'source_object_id',
+        'Source object is not active in ORS registry.');
+    if (trusted && orsActive && !orsQuantityOk)
+      pushW('quantity_mismatch', 'blocking', 'source_quantity_before',
+        'Resolver quantity does not match current ORS record quantity.');
+    if (trusted && orsActive && !orsContainerOk)
+      pushW('container_mismatch', 'blocking', 'source_container_type',
+        'Resolver container does not match current ORS record container.');
+
+    // ── Deterministic routing computation ────────────────────────────────────
+    let requestedVsAvailable = null;
+    if (requestedQty !== null && availableQty !== null) {
+      if (requestedQty < availableQty)       requestedVsAvailable = 'partial';
+      else if (requestedQty === availableQty) requestedVsAvailable = 'exact_stack';
+      else                                    requestedVsAvailable = 'over_stack';
+    }
+
+    const routingBlocked = (
+      !trusted ||
+      requestedQty === null ||
+      availableQty === null ||
+      requestedVsAvailable === 'over_stack' ||
+      !orsActive ||
+      (orsActive && (!orsQuantityOk || !orsContainerOk))
+    );
+
+    let intendedMutation = null;
+    let failClosedReason = null;
+    if (requestedVsAvailable === 'partial') {
+      intendedMutation = 'partial_split';
+    } else if (requestedVsAvailable === 'exact_stack') {
+      intendedMutation = 'whole_transfer';
+    } else if (requestedVsAvailable === 'over_stack') {
+      intendedMutation = 'fail_closed';
+      failClosedReason = 'over_stack';
+    } else {
+      intendedMutation = 'fail_closed';
+      failClosedReason = 'invalid_quantity';
+    }
+
+    if (routingBlocked && failClosedReason === null) {
+      intendedMutation = 'fail_closed';
+      if (!trusted)                           failClosedReason = 'resolver_untrusted';
+      else if (requestedQty === null)         failClosedReason = 'invalid_quantity';
+      else if (availableQty === null)         failClosedReason = 'invalid_quantity';
+      else if (!orsActive)                    failClosedReason = 'source_inactive';
+      else if (!orsQuantityOk)                failClosedReason = 'internal_inconsistency';
+      else if (!orsContainerOk)               failClosedReason = 'internal_inconsistency';
+    }
+
+    // ── Advisory warnings ────────────────────────────────────────────────────
+    if (resolverEvidence.resolution_basis === 'ambiguous')
+      pushW('ambiguous_resolver', 'advisory', 'resolution_basis',
+        'Resolver reported ambiguous match among candidates.');
+    if (resolverEvidence.resolution_confidence < 0.5)
+      pushW('low_resolution_confidence', 'advisory', 'resolution_confidence',
+        `Resolver reported low confidence (${resolverEvidence.resolution_confidence}).`);
+
+    // Accumulate resolver's own warnings
+    if (Array.isArray(resolverEvidence.resolution_warnings)) {
+      for (const rw of resolverEvidence.resolution_warnings) {
+        if (rw && typeof rw === 'object') {
+          warnings.push({
+            code: String(rw.code || 'resolver_warning'),
+            severity: rw.severity === 'blocking' ? 'blocking' : 'advisory',
+            field: rw.field || null,
+            message: String(rw.message || ''),
+            detail: null
+          });
+        }
+      }
+    }
+
+    // ── Executor parameters (by method) ──────────────────────────────────────
+    let expectedHelperMethod = null;
+    let executorParams        = null;
+    if (intendedMutation === 'partial_split') {
+      expectedHelperMethod = 'splitObjectDirect';
+      executorParams = {
+        source_object_id:           resolverEvidence.source_object_id,
+        extract_quantity:           requestedQty,
+        destination_container_type: 'player',
+        destination_container_id:   'player'
+      };
+    } else if (intendedMutation === 'whole_transfer') {
+      expectedHelperMethod = 'transferObjectDirect';
+      executorParams = {
+        object_id:                   resolverEvidence.source_object_id,
+        destination_container_type: 'player',
+        destination_container_id:   'player'
+      };
+    }
+
+    // ── Operation family / type ──────────────────────────────────────────────
+    const operationFamily = actions.operation_family || 'take';
+    const operationType = intendedMutation === 'partial_split'
+      ? 'partial_object_transfer'
+      : intendedMutation === 'whole_transfer'
+        ? 'whole_object_transfer' : null;
+
+    // ── Build and return ─────────────────────────────────────────────────────
+    return {
+      schema_version: 'tls_ors_instruction_v1',
+      operation_family: operationFamily,
+      operation_type:   operationType,
+
+      object: {
+        id:   trusted ? resolverEvidence.source_object_id   : null,
+        name: trusted ? resolverEvidence.source_object_name : null,
+        source_basis: 'resolver_evidence_v1'
+      },
+
+      source: {
+        container_type: trusted ? resolverEvidence.source_container_type : null,
+        container_id:   trusted ? resolverEvidence.source_container_id   : null,
+        source_basis:   'resolver_evidence_v1'
+      },
+
+      destination: {
+        container_type: 'player',
+        container_id:   'player',
+        owner_type:     'player'
+      },
+
+      quantity: {
+        requested_quantity:        requestedQty,
+        quantity_mode:             actions.quantity_mode ?? 'unspecified',
+        observed_available_quantity: availableQty,
+        unit:                      resolverEvidence.source_unit ?? null
+      },
+
+      routing: {
+        requested_vs_available: requestedVsAvailable,
+        intended_mutation:      intendedMutation,
+        fail_closed_reason:     failClosedReason,
+        deterministic:          true
+      },
+
+      mutation: {
+        requires_fission:  intendedMutation === 'partial_split',
+        requires_transfer: intendedMutation === 'whole_transfer' || intendedMutation === 'partial_split',
+        retires_source:    false,
+        creates_successor: intendedMutation === 'partial_split'
+      },
+
+      execution: {
+        mode:               'observe_only',
+        allowed_to_execute: false,
+        refusal_reason:     routingBlocked ? 'routing_fail_closed' : 'observe_only',
+        gate_decision:      routingBlocked ? 'blocked' : 'observe_only'
+      },
+
+      executor: {
+        expected_helper_method: expectedHelperMethod,
+        parameters:             executorParams
+      },
+
+      warnings: warnings,
+      provenance: {
+        evidence_source:          resolverEvidence.evidence_source ?? 'llm_model',
+        provider:                 resolverEvidence.provider ?? null,
+        resolver_kind:            resolverEvidence.resolver_kind ?? null,
+        resolution_basis:         resolverEvidence.resolution_basis ?? null,
+        resolution_confidence:    resolverEvidence.resolution_confidence ?? 0,
+        candidate_count:          resolverEvidence.candidate_count ?? 0,
+        candidate_ids_sent:       resolverEvidence.candidate_ids_sent ?? [],
+        candidate_ids_considered: resolverEvidence.candidate_ids_considered ?? null,
+        reasoning_summary:        resolverEvidence.reasoning_summary ?? null,
+        fail_closed_reason:       resolverEvidence.fail_closed_reason ?? null,
+        validation_errors:        resolverEvidence.validation_errors ?? [],
+        resolver_error:           resolverError ?? null
+      }
+    };
+  }
+
   if (isFirstTurn === true) {
     isFirstTurn = false;
     const _sessionType = req.headers['x-progress-token'] ? 'game' : 'probe';
@@ -2146,7 +2376,7 @@ app.post('/narrate', async (req, res) => {
             }
           }
 
-          // v1.91.59: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
+          // v1.91.61: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
           debug.tls_instruction_v1 = _assembleTlsInstructionV1(
             objectOperationResolverEvidence,
             objectOperationResolverError,
@@ -3343,235 +3573,6 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           allowed_to_execute: false,
           refusal_reason:     proposal ? 'observe_only' : 'no_tls_proposal',
           gate_decision:      w.gate_decision ?? null
-        }
-      };
-    }
-
-    // v1.91.59: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
-    // Consumes resolver evidence + parser actions to produce a source-authoritative
-    // tls_ors_instruction_v1. Pure function — no state access, no ObjectHelper calls.
-    // Returns null when resolver evidence is absent; returns disabled instruction
-    // when trust gate or routing blocks execution.
-    function _assembleTlsInstructionV1(resolverEvidence, resolverError, actions, state) {
-      // ── Null gate: P2 not applicable if no resolver evidence ──────────────────
-      if (!resolverEvidence) return null;
-
-      // ── Trust gate: resolver must have selected a source ──────────────────────
-      const trusted = (
-        resolverEvidence.resolution_basis === 'model_selected' &&
-        resolverEvidence.source_object_id !== null &&
-        resolverEvidence.fail_closed_reason === null
-      );
-
-      // ── Quantity sanitation ──────────────────────────────────────────────────
-      const requestedQty = typeof actions.requested_quantity === 'number' &&
-                           actions.requested_quantity >= 1
-        ? actions.requested_quantity : null;
-      const availableQty = typeof resolverEvidence.source_quantity_before === 'number' &&
-                           resolverEvidence.source_quantity_before >= 1
-        ? resolverEvidence.source_quantity_before : null;
-
-      // ── Sanity checks against live ORS record ────────────────────────────────
-      const orsRecord = state?.objects?.[resolverEvidence.source_object_id];
-      const orsActive     = orsRecord && orsRecord.status === 'active';
-      const orsQuantityOk = availableQty !== null &&
-        typeof orsRecord?.quantity === 'number' &&
-        orsRecord.quantity === availableQty;
-      const orsContainerOk = (
-        String(orsRecord?.current_container_type || '') ===
-        String(resolverEvidence.source_container_type || '')
-      ) && (
-        String(orsRecord?.current_container_id || '') ===
-        String(resolverEvidence.source_container_id || '')
-      );
-
-      // ── Warning collector ────────────────────────────────────────────────────
-      const warnings = [];
-      const pushW = (code, severity, field, message) =>
-        warnings.push({ code, severity, field, message, detail: null });
-
-      // ── Blocking checks ──────────────────────────────────────────────────────
-      if (!trusted)
-        pushW('resolver_untrusted', 'blocking', 'resolution_basis',
-          'Resolver did not produce trusted source evidence.');
-      if (requestedQty === null)
-        pushW('missing_requested_quantity', 'blocking', 'requested_quantity',
-          'Requested quantity is missing, NaN, or less than 1.');
-      if (availableQty === null)
-        pushW('missing_available_quantity', 'blocking', 'source_quantity_before',
-          'Available source quantity is missing, NaN, or less than 1.');
-      if (trusted && !orsActive)
-        pushW('source_inactive', 'blocking', 'source_object_id',
-          'Source object is not active in ORS registry.');
-      if (trusted && orsActive && !orsQuantityOk)
-        pushW('quantity_mismatch', 'blocking', 'source_quantity_before',
-          'Resolver quantity does not match current ORS record quantity.');
-      if (trusted && orsActive && !orsContainerOk)
-        pushW('container_mismatch', 'blocking', 'source_container_type',
-          'Resolver container does not match current ORS record container.');
-
-      // ── Deterministic routing computation ────────────────────────────────────
-      let requestedVsAvailable = null;
-      if (requestedQty !== null && availableQty !== null) {
-        if (requestedQty < availableQty)       requestedVsAvailable = 'partial';
-        else if (requestedQty === availableQty) requestedVsAvailable = 'exact_stack';
-        else                                    requestedVsAvailable = 'over_stack';
-      }
-
-      const routingBlocked = (
-        !trusted ||
-        requestedQty === null ||
-        availableQty === null ||
-        requestedVsAvailable === 'over_stack' ||
-        !orsActive ||
-        (orsActive && (!orsQuantityOk || !orsContainerOk))
-      );
-
-      let intendedMutation = null;
-      let failClosedReason = null;
-      if (requestedVsAvailable === 'partial') {
-        intendedMutation = 'partial_split';
-      } else if (requestedVsAvailable === 'exact_stack') {
-        intendedMutation = 'whole_transfer';
-      } else if (requestedVsAvailable === 'over_stack') {
-        intendedMutation = 'fail_closed';
-        failClosedReason = 'over_stack';
-      } else {
-        intendedMutation = 'fail_closed';
-        failClosedReason = 'invalid_quantity';
-      }
-
-      if (routingBlocked && failClosedReason === null) {
-        intendedMutation = 'fail_closed';
-        if (!trusted)                           failClosedReason = 'resolver_untrusted';
-        else if (requestedQty === null)         failClosedReason = 'invalid_quantity';
-        else if (availableQty === null)         failClosedReason = 'invalid_quantity';
-        else if (!orsActive)                    failClosedReason = 'source_inactive';
-        else if (!orsQuantityOk)                failClosedReason = 'internal_inconsistency';
-        else if (!orsContainerOk)               failClosedReason = 'internal_inconsistency';
-      }
-
-      // ── Advisory warnings ────────────────────────────────────────────────────
-      if (resolverEvidence.resolution_basis === 'ambiguous')
-        pushW('ambiguous_resolver', 'advisory', 'resolution_basis',
-          'Resolver reported ambiguous match among candidates.');
-      if (resolverEvidence.resolution_confidence < 0.5)
-        pushW('low_resolution_confidence', 'advisory', 'resolution_confidence',
-          `Resolver reported low confidence (${resolverEvidence.resolution_confidence}).`);
-
-      // Accumulate resolver's own warnings
-      if (Array.isArray(resolverEvidence.resolution_warnings)) {
-        for (const rw of resolverEvidence.resolution_warnings) {
-          if (rw && typeof rw === 'object') {
-            warnings.push({
-              code: String(rw.code || 'resolver_warning'),
-              severity: rw.severity === 'blocking' ? 'blocking' : 'advisory',
-              field: rw.field || null,
-              message: String(rw.message || ''),
-              detail: null
-            });
-          }
-        }
-      }
-
-      // ── Executor parameters (by method) ──────────────────────────────────────
-      let expectedHelperMethod = null;
-      let executorParams        = null;
-      if (intendedMutation === 'partial_split') {
-        expectedHelperMethod = 'splitObjectDirect';
-        executorParams = {
-          source_object_id:           resolverEvidence.source_object_id,
-          extract_quantity:           requestedQty,
-          destination_container_type: 'player',
-          destination_container_id:   'player'
-        };
-      } else if (intendedMutation === 'whole_transfer') {
-        expectedHelperMethod = 'transferObjectDirect';
-        executorParams = {
-          object_id:                   resolverEvidence.source_object_id,
-          destination_container_type: 'player',
-          destination_container_id:   'player'
-        };
-      }
-
-      // ── Operation family / type ──────────────────────────────────────────────
-      const operationFamily = actions.operation_family || 'take';
-      const operationType = intendedMutation === 'partial_split'
-        ? 'partial_object_transfer'
-        : intendedMutation === 'whole_transfer'
-          ? 'whole_object_transfer' : null;
-
-      // ── Build and return ─────────────────────────────────────────────────────
-      return {
-        schema_version: 'tls_ors_instruction_v1',
-        operation_family: operationFamily,
-        operation_type:   operationType,
-
-        object: {
-          id:   trusted ? resolverEvidence.source_object_id   : null,
-          name: trusted ? resolverEvidence.source_object_name : null,
-          source_basis: 'resolver_evidence_v1'
-        },
-
-        source: {
-          container_type: trusted ? resolverEvidence.source_container_type : null,
-          container_id:   trusted ? resolverEvidence.source_container_id   : null,
-          source_basis:   'resolver_evidence_v1'
-        },
-
-        destination: {
-          container_type: 'player',
-          container_id:   'player',
-          owner_type:     'player'
-        },
-
-        quantity: {
-          requested_quantity:        requestedQty,
-          quantity_mode:             actions.quantity_mode ?? 'unspecified',
-          observed_available_quantity: availableQty,
-          unit:                      resolverEvidence.source_unit ?? null
-        },
-
-        routing: {
-          requested_vs_available: requestedVsAvailable,
-          intended_mutation:      intendedMutation,
-          fail_closed_reason:     failClosedReason,
-          deterministic:          true
-        },
-
-        mutation: {
-          requires_fission:  intendedMutation === 'partial_split',
-          requires_transfer: intendedMutation === 'whole_transfer' || intendedMutation === 'partial_split',
-          retires_source:    false,
-          creates_successor: intendedMutation === 'partial_split'
-        },
-
-        execution: {
-          mode:               'observe_only',
-          allowed_to_execute: false,
-          refusal_reason:     routingBlocked ? 'routing_fail_closed' : 'observe_only',
-          gate_decision:      routingBlocked ? 'blocked' : 'observe_only'
-        },
-
-        executor: {
-          expected_helper_method: expectedHelperMethod,
-          parameters:             executorParams
-        },
-
-        warnings: warnings,
-        provenance: {
-          evidence_source:          resolverEvidence.evidence_source ?? 'llm_model',
-          provider:                 resolverEvidence.provider ?? null,
-          resolver_kind:            resolverEvidence.resolver_kind ?? null,
-          resolution_basis:         resolverEvidence.resolution_basis ?? null,
-          resolution_confidence:    resolverEvidence.resolution_confidence ?? 0,
-          candidate_count:          resolverEvidence.candidate_count ?? 0,
-          candidate_ids_sent:       resolverEvidence.candidate_ids_sent ?? [],
-          candidate_ids_considered: resolverEvidence.candidate_ids_considered ?? null,
-          reasoning_summary:        resolverEvidence.reasoning_summary ?? null,
-          fail_closed_reason:       resolverEvidence.fail_closed_reason ?? null,
-          validation_errors:        resolverEvidence.validation_errors ?? [],
-          resolver_error:           resolverError ?? null
         }
       };
     }
