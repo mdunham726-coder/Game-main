@@ -41,8 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.5.1';
-// MB v7.5.1 (June 2026): Patch — P2 TLS v1 INSTRUCTION DIAGNOSTIC block added to SYSTEM_PROMPT after VOLATILE DIAGNOSTIC SURFACES. Teaches Mother about new pre-AP diagnostic sibling `tls_instruction_v1` — schema `tls_ors_instruction_v1`, observe-only, no mutation authority, null vs disabled semantics, compare v1 prediction against v0 outcome. No tools, FIELD_MAP, or runtime behavior changes. MB_VERSION 7.5.0 -> 7.5.1.
+const MB_VERSION = '7.5.2';
+// MB v7.5.2 (June 2026): Patch — P3 comparison diagnostic tool added to MB_TOOLS (get_p3_comparison). Calls GET /diagnostics/turn/:sessionId/:turn/p3-comparison endpoint. Observe-only, post-hoc. MB_VERSION 7.5.1 -> 7.5.2.
 // MB v7.4.0 (June 2026): Patch — VOLATILE DIAGNOSTIC SURFACES doctrine block added to SYSTEM_PROMPT after CLAIM ANNOTATION. Teaches Mother that get_witness is latest-only and overwritten each turn; get_turn_data(turn=N) is preferred for historical validation; overwritten diagnostics without archive access must be marked LOST / NOT DIRECTLY VERIFIED; reconstructed evidence must be labeled [RECONSTRUCTED from later state]; do not start a new game to recreate missing evidence unless explicitly instructed. MB_VERSION 7.3.0 -> 7.4.0.
 // MB v7.3.0 (May 2026): TSL Stage 1 integration — SemanticNormalizer.js added to _SOURCE_ALLOWLIST (full source visibility); TSL SEMANTIC LAYER data source bullet added to SYSTEM_PROMPT (object_reality.tsl path, four sub-arrays, acquisition_ungrounded warning); TSL SEMANTIC LAYER INTERNALS block added (architecture, ENABLED rollback, provenance hard rule, cb-semantic-normalization branch note, Stage 2 preview); SemanticNormalizer.js added to SOURCE FILE GUIDE; node_check_semantic_normalizer added to run_validation _taskMap. MB_VERSION 7.2.5 -> 7.3.0.
 // MB v7.1.2 (May 2026): SOURCE-ROOT VERIFICATION doctrine block added. Prevents a class of silently-inert code proposal: proposing a property path through a local alias that doesn't own the needed field (e.g. w.player when w = gameState.world and player is a sibling of world, not a child). Rule: before proposing any code change involving a nested property path, first identify the local variable root and its binding; if the needed data lives outside that root, use the original top-level object, not an invented child path. Block inserted after SOURCE CODE READ EFFICIENCY, before SOURCE FILE GUIDE. MB_VERSION 7.1.1 -> 7.1.2.
@@ -890,6 +890,23 @@ const MB_TOOLS = [
         type: 'object',
         properties: {},
         required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_p3_comparison',
+      description: 'Retrieve the P3 AP-vs-TLS comparison diagnostic for a specific turn. Returns a structured verdict (match, source_id_mismatch, expected_known_gap, skipped_not_applicable, insufficient_evidence, etc.) plus per-field comparison details. Reads archived tls_instruction_v1 prediction and ap_actuals from the turn archive. Post-hoc, observe-only, no mutation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          turn: {
+            type: 'integer',
+            description: 'The turn number to retrieve the P3 comparison for.'
+          }
+        },
+        required: ['turn']
       }
     }
   }
@@ -2302,6 +2319,16 @@ async function executeToolCall(name, args) {
           timeout: 10000,
           httpAgent: _toolHttpAgent,
           headers: { 'x-session-id': _activeSessionId }
+        });
+        return JSON.stringify(resp.data);
+      } catch (err) {
+        return JSON.stringify({ error: err.message, status: err.response?.status ?? null });
+      }
+    } else if (name === 'get_p3_comparison') {
+      try {
+        const resp = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${_activeSessionId}/${args.turn}/p3-comparison`, {
+          timeout: 10000,
+          httpAgent: _toolHttpAgent
         });
         return JSON.stringify(resp.data);
       } catch (err) {

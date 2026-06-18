@@ -1432,10 +1432,36 @@ function registerRoutes(app, opts = {}) {
     else if (details.length > 0)                    verdict = 'match';
     else                                            verdict = 'match';
 
+    const _match = (f, p, a) => ({ field: f, predicted: p ?? null, actual: a ?? null, match: p === a });
+    const comparison = [
+      _match('source_object_id',       predId, actualId),
+      _match('source_quantity_before', predQty, actualQty),
+      _match('source_container',       [predSrcType, predSrcId].join('/'), [actualSrcType, actualSrcId].join('/')),
+      _match('requested_quantity',     predReqQty, actualReqQty),
+      _match('routing',                predRouting, actualRouting),
+      _match('helper_method',          predMethod, actualMethod),
+      _match('outcome',                predOutcome, actualOutcome)
+    ];
+    const prediction = {
+      schema_version: v1?.schema_version, object_id: predId, source_quantity_before: predQty,
+      source_container: predSrcType ? `${predSrcType}/${predSrcId}` : null,
+      requested_quantity: predReqQty, routing: predRouting, helper_method: predMethod, outcome: predOutcome
+    };
+    const actuals = {
+      operation_family: apActuals.operation_family, routing: actualRouting, helper_method: actualMethod,
+      source_object_id: actualId, source_quantity_before: actualQty, source_quantity_after: apActuals.source_quantity_after,
+      successor_id: apActuals.successor_id, successor_quantity: actualAppliedQty,
+      destination_container_type: apActuals.destination_container_type, destination_container_id: apActuals.destination_container_id,
+      outcome: actualOutcome
+    };
+
     return {
       verdict,
       details,
       warnings,
+      comparison,
+      prediction,
+      actuals,
       evidence_basis: 'archived_turn',
       turn_number: turnObj?.turn_number ?? null
     };
