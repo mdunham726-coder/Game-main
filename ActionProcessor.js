@@ -493,6 +493,20 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
             takeSucceeded = true;
             if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
             state._apExecutedTransfers.push(splitResult.successor_object_id);
+            // v1.91.XX P3: raw AP actuals — diagnostics.js consumes this from witness/archive
+            state._apActuals = {
+              operation_family:         'take',
+              routing:                  'partial_split',
+              helper_method:            'splitObjectDirect',
+              source_object_id:         found.objectId,
+              source_quantity_before:   splitResult.source_quantity_before,
+              source_quantity_after:    splitResult.source_quantity_after,
+              successor_id:             splitResult.successor_object_id,
+              successor_quantity:       splitResult.applied_quantity,
+              destination_container_type:  'player',
+              destination_container_id:    'player',
+              outcome:                  'success'
+            };
             if (Array.isArray(state._objectRealityDebug?.audit)) {
               state._objectRealityDebug.audit.push({
                 turn:                   turnNum,
@@ -520,9 +534,37 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
         if (_preObj.quantity < actions.requested_quantity) {
           console.warn(`[ACTIONS] take partial-split: not enough — requested ${actions.requested_quantity}, available ${_preObj.quantity} (${found.objectId})`);
           if (logger) logger.action_resolved('take', false, `not enough ${target}: requested ${actions.requested_quantity}, have ${_preObj.quantity}`);
+          // v1.91.XX P3: raw AP actuals for over-stack fail_closed
+          state._apActuals = {
+            operation_family:         'take',
+            routing:                  'fail_closed',
+            helper_method:            null,
+            source_object_id:         found.objectId,
+            source_quantity_before:   _preObj.quantity,
+            source_quantity_after:    _preObj.quantity,
+            successor_id:             null,
+            successor_quantity:       null,
+            destination_container_type:  'player',
+            destination_container_id:    'player',
+            outcome:                  'fail_closed'
+          };
           return; // Bridge handled failure — skips generic bottom-of-function logger
         }
         // _preObj.quantity === requested_quantity — fall through to transferObjectDirect
+        // v1.91.XX P3: raw AP actuals for exact-stack dead_end
+        state._apActuals = {
+          operation_family:         'take',
+          routing:                  'dead_end',
+          helper_method:            null,
+          source_object_id:         found.objectId,
+          source_quantity_before:   _preObj.quantity,
+          source_quantity_after:    _preObj.quantity,
+          successor_id:             null,
+          successor_quantity:       null,
+          destination_container_type:  'player',
+          destination_container_id:    'player',
+          outcome:                  'dead_end'
+        };
       }
 
       // v1.91.XX: Phase D — TLS whole-object take execution lane.

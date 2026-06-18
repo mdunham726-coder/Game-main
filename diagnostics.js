@@ -1308,7 +1308,162 @@ function registerRoutes(app, opts = {}) {
     return res.json(latest);
   });
 
-  // Payload archive — GET /diagnostics/payload/:sessionId/:turn
+  // v1.91.XX P3: AP-vs-TLS Comparison Diagnostic — observe-only, post-hoc, no mutation
+  // ── P3 comparison builder ───────────────────────────────────────────────
+  // Pure function. Reads archived turnObject. Applies Q5 taxonomy. No state access.
+  function _buildP3ApTlsComparison(turnObj) {
+    const v1 = turnObj?.tls_instruction_v1 ?? null;
+    const apActuals = turnObj?.item_operation_witness?.ap_actuals ?? null;
+
+    // ── Not applicable ─────────────────────────────────────────────────
+    if (v1 === null) {
+      return { verdict: 'skipped_not_applicable', reason: 'no_tls_instruction_v1' };
+    }
+
+    // ── Insufficient evidence ──────────────────────────────────────────
+    if (!apActuals) {
+      return {
+        verdict: 'insufficient_evidence',
+        reason: 'no_ap_actuals',
+        note: 'AP did not produce raw actuals for this turn. May be non-partial-stack TAKE, uncontaminated, or AP did not execute.'
+      };
+    }
+
+    // ── Helper: compare two values ─────────────────────────────────────
+    const _eq = (a, b) => {
+      if (a === null && b === null) return true;
+      if (a === null || b === null) return false;
+      if (typeof a === 'number' && typeof b === 'number') return a === b;
+      return String(a) === String(b);
+    };
+
+    const details = [];
+    const warnings = [];
+
+    // ── Extract prediction vs actual ────────────────────────────────────
+    const predId     = v1?.object?.id ?? null;
+    const actualId   = apActuals.source_object_id ?? null;
+    const predQty    = v1?.quantity?.observed_available_quantity ?? null;
+    const actualQty  = apActuals.source_quantity_before ?? null;
+    const predReqQty = v1?.quantity?.requested_quantity ?? null;
+    const actualReqQty = turnObj?.item_operation_witness?.requested_quantity ?? null;
+    const predSrcType = v1?.source?.container_type ?? null;
+    const predSrcId   = v1?.source?.container_id ?? null;
+    const actualSrcType = turnObj?.item_operation_witness?.target_object_prior_container_type ?? null;
+    const actualSrcId   = turnObj?.item_operation_witness?.target_object_prior_container_id ?? null;
+    const predRouting    = v1?.routing?.intended_mutation ?? null;
+    const actualRouting  = apActuals.routing ?? null;
+    const predMethod     = v1?.executor?.expected_helper_method ?? null;
+    const actualMethod   = apActuals.helper_method ?? null;
+    const predOutcome = (v1?.routing?.fail_closed_reason === null) ? 'success' : 'fail_closed';
+    const actualOutcome = apActuals.outcome ?? null;
+    const predExtractQty = v1?.executor?.parameters?.extract_quantity ?? null;
+    const actualAppliedQty = apActuals.successor_quantity ?? null;
+
+    // ── Edge case: exact-stack expected_known_gap ──────────────────────
+    const isExactStackPred = (v1?.routing?.requested_vs_available === 'exact_stack');
+    const isDeadEndActual  = (apActuals.routing === 'dead_end');
+    if (isExactStackPred && isDeadEndActual) {
+      return {
+        verdict: 'expected_known_gap',
+        reason: 'exact_stack_dead_end',
+        note: 'TLS correctly predicts whole_transfer; AP currently dead-ends on exact-stack partial-stack TAKE.',
+        details: [],
+        warnings: [],
+        evidence_basis: 'archived_turn'
+      };
+    }
+
+    // ── Blocking checks ────────────────────────────────────────────────
+    if (!_eq(predId, actualId)) {
+      details.push({ field: 'source_object_id', predicted: predId, actual: actualId });
+    }
+    if (!_eq(predQty, actualQty)) {
+      details.push({ field: 'source_quantity_before', predicted: predQty, actual: actualQty });
+    }
+    if (!_eq(predSrcType, actualSrcType) || !_eq(predSrcId, actualSrcId)) {
+      details.push({
+        field: 'source_container',
+        predicted: { container_type: predSrcType, container_id: predSrcId },
+        actual:    { container_type: actualSrcType, container_id: actualSrcId }
+      });
+    }
+    if (!_eq(predReqQty, actualReqQty)) {
+      details.push({ field: 'requested_quantity', predicted: predReqQty, actual: actualReqQty });
+    }
+    if (!_eq(predRouting, actualRouting)) {
+      details.push({ field: 'routing', predicted: predRouting, actual: actualRouting });
+    }
+    if (!_eq(predMethod, actualMethod)) {
+      details.push({ field: 'helper_method', predicted: predMethod, actual: actualMethod });
+    }
+    if (!_eq(predOutcome, actualOutcome)) {
+      details.push({ field: 'outcome', predicted: predOutcome, actual: actualOutcome });
+    }
+    if (!_eq(predExtractQty, actualAppliedQty)) {
+      details.push({ field: 'quantity_applied', predicted: predExtractQty, actual: actualAppliedQty });
+    }
+
+    // ── Expected postcondition checks ──────────────────────────────────
+    if (actualRouting === 'partial_split') {
+      const expectedSourceAfter = actualQty - actualAppliedQty;
+      const actualSourceAfter = apActuals.source_quantity_after;
+      if (!_eq(expectedSourceAfter, actualSourceAfter)) {
+        details.push({
+          field: 'source_quantity_after',
+          predicted: expectedSourceAfter,
+          actual: actualSourceAfter
+        });
+      }
+    }
+
+    // ── Verdict ────────────────────────────────────────────────────────
+    let verdict;
+    const blockingFields = Object.fromEntries(details.map(d => [d.field, true]));
+    if (blockingFields.source_object_id)      verdict = 'source_id_mismatch';
+    else if (blockingFields.source_quantity_before) verdict = 'quantity_before_mismatch';
+    else if (blockingFields.source_container)      verdict = 'container_mismatch';
+    else if (blockingFields.outcome)                verdict = 'outcome_mismatch';
+    else if (blockingFields.requested_quantity)     verdict = 'requested_quantity_mismatch';
+    else if (blockingFields.routing)                verdict = 'routing_mismatch';
+    else if (blockingFields.helper_method)          verdict = 'method_mismatch';
+    else if (blockingFields.quantity_applied)       verdict = 'quantity_applied_mismatch';
+    else if (blockingFields.source_quantity_after)  verdict = 'helper_param_mismatch';
+    else if (details.length > 0)                    verdict = 'match';
+    else                                            verdict = 'match';
+
+    return {
+      verdict,
+      details,
+      warnings,
+      evidence_basis: 'archived_turn',
+      turn_number: turnObj?.turn_number ?? null
+    };
+  }
+
+  // ── P3 comparison endpoint ───────────────────────────────────────────────
+  // GET /diagnostics/turn/:sessionId/:turn/p3-comparison
+  app.get('/diagnostics/turn/:sessionId/:turn/p3-comparison', async (req, res) => {
+    const { sessionId, turn } = req.params;
+    const turnNum = parseInt(turn, 10);
+    if (!sessionId || isNaN(turnNum)) {
+      return res.status(400).json({ error: 'sessionId and numeric turn are required' });
+    }
+    const session = opts.getSessionStates().get(sessionId);
+    const history = session?.gameState?.turn_history || [];
+    let turnObj = history.find(t => t.turn_number === turnNum);
+    if (!turnObj) {
+      turnObj = await _readTurnFromDisk(sessionId, turnNum);
+    }
+    if (!turnObj) {
+      if (!session) {
+        return res.status(404).json({ error: 'session_not_found' });
+      }
+      return res.status(404).json({ error: 'turn_not_found', turn: turnNum });
+    }
+    const comparison = _buildP3ApTlsComparison(turnObj);
+    return res.json(comparison);
+  });
   app.get('/diagnostics/payload/:sessionId/:turn', (req, res) => {
     const { sessionId, turn } = req.params;
     const turnNum = parseInt(turn, 10);

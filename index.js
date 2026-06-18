@@ -2355,6 +2355,7 @@ app.post('/narrate', async (req, res) => {
 
           // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic before AP runs
           gameState._tlsExecutionResult = null;
+          gameState._apActuals = null;                // v1.91.XX P3: clear per-turn AP actuals
 
           // v1.91.58: P1b — pre-AP resolver evidence capture inside queue loop (observe-only, diagnostic only)
           if (
@@ -3825,6 +3826,11 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // Accessible here means AP resolved this object as interactable in the current turn;
       // it is not a general world-reachability calculation.
       _w.target_object_accessible = true;
+    }
+
+    // v1.91.XX P3: archive raw AP actuals into witness for diagnostics.js post-hoc comparison
+    if (gameState._apActuals) {
+      debug.itemOperationWitness.ap_actuals = _cloneForArchive(gameState._apActuals);
     }
 
     // v1.91.35: Phase 4 — TLS observe-only normalization proposal.
