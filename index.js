@@ -1082,7 +1082,7 @@ app.post('/narrate', async (req, res) => {
   let objectOperationResolverEvidence = null;
   let objectOperationResolverError = null;
 
-  // v1.91.61: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
+  // v1.91.62: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
   // Consumes resolver evidence + parser actions to produce a source-authoritative
   // tls_ors_instruction_v1. Pure function — no state access, no ObjectHelper calls.
   // Returns null when resolver evidence is absent; returns disabled instruction
@@ -2376,7 +2376,7 @@ app.post('/narrate', async (req, res) => {
             }
           }
 
-          // v1.91.61: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
+          // v1.91.62: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
           debug.tls_instruction_v1 = _assembleTlsInstructionV1(
             objectOperationResolverEvidence,
             objectOperationResolverError,
@@ -5368,9 +5368,45 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // v1.84.57: suppress CB transfers for objects AP already transferred this turn.
         // AP writes object IDs to gameState._apExecutedTransfers[] on success only — fail = no proof = CB fallback stays.
         // Temp-ref-only entries (no object_id) pass through unfiltered; destination idempotency in ObjectHelper catches any duplicates.
+        // v1.91.62: extended filter to also suppress temp-ref-only transfers whose candidate name matches
+        // an AP-done object name — same-turn replay containment for partial-stack TAKE remainder.
         const _apDoneIds = new Set(Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : []);
         gameState._apExecutedTransfers = []; // consume and clear for next turn
-        const _cbTransfersFiltered = _cbTransfers.filter(t => !t.object_id || !_apDoneIds.has(t.object_id));
+        // Build AP-done normalized-name set for temp-ref replay suppression
+        const _apDoneNames = new Set();
+        const _norm = v => String(v || '').toLowerCase().trim();
+        for (const _aid of _apDoneIds) {
+          const _aObj = gameState.objects[_aid];
+          if (_aObj) _apDoneNames.add(_norm(_aObj.name));
+        }
+        // Build CB candidate temp_ref → normalized name map
+        const _cbTempRefToName = {};
+        for (const _cc of _cbCandidates) {
+          if (_cc.temp_ref) _cbTempRefToName[_cc.temp_ref] = _norm(_cc.name);
+        }
+        const _cbTransfersFiltered = _cbTransfers.filter(t => {
+          // Phase 1: existing explicit-ID dedup — preserve unchanged
+          if (t.object_id && _apDoneIds.has(t.object_id)) return false;
+          // Phase 2: temp-ref replay suppression — same-turn containment guard
+          if (!t.object_id && t.temp_ref && _apDoneIds.size > 0) {
+            const _candName = _cbTempRefToName[t.temp_ref];
+            if (_candName && _apDoneNames.has(_candName)) {
+              if (!Array.isArray(_objectRealityDebug.suppressed_replays)) _objectRealityDebug.suppressed_replays = [];
+              _objectRealityDebug.suppressed_replays.push({
+                reason: 'ap_replay_temp_ref_suppressed',
+                temp_ref: t.temp_ref,
+                candidate_name: _candName,
+                matched_ap_id: [..._apDoneIds].find(id => {
+                  const _obj = gameState.objects[id];
+                  return _obj && _norm(_obj.name) === _candName;
+                }) || null,
+                transfer_direction: t.to_container_type || null
+              });
+              return false; // suppress — AP already handled this named object this turn
+            }
+          }
+          return true;
+        });
         // v1.85.9: detect ap_dedup_all_transfers — CB produced transfers but all were AP-claimed.
         // Distinct from empty_quarantine (CB produced nothing) — improves diagnostic clarity.
         if (_cbCandidates.length === 0 && _cbTransfers.length > 0 && _cbTransfersFiltered.length === 0) {
