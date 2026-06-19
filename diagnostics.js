@@ -1467,6 +1467,476 @@ function registerRoutes(app, opts = {}) {
     };
   }
 
+  // ── P4: Partial-stack comparison builder (additive — does not modify P3) ──
+  // Pure function. Reads archived turnObject. Applies 8-condition match contract
+  // with corrected null-identity handling, schema version guard, 4-state guard
+  // order, and expected_known_gap no-mutation postcondition verification.
+  // Mode: 'compact' | 'detailed' | 'raw'. Default: 'compact'.
+  // Observe-only — never reads live ORS state or calls mutation authorities.
+  function _buildPartialStackComparison(turnObj, mode) {
+    const effectiveMode = (mode === 'detailed' || mode === 'raw') ? mode : 'compact';
+
+    const v1 = turnObj?.tls_instruction_v1 ?? null;
+    const apActuals = turnObj?.item_operation_witness?.ap_actuals ?? null;
+
+    // ── 4-state guard order (BEFORE schema version check) ──────────────────
+    // State 1: both null — nothing happened
+    if (v1 === null && !apActuals) {
+      const result = {
+        verdict: 'skipped_not_applicable',
+        reason: 'no_partial_stack_take',
+        scope: 'single_action_partial_stack_take',
+        turn_number: turnObj?.turn_number ?? null,
+        evidence_basis: 'archived_turn'
+      };
+      if (effectiveMode === 'compact') {
+        result.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': No partial-stack TAKE operation detected. Nothing to compare.';
+        return result;
+      }
+      result.details = [];
+      result.warnings = [];
+      result.comparison = [];
+      result.prediction = null;
+      result.actuals = null;
+      return result;
+    }
+
+    // State 2: P2 exists but P3 missing
+    if (v1 !== null && !apActuals) {
+      const result = {
+        verdict: 'insufficient_evidence',
+        reason: 'no_ap_actuals',
+        scope: 'single_action_partial_stack_take',
+        turn_number: turnObj?.turn_number ?? null,
+        evidence_basis: 'archived_turn',
+        note: 'TLS v1 instruction was assembled but AP did not stamp ap_actuals. May be a non-partial-stack TAKE or AP did not execute.'
+      };
+      if (effectiveMode === 'compact') {
+        result.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': Insufficient evidence — TLS predicted an operation but AP produced no actuals.';
+        return result;
+      }
+      result.details = [];
+      result.warnings = ['ap_actuals_missing'];
+      result.comparison = [];
+      result.prediction = {
+        schema_version: v1?.schema_version,
+        object_id: v1?.object?.id ?? null,
+        source_quantity_before: v1?.quantity?.observed_available_quantity ?? null,
+        requested_quantity: v1?.quantity?.requested_quantity ?? null,
+        routing: v1?.routing?.intended_mutation ?? null
+      };
+      result.actuals = null;
+      return result;
+    }
+
+    // State 3: P3 exists but P2 missing — evidence insufficiency, not scope exclusion
+    if (v1 === null && apActuals) {
+      const result = {
+        verdict: 'insufficient_evidence',
+        reason: 'p3_present_p2_missing',
+        scope: 'single_action_partial_stack_take',
+        turn_number: turnObj?.turn_number ?? null,
+        evidence_basis: 'archived_turn',
+        note: 'AP stamped ap_actuals but tls_instruction_v1 is null. Resolver may have failed to capture evidence for this turn.'
+      };
+      if (effectiveMode === 'compact') {
+        result.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': Insufficient evidence — AP recorded actuals but TLS prediction is missing.';
+        return result;
+      }
+      result.details = [];
+      result.warnings = ['tls_instruction_v1_missing'];
+      result.comparison = [];
+      result.prediction = null;
+      result.actuals = {
+        routing: apActuals.routing ?? null,
+        helper_method: apActuals.helper_method ?? null,
+        source_object_id: apActuals.source_object_id ?? null,
+        source_quantity_before: apActuals.source_quantity_before ?? null,
+        source_quantity_after: apActuals.source_quantity_after ?? null,
+        successor_id: apActuals.successor_id ?? null,
+        successor_quantity: apActuals.successor_quantity ?? null,
+        outcome: apActuals.outcome ?? null
+      };
+      return result;
+    }
+
+    // State 4: both exist — proceed to comparison
+
+    // ── Schema version guard (only when v1 !== null, already confirmed) ─────
+    if (v1.schema_version !== 'tls_ors_instruction_v1') {
+      const result = {
+        verdict: 'insufficient_evidence',
+        reason: 'unexpected_schema_version',
+        scope: 'single_action_partial_stack_take',
+        turn_number: turnObj?.turn_number ?? null,
+        evidence_basis: 'archived_turn',
+        note: 'Expected tls_ors_instruction_v1, got ' + (v1.schema_version || 'null')
+      };
+      if (effectiveMode === 'compact') {
+        result.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': Insufficient evidence — unexpected TLS instruction schema version.';
+        return result;
+      }
+      result.details = [];
+      result.warnings = ['schema_version_mismatch'];
+      result.comparison = [];
+      result.prediction = null;
+      result.actuals = null;
+      return result;
+    }
+
+    // ── Extract prediction (P2) fields ─────────────────────────────────────
+    const predId        = v1?.object?.id ?? null;
+    const predQty       = v1?.quantity?.observed_available_quantity ?? null;
+    const predReqQty    = v1?.quantity?.requested_quantity ?? null;
+    const predSrcType   = v1?.source?.container_type ?? null;
+    const predSrcId     = v1?.source?.container_id ?? null;
+    const predRouting   = v1?.routing?.intended_mutation ?? null;
+    const predMethod    = v1?.executor?.expected_helper_method ?? null;
+    const predOutcome   = (v1?.routing?.fail_closed_reason === null) ? 'success' : 'fail_closed';
+    const predExtractQty = v1?.executor?.parameters?.extract_quantity ?? null;
+    const predReqVsAvail = v1?.routing?.requested_vs_available ?? null;
+
+    // ── Extract actual (P3) fields ─────────────────────────────────────────
+    const actualId       = apActuals.source_object_id ?? null;
+    const actualQty      = apActuals.source_quantity_before ?? null;
+    const actualReqQty   = turnObj?.item_operation_witness?.requested_quantity ?? null;
+    const actualSrcType  = turnObj?.item_operation_witness?.target_object_prior_container_type ?? null;
+    const actualSrcId    = turnObj?.item_operation_witness?.target_object_prior_container_id ?? null;
+    const actualRouting  = apActuals.routing ?? null;
+    const actualMethod   = apActuals.helper_method ?? null;
+    const actualOutcome  = apActuals.outcome ?? null;
+    const actualAppliedQty = apActuals.successor_quantity ?? null;
+    const actualSourceAfter = apActuals.source_quantity_after ?? null;
+
+    // ── expected_known_gap: exact-stack dead-end ────────────────────────────
+    const isExactStackPred = (predReqVsAvail === 'exact_stack');
+    const isDeadEndActual  = (actualRouting === 'dead_end');
+    if (isExactStackPred && isDeadEndActual) {
+      // No-mutation postcondition: all three must hold
+      const sourceUnchanged = (actualSourceAfter === actualQty);
+      const noSuccessor     = (apActuals.successor_id === null && apActuals.successor_quantity === null);
+      if (!sourceUnchanged || !noSuccessor) {
+        // Unexpected mutation — escalate
+        const escResult = {
+          verdict: 'no_mutation_check_failed',
+          reason: 'exact_stack_expected_no_mutation_but_state_changed',
+          scope: 'single_action_partial_stack_take',
+          turn_number: turnObj?.turn_number ?? null,
+          evidence_basis: 'archived_turn',
+          note: 'P2 predicted whole_transfer, AP dead-ended, but source state changed or successor appeared.',
+          details: [{
+            field: 'no_mutation_postcondition',
+            expected: { source_quantity_after: actualQty, successor_id: null, successor_quantity: null },
+            actual:    { source_quantity_after: actualSourceAfter, successor_id: apActuals.successor_id, successor_quantity: apActuals.successor_quantity }
+          }]
+        };
+        if (effectiveMode === 'compact') {
+          escResult.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': No-mutation check FAILED — exact-stack dead-end but source state changed unexpectedly.';
+          return escResult;
+        }
+        escResult.warnings = ['unexpected_mutation_in_dead_end'];
+        escResult.comparison = [];
+        escResult.prediction = null;
+        escResult.actuals = null;
+        return escResult;
+      }
+      const gapResult = {
+        verdict: 'expected_known_gap',
+        reason: 'exact_stack_dead_end',
+        scope: 'single_action_partial_stack_take',
+        turn_number: turnObj?.turn_number ?? null,
+        evidence_basis: 'archived_turn',
+        note: 'TLS correctly predicts whole_transfer; AP currently dead-ends on exact-stack partial-stack TAKE. No mutation occurred — source state unchanged.',
+        details: [
+          { field: 'no_mutation_verified', source_quantity_unchanged: sourceUnchanged, no_successor_created: noSuccessor }
+        ]
+      };
+      if (effectiveMode === 'compact') {
+        gapResult.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': Expected known gap — exact-stack dead-end. TLS predicts whole_transfer; AP dead-ends correctly with no mutation.';
+        return gapResult;
+      }
+      gapResult.warnings = [];
+      gapResult.comparison = [];
+      gapResult.prediction = {
+        schema_version: v1?.schema_version,
+        object_id: predId,
+        source_quantity_before: predQty,
+        requested_quantity: predReqQty,
+        routing: predRouting,
+        helper_method: predMethod
+      };
+      gapResult.actuals = {
+        routing: actualRouting,
+        source_object_id: actualId,
+        source_quantity_before: actualQty,
+        source_quantity_after: actualSourceAfter,
+        successor_id: apActuals.successor_id,
+        successor_quantity: apActuals.successor_quantity,
+        outcome: actualOutcome
+      };
+      return gapResult;
+    }
+
+    // ── Also check fail_closed no-mutation ──────────────────────────────────
+    if (actualRouting === 'fail_closed') {
+      const fcSourceUnchanged = (actualSourceAfter === actualQty);
+      const fcNoSuccessor     = (apActuals.successor_id === null && apActuals.successor_quantity === null);
+      if (!fcSourceUnchanged || !fcNoSuccessor) {
+        const fcResult = {
+          verdict: 'no_mutation_check_failed',
+          reason: 'fail_closed_expected_no_mutation_but_state_changed',
+          scope: 'single_action_partial_stack_take',
+          turn_number: turnObj?.turn_number ?? null,
+          evidence_basis: 'archived_turn',
+          note: 'AP reported fail_closed but source state changed or successor appeared.',
+          details: [{
+            field: 'no_mutation_postcondition',
+            expected: { source_quantity_after: actualQty, successor_id: null, successor_quantity: null },
+            actual:    { source_quantity_after: actualSourceAfter, successor_id: apActuals.successor_id, successor_quantity: apActuals.successor_quantity }
+          }]
+        };
+        if (effectiveMode === 'compact') {
+          fcResult.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': No-mutation check FAILED — fail_closed but source state changed.';
+          return fcResult;
+        }
+        fcResult.warnings = ['unexpected_mutation_in_fail_closed'];
+        fcResult.comparison = [];
+        fcResult.prediction = null;
+        fcResult.actuals = null;
+        return fcResult;
+      }
+    }
+
+    // ── Identity comparison helpers ─────────────────────────────────────────
+    // null-safe equality: null === null is NOT a match for identity fields
+    const _idEq = (a, b) => {
+      if (a === null || b === null) return false;
+      if (typeof a === 'number' && typeof b === 'number') return a === b;
+      return String(a) === String(b);
+    };
+    // null-safe equality for non-identity fields: null === null IS a match
+    const _valEq = (a, b) => {
+      if (a === null && b === null) return true;
+      if (a === null || b === null) return false;
+      if (typeof a === 'number' && typeof b === 'number') return a === b;
+      return String(a) === String(b);
+    };
+
+    // ── Blocking comparison (8 conditions) ──────────────────────────────────
+    const details = [];
+    const warnings = [];
+
+    // 1. source_object_id — identity field: both null = insufficient, not match
+    if (predId === null && actualId === null) {
+      warnings.push('Both source_object_ids are null — cannot confirm identity match.');
+    } else if (!_idEq(predId, actualId)) {
+      details.push({ field: 'source_object_id', predicted: predId, actual: actualId, match: false });
+    }
+
+    // 2. source_quantity_before
+    if (!_valEq(predQty, actualQty)) {
+      details.push({ field: 'source_quantity_before', predicted: predQty, actual: actualQty, match: false });
+    }
+
+    // 3. source_container (type + id)
+    if (!_valEq(predSrcType, actualSrcType) || !_valEq(predSrcId, actualSrcId)) {
+      details.push({
+        field: 'source_container',
+        predicted: { container_type: predSrcType, container_id: predSrcId },
+        actual:    { container_type: actualSrcType, container_id: actualSrcId },
+        match: false
+      });
+    }
+
+    // 4. requested_quantity
+    if (!_valEq(predReqQty, actualReqQty)) {
+      details.push({ field: 'requested_quantity', predicted: predReqQty, actual: actualReqQty, match: false });
+    }
+
+    // 5. routing
+    if (!_valEq(predRouting, actualRouting)) {
+      details.push({ field: 'routing', predicted: predRouting, actual: actualRouting, match: false });
+    }
+
+    // 6. helper_method
+    if (!_valEq(predMethod, actualMethod)) {
+      details.push({ field: 'helper_method', predicted: predMethod, actual: actualMethod, match: false });
+    }
+
+    // 7. outcome
+    if (!_valEq(predOutcome, actualOutcome)) {
+      details.push({ field: 'outcome', predicted: predOutcome, actual: actualOutcome, match: false });
+    }
+
+    // 8. quantity_applied (blocking)
+    if (!_valEq(predExtractQty, actualAppliedQty)) {
+      details.push({ field: 'quantity_applied', predicted: predExtractQty, actual: actualAppliedQty, match: false });
+    }
+
+    // 9. source_quantity_after (blocking) — derived check for partial_split
+    if (actualRouting === 'partial_split' && actualQty !== null && actualAppliedQty !== null) {
+      const expectedSourceAfter = actualQty - actualAppliedQty;
+      if (!_valEq(expectedSourceAfter, actualSourceAfter)) {
+        details.push({
+          field: 'source_quantity_after',
+          predicted: expectedSourceAfter,
+          actual: actualSourceAfter,
+          match: false
+        });
+      }
+    }
+
+    // ── Verdict assignment (priority-ordered) ───────────────────────────────
+    const blockingFields = Object.fromEntries(details.map(d => [d.field, true]));
+
+    // Null-identity check: if both IDs are null and no other blocking mismatch, that's insufficient
+    if (predId === null && actualId === null) {
+      // insufficient_evidence due to null identity — can't confirm match
+    }
+
+    let verdict;
+    if (blockingFields.source_object_id)            verdict = 'source_id_mismatch';
+    else if (predId === null && actualId === null)  verdict = 'insufficient_evidence';
+    else if (blockingFields.source_quantity_before) verdict = 'quantity_before_mismatch';
+    else if (blockingFields.source_container)       verdict = 'container_mismatch';
+    else if (blockingFields.outcome)                verdict = 'outcome_mismatch';
+    else if (blockingFields.requested_quantity)     verdict = 'requested_quantity_mismatch';
+    else if (blockingFields.routing)                verdict = 'routing_mismatch';
+    else if (blockingFields.helper_method)          verdict = 'method_mismatch';
+    else if (blockingFields.quantity_applied)       verdict = 'quantity_applied_mismatch';
+    else if (blockingFields.source_quantity_after)  verdict = 'source_after_mismatch';
+    else if (details.length > 0)                    verdict = 'match';
+    else                                            verdict = 'match';
+
+    // ── Compact mode: return verdict + summary only ────────────────────────
+    if (effectiveMode === 'compact') {
+      let summary;
+      if (verdict === 'match') {
+        summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': MATCH — TLS prediction and AP actuals agree on all 8 comparison conditions.';
+      } else if (verdict === 'insufficient_evidence') {
+        summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': Insufficient evidence — both source object IDs are null; cannot confirm identity match.';
+      } else {
+        const mismatchFields = details.map(d => d.field).join(', ');
+        summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': ' + verdict.toUpperCase() + ' — mismatch in: ' + mismatchFields + '.';
+      }
+      return {
+        verdict,
+        turn_number: turnObj?.turn_number ?? null,
+        scope: 'single_action_partial_stack_take',
+        summary,
+        evidence_basis: 'archived_turn'
+      };
+    }
+
+    // ── Build comparison table ─────────────────────────────────────────────
+    const _match = (f, p, a) => ({ field: f, predicted: p ?? null, actual: a ?? null, match: _valEq(p, a) });
+    const comparison = [
+      _match('source_object_id',       predId, actualId),
+      _match('source_quantity_before', predQty, actualQty),
+      _match('source_container',       (predSrcType && predSrcId) ? predSrcType + '/' + predSrcId : null,
+                                        (actualSrcType && actualSrcId) ? actualSrcType + '/' + actualSrcId : null),
+      _match('requested_quantity',     predReqQty, actualReqQty),
+      _match('routing',                predRouting, actualRouting),
+      _match('helper_method',          predMethod, actualMethod),
+      _match('outcome',                predOutcome, actualOutcome),
+      _match('quantity_applied',       predExtractQty, actualAppliedQty)
+    ];
+    // Add source_quantity_after row if partial_split
+    if (actualRouting === 'partial_split' && actualQty !== null && actualAppliedQty !== null) {
+      const expectedSourceAfter = actualQty - actualAppliedQty;
+      comparison.push(_match('source_quantity_after', expectedSourceAfter, actualSourceAfter));
+    }
+
+    // ── Build prediction/actuals blocks ─────────────────────────────────────
+    const prediction = {
+      schema_version: v1?.schema_version,
+      object_id: predId,
+      source_quantity_before: predQty,
+      source_container: predSrcType ? predSrcType + '/' + predSrcId : null,
+      requested_quantity: predReqQty,
+      routing: predRouting,
+      helper_method: predMethod,
+      outcome: predOutcome,
+      extract_quantity: predExtractQty,
+      requested_vs_available: predReqVsAvail
+    };
+    const actuals = {
+      operation_family: apActuals.operation_family,
+      routing: actualRouting,
+      helper_method: actualMethod,
+      source_object_id: actualId,
+      source_quantity_before: actualQty,
+      source_quantity_after: actualSourceAfter,
+      successor_id: apActuals.successor_id,
+      successor_quantity: actualAppliedQty,
+      destination_container_type: apActuals.destination_container_type,
+      destination_container_id: apActuals.destination_container_id,
+      outcome: actualOutcome
+    };
+
+    // ── Confidence ──────────────────────────────────────────────────────────
+    const totalConditions = comparison.length;
+    const matchedConditions = comparison.filter(c => c.match).length;
+    const confidence = totalConditions > 0 ? matchedConditions / totalConditions : null;
+
+    // ── Detailed mode ──────────────────────────────────────────────────────
+    const result = {
+      verdict,
+      turn_number: turnObj?.turn_number ?? null,
+      scope: 'single_action_partial_stack_take',
+      details,
+      warnings,
+      comparison,
+      prediction,
+      actuals,
+      confidence,
+      evidence_basis: 'archived_turn'
+    };
+
+    // ── Raw mode: add bounded evidence block ────────────────────────────────
+    if (effectiveMode === 'raw') {
+      result.evidence = {
+        tls_instruction_v1: {
+          schema_version: v1?.schema_version,
+          object: { id: v1?.object?.id ?? null, name: v1?.object?.name ?? null },
+          quantity: {
+            observed_available_quantity: v1?.quantity?.observed_available_quantity ?? null,
+            requested_quantity: v1?.quantity?.requested_quantity ?? null,
+            unit: v1?.quantity?.unit ?? null
+          },
+          source: { container_type: v1?.source?.container_type ?? null, container_id: v1?.source?.container_id ?? null },
+          routing: {
+            requested_vs_available: v1?.routing?.requested_vs_available ?? null,
+            intended_mutation: v1?.routing?.intended_mutation ?? null,
+            fail_closed_reason: v1?.routing?.fail_closed_reason ?? null
+          },
+          executor: {
+            expected_helper_method: v1?.executor?.expected_helper_method ?? null,
+            parameters: v1?.executor?.parameters ?? null
+          },
+          execution: {
+            mode: v1?.execution?.mode ?? null,
+            allowed_to_execute: v1?.execution?.allowed_to_execute ?? null,
+            gate_decision: v1?.execution?.gate_decision ?? null
+          },
+          provenance: v1?.provenance ?? null,
+          warnings: v1?.warnings ?? null
+        },
+        ap_actuals: apActuals,
+        resolver_evidence: turnObj?.item_operation_witness?.resolver_evidence ? {
+          source_object_id: turnObj.item_operation_witness.resolver_evidence.source_object_id ?? null,
+          source_quantity_before: turnObj.item_operation_witness.resolver_evidence.source_quantity_before ?? null,
+          resolution_basis: turnObj.item_operation_witness.resolver_evidence.resolution_basis ?? null,
+          resolution_confidence: turnObj.item_operation_witness.resolver_evidence.resolution_confidence ?? null
+        } : null,
+        parsed_target: turnObj?.item_operation_witness?.parsed_target ?? null,
+        normalized_target: turnObj?.item_operation_witness?.normalized_target ?? null
+      };
+    }
+
+    return result;
+  }
+
   // ── P3 comparison endpoint ───────────────────────────────────────────────
   // GET /diagnostics/turn/:sessionId/:turn/p3-comparison
   app.get('/diagnostics/turn/:sessionId/:turn/p3-comparison', async (req, res) => {
@@ -1490,6 +1960,35 @@ function registerRoutes(app, opts = {}) {
     const comparison = _buildP3ApTlsComparison(turnObj);
     return res.json(comparison);
   });
+
+  // ── P4: Partial-stack comparison endpoint ─────────────────────────────────
+  // GET /diagnostics/turn/:sessionId/:turn/partial-stack-comparison?mode=compact|detailed|raw
+  // Observe-only, post-hoc. Compares tls_instruction_v1 (P2 prediction) against
+  // ap_actuals (P3 result) for single-action partial-stack TAKE turns only.
+  // Default mode: 'compact' (verdict + one-line summary).
+  app.get('/diagnostics/turn/:sessionId/:turn/partial-stack-comparison', async (req, res) => {
+    const { sessionId, turn } = req.params;
+    const turnNum = parseInt(turn, 10);
+    if (!sessionId || isNaN(turnNum)) {
+      return res.status(400).json({ error: 'sessionId and numeric turn are required' });
+    }
+    const mode = (req.query.mode === 'detailed' || req.query.mode === 'raw') ? req.query.mode : 'compact';
+    const session = opts.getSessionStates().get(sessionId);
+    const history = session?.gameState?.turn_history || [];
+    let turnObj = history.find(t => t.turn_number === turnNum);
+    if (!turnObj) {
+      turnObj = await _readTurnFromDisk(sessionId, turnNum);
+    }
+    if (!turnObj) {
+      if (!session) {
+        return res.status(404).json({ error: 'session_not_found' });
+      }
+      return res.status(404).json({ error: 'turn_not_found', turn: turnNum });
+    }
+    const result = _buildPartialStackComparison(turnObj, mode);
+    return res.json(result);
+  });
+
   app.get('/diagnostics/payload/:sessionId/:turn', (req, res) => {
     const { sessionId, turn } = req.params;
     const turnNum = parseInt(turn, 10);

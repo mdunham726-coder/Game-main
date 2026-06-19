@@ -41,7 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.5.2';
+const MB_VERSION = '7.6.0';
+// MB v7.6.0 (June 2026): Minor — partial_stack_comparison tool added to MB_TOOLS. Calls GET /diagnostics/turn/:sessionId/:turn/partial-stack-comparison endpoint. Observe-only, post-hoc, single-action partial-stack TAKE only. Supports compact/detailed/raw expansion modes. MB_VERSION 7.5.2 -> 7.6.0.
 // MB v7.5.2 (June 2026): Patch — P3 comparison diagnostic tool added to MB_TOOLS (get_p3_comparison). Calls GET /diagnostics/turn/:sessionId/:turn/p3-comparison endpoint. Observe-only, post-hoc. MB_VERSION 7.5.1 -> 7.5.2.
 // MB v7.4.0 (June 2026): Patch — VOLATILE DIAGNOSTIC SURFACES doctrine block added to SYSTEM_PROMPT after CLAIM ANNOTATION. Teaches Mother that get_witness is latest-only and overwritten each turn; get_turn_data(turn=N) is preferred for historical validation; overwritten diagnostics without archive access must be marked LOST / NOT DIRECTLY VERIFIED; reconstructed evidence must be labeled [RECONSTRUCTED from later state]; do not start a new game to recreate missing evidence unless explicitly instructed. MB_VERSION 7.3.0 -> 7.4.0.
 // MB v7.3.0 (May 2026): TSL Stage 1 integration — SemanticNormalizer.js added to _SOURCE_ALLOWLIST (full source visibility); TSL SEMANTIC LAYER data source bullet added to SYSTEM_PROMPT (object_reality.tsl path, four sub-arrays, acquisition_ungrounded warning); TSL SEMANTIC LAYER INTERNALS block added (architecture, ENABLED rollback, provenance hard rule, cb-semantic-normalization branch note, Stage 2 preview); SemanticNormalizer.js added to SOURCE FILE GUIDE; node_check_semantic_normalizer added to run_validation _taskMap. MB_VERSION 7.2.5 -> 7.3.0.
@@ -909,10 +910,29 @@ const MB_TOOLS = [
         required: ['turn']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'partial_stack_comparison',
+      description: 'Retrieve a corrected partial-stack TAKE comparison diagnostic for a specific turn. Compares tls_instruction_v1 (P2 prediction) against ap_actuals (P3 result) with an 8-condition match contract, proper null-identity handling, and expected_known_gap no-mutation verification. Supports three expansion modes: compact (verdict + one-line summary, default), detailed (+ per-field comparison table, prediction/actuals blocks, confidence), raw (+ bounded P2/P3/witness evidence excerpts). Scope: single-action partial-stack TAKE turns only. Post-hoc, observe-only, no mutation. Use compact first; escalate to detailed on mismatch or insufficient_evidence; use raw only for forensic investigation of a specific mismatch.',
+      parameters: {
+        type: 'object',
+        properties: {
+          turn: {
+            type: 'integer',
+            description: 'The turn number to retrieve the partial-stack comparison for.'
+          },
+          mode: {
+            type: 'string',
+            description: 'Expansion mode: compact (verdict + summary only, default), detailed (+ comparison table, prediction/actuals, confidence), raw (+ bounded evidence excerpts).'
+          }
+        },
+        required: ['turn']
+      }
+    }
   }
 ];
-
-// ── Config ─────────────────────────────────────────────────────────────────────
 const HOST         = 'localhost';
 const PORT         = process.env.PORT || 3000;
 const SSE_PATH     = '/diagnostics/stream';
@@ -1174,6 +1194,8 @@ TOOL ROUTING — SITES & LOCALSPACES (all tools operate on loaded/generated worl
   inspect_active_site → active site + all localspace descriptors (active site only, fastest)
   get_localspaces     → compact table of all localspaces for any loaded site (player need not be present)
   get_localspace      → single localspace full record + grid_summary (any loaded space, player need not be present)
+
+PARTIAL-STACK COMPARISON TOOL (v7.6.0): partial_stack_comparison(turn, mode?) provides a corrected deterministic comparison between the engine's pre-execution prediction (tls_instruction_v1, P2) and the actual post-mutation result (ap_actuals, P3) for single-action partial-stack TAKE turns only. It uses an 8-condition match contract with proper null-identity handling (null IDs are insufficient_evidence, not match), schema version guard, and expected_known_gap no-mutation postcondition verification. Three expansion modes: compact (verdict + one-line summary, default — use first), detailed (+ per-field comparison table, prediction/actuals blocks, confidence — escalate to this on mismatch or insufficient_evidence), raw (+ bounded P2/P3/witness evidence excerpts — use only for forensic investigation of a specific mismatch). There is no auto mode. Verdict semantics: match means all 8 conditions agree; mismatch verdicts are blocking (source_id_mismatch, quantity_before_mismatch, container_mismatch, outcome_mismatch, requested_quantity_mismatch, routing_mismatch, method_mismatch, quantity_applied_mismatch, source_after_mismatch); expected_known_gap covers the exact-stack dead-end (P2 predicts whole_transfer, AP dead-ends — verified no mutation occurred); no_mutation_check_failed escalates if expected_known_gap or fail_closed unexpectedly mutated state; insufficient_evidence covers missing P2, missing P3, null identity, or unexpected schema version; skipped_not_applicable means no partial-stack TAKE was detected. This is a purely diagnostic tool — it reads archived turn data only, never live ORS state, and never calls mutation authorities. Not for whole-object TAKE, environmental gather, compound commands, or Turn 1.
 
 KNOWLEDGE TIERS: Every answer you give draws from one of three tiers:
   Tier 1 — Current state (authoritative): current game state snapshot, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn RC/extraction. Fully reliable for present-moment questions.
@@ -2327,6 +2349,17 @@ async function executeToolCall(name, args) {
     } else if (name === 'get_p3_comparison') {
       try {
         const resp = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${_activeSessionId}/${args.turn}/p3-comparison`, {
+          timeout: 10000,
+          httpAgent: _toolHttpAgent
+        });
+        return JSON.stringify(resp.data);
+      } catch (err) {
+        return JSON.stringify({ error: err.message, status: err.response?.status ?? null });
+      }
+    } else if (name === 'partial_stack_comparison') {
+      try {
+        const modeParam = args.mode || 'compact';
+        const resp = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${_activeSessionId}/${args.turn}/partial-stack-comparison?mode=${modeParam}`, {
           timeout: 10000,
           httpAgent: _toolHttpAgent
         });
