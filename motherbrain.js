@@ -925,6 +925,7 @@ const MB_TOOLS = [
           },
           mode: {
             type: 'string',
+            enum: ['compact', 'detailed', 'raw'],
             description: 'Expansion mode: compact (verdict + summary only, default), detailed (+ comparison table, prediction/actuals, confidence), raw (+ bounded evidence excerpts).'
           }
         },

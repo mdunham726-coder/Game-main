@@ -1799,10 +1799,9 @@ function registerRoutes(app, opts = {}) {
     else if (predId === null && actualId === null)  verdict = 'insufficient_evidence';
     else if (blockingFields.source_quantity_before) verdict = 'quantity_before_mismatch';
     else if (blockingFields.source_container)       verdict = 'container_mismatch';
-    else if (blockingFields.outcome)                verdict = 'outcome_mismatch';
-    else if (blockingFields.requested_quantity)     verdict = 'requested_quantity_mismatch';
     else if (blockingFields.routing)                verdict = 'routing_mismatch';
     else if (blockingFields.helper_method)          verdict = 'method_mismatch';
+    else if (blockingFields.outcome)                verdict = 'outcome_mismatch';
     else if (blockingFields.quantity_applied)       verdict = 'quantity_applied_mismatch';
     else if (blockingFields.source_quantity_after)  verdict = 'source_after_mismatch';
     else if (details.length > 0)                    verdict = 'match';
@@ -1830,16 +1829,17 @@ function registerRoutes(app, opts = {}) {
 
     // ── Build comparison table ─────────────────────────────────────────────
     const _match = (f, p, a) => ({ field: f, predicted: p ?? null, actual: a ?? null, match: _valEq(p, a) });
+    const _matchId = (f, p, a) => ({ field: f, predicted: p ?? null, actual: a ?? null, match: _idEq(p, a) });
     const comparison = [
-      _match('source_object_id',       predId, actualId),
-      _match('source_quantity_before', predQty, actualQty),
-      _match('source_container',       (predSrcType && predSrcId) ? predSrcType + '/' + predSrcId : null,
-                                        (actualSrcType && actualSrcId) ? actualSrcType + '/' + actualSrcId : null),
-      _match('requested_quantity',     predReqQty, actualReqQty),
-      _match('routing',                predRouting, actualRouting),
-      _match('helper_method',          predMethod, actualMethod),
-      _match('outcome',                predOutcome, actualOutcome),
-      _match('quantity_applied',       predExtractQty, actualAppliedQty)
+      _matchId('source_object_id',       predId, actualId),
+      _match('source_quantity_before',   predQty, actualQty),
+      _match('source_container',         (predSrcType && predSrcId) ? predSrcType + '/' + predSrcId : null,
+                                         (actualSrcType && actualSrcId) ? actualSrcType + '/' + actualSrcId : null),
+      _match('requested_quantity',       predReqQty, actualReqQty),
+      _match('routing',                  predRouting, actualRouting),
+      _match('helper_method',            predMethod, actualMethod),
+      _match('outcome',                  predOutcome, actualOutcome),
+      _match('quantity_applied',         predExtractQty, actualAppliedQty)
     ];
     // Add source_quantity_after row if partial_split
     if (actualRouting === 'partial_split' && actualQty !== null && actualAppliedQty !== null) {
@@ -1874,10 +1874,15 @@ function registerRoutes(app, opts = {}) {
       outcome: actualOutcome
     };
 
-    // ── Confidence ──────────────────────────────────────────────────────────
+    // ── Confidence (evidence trust, not match ratio) ────────────────────────
     const totalConditions = comparison.length;
     const matchedConditions = comparison.filter(c => c.match).length;
-    const confidence = totalConditions > 0 ? matchedConditions / totalConditions : null;
+    const match_ratio = totalConditions > 0 ? matchedConditions / totalConditions : null;
+    const evidenceConfidence = {
+      resolution_confidence: v1?.provenance?.resolution_confidence ?? null,
+      evidence_completeness: (v1 !== null && apActuals !== null) ? 'full' : 'partial',
+      warnings_count: (v1?.warnings && Array.isArray(v1.warnings)) ? v1.warnings.length : 0
+    };
 
     // ── Detailed mode ──────────────────────────────────────────────────────
     const result = {
@@ -1889,7 +1894,8 @@ function registerRoutes(app, opts = {}) {
       comparison,
       prediction,
       actuals,
-      confidence,
+      confidence: evidenceConfidence,
+      match_ratio,
       evidence_basis: 'archived_turn'
     };
 
@@ -1919,7 +1925,14 @@ function registerRoutes(app, opts = {}) {
             allowed_to_execute: v1?.execution?.allowed_to_execute ?? null,
             gate_decision: v1?.execution?.gate_decision ?? null
           },
-          provenance: v1?.provenance ?? null,
+          provenance: v1?.provenance ? {
+            evidence_source:       v1.provenance.evidence_source ?? null,
+            provider:              v1.provenance.provider ?? null,
+            resolver_kind:         v1.provenance.resolver_kind ?? null,
+            resolution_basis:      v1.provenance.resolution_basis ?? null,
+            resolution_confidence: v1.provenance.resolution_confidence ?? null,
+            candidate_count:       v1.provenance.candidate_count ?? null
+          } : null,
           warnings: v1?.warnings ?? null
         },
         ap_actuals: apActuals,
