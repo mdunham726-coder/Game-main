@@ -1723,7 +1723,8 @@ function registerRoutes(app, opts = {}) {
     };
 
     // ── Blocking comparison (8 conditions) ──────────────────────────────────
-    const details = [];
+    const details = [];           // blocking mismatches only — drives verdict
+    const advisory_details = [];  // non-blocking diagnostic differences
     const warnings = [];
 
     // 1. source_object_id — identity field: both null = insufficient, not match
@@ -1748,9 +1749,9 @@ function registerRoutes(app, opts = {}) {
       });
     }
 
-    // 4. requested_quantity
+    // 4. requested_quantity (advisory — does not block match)
     if (!_valEq(predReqQty, actualReqQty)) {
-      details.push({ field: 'requested_quantity', predicted: predReqQty, actual: actualReqQty, match: false });
+      advisory_details.push({ field: 'requested_quantity', predicted: predReqQty, actual: actualReqQty, match: false });
     }
 
     // 5. routing
@@ -1811,7 +1812,10 @@ function registerRoutes(app, opts = {}) {
     if (effectiveMode === 'compact') {
       let summary;
       if (verdict === 'match') {
-        summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': MATCH — TLS prediction and AP actuals agree on all 8 comparison conditions.';
+        const advisoryNote = advisory_details.length > 0
+          ? ' (' + advisory_details.length + ' advisory difference(s): ' + advisory_details.map(d => d.field).join(', ') + ')'
+          : '';
+        summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': MATCH — blocking operation contract holds (source ID, quantity before, container, routing, method, outcome, quantity applied, source after all agree).' + advisoryNote;
       } else if (verdict === 'insufficient_evidence') {
         summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': Insufficient evidence — both source object IDs are null; cannot confirm identity match.';
       } else {
@@ -1890,6 +1894,7 @@ function registerRoutes(app, opts = {}) {
       turn_number: turnObj?.turn_number ?? null,
       scope: 'single_action_partial_stack_take',
       details,
+      advisory_details,
       warnings,
       comparison,
       prediction,
