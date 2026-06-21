@@ -23,7 +23,7 @@
  * @returns {object} tls_executor_dry_run_v1 envelope
  */
 function executeTlsObjectInstruction(state, instruction, options) {
-  const _dryRun = options?.dryRun !== false; // always true in P4
+  const _dryRun = true; // P4 v0 always dry-run — never allow live mutation
 
   // ── Base envelope skeleton ──────────────────────────────────────────────
   const _base = () => ({
@@ -283,7 +283,6 @@ function executeTlsObjectInstruction(state, instruction, options) {
     env.outcome = 'fail_closed';
     env.fail_closed_reason = 'routing_mismatch';
     env.validation = { source_exists: sourceExists, source_active: sourceActive, quantity_matches_instruction: quantityMatches, container_matches_instruction: containerMatches, destination_valid: destValid, routing_recomputed: routingRecomputed };
-    env.warnings.push({ code: 'routing_mismatch', severity: 'advisory', message: 'Recomputed routing (' + recomputedRouting + '/' + recomputedMethod + ') differs from v1 instruction (' + v1IntendedMutation + '/' + v1ExpectedMethod + '). Instruction may be stale.' });
     return env;
   }
 
@@ -323,7 +322,7 @@ function executeTlsObjectInstruction(state, instruction, options) {
     };
     predictedResult = {
       source_quantity_before: orsQuantity,
-      source_quantity_after: orsQuantity, // whole transfer — same object moves
+      source_quantity_after: null,
       successor_quantity: null
     };
   }
