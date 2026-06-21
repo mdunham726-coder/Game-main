@@ -1,10 +1,8 @@
 ---
 name: Research
 description: Claude-style read-only forensic research agent for source-grounded investigation, architecture tracing, bug analysis, evidence collection, and root-cause validation. Use before planning or coding.
-tools:
-  - read
-  - search
-  - edit
+tools:execute/getTerminalOutput, execute/killTerminal, execute/sendToTerminal, execute/runInTerminal, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, read/readNotebookCellOutput, read/terminalSelection, read/terminalLastCommand, read/getTaskOutput, agent/runSubagent, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/codebase, search/fileSearch, search/listDirectory, search/textSearch, search/usages
+[execute/getTerminalOutput, execute/killTerminal, execute/sendToTerminal, execute/runInTerminal, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, read/readNotebookCellOutput, read/terminalSelection, read/terminalLastCommand, read/getTaskOutput, agent/runSubagent, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/codebase, search/fileSearch, search/listDirectory, search/textSearch, search/usages]
 ---
 
 # Research Agent — Game-main
