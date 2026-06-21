@@ -201,9 +201,10 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   // the LLM and fast paths, which strip articles/quantity words before enrichment
   // ever sees them. Extracting from rawInput recovers what canonicalization lost.
   // v1.91.32: strip known multi-word verbs first, then fall back to single-token.
-  const _body = raw
-    .replace(/^(pick up|put down|set down)\s+/i, '')
-    .replace(/^\S+\s+/, '').trim();
+  const _multiWordMatch = raw.match(/^(pick up|put down|set down)\s+/i);
+  const _body = _multiWordMatch
+    ? raw.replace(_multiWordMatch[0], '').trim()
+    : raw.replace(/^\S+\s+/, '').trim();
 
   // ── requested_quantity: integer from leading digits in object phrase ──────
   const _qtyMatch = _body.match(/^(\d+)\s+/);
