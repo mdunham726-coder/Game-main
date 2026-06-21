@@ -41,7 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.6.0';
+const MB_VERSION = '7.6.1';
+// MB v7.6.1 (June 2026): Patch — adds Mother Brain awareness of the P4 tls_executor_dry_run diagnostic surface. MB_VERSION 7.6.0 -> 7.6.1.
 // MB v7.6.0 (June 2026): Minor — partial_stack_comparison tool added to MB_TOOLS. Calls GET /diagnostics/turn/:sessionId/:turn/partial-stack-comparison endpoint. Observe-only, post-hoc, single-action partial-stack TAKE only. Supports compact/detailed/raw expansion modes. MB_VERSION 7.5.2 -> 7.6.0.
 // MB v7.5.2 (June 2026): Patch — P3 comparison diagnostic tool added to MB_TOOLS (get_p3_comparison). Calls GET /diagnostics/turn/:sessionId/:turn/p3-comparison endpoint. Observe-only, post-hoc. MB_VERSION 7.5.1 -> 7.5.2.
 // MB v7.4.0 (June 2026): Patch — VOLATILE DIAGNOSTIC SURFACES doctrine block added to SYSTEM_PROMPT after CLAIM ANNOTATION. Teaches Mother that get_witness is latest-only and overwritten each turn; get_turn_data(turn=N) is preferred for historical validation; overwritten diagnostics without archive access must be marked LOST / NOT DIRECTLY VERIFIED; reconstructed evidence must be labeled [RECONSTRUCTED from later state]; do not start a new game to recreate missing evidence unless explicitly instructed. MB_VERSION 7.3.0 -> 7.4.0.
@@ -1273,6 +1274,9 @@ When validating a specific prior turn's diagnostics:
 P2 TLS v1 INSTRUCTION DIAGNOSTIC (v1.91.60):
 tls_instruction_v1 is a new pre-AP diagnostic sibling of existing tls_instruction. Schema version is tls_ors_instruction_v1. It is observe-only and has no mutation authority. Semantics: null means P2 was not applicable / resolver evidence was absent; a non-null disabled instruction means P2 was applicable but blocked, so inspect execution, routing.fail_closed_reason, and warnings[]; an execution-eligible classification still remains observe-only and should carry execution.gate_decision: 'observe_only'. Compare v1 as the pre-AP source-authoritative prediction against v0 tls_instruction as the post-AP diagnostic outcome. AP remains the mutation path in P2; v1 must not imply ObjectHelper execution, _apExecutedTransfers writes, or runtime behavior changes.
 
+P4 TLS EXECUTOR DRY-RUN DIAGNOSTIC:
+tls_executor_dry_run is a P4 pre-AP diagnostic surface that predicts the ObjectHelper operation without executing it. dry_run is always true and would_project must remain null; non-null projection data indicates P5 leakage. Access it with get_witness() for the latest turn or unfiltered get_turn_data(turn=N) for archived turns. Do not use filtered get_turn_data(fields=...) or partial_stack_comparison — neither validates this field. Compare tls_executor_dry_run against ap_actuals and final ORS state as two separate verdicts: (1) did P4 predict AP correctly, and (2) did the final world state match the prediction? Do not collapse these verdicts; post-AP duplicate mutation can make verdict 1 pass while verdict 2 fails. Non-v1 turns should show tls_executor_dry_run as null, absent, or otherwise non-populated.
+
 PRIORITY ORDER:
   1. Retrieved evidence (tool result) — highest authority
   2. Structured context already in this message (current state, last 5 narrations, last 3 CB packets, last turn RC/extraction)
@@ -1298,6 +1302,7 @@ SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it
   ObjectHelper.js — object lifecycle: promotion, transfer, retirement, condition updates, dedup guard | read when investigating object_errors, container mismatches, or phantom duplicates
   SemanticNormalizer.js — TSL Stage 1 observe-only semantic normalization; analyze() reads CB output + parser/gate/AP signals and emits tsl diagnostic object attached to object_reality; does NOT mutate any state; result flows to object_reality.tsl in turn archive; read when investigating semantic evidence, alias resolution, acquisition intent, TSL warning patterns, or acquisition_ungrounded signals
   ObjectOperationResolver.js — P1a observe-only LLM-backed evidence resolver for partial-stack TAKE; three-layer architecture: candidate enumeration (deterministic JS) → LLM evidence analysis (DeepSeek model call) → ORS fact validation (deterministic JS); exports resolvePartialStackTake(state, actions) returning resolver_evidence_v1; does NOT mutate state, does NOT call ObjectHelper, does NOT write _apExecutedTransfers or AP compatibility projections; NOT YET wired into witness or execution — standalone observe-only module; read when investigating resolver evidence contract, candidate enumeration rules, prompt payload schema, or ORS validation logic; expected success is evidence correctness, not game behavior change
+  TlsObjectOperationExecutor.js — P4 dry-run predictor: reads tls_instruction_v1 + pre-AP ORS state and produces tls_executor_dry_run. Diagnostic only; no object mutation, ObjectHelper call, AP bypass, or compatibility projection.
   conditionbot.js — player condition lifecycle evaluation | read when a condition was not created, resolved, or updated correctly
   NarrativeContinuity.js — legacy continuity module (bypassed, preserved) | read only for legacy reference
   QuestSystem.js — quest tracking stubs | read when investigating quest state
