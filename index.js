@@ -40,6 +40,7 @@ const AuthorityGate = require('./authoritygate'); // v1.88.0
 const SemanticNormalizer = require('./SemanticNormalizer'); // v1.88.78: TSL Stage 1
 const diag = require('./diagnostics');
 const ObjectOperationResolver = require('./ObjectOperationResolver'); // v1.91.56: P1b witness diagnostics
+const TlsObjectOperationExecutor = require('./TlsObjectOperationExecutor'); // v1.91.64: P4 dry-run executor
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -2385,6 +2386,15 @@ app.post('/narrate', async (req, res) => {
             gameState
           );
 
+          // v1.91.64: P4 — dry-run executor prediction (pre-AP, observe-only, partial-stack TAKE only)
+          if (debug.tls_instruction_v1) {
+            debug.tls_executor_dry_run = TlsObjectOperationExecutor.executeTlsObjectInstruction(
+              gameState,
+              debug.tls_instruction_v1,
+              { dryRun: true }
+            );
+          }
+
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
@@ -3887,6 +3897,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         tls_instruction: debug.tls_instruction,
         tls_instruction_v1: debug.tls_instruction_v1,          // v1.91.59: P2 v1 sibling
         tls_ors_alignment: debug.tls_ors_alignment,
+        tls_executor_dry_run: debug.tls_executor_dry_run,       // v1.91.64: P4 dry-run envelope
         tls_execution_result: debug.tls_execution_result
       });
     }
@@ -6493,6 +6504,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       tls_instruction:          _cloneForArchive(debug.tls_instruction),
       tls_instruction_v1:       _cloneForArchive(debug.tls_instruction_v1),  // v1.91.59: P2 v1 sibling
       tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
+      tls_executor_dry_run:     _cloneForArchive(debug.tls_executor_dry_run),  // v1.91.64: P4 dry-run envelope
       tls_execution_result:     _cloneForArchive(debug.tls_execution_result)
     };
     
