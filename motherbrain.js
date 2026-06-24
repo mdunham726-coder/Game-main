@@ -41,7 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.7.0';
+const MB_VERSION = '7.7.1';
+// MB v7.7.1 (June 2026): Patch — P5-0 archive foundation awareness: get_turn_data tool description updated with p5_witness_archive field. MB_VERSION 7.7.0 -> 7.7.1.
 // MB v7.7.0 (June 2026): Minor — Evidence Admissibility / Witness Integrity HARD RULE doctrine added to SYSTEM_PROMPT. Teaches Mother Brain that diagnostic claims require specific tool-call provenance, that inference/memory/reconstruction cannot support PASS, that truncated tool output is not observed, and that insufficient evidence is INCONCLUSIVE. MB_VERSION 7.6.1 -> 7.7.0.
 // MB v7.6.1 (June 2026): Patch — adds Mother Brain awareness of the P4 tls_executor_dry_run diagnostic surface. MB_VERSION 7.6.0 -> 7.6.1.
 // MB v7.6.0 (June 2026): Minor — partial_stack_comparison tool added to MB_TOOLS. Calls GET /diagnostics/turn/:sessionId/:turn/partial-stack-comparison endpoint. Observe-only, post-hoc, single-action partial-stack TAKE only. Supports compact/detailed/raw expansion modes. MB_VERSION 7.5.2 -> 7.6.0.
