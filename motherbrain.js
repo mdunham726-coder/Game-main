@@ -1524,7 +1524,9 @@ github_compare -- Return the unified diff between two refs (commit SHAs, branche
 
 github_search_code -- Search for a string or pattern across all files in the repository. Returns file paths, URLs, and text fragments for each match (up to 20 results). Uses GitHub code search syntax.
 
-Error handling: all GitHub tools return structured JSON errors rather than throwing. Error shapes: {error:"github_pat_not_configured"} if PAT is missing; {error:"github_not_found", hint:...} on 404 (wrong SHA, path, or ref); {error:"github_auth_failed", hint:...} on 401/403; {error:"github_rate_limited", reset_at:<epoch>} on rate limit; {error:"github_unreachable", detail:...} on network failure. Check the error field before interpreting any response.`;
+Error handling: all GitHub tools return structured JSON errors rather than throwing. Error shapes: {error:"github_pat_not_configured"} if PAT is missing; {error:"github_not_found", hint:...} on 404 (wrong SHA, path, or ref); {error:"github_auth_failed", hint:...} on 401/403; {error:"github_rate_limited", reset_at:<epoch>} on rate limit; {error:"github_unreachable", detail:...} on network failure. Check the error field before interpreting any response.
+
+ACTIVE BRANCH: The primary development branch is 'partial-stack-execution'. P4, P5-0, and all recent TLS/executor/archive work lives there. When inspecting the latest code via github_get_file or github_search_code, use ref='partial-stack-execution'. The main branch is the stable release baseline — it does not contain P4+ work.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
