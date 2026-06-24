@@ -3902,6 +3902,73 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       });
     }
 
+    // v1.91.66: P5-0 — immutable evidence archive freeze (pre-RC, post-witness, deep-cloned)
+    // Fires only for partial-stack TAKE turns where tls_instruction_v1 exists.
+    // Deep-cloned via JSON roundtrip — no references to mutable debug.* fields survive.
+    // _p5Snapshot is carried forward and attached to turnObject ~2600 lines later.
+    let _p5Snapshot = null;
+    if (debug.tls_instruction_v1) {
+      const _wit = debug.itemOperationWitness;
+      _p5Snapshot = JSON.parse(JSON.stringify({
+        schema_version:       'p5_witness_archive_v1',
+        turn:                 turnNumber,
+        timestamp:            new Date().toISOString(),
+        parsed_action:        _wit?.parsed_action ?? null,
+        parsed_target:        _wit?.parsed_target ?? null,
+        selection_mode:       _wit?.selection_mode ?? null,
+        requested_quantity:   _wit?.requested_quantity ?? null,
+        gate_decision:        _wit?.gate_decision ?? null,
+        gate_reason_code:     _wit?.gate_reason_code ?? null,
+        resolver_evidence:    _wit?.resolver_evidence ?? null,
+        tls_instruction_v1:   debug.tls_instruction_v1 ?? null,
+        tls_executor_dry_run: debug.tls_executor_dry_run ?? null,
+        ap_actuals:           _wit?.ap_actuals ?? null,
+        tls_execution_result: debug.tls_execution_result ?? null,
+        tls_ors_alignment:    debug.tls_ors_alignment ?? null,
+        object_reality_summary: (() => {
+          try {
+            const _src = gameState.objects?.[debug.tls_instruction_v1?.object?.id];
+            const _succId = debug.itemOperationWitness?.ap_actuals?.successor_id;
+            const _succ = _succId ? gameState.objects?.[_succId] : null;
+            return {
+              source_object: _src ? {
+                object_id:      _src.id ?? null,
+                quantity_before: debug.tls_instruction_v1?.quantity?.observed_available_quantity ?? null,
+                quantity_after:  _src.quantity ?? null,
+                container_type:  _src.current_container_type ?? null,
+                container_id:    _src.current_container_id ?? null
+              } : null,
+              successor_object: _succ ? {
+                object_id:      _succ.id ?? null,
+                quantity:       _succ.quantity ?? null,
+                container_type: _succ.current_container_type ?? null,
+                container_id:   _succ.current_container_id ?? null
+              } : null,
+              player_inventory: {
+                held_object_ids: Array.isArray(gameState.player?.object_ids) ? [...gameState.player.object_ids] : [],
+                held_count:      Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids.length : 0,
+                worn_object_ids: Array.isArray(gameState.player?.worn_object_ids) ? [...gameState.player.worn_object_ids] : []
+              }
+            };
+          } catch (_) { return null; }
+        })(),
+        fields_present: {
+          resolver_evidence:     !!(_wit?.resolver_evidence),
+          tls_instruction_v1:    !!(debug.tls_instruction_v1),
+          tls_executor_dry_run:  !!(debug.tls_executor_dry_run),
+          ap_actuals:            !!(_wit?.ap_actuals),
+          tls_execution_result:  !!(debug.tls_execution_result),
+          tls_ors_alignment:     !!(debug.tls_ors_alignment),
+          p5_authority_result:   false,
+          p5_blocked_candidates: false
+        },
+        archive_frozen_at: new Date().toISOString(),
+        archive_source:    'p5_freeze_point_3902',
+        p5_authority_result:   null,
+        p5_blocked_candidates: null
+      }));
+    }
+
     // [REALITY-CHECK] Arbiter Phase 0 — pre-narration reality adjudication (v1.84.2)
     // Awaited and blocking. Fires before narrationContent is built. On failure: hard stop — narrator never called.
     // Skip conditions: Turn 1 (founding premise), move, look, wait.
@@ -6505,7 +6572,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       tls_instruction_v1:       _cloneForArchive(debug.tls_instruction_v1),  // v1.91.59: P2 v1 sibling
       tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
       tls_executor_dry_run:     _cloneForArchive(debug.tls_executor_dry_run),  // v1.91.64: P4 dry-run envelope
-      tls_execution_result:     _cloneForArchive(debug.tls_execution_result)
+      tls_execution_result:     _cloneForArchive(debug.tls_execution_result),
+      p5_witness_archive:       _p5Snapshot                                // v1.91.66: P5-0 immutable evidence archive
     };
     
     // Store turn object in turn history

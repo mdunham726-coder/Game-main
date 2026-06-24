@@ -1268,7 +1268,8 @@ function registerRoutes(app, opts = {}) {
       narration_debug:     'narration_debug',
       logs:                'logs',
       object_reality:      'object_reality',
-      arbiter_verdict:     'arbiter_verdict'
+      arbiter_verdict:     'arbiter_verdict',
+      p5_witness_archive:  'p5_witness_archive'                               // v1.91.66: P5-0
     };
     const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
     const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };
@@ -1313,8 +1314,12 @@ function registerRoutes(app, opts = {}) {
   // ── P3 comparison builder ───────────────────────────────────────────────
   // Pure function. Reads archived turnObject. Applies Q5 taxonomy. No state access.
   function _buildP3ApTlsComparison(turnObj) {
-    const v1 = turnObj?.tls_instruction_v1 ?? null;
-    const apActuals = turnObj?.item_operation_witness?.ap_actuals ?? null;
+    const v1 = turnObj?.p5_witness_archive?.tls_instruction_v1
+            ?? turnObj?.tls_instruction_v1
+            ?? null;
+    const apActuals = turnObj?.p5_witness_archive?.ap_actuals
+                   ?? turnObj?.item_operation_witness?.ap_actuals
+                   ?? null;
 
     // ── Not applicable ─────────────────────────────────────────────────
     if (v1 === null) {
@@ -1477,8 +1482,12 @@ function registerRoutes(app, opts = {}) {
   function _buildPartialStackComparison(turnObj, mode) {
     const effectiveMode = (mode === 'detailed' || mode === 'raw') ? mode : 'compact';
 
-    const v1 = turnObj?.tls_instruction_v1 ?? null;
-    const apActuals = turnObj?.item_operation_witness?.ap_actuals ?? null;
+    const v1 = turnObj?.p5_witness_archive?.tls_instruction_v1
+            ?? turnObj?.tls_instruction_v1
+            ?? null;
+    const apActuals = turnObj?.p5_witness_archive?.ap_actuals
+                   ?? turnObj?.item_operation_witness?.ap_actuals
+                   ?? null;
 
     // ── 4-state guard order (BEFORE schema version check) ──────────────────
     // State 1: both null — nothing happened

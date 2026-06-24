@@ -196,7 +196,7 @@ const MB_TOOLS = [
           },
           fields: {
             type: 'string',
-            description: 'Optional comma-separated list of fields to return: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs, object_reality. Omit for the full turnObject. Use logs for engine-event tracing (player_action_parsed, move, location_changed events) — not for LLM prompts or responses (use get_payload for those). Event presence in logs is version-dependent — absence is not proof an event did not occur.'
+            description: 'Optional comma-separated list of fields to return: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs, object_reality, p5_witness_archive. Omit for the full turnObject. p5_witness_archive is the preferred compact historical certification surface for partial-stack TAKE operation evidence — it contains frozen pre-AP predictions and post-AP actuals. Use logs for engine-event tracing (player_action_parsed, move, location_changed events) — not for LLM prompts or responses (use get_payload for those). Event presence in logs is version-dependent — absence is not proof an event did not occur.'
           }
         },
         required: ['turn']
