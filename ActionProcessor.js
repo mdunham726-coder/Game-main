@@ -471,100 +471,26 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       // v1.91.35: expose pre-transfer container to gameState for witness/tls prior-container fields
       state._apFromContainerType = _fromContainerType;
       state._apFromContainerId   = _fromContainerId;
-      // v1.91.35 TEMP BRIDGE — pending TLS object-operation execution lane.
-      // Consumes selection_mode/requested_quantity from enriched parser intent.
-      // Mirrors drop handler partial-stack guard (same splitObjectDirect shape).
-      // Three-way quantity: requested < source → split; === source → whole transfer;
-      // > source → fail safely (no mutation).
-      if (
-        actions?.selection_mode === 'partial_from_stack' &&
-        typeof actions?.requested_quantity === 'number' &&
-        actions.requested_quantity >= 1 &&
-        typeof _preObj?.quantity === 'number'
-      ) {
-        if (_preObj.quantity > actions.requested_quantity) {
-          const splitResult = splitObjectDirect(
-            state, found.objectId, actions.requested_quantity,
-            'player', 'player', turnNum, 'ap_partial_split_take'
-          );
-          if (splitResult.ok) {
-            deltas.push({ op: 'set', path: '/player/object_ids', value: state.player.object_ids });
-            flags.inventory_rev = true;
-            takeSucceeded = true;
-            if (!state._apExecutedTransfers) state._apExecutedTransfers = [];
-            state._apExecutedTransfers.push(splitResult.successor_object_id);
-            // v1.91.XX P3: raw AP actuals — diagnostics.js consumes this from witness/archive
-            state._apActuals = {
-              operation_family:         'take',
-              routing:                  'partial_split',
-              helper_method:            'splitObjectDirect',
-              source_object_id:         found.objectId,
-              source_quantity_before:   splitResult.source_quantity_before,
-              source_quantity_after:    splitResult.source_quantity_after,
-              successor_id:             splitResult.successor_object_id,
-              successor_quantity:       splitResult.applied_quantity,
-              destination_container_type:  'player',
-              destination_container_id:    'player',
-              outcome:                  'success'
-            };
-            if (Array.isArray(state._objectRealityDebug?.audit)) {
-              state._objectRealityDebug.audit.push({
-                turn:                   turnNum,
-                action:                 'ap_partial_split_take',
-                source_object_id:       found.objectId,
-                successor_id:           splitResult.successor_object_id,
-                split_key:              splitResult.split_key,
-                source_quantity_before: splitResult.source_quantity_before,
-                source_quantity_after:  splitResult.source_quantity_after,
-                requested_quantity:     splitResult.requested_quantity,
-                applied_quantity:       splitResult.applied_quantity
-              });
-            }
-            if (logger) {
-              logger.action_resolved('take', true,
-                `took ${actions.requested_quantity} ${target} (partial split, ${splitResult.source_quantity_after} remain)`
-              );
-            }
-          } else {
-            console.warn(`[ACTIONS] take partial-split failed: ${splitResult.error} (${found.objectId})`);
-            if (logger) logger.action_resolved('take', false, `could not take ${target}: ${splitResult.error}`);
-          }
-          return; // Bridge handled — skips generic bottom-of-function logger
-        }
-        if (_preObj.quantity < actions.requested_quantity) {
-          console.warn(`[ACTIONS] take partial-split: not enough — requested ${actions.requested_quantity}, available ${_preObj.quantity} (${found.objectId})`);
-          if (logger) logger.action_resolved('take', false, `not enough ${target}: requested ${actions.requested_quantity}, have ${_preObj.quantity}`);
-          // v1.91.XX P3: raw AP actuals for over-stack fail_closed
-          state._apActuals = {
-            operation_family:         'take',
-            routing:                  'fail_closed',
-            helper_method:            null,
-            source_object_id:         found.objectId,
-            source_quantity_before:   _preObj.quantity,
-            source_quantity_after:    _preObj.quantity,
-            successor_id:             null,
-            successor_quantity:       null,
-            destination_container_type:  'player',
-            destination_container_id:    'player',
-            outcome:                  'fail_closed'
-          };
-          return; // Bridge handled failure — skips generic bottom-of-function logger
-        }
-        // _preObj.quantity === requested_quantity — fall through to transferObjectDirect
-        // v1.91.XX P3: raw AP actuals for exact-stack dead_end
+
+      // v1.91.67: P5-A1 — AP quarantine / dead-end proof
+      // AP refuses ownership of partial-stack TAKE. Writes quarantine evidence
+      // to _apActuals and returns immediately — no mutation, no quantity comparison,
+      // no split/transfer, no inventory delta, no logger.
+      if (actions?.selection_mode === 'partial_from_stack') {
         state._apActuals = {
           operation_family:         'take',
-          routing:                  'dead_end',
+          routing:                  'quarantined',
           helper_method:            null,
           source_object_id:         found.objectId,
-          source_quantity_before:   _preObj.quantity,
-          source_quantity_after:    _preObj.quantity,
+          source_quantity_before:   _preObj?.quantity ?? null,
+          source_quantity_after:    _preObj?.quantity ?? null,
           successor_id:             null,
           successor_quantity:       null,
           destination_container_type:  'player',
           destination_container_id:    'player',
-          outcome:                  'dead_end'
+          outcome:                  'refused_ownership'
         };
+        return;
       }
 
       // v1.91.XX: Phase D — TLS whole-object take execution lane.
