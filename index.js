@@ -5894,7 +5894,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
         _objectRealityDebug.retirement_updates = _retirementResults;
 
-        // v1.91.67: P5-A1 quarantine seal — suppress downstream injection when AP refused partial-stack TAKE this turn
+        // v1.91.68: P5-A1 quarantine seal — suppress downstream injection when AP refused partial-stack TAKE this turn
         const _apRefusedTake =
           gameState._apActuals?.operation_family === 'take' &&
           gameState._apActuals?.routing === 'quarantined' &&
