@@ -5894,9 +5894,15 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
         _objectRealityDebug.retirement_updates = _retirementResults;
 
+        // v1.91.67: P5-A1 quarantine seal — suppress downstream injection when AP refused partial-stack TAKE this turn
+        const _apRefusedTake =
+          gameState._apActuals?.operation_family === 'take' &&
+          gameState._apActuals?.routing === 'quarantined' &&
+          gameState._apActuals?.outcome === 'refused_ownership';
+
         // v1.90.02: TLS fission injection — retire objects TLS resolved that CB missed this turn.
         // Inserts into _retirementPairs so the existing fission second pass picks up successors automatically.
-        {
+        if (!_apRefusedTake) {
           const _tslFissionOps = Array.isArray(_tslR?.tsl?.fission_operations) ? _tslR.tsl.fission_operations : [];
           let _tslFissionInjected    = 0;
           let _tslFissionUnresolvable = 0;
@@ -5925,7 +5931,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // v1.91.03: TLS extraction injection — build partial_split quarantine from extraction_operations.
         // Non-degenerate ops: partial_split entries → ObjectHelper Pass 3.
         // degrades_to_fission ops: retire source → push to _retirementPairs (fission second pass promotes successor).
-        {
+        if (!_apRefusedTake) {
           const _tslExtractionOps = Array.isArray(_tslR?.tsl?.extraction_operations) ? _tslR.tsl.extraction_operations : [];
           let _tslExtractionInjected     = 0;
           let _tslExtractionUnresolvable = 0;
