@@ -2405,6 +2405,53 @@ app.post('/narrate', async (req, res) => {
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
             console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
           }
+
+          // v1.91.71: P5-A2 — live TLS partial-stack TAKE execution
+          // Consumes P4 dry-run prediction. Executes when P4 predicted a
+          // valid partial_split. AP is not a precondition — the new lane
+          // owns execution. splitObjectDirect is self-guarding (fail-closed).
+          // Mutation happens pre-narration/pre-CB so narrator and CB see
+          // correct ORS state. Downstream CB output remains runtime-observed.
+          if (
+            debug.tls_executor_dry_run?.operation_allowed === true &&
+            debug.tls_executor_dry_run?.outcome === 'partial_split'
+          ) {
+            const _tlsPartialParams = debug.tls_executor_dry_run.predicted_call.parameters;
+            const splitResult = ObjectHelper.splitObjectDirect(
+              gameState,
+              _tlsPartialParams.source_object_id,
+              _tlsPartialParams.extract_quantity,
+              _tlsPartialParams.destination_container_type,
+              _tlsPartialParams.destination_container_id,
+              turnNumber,
+              'tls_partial_stack_take'
+            );
+            gameState._tlsPartialStackResult = {
+              schema_version: 'tls_partial_stack_execution_v1',
+              executed: splitResult.ok,
+              split_result: splitResult,
+              predicted_call: debug.tls_executor_dry_run.predicted_call,
+              ap_actuals: gameState._apActuals ?? null
+            };
+
+            // Audit entry
+            if (!Array.isArray(gameState._objectRealityDebug?.audit)) {
+              if (!gameState._objectRealityDebug) gameState._objectRealityDebug = {};
+              gameState._objectRealityDebug.audit = [];
+            }
+            gameState._objectRealityDebug.audit.push({
+              action: 'tls_partial_stack_take',
+              source_object_id: _tlsPartialParams.source_object_id,
+              extract_quantity: _tlsPartialParams.extract_quantity,
+              destination_container_type: _tlsPartialParams.destination_container_type,
+              destination_container_id: _tlsPartialParams.destination_container_id,
+              executed: splitResult.ok,
+              split_result: splitResult,
+              turn: turnNumber,
+              timestamp: new Date().toISOString()
+            });
+          }
+
           // v1.85.4: no-movement detection for enter/exit/move intents
           const _ma = mapped?.player_intent?.action;
           if (_preTurnLoc && (_ma === 'enter' || _ma === 'exit' || _ma === 'move')) {
@@ -3898,7 +3945,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         tls_instruction_v1: debug.tls_instruction_v1,          // v1.91.59: P2 v1 sibling
         tls_ors_alignment: debug.tls_ors_alignment,
         tls_executor_dry_run: debug.tls_executor_dry_run,       // v1.91.64: P4 dry-run envelope
-        tls_execution_result: debug.tls_execution_result
+        tls_execution_result: debug.tls_execution_result,
+        tls_partial_stack_result: gameState._tlsPartialStackResult ?? null   // v1.91.71: P5-A2 live TLS partial-stack result
       });
     }
 
@@ -5098,7 +5146,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       const _preserveDirectAuditActions = new Set([
         'ap_direct_transfer',
         'tls_whole_object_transfer',
-        'ap_partial_split_take'
+        'ap_partial_split_take',
+        'tls_partial_stack_take'
       ]);
       const _priorDirectAudit = Array.isArray(gameState._objectRealityDebug?.audit)
         ? gameState._objectRealityDebug.audit.filter(e => _preserveDirectAuditActions.has(e?.action))
@@ -6640,6 +6689,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
       tls_executor_dry_run:     _cloneForArchive(debug.tls_executor_dry_run),  // v1.91.64: P4 dry-run envelope
       tls_execution_result:     _cloneForArchive(debug.tls_execution_result),
+      tls_partial_stack_result: _cloneForArchive(gameState._tlsPartialStackResult ?? null),  // v1.91.71: P5-A2 live TLS partial-stack result
       p5_witness_archive:       _p5Snapshot                                // v1.91.66: P5-0 immutable evidence archive
     };
     
