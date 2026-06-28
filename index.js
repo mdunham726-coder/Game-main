@@ -5445,6 +5445,39 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             if (_cbExtSuppressed > 0) _objectRealityDebug.cb_extraction_suppressed = _cbExtSuppressed;
           }
         }
+        // v1.91.70: P5-A1 CB candidate promotion guard — suppress environment→player
+        // candidates after AP already refused a partial-stack TAKE this turn.
+        // Operates on structural signals only — no name matching.
+        // Temporary — will be narrowed in P5-A2 when the live execution lane goes live.
+        let _cbCandidateTakeSuppressed = 0;
+        _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+          if (
+            c.container_type === 'player' &&
+            c.transfer_origin === 'environment_interaction' &&
+            _parsedAction === 'take' &&
+            _envGatherLabel === null &&
+            gameState._apActuals?.routing === 'quarantined' &&
+            gameState._apActuals?.outcome === 'refused_ownership'
+          ) {
+            if (!Array.isArray(_objectRealityDebug.suppressed_replays)) _objectRealityDebug.suppressed_replays = [];
+            _objectRealityDebug.suppressed_replays.push({
+              reason: 'cb_candidate_take_suppressed',
+              candidate_name: c.name || null,
+              temp_ref: c.temp_ref || null,
+              container_type: c.container_type,
+              transfer_origin: c.transfer_origin,
+              parsed_action: _parsedAction,
+              env_gather_label: _envGatherLabel,
+              ap_routing: gameState._apActuals?.routing || null,
+              ap_outcome: gameState._apActuals?.outcome || null,
+              ap_source_object_id: gameState._apActuals?.source_object_id || null
+            });
+            _cbCandidateTakeSuppressed++;
+            return false;
+          }
+          return true;
+        });
+        if (_cbCandidateTakeSuppressed > 0) _objectRealityDebug.cb_candidate_take_suppressed = _cbCandidateTakeSuppressed;
         const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
         const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];
         _objectRealityDebug.cb_candidates = _cbCandidates;
