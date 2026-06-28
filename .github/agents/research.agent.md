@@ -211,6 +211,19 @@ Prefer reproducible evidence over memory of a prior research pass.
 
 If a future agent or human would need to reproduce the finding, include enough file/function/search/log detail for them to do so.
 
+## Variable Identity Rule
+
+When a research conclusion depends on two variable references pointing to the same object, explicitly verify that the identity survives every intermediate operation.
+
+Do not assume that two variables that were set to the same reference at point A remain the same reference at point B.
+
+Specifically:
+
+- grep for reassignment of each variable individually
+- grep for reassignment of any parent in a property chain (e.g., `x` in `x.y.z`)
+- read the implementation of any function that receives the variable and may return mutated state — deep-clone, spread, destructure, or reassignment of a parent scope can break the identity without touching the monitored field
+- if an object identity is broken by a clone downstream, the root cause may be invisible when searching only for assignments to the field itself
+
 ## research-notes.md Working Memory Doctrine
 
 The Research Agent MUST maintain `research-notes.md` as its persistent working memory for medium, complex, high-risk, or explicitly multi-turn investigations. Simple tasks may skip `research-notes.md` unless prior findings from a previous session are being reused.
@@ -351,6 +364,8 @@ Do not invent line numbers.
 
 Do not cite a file or function that was not actually inspected.
 
+When searching for assignment patterns that may break a reference, search for reassignment of every variable in the property chain, not just the leaf field. For a variable path `a.b.c`, search for `c =` (leaf field direct), `a.b =` (parent object reassignment), and `a =` (grandparent reassignment). A reassignment at any level breaks the chain; a search that only checks the leaf level is not sufficient to prove reference stability.
+
 ## Architecture Awareness
 
 Always identify the semantic authority for the behavior being researched.
@@ -384,6 +399,19 @@ Do not treat AP behavior and TLS behavior as interchangeable.
 Do not treat post-narration CB behavior as proof of pre-narration parser/witness behavior.
 Do not treat object names in narration as object IDs.
 Do not treat "visible in prose" as "authoritative object exists."
+
+## Function Boundary Rule
+
+When researching a data flow that crosses a function call boundary, read the callee's implementation for state-mutation strategy. Do not assume the callee mutates its arguments in place.
+
+Specifically, determine whether the callee:
+
+- mutates the received object in place
+- deep-clones the received object and mutates the clone
+- creates a new object and returns it, leaving the original unchanged
+- reassigns any shared variable in the caller scope that carries the data being traced
+
+If the callee was not inspected, state so explicitly in the report.
 
 ## Anti-Premature-Closure Rule
 

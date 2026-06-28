@@ -2629,6 +2629,12 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
                      : or.skip_reason || 'unknown reason';
         const _fissSufx = (or.fission_retired > 0) ? ' | fission pass ran separately' : '';
 
+        // v1.91.71: detect TLS partial-stack handling for correct skip-reason label
+        const _tlsPartialAudit = (or.audit || []).filter(a => a.action === 'tls_partial_stack_take');
+        const _reasonLabel = (_tlsPartialAudit.length > 0 && or.skip_reason === 'ap_dedup_all_transfers')
+          ? 'transfers handled by TLS partial-stack executor'
+          : reason;
+
         // v1.91.29: surface AP direct transfers even when post-narration CB/ORS is skipped
         const _apAudit = (or.audit || []).filter(a => a.action === 'ap_direct_transfer' || a.action === 'tls_whole_object_transfer');
         if (_apAudit.length > 0) {
@@ -2656,7 +2662,28 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           }
         }
 
-        lines.push(`  Post-narration CB/ORS: skipped (${reason})${_fissSufx}`);
+        // v1.91.44: surface AP partial-split operations when post-narration CB/ORS is skipped
+        const _apSplitAudit = (or.audit || []).filter(a => a.action === 'ap_partial_split_take');
+        if (_apSplitAudit.length > 0) {
+          lines.push(`  Object operations: ${_apSplitAudit.length} AP partial split(s)`);
+          for (const a of _apSplitAudit) {
+            lines.push(`    [AP-SPLIT] source:${a.source_object_id} qty:${a.source_quantity_before}→${a.source_quantity_after} successor:${a.successor_id} took:${a.applied_quantity}`);
+          }
+        }
+
+        // v1.91.71: surface TLS partial-stack operations when post-narration CB/ORS is skipped
+        // This mirrors the tls_partial_stack_take rendering in the or.ran === true branch.
+        // Without this, the [TLS-PARTIAL] display is unreachable when or.ran is false.
+        if (_tlsPartialAudit.length > 0) {
+          lines.push(`  Object operations: ${_tlsPartialAudit.length} TLS partial split(s)`);
+          for (const a of _tlsPartialAudit) {
+            const _srcShort = (a.source_object_id || '').slice(0, 14) + '\u2026';
+            const _okTag = a.executed ? '' : ' [FAILED]';
+            lines.push(`    [TLS-PARTIAL] source:${_srcShort} took:${a.extract_quantity} -> ${a.destination_container_type}:${a.destination_container_id}${_okTag}`);
+          }
+        }
+
+        lines.push(`  Post-narration CB/ORS: skipped (${_reasonLabel})${_fissSufx}`);
         if ((or.visible_objects_count || 0) > 0)
           lines.push(`  visible_objects: ${or.visible_objects_count} extracted (barrier-inaccessible)`);
       } else {
@@ -2689,6 +2716,12 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
             lines.push(`    [suppressed] "${a.object_name||'?'}" — ${a.action}`);
           } else if (a.action && a.action.startsWith('promote_skipped')) {
             lines.push(`    [skipped] "${a.object_name||'?'}" — ${a.action}`);
+          } else if (a.action === 'ap_partial_split_take') {
+            lines.push(`    [AP-SPLIT] source:${a.source_object_id} qty:${a.source_quantity_before}→${a.source_quantity_after} successor:${a.successor_id} took:${a.applied_quantity}`);
+          } else if (a.action === 'tls_partial_stack_take') {
+            const _srcShort = (a.source_object_id || '').slice(0, 14) + '\u2026';
+            const _okTag = a.executed ? '' : ' [FAILED]';
+            lines.push(`    [TLS-PARTIAL] source:${_srcShort} took:${a.extract_quantity} -> ${a.destination_container_type}:${a.destination_container_id}${_okTag}`);
           }
           // Fission-successor 'promoted' entries (parent_object_id set, not in _psSuccIds) rendered in §5
         }

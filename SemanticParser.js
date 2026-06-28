@@ -201,9 +201,10 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   // the LLM and fast paths, which strip articles/quantity words before enrichment
   // ever sees them. Extracting from rawInput recovers what canonicalization lost.
   // v1.91.32: strip known multi-word verbs first, then fall back to single-token.
-  const _body = raw
-    .replace(/^(pick up|put down|set down)\s+/i, '')
-    .replace(/^\S+\s+/, '').trim();
+  const _multiWordMatch = raw.match(/^(pick up|put down|set down)\s+/i);
+  const _body = _multiWordMatch
+    ? raw.replace(_multiWordMatch[0], '').trim()
+    : raw.replace(/^\S+\s+/, '').trim();
 
   // ── requested_quantity: integer from leading digits in object phrase ──────
   const _qtyMatch = _body.match(/^(\d+)\s+/);
@@ -248,22 +249,32 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   // Recovers partial-stack intent from rawInput when LLM omits it. Only fills
   // for 'take' action family. Does NOT override LLM-emitted selection_mode.
   // Article-safety: "take an apple" / "take the apple" are NOT partial-stack.
+  // v1.91.36: bare quantity fallback — digit or word-number prefix on take is partial-stack intent
+  // when requested_quantity is explicit (quantity_mode === 'exact'). "all" and article
+  // forms are excluded by the quantity_mode guard.
   if (!enriched.selection_mode && enriched.action === 'take') {
     const _bodyLower = _body.toLowerCase();
     if (/\b(one|two|three|four|five|six|seven|eight|nine|ten|some|a few)\s+of\s+the\b/i.test(_bodyLower)) {
+      enriched.selection_mode = 'partial_from_stack';
+    } else if (enriched.requested_quantity !== null && enriched.quantity_mode === 'exact') {
       enriched.selection_mode = 'partial_from_stack';
     }
   }
 
   // ── normalized_target: strip quantity/ determiner prefix ──────────────────
-  // Strips: digits, a/an/the/my/some/all/all N. Never strips identifying nouns.
-  // "the" and "my" stripped only from normalized_target — NOT quantity signals.
+  // v1.91.53: added word-number, "more", and source-preposition stripping for
+  // resolver-only normalization. Strips leading quantity, modifier, and
+  // source-preposition tokens for resolver targeting only — does not change
+  // quantity signals or execution behavior.
   if (target) {
     let _norm = target
       .replace(/^(all\s+\d+)\s+/i, '')     // "all 15 tortillas" → "tortillas"
       .replace(/^(all)\s+/i, '')            // "all tortillas" → "tortillas"
       .replace(/^(\d+)\s+/, '')             // "5 arrows" → "arrows"
-      .replace(/^(a|an|the|some|my|every)\s+/i, '') // "a sword" → "sword", "every arrow" → "arrow"
+      .replace(/^(a|an|the|some|my|every)\s+/i, '') // "a sword" → "sword"
+      .replace(/^(one|two|three|four|five|six|seven|eight|nine|ten)\s+/i, '') // "two pinecones" → "pinecones"
+      .replace(/^more\s+/i, '')             // "more pinecones" → "pinecones"
+      .replace(/^(?:of|from|off)\s+(?:the\s+)?/i, '') // "of the pinecones" → "pinecones"
       .trim();
     enriched.normalized_target = _norm || target; // fallback to original if stripped empty
   } else {

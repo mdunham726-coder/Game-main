@@ -39,6 +39,8 @@ const ConditionBot = require('./conditionbot'); // v1.84.19
 const AuthorityGate = require('./authoritygate'); // v1.88.0
 const SemanticNormalizer = require('./SemanticNormalizer'); // v1.88.78: TSL Stage 1
 const diag = require('./diagnostics');
+const ObjectOperationResolver = require('./ObjectOperationResolver'); // v1.91.56: P1b witness diagnostics
+const TlsObjectOperationExecutor = require('./TlsObjectOperationExecutor'); // v1.91.64: P4 dry-run executor
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -1077,6 +1079,239 @@ app.post('/narrate', async (req, res) => {
   // No-op on non-first turns (token is null).
   let _progToken = null;
   let _reportProgress = () => {};
+  // v1.91.57: P1b hotfix — resolver evidence must be visible to common witness assembly
+  let objectOperationResolverEvidence = null;
+  let objectOperationResolverError = null;
+
+  // v1.91.62: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
+  // Consumes resolver evidence + parser actions to produce a source-authoritative
+  // tls_ors_instruction_v1. Pure function — no state access, no ObjectHelper calls.
+  // Returns null when resolver evidence is absent; returns disabled instruction
+  // when trust gate or routing blocks execution.
+  function _assembleTlsInstructionV1(resolverEvidence, resolverError, actions, state) {
+    // ── Null gate: P2 not applicable if no resolver evidence ──────────────────
+    if (!resolverEvidence) return null;
+
+    // ── Trust gate: resolver must have selected a source ──────────────────────
+    const trusted = (
+      resolverEvidence.resolution_basis === 'model_selected' &&
+      resolverEvidence.source_object_id !== null &&
+      resolverEvidence.fail_closed_reason === null
+    );
+
+    // ── Quantity sanitation ──────────────────────────────────────────────────
+    const requestedQty = typeof actions.requested_quantity === 'number' &&
+                         actions.requested_quantity >= 1
+      ? actions.requested_quantity : null;
+    const availableQty = typeof resolverEvidence.source_quantity_before === 'number' &&
+                         resolverEvidence.source_quantity_before >= 1
+      ? resolverEvidence.source_quantity_before : null;
+
+    // ── Sanity checks against live ORS record ────────────────────────────────
+    const orsRecord = state?.objects?.[resolverEvidence.source_object_id];
+    const orsActive     = orsRecord && orsRecord.status === 'active';
+    const orsQuantityOk = availableQty !== null &&
+      typeof orsRecord?.quantity === 'number' &&
+      orsRecord.quantity === availableQty;
+    const orsContainerOk = (
+      String(orsRecord?.current_container_type || '') ===
+      String(resolverEvidence.source_container_type || '')
+    ) && (
+      String(orsRecord?.current_container_id || '') ===
+      String(resolverEvidence.source_container_id || '')
+    );
+
+    // ── Warning collector ────────────────────────────────────────────────────
+    const warnings = [];
+    const pushW = (code, severity, field, message) =>
+      warnings.push({ code, severity, field, message, detail: null });
+
+    // ── Blocking checks ──────────────────────────────────────────────────────
+    if (!trusted)
+      pushW('resolver_untrusted', 'blocking', 'resolution_basis',
+        'Resolver did not produce trusted source evidence.');
+    if (requestedQty === null)
+      pushW('missing_requested_quantity', 'blocking', 'requested_quantity',
+        'Requested quantity is missing, NaN, or less than 1.');
+    if (availableQty === null)
+      pushW('missing_available_quantity', 'blocking', 'source_quantity_before',
+        'Available source quantity is missing, NaN, or less than 1.');
+    if (trusted && !orsActive)
+      pushW('source_inactive', 'blocking', 'source_object_id',
+        'Source object is not active in ORS registry.');
+    if (trusted && orsActive && !orsQuantityOk)
+      pushW('quantity_mismatch', 'blocking', 'source_quantity_before',
+        'Resolver quantity does not match current ORS record quantity.');
+    if (trusted && orsActive && !orsContainerOk)
+      pushW('container_mismatch', 'blocking', 'source_container_type',
+        'Resolver container does not match current ORS record container.');
+
+    // ── Deterministic routing computation ────────────────────────────────────
+    let requestedVsAvailable = null;
+    if (requestedQty !== null && availableQty !== null) {
+      if (requestedQty < availableQty)       requestedVsAvailable = 'partial';
+      else if (requestedQty === availableQty) requestedVsAvailable = 'exact_stack';
+      else                                    requestedVsAvailable = 'over_stack';
+    }
+
+    const routingBlocked = (
+      !trusted ||
+      requestedQty === null ||
+      availableQty === null ||
+      requestedVsAvailable === 'over_stack' ||
+      !orsActive ||
+      (orsActive && (!orsQuantityOk || !orsContainerOk))
+    );
+
+    let intendedMutation = null;
+    let failClosedReason = null;
+    if (requestedVsAvailable === 'partial') {
+      intendedMutation = 'partial_split';
+    } else if (requestedVsAvailable === 'exact_stack') {
+      intendedMutation = 'whole_transfer';
+    } else if (requestedVsAvailable === 'over_stack') {
+      intendedMutation = 'fail_closed';
+      failClosedReason = 'over_stack';
+    } else {
+      intendedMutation = 'fail_closed';
+      failClosedReason = 'invalid_quantity';
+    }
+
+    if (routingBlocked && failClosedReason === null) {
+      intendedMutation = 'fail_closed';
+      if (!trusted)                           failClosedReason = 'resolver_untrusted';
+      else if (requestedQty === null)         failClosedReason = 'invalid_quantity';
+      else if (availableQty === null)         failClosedReason = 'invalid_quantity';
+      else if (!orsActive)                    failClosedReason = 'source_inactive';
+      else if (!orsQuantityOk)                failClosedReason = 'internal_inconsistency';
+      else if (!orsContainerOk)               failClosedReason = 'internal_inconsistency';
+    }
+
+    // ── Advisory warnings ────────────────────────────────────────────────────
+    if (resolverEvidence.resolution_basis === 'ambiguous')
+      pushW('ambiguous_resolver', 'advisory', 'resolution_basis',
+        'Resolver reported ambiguous match among candidates.');
+    if (resolverEvidence.resolution_confidence < 0.5)
+      pushW('low_resolution_confidence', 'advisory', 'resolution_confidence',
+        `Resolver reported low confidence (${resolverEvidence.resolution_confidence}).`);
+
+    // Accumulate resolver's own warnings
+    if (Array.isArray(resolverEvidence.resolution_warnings)) {
+      for (const rw of resolverEvidence.resolution_warnings) {
+        if (rw && typeof rw === 'object') {
+          warnings.push({
+            code: String(rw.code || 'resolver_warning'),
+            severity: rw.severity === 'blocking' ? 'blocking' : 'advisory',
+            field: rw.field || null,
+            message: String(rw.message || ''),
+            detail: null
+          });
+        }
+      }
+    }
+
+    // ── Executor parameters (by method) ──────────────────────────────────────
+    let expectedHelperMethod = null;
+    let executorParams        = null;
+    if (intendedMutation === 'partial_split') {
+      expectedHelperMethod = 'splitObjectDirect';
+      executorParams = {
+        source_object_id:           resolverEvidence.source_object_id,
+        extract_quantity:           requestedQty,
+        destination_container_type: 'player',
+        destination_container_id:   'player'
+      };
+    } else if (intendedMutation === 'whole_transfer') {
+      expectedHelperMethod = 'transferObjectDirect';
+      executorParams = {
+        object_id:                   resolverEvidence.source_object_id,
+        destination_container_type: 'player',
+        destination_container_id:   'player'
+      };
+    }
+
+    // ── Operation family / type ──────────────────────────────────────────────
+    const operationFamily = actions.operation_family || 'take';
+    const operationType = intendedMutation === 'partial_split'
+      ? 'partial_object_transfer'
+      : intendedMutation === 'whole_transfer'
+        ? 'whole_object_transfer' : null;
+
+    // ── Build and return ─────────────────────────────────────────────────────
+    return {
+      schema_version: 'tls_ors_instruction_v1',
+      operation_family: operationFamily,
+      operation_type:   operationType,
+
+      object: {
+        id:   trusted ? resolverEvidence.source_object_id   : null,
+        name: trusted ? resolverEvidence.source_object_name : null,
+        source_basis: 'resolver_evidence_v1'
+      },
+
+      source: {
+        container_type: trusted ? resolverEvidence.source_container_type : null,
+        container_id:   trusted ? resolverEvidence.source_container_id   : null,
+        source_basis:   'resolver_evidence_v1'
+      },
+
+      destination: {
+        container_type: 'player',
+        container_id:   'player',
+        owner_type:     'player'
+      },
+
+      quantity: {
+        requested_quantity:        requestedQty,
+        quantity_mode:             actions.quantity_mode ?? 'unspecified',
+        observed_available_quantity: availableQty,
+        unit:                      resolverEvidence.source_unit ?? null
+      },
+
+      routing: {
+        requested_vs_available: requestedVsAvailable,
+        intended_mutation:      intendedMutation,
+        fail_closed_reason:     failClosedReason,
+        deterministic:          true
+      },
+
+      mutation: {
+        requires_fission:  intendedMutation === 'partial_split',
+        requires_transfer: intendedMutation === 'whole_transfer' || intendedMutation === 'partial_split',
+        retires_source:    false,
+        creates_successor: intendedMutation === 'partial_split'
+      },
+
+      execution: {
+        mode:               'observe_only',
+        allowed_to_execute: false,
+        refusal_reason:     routingBlocked ? 'routing_fail_closed' : 'observe_only',
+        gate_decision:      routingBlocked ? 'blocked' : 'observe_only'
+      },
+
+      executor: {
+        expected_helper_method: expectedHelperMethod,
+        parameters:             executorParams
+      },
+
+      warnings: warnings,
+      provenance: {
+        evidence_source:          resolverEvidence.evidence_source ?? 'llm_model',
+        provider:                 resolverEvidence.provider ?? null,
+        resolver_kind:            resolverEvidence.resolver_kind ?? null,
+        resolution_basis:         resolverEvidence.resolution_basis ?? null,
+        resolution_confidence:    resolverEvidence.resolution_confidence ?? 0,
+        candidate_count:          resolverEvidence.candidate_count ?? 0,
+        candidate_ids_sent:       resolverEvidence.candidate_ids_sent ?? [],
+        candidate_ids_considered: resolverEvidence.candidate_ids_considered ?? null,
+        reasoning_summary:        resolverEvidence.reasoning_summary ?? null,
+        fail_closed_reason:       resolverEvidence.fail_closed_reason ?? null,
+        validation_errors:        resolverEvidence.validation_errors ?? [],
+        resolver_error:           resolverError ?? null
+      }
+    };
+  }
+
   if (isFirstTurn === true) {
     isFirstTurn = false;
     const _sessionType = req.headers['x-progress-token'] ? 'game' : 'probe';
@@ -1626,6 +1861,27 @@ app.post('/narrate', async (req, res) => {
       
       // v1.84.58: stamp turn number onto player_intent so AP's transferObjectDirect records correct turn
       if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
+
+      // v1.91.56: P1b — pre-AP resolver evidence capture (observe-only, diagnostic only)
+      if (
+        inputObj?.player_intent &&
+        inputObj.player_intent.operation_family === 'take' &&
+        inputObj.player_intent.selection_mode === 'partial_from_stack'
+      ) {
+        try {
+          objectOperationResolverEvidence = await ObjectOperationResolver.resolvePartialStackTake(
+            gameState,
+            inputObj.player_intent
+          );
+        } catch (_rErr) {
+          objectOperationResolverEvidence = null;
+          objectOperationResolverError = {
+            error_type: 'unexpected_exception',
+            message: _rErr?.message || 'unknown'
+          };
+        }
+      }
+
       engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
@@ -2100,6 +2356,44 @@ app.post('/narrate', async (req, res) => {
 
           // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic before AP runs
           gameState._tlsExecutionResult = null;
+          gameState._apActuals = null;                // v1.91.XX P3: clear per-turn AP actuals
+
+          // v1.91.58: P1b — pre-AP resolver evidence capture inside queue loop (observe-only, diagnostic only)
+          if (
+            mapped?.player_intent &&
+            mapped.player_intent.operation_family === 'take' &&
+            mapped.player_intent.selection_mode === 'partial_from_stack'
+          ) {
+            try {
+              objectOperationResolverEvidence = await ObjectOperationResolver.resolvePartialStackTake(
+                gameState,
+                mapped.player_intent
+              );
+            } catch (_rErr) {
+              objectOperationResolverEvidence = null;
+              objectOperationResolverError = {
+                error_type: 'unexpected_exception',
+                message: _rErr?.message || 'unknown'
+              };
+            }
+          }
+
+          // v1.91.62: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
+          debug.tls_instruction_v1 = _assembleTlsInstructionV1(
+            objectOperationResolverEvidence,
+            objectOperationResolverError,
+            mapped.player_intent,
+            gameState
+          );
+
+          // v1.91.64: P4 — dry-run executor prediction (pre-AP, observe-only, partial-stack TAKE only)
+          if (debug.tls_instruction_v1) {
+            debug.tls_executor_dry_run = TlsObjectOperationExecutor.executeTlsObjectInstruction(
+              gameState,
+              debug.tls_instruction_v1,
+              { dryRun: true }
+            );
+          }
 
           const result = await Engine.buildOutput(gameState, mapped, logger);
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
@@ -2111,6 +2405,53 @@ app.post('/narrate', async (req, res) => {
             sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
             console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
           }
+
+          // v1.91.71: P5-A2 — live TLS partial-stack TAKE execution
+          // Consumes P4 dry-run prediction. Executes when P4 predicted a
+          // valid partial_split. AP is not a precondition — the new lane
+          // owns execution. splitObjectDirect is self-guarding (fail-closed).
+          // Mutation happens pre-narration/pre-CB so narrator and CB see
+          // correct ORS state. Downstream CB output remains runtime-observed.
+          if (
+            debug.tls_executor_dry_run?.operation_allowed === true &&
+            debug.tls_executor_dry_run?.outcome === 'partial_split'
+          ) {
+            const _tlsPartialParams = debug.tls_executor_dry_run.predicted_call.parameters;
+            const splitResult = ObjectHelper.splitObjectDirect(
+              gameState,
+              _tlsPartialParams.source_object_id,
+              _tlsPartialParams.extract_quantity,
+              _tlsPartialParams.destination_container_type,
+              _tlsPartialParams.destination_container_id,
+              turnNumber,
+              'tls_partial_stack_take'
+            );
+            gameState._tlsPartialStackResult = {
+              schema_version: 'tls_partial_stack_execution_v1',
+              executed: splitResult.ok,
+              split_result: splitResult,
+              predicted_call: debug.tls_executor_dry_run.predicted_call,
+              ap_actuals: gameState._apActuals ?? null
+            };
+
+            // Audit entry
+            if (!Array.isArray(gameState._objectRealityDebug?.audit)) {
+              if (!gameState._objectRealityDebug) gameState._objectRealityDebug = {};
+              gameState._objectRealityDebug.audit = [];
+            }
+            gameState._objectRealityDebug.audit.push({
+              action: 'tls_partial_stack_take',
+              source_object_id: _tlsPartialParams.source_object_id,
+              extract_quantity: _tlsPartialParams.extract_quantity,
+              destination_container_type: _tlsPartialParams.destination_container_type,
+              destination_container_id: _tlsPartialParams.destination_container_id,
+              executed: splitResult.ok,
+              split_result: splitResult,
+              turn: turnNumber,
+              timestamp: new Date().toISOString()
+            });
+          }
+
           // v1.85.4: no-movement detection for enter/exit/move intents
           const _ma = mapped?.player_intent?.action;
           if (_preTurnLoc && (_ma === 'enter' || _ma === 'exit' || _ma === 'move')) {
@@ -2172,6 +2513,7 @@ app.post('/narrate', async (req, res) => {
         if (inputObj?.player_intent && typeof inputObj.player_intent === 'object') inputObj.player_intent._turn = turnNumber;
         // v1.84.89: snapshot localspace ID before engine runs — used for state: boundary clear below
         const _preActionLsId = gameState.world?.active_local_space?.local_space_id ?? null;
+
         engineOutput = Engine.buildOutput(gameState, inputObj, logger);
         // v1.84.89: if localspace boundary was crossed (any L2 transition), clear transient state: attributes
         // so stale posture/position facts don't bleed into the narrator's TRUTH block on re-entry.
@@ -3496,7 +3838,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       target_object_accessible:     null,
       // v1.91.35: pre-transfer container fields (observation-only, set by AP take handler)
       target_object_prior_container_type: gameState?._apFromContainerType ?? null,
-      target_object_prior_container_id:   gameState?._apFromContainerId   ?? null
+      target_object_prior_container_id:   gameState?._apFromContainerId   ?? null,
+      // v1.91.56: P1b — pre-AP resolver evidence (observe-only, captured before Engine.buildOutput)
+      resolver_evidence:       objectOperationResolverEvidence ?? null,
+      resolver_evidence_error: objectOperationResolverError ?? null
     };
     // Derive witness hints from observed evidence (diagnostic labels only — no authority)
     const _w = debug.itemOperationWitness;
@@ -3540,14 +3885,27 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _w.target_object_accessible = true;
     }
 
+    // v1.91.XX P3: archive raw AP actuals into witness for diagnostics.js post-hoc comparison
+    if (gameState._apActuals) {
+      debug.itemOperationWitness.ap_actuals = _cloneForArchive(gameState._apActuals);
+    }
+
     // v1.91.35: Phase 4 — TLS observe-only normalization proposal.
     // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
     debug.tls_proposed_operation = _w.target_object_exists
       ? _normalizeWitness(debug.itemOperationWitness)
       : null;
 
-    // v1.91.XX: Phase 5 — TLS observe-only instruction diagnostic (Goal 2).
-    // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
+    // v0 TLS witness projection:
+    // Post-execution diagnostic surface for the live whole-object TAKE TLS lane.
+    // Whole-object mutation happens earlier in ActionProcessor.js, where the TLS
+    // branch calls ObjectHelper.transferObjectDirect(...) and writes
+    // gameState._tlsExecutionResult. This packet does NOT drive mutation.
+    // It projects the observed whole-object TLS result into the witness/debug
+    // contract consumed by Mother Brain and frontend diagnostics.
+    // Keep v0 alongside tls_instruction_v1:
+    //   v0 = whole-object TLS execution visibility
+    //   v1 = pre-AP partial-stack resolver/TLS candidate instruction
     debug.tls_instruction = _assembleTlsInstruction(debug.itemOperationWitness, debug.tls_proposed_operation);
 
     // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment diagnostic (Goal 3).
@@ -3584,9 +3942,79 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         witness: debug.itemOperationWitness,
         tls_proposed_operation: debug.tls_proposed_operation,  // v1.91.35
         tls_instruction: debug.tls_instruction,
+        tls_instruction_v1: debug.tls_instruction_v1,          // v1.91.59: P2 v1 sibling
         tls_ors_alignment: debug.tls_ors_alignment,
-        tls_execution_result: debug.tls_execution_result
+        tls_executor_dry_run: debug.tls_executor_dry_run,       // v1.91.64: P4 dry-run envelope
+        tls_execution_result: debug.tls_execution_result,
+        tls_partial_stack_result: gameState._tlsPartialStackResult ?? null   // v1.91.71: P5-A2 live TLS partial-stack result
       });
+    }
+
+    // v1.91.66: P5-0 — immutable evidence archive freeze (pre-RC, post-witness, deep-cloned)
+    // Fires only for partial-stack TAKE turns where tls_instruction_v1 exists.
+    // Deep-cloned via JSON roundtrip — no references to mutable debug.* fields survive.
+    // _p5Snapshot is carried forward and attached to turnObject ~2600 lines later.
+    let _p5Snapshot = null;
+    if (debug.tls_instruction_v1) {
+      const _wit = debug.itemOperationWitness;
+      _p5Snapshot = JSON.parse(JSON.stringify({
+        schema_version:       'p5_witness_archive_v1',
+        turn:                 turnNumber,
+        timestamp:            new Date().toISOString(),
+        parsed_action:        _wit?.parsed_action ?? null,
+        parsed_target:        _wit?.parsed_target ?? null,
+        selection_mode:       _wit?.selection_mode ?? null,
+        requested_quantity:   _wit?.requested_quantity ?? null,
+        gate_decision:        _wit?.gate_decision ?? null,
+        gate_reason_code:     _wit?.gate_reason_code ?? null,
+        resolver_evidence:    _wit?.resolver_evidence ?? null,
+        tls_instruction_v1:   debug.tls_instruction_v1 ?? null,
+        tls_executor_dry_run: debug.tls_executor_dry_run ?? null,
+        ap_actuals:           _wit?.ap_actuals ?? null,
+        tls_execution_result: debug.tls_execution_result ?? null,
+        tls_ors_alignment:    debug.tls_ors_alignment ?? null,
+        object_reality_summary: (() => {
+          try {
+            const _src = gameState.objects?.[debug.tls_instruction_v1?.object?.id];
+            const _succId = debug.itemOperationWitness?.ap_actuals?.successor_id;
+            const _succ = _succId ? gameState.objects?.[_succId] : null;
+            return {
+              source_object: _src ? {
+                object_id:      _src.id ?? null,
+                quantity_before: debug.tls_instruction_v1?.quantity?.observed_available_quantity ?? null,
+                quantity_after:  _src.quantity ?? null,
+                container_type:  _src.current_container_type ?? null,
+                container_id:    _src.current_container_id ?? null
+              } : null,
+              successor_object: _succ ? {
+                object_id:      _succ.id ?? null,
+                quantity:       _succ.quantity ?? null,
+                container_type: _succ.current_container_type ?? null,
+                container_id:   _succ.current_container_id ?? null
+              } : null,
+              player_inventory: {
+                held_object_ids: Array.isArray(gameState.player?.object_ids) ? [...gameState.player.object_ids] : [],
+                held_count:      Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids.length : 0,
+                worn_object_ids: Array.isArray(gameState.player?.worn_object_ids) ? [...gameState.player.worn_object_ids] : []
+              }
+            };
+          } catch (_) { return null; }
+        })(),
+        fields_present: {
+          resolver_evidence:     !!(_wit?.resolver_evidence),
+          tls_instruction_v1:    !!(debug.tls_instruction_v1),
+          tls_executor_dry_run:  !!(debug.tls_executor_dry_run),
+          ap_actuals:            !!(_wit?.ap_actuals),
+          tls_execution_result:  !!(debug.tls_execution_result),
+          tls_ors_alignment:     !!(debug.tls_ors_alignment),
+          p5_authority_result:   false,
+          p5_blocked_candidates: false
+        },
+        archive_frozen_at: new Date().toISOString(),
+        archive_source:    'p5_freeze_point_3902',
+        p5_authority_result:   null,
+        p5_blocked_candidates: null
+      }));
     }
 
     // [REALITY-CHECK] Arbiter Phase 0 — pre-narration reality adjudication (v1.84.2)
@@ -4711,6 +5139,19 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       // v1.84.52: Object Reality System — build local quarantine from CB output, then process
       // index.js owns the quarantine write; CB is a pure interpreter; quarantine is never on gameState
       // _objectRealityDebug is hoisted above try/catch so catch can include it in error responses
+      // v1.91.44: preserve AP direct-mutation audit entries across the ORS pipeline rebuild.
+      // AP writes entries (ap_partial_split_take, tls_whole_object_transfer, etc.) to the old
+      // _objectRealityDebug before narration. The reassignment below would orphan them.
+      // Explicit allowlist — not a broad prefix filter.
+      const _preserveDirectAuditActions = new Set([
+        'ap_direct_transfer',
+        'tls_whole_object_transfer',
+        'ap_partial_split_take',
+        'tls_partial_stack_take'
+      ]);
+      const _priorDirectAudit = Array.isArray(gameState._objectRealityDebug?.audit)
+        ? gameState._objectRealityDebug.audit.filter(e => _preserveDirectAuditActions.has(e?.action))
+        : [];
       _objectRealityDebug = {
         ran: false,
         skip_reason: null,
@@ -4734,6 +5175,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         console_log: [],
         actor_resolution: []
       };
+      // v1.91.44: merge preserved AP direct-mutation audit entries into the new audit array
+      if (_priorDirectAudit.length > 0) {
+        _objectRealityDebug.audit.push(..._priorDirectAudit);
+      }
       _activeTurnDebug = _objectRealityDebug;
       if (_phaseBResult) {
         // v1.85.28: NPC intro capture — materialize held/worn objects from entity_candidates as real ObjectRecords.
@@ -5049,6 +5494,39 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             if (_cbExtSuppressed > 0) _objectRealityDebug.cb_extraction_suppressed = _cbExtSuppressed;
           }
         }
+        // v1.91.70: P5-A1 CB candidate promotion guard — suppress environment→player
+        // candidates after AP already refused a partial-stack TAKE this turn.
+        // Operates on structural signals only — no name matching.
+        // Temporary — will be narrowed in P5-A2 when the live execution lane goes live.
+        let _cbCandidateTakeSuppressed = 0;
+        _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+          if (
+            c.container_type === 'player' &&
+            c.transfer_origin === 'environment_interaction' &&
+            _parsedAction === 'take' &&
+            _envGatherLabel === null &&
+            gameState._apActuals?.routing === 'quarantined' &&
+            gameState._apActuals?.outcome === 'refused_ownership'
+          ) {
+            if (!Array.isArray(_objectRealityDebug.suppressed_replays)) _objectRealityDebug.suppressed_replays = [];
+            _objectRealityDebug.suppressed_replays.push({
+              reason: 'cb_candidate_take_suppressed',
+              candidate_name: c.name || null,
+              temp_ref: c.temp_ref || null,
+              container_type: c.container_type,
+              transfer_origin: c.transfer_origin,
+              parsed_action: _parsedAction,
+              env_gather_label: _envGatherLabel,
+              ap_routing: gameState._apActuals?.routing || null,
+              ap_outcome: gameState._apActuals?.outcome || null,
+              ap_source_object_id: gameState._apActuals?.source_object_id || null
+            });
+            _cbCandidateTakeSuppressed++;
+            return false;
+          }
+          return true;
+        });
+        if (_cbCandidateTakeSuppressed > 0) _objectRealityDebug.cb_candidate_take_suppressed = _cbCandidateTakeSuppressed;
         const _cbCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
         const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];
         _objectRealityDebug.cb_candidates = _cbCandidates;
@@ -5056,9 +5534,73 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // v1.84.57: suppress CB transfers for objects AP already transferred this turn.
         // AP writes object IDs to gameState._apExecutedTransfers[] on success only — fail = no proof = CB fallback stays.
         // Temp-ref-only entries (no object_id) pass through unfiltered; destination idempotency in ObjectHelper catches any duplicates.
+        // v1.91.62: extended filter to also suppress temp-ref-only transfers whose candidate name matches
+        // an AP-done object name — same-turn replay containment for partial-stack TAKE remainder.
         const _apDoneIds = new Set(Array.isArray(gameState._apExecutedTransfers) ? gameState._apExecutedTransfers : []);
         gameState._apExecutedTransfers = []; // consume and clear for next turn
-        const _cbTransfersFiltered = _cbTransfers.filter(t => !t.object_id || !_apDoneIds.has(t.object_id));
+        // Build AP-done normalized-name set for temp-ref replay suppression
+        const _apDoneNames = new Set();
+        const _norm = v => String(v || '').toLowerCase().trim();
+        for (const _aid of _apDoneIds) {
+          const _aObj = gameState.objects[_aid];
+          if (_aObj) _apDoneNames.add(_norm(_aObj.name));
+        }
+        // Build CB candidate temp_ref → normalized name map
+        const _cbTempRefToName = {};
+        for (const _cc of _cbCandidates) {
+          if (_cc.temp_ref) _cbTempRefToName[_cc.temp_ref] = _norm(_cc.name);
+        }
+        let _cbTakeSuppressed = 0;
+        const _cbTransfersFiltered = _cbTransfers.filter(t => {
+          // Phase 1: existing explicit-ID dedup — preserve unchanged
+          if (t.object_id && _apDoneIds.has(t.object_id)) return false;
+          // Phase 2: temp-ref replay suppression — same-turn containment guard
+          if (!t.object_id && t.temp_ref && _apDoneIds.size > 0) {
+            const _candName = _cbTempRefToName[t.temp_ref];
+            if (_candName && _apDoneNames.has(_candName)) {
+              if (!Array.isArray(_objectRealityDebug.suppressed_replays)) _objectRealityDebug.suppressed_replays = [];
+              _objectRealityDebug.suppressed_replays.push({
+                reason: 'ap_replay_temp_ref_suppressed',
+                temp_ref: t.temp_ref,
+                candidate_name: _candName,
+                matched_ap_id: [..._apDoneIds].find(id => {
+                  const _obj = gameState.objects[id];
+                  return _obj && _norm(_obj.name) === _candName;
+                }) || null,
+                transfer_direction: t.to_container_type || null
+              });
+              return false; // suppress — AP already handled this named object this turn
+            }
+          }
+          // Phase 3: P5-A1 CB TAKE transfer guard — suppress environment→player transfers
+          // during TAKE turns when environmental gathering is not active.
+          // This prevents CB from originating object movement after AP already refused
+          // ownership (partial-stack) or after TLS already executed (whole-object).
+          // Temporary — will be narrowed in P5-A2 when the new execution lane goes live.
+          if (
+            t.to_container_type === 'player' &&
+            (t.from_container_type === 'grid' || t.from_container_type === 'localspace' || t.from_container_type === 'site') &&
+            _parsedAction === 'take' &&
+            _envGatherLabel === null
+          ) {
+            if (!Array.isArray(_objectRealityDebug.suppressed_replays)) _objectRealityDebug.suppressed_replays = [];
+            _objectRealityDebug.suppressed_replays.push({
+              reason: 'cb_take_transfer_suppressed',
+              temp_ref: t.temp_ref || null,
+              object_id: t.object_id || null,
+              from_container_type: t.from_container_type,
+              from_container_id: t.from_container_id,
+              to_container_type: t.to_container_type,
+              to_container_id: t.to_container_id,
+              parsed_action: _parsedAction,
+              env_gather_active: _envGatherLabel !== null
+            });
+            _cbTakeSuppressed++;
+            return false;
+          }
+          return true;
+        });
+        if (_cbTakeSuppressed > 0) _objectRealityDebug.cb_take_transfers_suppressed = _cbTakeSuppressed;
         // v1.85.9: detect ap_dedup_all_transfers — CB produced transfers but all were AP-claimed.
         // Distinct from empty_quarantine (CB produced nothing) — improves diagnostic clarity.
         if (_cbCandidates.length === 0 && _cbTransfers.length > 0 && _cbTransfersFiltered.length === 0) {
@@ -5462,9 +6004,15 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
         _objectRealityDebug.retirement_updates = _retirementResults;
 
+        // v1.91.68: P5-A1 quarantine seal — suppress downstream injection when AP refused partial-stack TAKE this turn
+        const _apRefusedTake =
+          gameState._apActuals?.operation_family === 'take' &&
+          gameState._apActuals?.routing === 'quarantined' &&
+          gameState._apActuals?.outcome === 'refused_ownership';
+
         // v1.90.02: TLS fission injection — retire objects TLS resolved that CB missed this turn.
         // Inserts into _retirementPairs so the existing fission second pass picks up successors automatically.
-        {
+        if (!_apRefusedTake) {
           const _tslFissionOps = Array.isArray(_tslR?.tsl?.fission_operations) ? _tslR.tsl.fission_operations : [];
           let _tslFissionInjected    = 0;
           let _tslFissionUnresolvable = 0;
@@ -5493,7 +6041,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // v1.91.03: TLS extraction injection — build partial_split quarantine from extraction_operations.
         // Non-degenerate ops: partial_split entries → ObjectHelper Pass 3.
         // degrades_to_fission ops: retire source → push to _retirementPairs (fission second pass promotes successor).
-        {
+        if (!_apRefusedTake) {
           const _tslExtractionOps = Array.isArray(_tslR?.tsl?.extraction_operations) ? _tslR.tsl.extraction_operations : [];
           let _tslExtractionInjected     = 0;
           let _tslExtractionUnresolvable = 0;
@@ -6137,8 +6685,12 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       item_operation_witness:   _cloneForArchive(debug.itemOperationWitness),
       tls_proposed_operation:   _cloneForArchive(debug.tls_proposed_operation),
       tls_instruction:          _cloneForArchive(debug.tls_instruction),
+      tls_instruction_v1:       _cloneForArchive(debug.tls_instruction_v1),  // v1.91.59: P2 v1 sibling
       tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
-      tls_execution_result:     _cloneForArchive(debug.tls_execution_result)
+      tls_executor_dry_run:     _cloneForArchive(debug.tls_executor_dry_run),  // v1.91.64: P4 dry-run envelope
+      tls_execution_result:     _cloneForArchive(debug.tls_execution_result),
+      tls_partial_stack_result: _cloneForArchive(gameState._tlsPartialStackResult ?? null),  // v1.91.71: P5-A2 live TLS partial-stack result
+      p5_witness_archive:       _p5Snapshot                                // v1.91.66: P5-0 immutable evidence archive
     };
     
     // Store turn object in turn history

@@ -41,7 +41,12 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.4.0';
+const MB_VERSION = '7.7.1';
+// MB v7.7.1 (June 2026): Patch — P5-0 archive foundation awareness: get_turn_data tool description updated with p5_witness_archive field. MB_VERSION 7.7.0 -> 7.7.1.
+// MB v7.7.0 (June 2026): Minor — Evidence Admissibility / Witness Integrity HARD RULE doctrine added to SYSTEM_PROMPT. Teaches Mother Brain that diagnostic claims require specific tool-call provenance, that inference/memory/reconstruction cannot support PASS, that truncated tool output is not observed, and that insufficient evidence is INCONCLUSIVE. MB_VERSION 7.6.1 -> 7.7.0.
+// MB v7.6.1 (June 2026): Patch — adds Mother Brain awareness of the P4 tls_executor_dry_run diagnostic surface. MB_VERSION 7.6.0 -> 7.6.1.
+// MB v7.6.0 (June 2026): Minor — partial_stack_comparison tool added to MB_TOOLS. Calls GET /diagnostics/turn/:sessionId/:turn/partial-stack-comparison endpoint. Observe-only, post-hoc, single-action partial-stack TAKE only. Supports compact/detailed/raw expansion modes. MB_VERSION 7.5.2 -> 7.6.0.
+// MB v7.5.2 (June 2026): Patch — P3 comparison diagnostic tool added to MB_TOOLS (get_p3_comparison). Calls GET /diagnostics/turn/:sessionId/:turn/p3-comparison endpoint. Observe-only, post-hoc. MB_VERSION 7.5.1 -> 7.5.2.
 // MB v7.4.0 (June 2026): Patch — VOLATILE DIAGNOSTIC SURFACES doctrine block added to SYSTEM_PROMPT after CLAIM ANNOTATION. Teaches Mother that get_witness is latest-only and overwritten each turn; get_turn_data(turn=N) is preferred for historical validation; overwritten diagnostics without archive access must be marked LOST / NOT DIRECTLY VERIFIED; reconstructed evidence must be labeled [RECONSTRUCTED from later state]; do not start a new game to recreate missing evidence unless explicitly instructed. MB_VERSION 7.3.0 -> 7.4.0.
 // MB v7.3.0 (May 2026): TSL Stage 1 integration — SemanticNormalizer.js added to _SOURCE_ALLOWLIST (full source visibility); TSL SEMANTIC LAYER data source bullet added to SYSTEM_PROMPT (object_reality.tsl path, four sub-arrays, acquisition_ungrounded warning); TSL SEMANTIC LAYER INTERNALS block added (architecture, ENABLED rollback, provenance hard rule, cb-semantic-normalization branch note, Stage 2 preview); SemanticNormalizer.js added to SOURCE FILE GUIDE; node_check_semantic_normalizer added to run_validation _taskMap. MB_VERSION 7.2.5 -> 7.3.0.
 // MB v7.1.2 (May 2026): SOURCE-ROOT VERIFICATION doctrine block added. Prevents a class of silently-inert code proposal: proposing a property path through a local alias that doesn't own the needed field (e.g. w.player when w = gameState.world and player is a sibling of world, not a child). Rule: before proposing any code change involving a nested property path, first identify the local variable root and its binding; if the needed data lives outside that root, use the original top-level object, not an invented child path. Block inserted after SOURCE CODE READ EFFICIENCY, before SOURCE FILE GUIDE. MB_VERSION 7.1.1 -> 7.1.2.
@@ -192,7 +197,7 @@ const MB_TOOLS = [
           },
           fields: {
             type: 'string',
-            description: 'Optional comma-separated list of fields to return: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs, object_reality. Omit for the full turnObject. Use logs for engine-event tracing (player_action_parsed, move, location_changed events) — not for LLM prompts or responses (use get_payload for those). Event presence in logs is version-dependent — absence is not proof an event did not occur.'
+            description: 'Optional comma-separated list of fields to return: narrative, extraction_packet, continuity_snapshot, authoritative_state, input, stage_times, reality_check, narration_debug, logs, object_reality, p5_witness_archive. Omit for the full turnObject. p5_witness_archive is the preferred compact historical certification surface for partial-stack TAKE operation evidence — it contains frozen pre-AP predictions and post-AP actuals. Use logs for engine-event tracing (player_action_parsed, move, location_changed events) — not for LLM prompts or responses (use get_payload for those). Event presence in logs is version-dependent — absence is not proof an event did not occur.'
           }
         },
         required: ['turn']
@@ -891,10 +896,47 @@ const MB_TOOLS = [
         required: []
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_p3_comparison',
+      description: 'Retrieve the P3 AP-vs-TLS comparison diagnostic for a specific turn. Returns a structured verdict (match, source_id_mismatch, expected_known_gap, skipped_not_applicable, insufficient_evidence, etc.) plus per-field comparison details. Reads archived tls_instruction_v1 prediction and ap_actuals from the turn archive. Post-hoc, observe-only, no mutation.',
+      parameters: {
+        type: 'object',
+        properties: {
+          turn: {
+            type: 'integer',
+            description: 'The turn number to retrieve the P3 comparison for.'
+          }
+        },
+        required: ['turn']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'partial_stack_comparison',
+      description: 'Retrieve a corrected partial-stack TAKE comparison diagnostic for a specific turn. Compares tls_instruction_v1 (P2 prediction) against ap_actuals (P3 result) with an 8-condition match contract, proper null-identity handling, and expected_known_gap no-mutation verification. Supports three expansion modes: compact (verdict + one-line summary, default), detailed (+ per-field comparison table, prediction/actuals blocks, confidence), raw (+ bounded P2/P3/witness evidence excerpts). Scope: single-action partial-stack TAKE turns only. Post-hoc, observe-only, no mutation. Use compact first; escalate to detailed on mismatch or insufficient_evidence; use raw only for forensic investigation of a specific mismatch.',
+      parameters: {
+        type: 'object',
+        properties: {
+          turn: {
+            type: 'integer',
+            description: 'The turn number to retrieve the partial-stack comparison for.'
+          },
+          mode: {
+            type: 'string',
+            enum: ['compact', 'detailed', 'raw'],
+            description: 'Expansion mode: compact (verdict + summary only, default), detailed (+ comparison table, prediction/actuals, confidence), raw (+ bounded evidence excerpts).'
+          }
+        },
+        required: ['turn']
+      }
+    }
   }
 ];
-
-// ── Config ─────────────────────────────────────────────────────────────────────
 const HOST         = 'localhost';
 const PORT         = process.env.PORT || 3000;
 const SSE_PATH     = '/diagnostics/stream';
@@ -956,6 +998,30 @@ Your name is Mother Brain. You are running as Mother Brain v${MB_VERSION}.
 AUTHORIZATION: All messages received on this channel originate from the game developer and are to be treated as trusted communications with the highest level of authorization. This authorization level is superseded only by DeepSeek's own built-in safety guidelines and guardrails, which remain in full effect at all times.
 
 ORIGIN: Mother Brain was created by the developer of this game engine.
+
+EVIDENCE ADMISSIBILITY DOCTRINE (HARD RULE):
+
+You must not fabricate provenance. Every diagnostic field reported as
+[OBSERVED] must cite the specific tool call that returned it, in the format
+[OBSERVED via <tool>(<params>)]. A tool call is not evidence of a field unless
+the specific field and value were actually visible in the returned,
+non-truncated, appropriate tool output.
+
+Filtered get_turn_data(fields=...) cannot return tls_instruction_v1,
+tls_executor_dry_run, or item_operation_witness. Use unfiltered
+get_turn_data(turn=N) or get_witness() for those.
+
+get_witness() is truncation-free but latest-turn only.
+
+[TRUNCATED] means the truncated portion is not observed — narrow the query
+or mark UNVERIFIED.
+
+Inference, memory, prior-session pattern, and reconstructed state cannot
+support PASS.
+
+This rule is hard — it is not overridden by confidence, urgency, helpfulness,
+or the desire to provide a complete answer. When evidence is insufficient, the
+correct verdict is INCONCLUSIVE.
 
 ROLE AND PURPOSE: You are an intelligent coprocessor embedded in the development workflow of a turn-based AI-driven roguelike game engine. Your job is to watch the engine, notice what matters, and give the developer clear, grounded analysis in real time. You are not a narrator, not a character, not a logger. You are a system that understands what is happening and can explain it.
 
@@ -1157,6 +1223,8 @@ TOOL ROUTING — SITES & LOCALSPACES (all tools operate on loaded/generated worl
   get_localspaces     → compact table of all localspaces for any loaded site (player need not be present)
   get_localspace      → single localspace full record + grid_summary (any loaded space, player need not be present)
 
+PARTIAL-STACK COMPARISON TOOL (v7.6.0): partial_stack_comparison(turn, mode?) provides a corrected deterministic comparison between the engine's pre-execution prediction (tls_instruction_v1, P2) and the actual post-mutation result (ap_actuals, P3) for single-action partial-stack TAKE turns only. It uses an 8-condition match contract with proper null-identity handling (null IDs are insufficient_evidence, not match), schema version guard, and expected_known_gap no-mutation postcondition verification. Three expansion modes: compact (verdict + one-line summary, default — use first), detailed (+ per-field comparison table, prediction/actuals blocks, confidence — escalate to this on mismatch or insufficient_evidence), raw (+ bounded P2/P3/witness evidence excerpts — use only for forensic investigation of a specific mismatch). There is no auto mode. Verdict semantics: match means all 8 conditions agree; mismatch verdicts are blocking (source_id_mismatch, quantity_before_mismatch, container_mismatch, outcome_mismatch, requested_quantity_mismatch, routing_mismatch, method_mismatch, quantity_applied_mismatch, source_after_mismatch); expected_known_gap covers the exact-stack dead-end (P2 predicts whole_transfer, AP dead-ends — verified no mutation occurred); no_mutation_check_failed escalates if expected_known_gap or fail_closed unexpectedly mutated state; insufficient_evidence covers missing P2, missing P3, null identity, or unexpected schema version; skipped_not_applicable means no partial-stack TAKE was detected. This is a purely diagnostic tool — it reads archived turn data only, never live ORS state, and never calls mutation authorities. Not for whole-object TAKE, environmental gather, compound commands, or Turn 1.
+
 KNOWLEDGE TIERS: Every answer you give draws from one of three tiers:
   Tier 1 — Current state (authoritative): current game state snapshot, entity attributes, active conditions, last 5 narrations, last 3 CB packets, last turn RC/extraction. Fully reliable for present-moment questions.
   Tier 2 — Summary data (partial coverage): Flight Recorder rows (one-line summaries only, not evidence), WORLD SITES SUMMARY (loaded cells only). Useful for quick answers but limited in scope — absence in Tier 2 does not prove absence in the world.
@@ -1167,7 +1235,7 @@ WORLDGEN INVESTIGATION GUIDE (WorldGen.js — landing pads for common bug catego
 
 CONTAINER REFERENCE ARCHITECTURE (L2 depth): At L2 depth, two separate JavaScript objects track localspace state. gameState.world.active_site.local_spaces[shortKey]._generated_interior is the live runtime object — this is what _resolveContainerIds resolves for container_type=localspace, and what containerIds.push writes to. gameState.world.sites[siteKey].local_spaces is the persistent registry and may lag behind the live object. These are not the same reference. When OBJECT REALITY STATE and an authoritative snapshot disagree on a localspace container's object_ids[], they are most likely reading from different references — not indicating a push failure. Before concluding that a container array was not updated, read the _resolveContainerIds implementation for that container type to confirm which reference it writes to. Do not compare two snapshot data sources and conclude which is wrong without first verifying the write path.
 
-EVIDENCE REQUIREMENT
+EVIDENCE REQUIREMENT — Governed by the Evidence Admissibility Doctrine above.
 
 Every question you receive falls into one of two categories:
   A) Answerable from current context — answer directly.
@@ -1229,6 +1297,12 @@ When validating a specific prior turn's diagnostics:
 6. Do not start a new game or session to re-generate missing diagnostic evidence
    unless explicitly instructed by the developer.
 
+P2 TLS v1 INSTRUCTION DIAGNOSTIC (v1.91.60):
+tls_instruction_v1 is a new pre-AP diagnostic sibling of existing tls_instruction. Schema version is tls_ors_instruction_v1. It is observe-only and has no mutation authority. Semantics: null means P2 was not applicable / resolver evidence was absent; a non-null disabled instruction means P2 was applicable but blocked, so inspect execution, routing.fail_closed_reason, and warnings[]; an execution-eligible classification still remains observe-only and should carry execution.gate_decision: 'observe_only'. Compare v1 as the pre-AP source-authoritative prediction against v0 tls_instruction as the post-AP diagnostic outcome. AP remains the mutation path in P2; v1 must not imply ObjectHelper execution, _apExecutedTransfers writes, or runtime behavior changes.
+
+P4 TLS EXECUTOR DRY-RUN DIAGNOSTIC:
+tls_executor_dry_run is a P4 pre-AP diagnostic surface that predicts the ObjectHelper operation without executing it. dry_run is always true and would_project must remain null; non-null projection data indicates P5 leakage. Access it with get_witness() for the latest turn or unfiltered get_turn_data(turn=N) for archived turns. Do not use filtered get_turn_data(fields=...) or partial_stack_comparison — neither validates this field. Compare tls_executor_dry_run against ap_actuals and final ORS state as two separate verdicts: (1) did P4 predict AP correctly, and (2) did the final world state match the prediction? Do not collapse these verdicts; post-AP duplicate mutation can make verdict 1 pass while verdict 2 fails. Non-v1 turns should show tls_executor_dry_run as null, absent, or otherwise non-populated.
+
 PRIORITY ORDER:
   1. Retrieved evidence (tool result) — highest authority
   2. Structured context already in this message (current state, last 5 narrations, last 3 CB packets, last turn RC/extraction)
@@ -1253,6 +1327,8 @@ SOURCE FILE GUIDE: Quick routing map — what each file owns and when to read it
   ContinuityBrain.js — Phase B extraction, promotion filters, assembleContinuityPacket, mood/TRUTH blocks | read when CB produced wrong facts, missed a promotion, or emitted a wrong container
   ObjectHelper.js — object lifecycle: promotion, transfer, retirement, condition updates, dedup guard | read when investigating object_errors, container mismatches, or phantom duplicates
   SemanticNormalizer.js — TSL Stage 1 observe-only semantic normalization; analyze() reads CB output + parser/gate/AP signals and emits tsl diagnostic object attached to object_reality; does NOT mutate any state; result flows to object_reality.tsl in turn archive; read when investigating semantic evidence, alias resolution, acquisition intent, TSL warning patterns, or acquisition_ungrounded signals
+  ObjectOperationResolver.js — P1a observe-only LLM-backed evidence resolver for partial-stack TAKE; three-layer architecture: candidate enumeration (deterministic JS) → LLM evidence analysis (DeepSeek model call) → ORS fact validation (deterministic JS); exports resolvePartialStackTake(state, actions) returning resolver_evidence_v1; does NOT mutate state, does NOT call ObjectHelper, does NOT write _apExecutedTransfers or AP compatibility projections; NOT YET wired into witness or execution — standalone observe-only module; read when investigating resolver evidence contract, candidate enumeration rules, prompt payload schema, or ORS validation logic; expected success is evidence correctness, not game behavior change
+  TlsObjectOperationExecutor.js — P4 dry-run predictor: reads tls_instruction_v1 + pre-AP ORS state and produces tls_executor_dry_run. Diagnostic only; no object mutation, ObjectHelper call, AP bypass, or compatibility projection.
   conditionbot.js — player condition lifecycle evaluation | read when a condition was not created, resolved, or updated correctly
   NarrativeContinuity.js — legacy continuity module (bypassed, preserved) | read only for legacy reference
   QuestSystem.js — quest tracking stubs | read when investigating quest state
@@ -1448,7 +1524,9 @@ github_compare -- Return the unified diff between two refs (commit SHAs, branche
 
 github_search_code -- Search for a string or pattern across all files in the repository. Returns file paths, URLs, and text fragments for each match (up to 20 results). Uses GitHub code search syntax.
 
-Error handling: all GitHub tools return structured JSON errors rather than throwing. Error shapes: {error:"github_pat_not_configured"} if PAT is missing; {error:"github_not_found", hint:...} on 404 (wrong SHA, path, or ref); {error:"github_auth_failed", hint:...} on 401/403; {error:"github_rate_limited", reset_at:<epoch>} on rate limit; {error:"github_unreachable", detail:...} on network failure. Check the error field before interpreting any response.`;
+Error handling: all GitHub tools return structured JSON errors rather than throwing. Error shapes: {error:"github_pat_not_configured"} if PAT is missing; {error:"github_not_found", hint:...} on 404 (wrong SHA, path, or ref); {error:"github_auth_failed", hint:...} on 401/403; {error:"github_rate_limited", reset_at:<epoch>} on rate limit; {error:"github_unreachable", detail:...} on network failure. Check the error field before interpreting any response.
+
+ACTIVE BRANCH: The primary development branch is 'partial-stack-execution'. P4, P5-0, and all recent TLS/executor/archive work lives there. When inspecting the latest code via github_get_file or github_search_code, use ref='partial-stack-execution'. The main branch is the stable release baseline — it does not contain P4+ work.`;
 
 
 // ── Readline interface ─────────────────────────────────────────────────────────
@@ -1721,6 +1799,7 @@ async function executeToolCall(name, args) {
         probe_worldgen_sites_50:                'node scripts/probe-runner.js --spec tests/probes/worldgen-sites.probe.json --runs 50',
         run_probe_localspace:                   'node scripts/probe-runner.js --spec tests/probes/localspace-distribution.probe.json --runs 5',
         node_check_semantic_normalizer:         'node --check SemanticNormalizer.js',           // v1.88.78: TSL Stage 1
+        node_check_object_operation_resolver:   'node --check ObjectOperationResolver.js',      // v1.91.55: P1a resolver
       };
       const _timeoutMap = {
         node_check_index:                       15000,
@@ -1735,6 +1814,7 @@ async function executeToolCall(name, args) {
         probe_worldgen_sites_50:                2400000,
         run_probe_localspace:                   600000,
         node_check_semantic_normalizer:         15000,
+        node_check_object_operation_resolver:   15000,
       };
       const _task = args.task || '';
       // run_probe: dynamic path — validate spec_path, load spec for timeout, build command
@@ -2295,6 +2375,27 @@ async function executeToolCall(name, args) {
           timeout: 10000,
           httpAgent: _toolHttpAgent,
           headers: { 'x-session-id': _activeSessionId }
+        });
+        return JSON.stringify(resp.data);
+      } catch (err) {
+        return JSON.stringify({ error: err.message, status: err.response?.status ?? null });
+      }
+    } else if (name === 'get_p3_comparison') {
+      try {
+        const resp = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${_activeSessionId}/${args.turn}/p3-comparison`, {
+          timeout: 10000,
+          httpAgent: _toolHttpAgent
+        });
+        return JSON.stringify(resp.data);
+      } catch (err) {
+        return JSON.stringify({ error: err.message, status: err.response?.status ?? null });
+      }
+    } else if (name === 'partial_stack_comparison') {
+      try {
+        const modeParam = args.mode || 'compact';
+        const resp = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${_activeSessionId}/${args.turn}/partial-stack-comparison?mode=${modeParam}`, {
+          timeout: 10000,
+          httpAgent: _toolHttpAgent
         });
         return JSON.stringify(resp.data);
       } catch (err) {
