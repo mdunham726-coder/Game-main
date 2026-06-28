@@ -5468,6 +5468,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         for (const _cc of _cbCandidates) {
           if (_cc.temp_ref) _cbTempRefToName[_cc.temp_ref] = _norm(_cc.name);
         }
+        let _cbTakeSuppressed = 0;
         const _cbTransfersFiltered = _cbTransfers.filter(t => {
           // Phase 1: existing explicit-ID dedup — preserve unchanged
           if (t.object_id && _apDoneIds.has(t.object_id)) return false;
@@ -5489,8 +5490,35 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               return false; // suppress — AP already handled this named object this turn
             }
           }
+          // Phase 3: P5-A1 CB TAKE transfer guard — suppress environment→player transfers
+          // during TAKE turns when environmental gathering is not active.
+          // This prevents CB from originating object movement after AP already refused
+          // ownership (partial-stack) or after TLS already executed (whole-object).
+          // Temporary — will be narrowed in P5-A2 when the new execution lane goes live.
+          if (
+            t.to_container_type === 'player' &&
+            (t.from_container_type === 'grid' || t.from_container_type === 'localspace' || t.from_container_type === 'site') &&
+            _parsedAction === 'take' &&
+            _envGatherLabel === null
+          ) {
+            if (!Array.isArray(_objectRealityDebug.suppressed_replays)) _objectRealityDebug.suppressed_replays = [];
+            _objectRealityDebug.suppressed_replays.push({
+              reason: 'cb_take_transfer_suppressed',
+              temp_ref: t.temp_ref || null,
+              object_id: t.object_id || null,
+              from_container_type: t.from_container_type,
+              from_container_id: t.from_container_id,
+              to_container_type: t.to_container_type,
+              to_container_id: t.to_container_id,
+              parsed_action: _parsedAction,
+              env_gather_active: _envGatherLabel !== null
+            });
+            _cbTakeSuppressed++;
+            return false;
+          }
           return true;
         });
+        if (_cbTakeSuppressed > 0) _objectRealityDebug.cb_take_transfers_suppressed = _cbTakeSuppressed;
         // v1.85.9: detect ap_dedup_all_transfers — CB produced transfers but all were AP-claimed.
         // Distinct from empty_quarantine (CB produced nothing) — improves diagnostic clarity.
         if (_cbCandidates.length === 0 && _cbTransfers.length > 0 && _cbTransfersFiltered.length === 0) {
