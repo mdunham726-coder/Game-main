@@ -3077,6 +3077,39 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         'REALITY ANCHOR (INJECTED BLOCK)',
         rc.anchor_block != null ? rc.anchor_block.trim() : '(skipped -- no anchor)',
         '',
+        'RESOLVER EVIDENCE (partial-stack TAKE object selection)',
+        (() => {
+          const iw = t.item_operation_witness;
+          if (!iw) return '(no resolver evidence -- not a partial-stack TAKE turn or resolver did not run)';
+          const err = iw.resolver_evidence_error;
+          const ev  = iw.resolver_evidence;
+          const parts = [];
+          if (err) {
+            parts.push('EXCEPTION');
+            parts.push(`  error_type:  ${err.error_type ?? 'null'}`);
+            parts.push(`  message:     ${err.message ?? 'null'}`);
+          }
+          if (ev) {
+            parts.push(`resolution_basis:         ${ev.resolution_basis ?? 'null'}`);
+            parts.push(`fail_closed_reason:       ${ev.fail_closed_reason ?? 'null'}`);
+            parts.push(`resolution_confidence:    ${ev.resolution_confidence ?? 'null'}`);
+            parts.push(`candidate_count:          ${ev.candidate_count ?? 0}`);
+            parts.push(`candidate_ids_sent:       ${JSON.stringify(ev.candidate_ids_sent ?? [])}`);
+            parts.push(`candidate_ids_considered: ${JSON.stringify(ev.candidate_ids_considered ?? [])}`);
+            parts.push(`reasoning_summary:        ${ev.reasoning_summary ?? 'null'}`);
+            parts.push(`source_object_id:         ${ev.source_object_id ?? 'null'}`);
+            parts.push(`source_object_name:       ${ev.source_object_name ?? 'null'}`);
+            parts.push(`requested_quantity:       ${ev.requested_quantity ?? 'null'}`);
+            if (Array.isArray(ev.resolution_warnings)) {
+              ev.resolution_warnings.forEach((w, i) => {
+                parts.push(`warning[${i}]: code=${w.code ?? 'null'} severity=${w.severity ?? 'null'} message="${w.message ?? ''}" candidate_ids=${JSON.stringify(w.candidate_ids ?? [])}`);
+              });
+            }
+          }
+          if (parts.length === 0) return '(no resolver evidence -- not a partial-stack TAKE turn or resolver did not run)';
+          return parts.join('\n');
+        })(),
+        '',
         'NARRATOR OUTPUT',
         `"${t.narrative ?? '(none)'}"`,
         '',

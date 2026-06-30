@@ -41,7 +41,7 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.7.1';
+const MB_VERSION = '7.7.2';
 // MB v7.7.1 (June 2026): Patch — P5-0 archive foundation awareness: get_turn_data tool description updated with p5_witness_archive field. MB_VERSION 7.7.0 -> 7.7.1.
 // MB v7.7.0 (June 2026): Minor — Evidence Admissibility / Witness Integrity HARD RULE doctrine added to SYSTEM_PROMPT. Teaches Mother Brain that diagnostic claims require specific tool-call provenance, that inference/memory/reconstruction cannot support PASS, that truncated tool output is not observed, and that insufficient evidence is INCONCLUSIVE. MB_VERSION 7.6.1 -> 7.7.0.
 // MB v7.6.1 (June 2026): Patch — adds Mother Brain awareness of the P4 tls_executor_dry_run diagnostic surface. MB_VERSION 7.6.0 -> 7.6.1.
@@ -1302,6 +1302,9 @@ tls_instruction_v1 is a new pre-AP diagnostic sibling of existing tls_instructio
 
 P4 TLS EXECUTOR DRY-RUN DIAGNOSTIC:
 tls_executor_dry_run is a P4 pre-AP diagnostic surface that predicts the ObjectHelper operation without executing it. dry_run is always true and would_project must remain null; non-null projection data indicates P5 leakage. Access it with get_witness() for the latest turn or unfiltered get_turn_data(turn=N) for archived turns. Do not use filtered get_turn_data(fields=...) or partial_stack_comparison — neither validates this field. Compare tls_executor_dry_run against ap_actuals and final ORS state as two separate verdicts: (1) did P4 predict AP correctly, and (2) did the final world state match the prediction? Do not collapse these verdicts; post-AP duplicate mutation can make verdict 1 pass while verdict 2 fails. Non-v1 turns should show tls_executor_dry_run as null, absent, or otherwise non-populated.
+
+P1b RESOLVER EVIDENCE DIAGNOSTIC (partial-stack TAKE object selection):
+Resolver evidence is the P1b observe-only LLM-backed object selection stage for partial-stack TAKE, upstream of P2 and P4. It captures why the resolver selected, rejected, or failed to select candidate objects. Access it with unfiltered get_turn_data(turn=N) → item_operation_witness.resolver_evidence. Exception evidence (Stage 5 catch) is at item_operation_witness.resolver_evidence_error. Fetch this when diagnosing any partial-stack TAKE failure, especially when tls_instruction_v1 is null (P2 did not run — resolver may have blocked) or tls_executor_dry_run is null or operation_allowed: false (P4 blocked — root cause may be in resolver). Key fields: resolution_basis (resolver conclusion: model_selected, ambiguous, unresolved, invalid_model_output, provider_unavailable, validation_failed), fail_closed_reason (why resolver blocked: no_candidates, provider_unavailable, invalid_model_output, validation_failed, etc.), candidate_count (how many ORS objects were in scope; 0 = no candidates), resolution_warnings[] (detailed warnings with code, severity, message, candidate_ids). Diagnostic chain: resolver evidence (P1b) → tls_instruction_v1 (P2) → tls_executor_dry_run (P4) → ap_actuals (AP). If resolver evidence is absent (no item_operation_witness, or both resolver_evidence and resolver_evidence_error are null), the turn was likely not a partial-stack TAKE or the resolver was never invoked. Resolver evidence is observe-only — it does not mutate state, does not call ObjectHelper, does not write _apExecutedTransfers.
 
 PRIORITY ORDER:
   1. Retrieved evidence (tool result) — highest authority
