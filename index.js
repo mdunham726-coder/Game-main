@@ -3960,11 +3960,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     });
     // Attach bridge receipt to witness store as flat sibling (follows tls_partial_stack_result pattern)
     if (debug.object_operation_bridge?.active) {
-      const _witStore = sessionWitnessStore || gameState._witnessStore;
-      if (_witStore && _witStore instanceof Map && _witStore.has(resolvedSessionId)) {
-        const _existingWitness = _witStore.get(resolvedSessionId);
+      const _existingWitness = _witnessStore.get(resolvedSessionId);
+      if (_existingWitness) {
         _existingWitness.object_operation_bridge = debug.object_operation_bridge;
-        _witStore.set(resolvedSessionId, _existingWitness);
+        _witnessStore.set(resolvedSessionId, _existingWitness);
       }
     }
 
@@ -4399,7 +4398,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
                     ? (inputObj?.player_intent?.target === '__all_worn__'
                       ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed ALL of their worn clothing and gear. Every item is now in their inventory. None of it landed on the ground, was dropped, or was discarded anywhere. Do not describe any item falling to the floor or being set down. Do not name items using shortened or informal versions of their names.)\n`
                       : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed a worn item from their body. The item is now in their inventory — it was not dropped, placed on the ground, or discarded. Do not describe it falling to the floor or ending up anywhere other than the player's possession.)\n`)
-                    : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`)))))))
+                    : (debug.object_operation_bridge?.active
+                        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted an object operation that the engine evaluated and denied for this turn. Narrate the failed attempt only. Do not describe the player gathering, picking up, taking, holding, receiving, possessing, or partially completing the object operation. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`
+                        : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`
+                    ))))))))
       : '';
     // v1.84.79: environmental gather block — fires when AP resolved a take against a CB-promoted env: feature.
     // v1.85.6: also fires for synthetic=true (ORS had no prior record — narrator resolves plausibility).
