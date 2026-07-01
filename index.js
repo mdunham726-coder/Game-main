@@ -41,6 +41,7 @@ const SemanticNormalizer = require('./SemanticNormalizer'); // v1.88.78: TSL Sta
 const diag = require('./diagnostics');
 const ObjectOperationResolver = require('./ObjectOperationResolver'); // v1.91.56: P1b witness diagnostics
 const TlsObjectOperationExecutor = require('./TlsObjectOperationExecutor'); // v1.91.64: P4 dry-run executor
+const ObjectOperationBridge = require('./ObjectOperationBridge'); // v1.91.73: Object Operation Bridge — fail-closed downstream routing
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -3950,6 +3951,23 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       });
     }
 
+    // v1.91.73: Object Operation Bridge — evaluate fail-closed outcome, produce downstream routing receipt
+    debug.object_operation_bridge = ObjectOperationBridge.evaluateOperation({
+      dryRunEnvelope:        debug.tls_executor_dry_run ?? null,
+      apActuals:             gameState._apActuals ?? null,
+      tlsPartialStackResult: gameState._tlsPartialStackResult ?? null,
+      operationFamily:       debug.tls_instruction_v1?.operation_family ?? null
+    });
+    // Attach bridge receipt to witness store as flat sibling (follows tls_partial_stack_result pattern)
+    if (debug.object_operation_bridge?.active) {
+      const _witStore = sessionWitnessStore || gameState._witnessStore;
+      if (_witStore && _witStore instanceof Map && _witStore.has(resolvedSessionId)) {
+        const _existingWitness = _witStore.get(resolvedSessionId);
+        _existingWitness.object_operation_bridge = debug.object_operation_bridge;
+        _witStore.set(resolvedSessionId, _existingWitness);
+      }
+    }
+
     // v1.91.66: P5-0 — immutable evidence archive freeze (pre-RC, post-witness, deep-cloned)
     // Fires only for partial-stack TAKE turns where tls_instruction_v1 exists.
     // Deep-cloned via JSON roundtrip — no references to mutable debug.* fields survive.
@@ -4082,6 +4100,12 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // AP is authoritative on inventory state for these actions — RC must not fire.
       _rcSkippedReason = 'target_not_in_inventory';
     } else {
+      // v1.91.73: Object Operation Bridge — authoritative fail-closed suppression (ORS-direct)
+      // Placed at top of else block: only runs if no prior skip condition matched.
+      // Sets _rcSkippedReason early; RC API call is skipped at the if (!_rcSkippedReason) gate below.
+      if (!_rcSkippedReason && debug.object_operation_bridge?.active) {
+        _rcSkippedReason = debug.object_operation_bridge.rc_skip_reason;
+      }
       // Build query — SAY channel with matched NPC gets role context
       _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
         ? (_npcTalkResult?.npc?.job || _rawNpcTarget)
@@ -4247,6 +4271,18 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       diag.emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: false, skipped_reason: _rcSkippedReason, query: null, result: null, gameSessionId: resolvedSessionId });
       console.log(`[REALITY-CHECK] skipped — turn ${turnNumber}, reason: ${_rcSkippedReason}`);
     }
+    // v1.91.73: Object Operation Bridge — emit bridge diagnostic event for active fail-closed routing
+    if (debug.object_operation_bridge?.active) {
+      diag.emitDiagnostics({
+        type: 'tls_bridge',
+        turn: turnNumber,
+        active: true,
+        fail_closed_reason: debug.object_operation_bridge.diagnostics.fail_closed_reason,
+        rc_skipped: !!_rcSkippedReason,
+        constraint_supplied: debug.object_operation_bridge.diagnostics.constraint_supplied,
+        gameSessionId: resolvedSessionId
+      });
+    }
     // v1.87.0: Post-RC name-reveal resolver — detect whether RC signaled a true-name reveal and
     // substitute the engine's canonical NPC name before the narrator sees the anchor block.
     // Two-tier detection: (1) RC obeyed the placeholder instruction → [NPC_NAME_REVEAL] literal;
@@ -4285,6 +4321,12 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         ? `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has a canonical engine identity. If this NPC chooses to reveal their name in this response, the only valid name to reveal is "${_authorizedNameReveal.canonical_name}". Do not invent an alternate proper name or nickname as the answer to a name request. The NPC may still refuse, deflect, delay, or answer indirectly if that fits the scene.\n`
         : `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has just revealed their true canonical name: "${_authorizedNameReveal.canonical_name}". This is engine-verified fact. If your narration depicts the name reveal occurring this turn, use this exact name only — do not substitute, alter, or invent a different name. If your narration depicts a non-reveal outcome (refusal, deflection, interruption), you do not need to use this name.\n`)
       : '';
+
+    // v1.91.73: Object Operation Bridge — hard denial for definitively failed object operations
+    const _objectOperationBridgeBlock = (() => {
+      if (!debug.object_operation_bridge?.active) return '';
+      return `\n\n[OBJECT OPERATION RESULT]\n${debug.object_operation_bridge.narration_constraint}\n[/OBJECT OPERATION RESULT]\n`;
+    })();
     const _realityAnchorBlock = _realityAnchor
       ? `\n\nPossible consequences of the player's action (advisory):\n${_realityAnchor}\nUse these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.\n`
       : '';
@@ -4749,7 +4791,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or assume a proper name when npc_name is null; if the fiction calls for a name to be spoken, wait for an ENGINE AUTHORITY block to supply it. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_entityGroundingBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
+${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_entityGroundingBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_objectOperationBridgeBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
     if (narrationContent.length > 28000) console.warn(`[NARRATOR] WARN prompt_oversized len=${narrationContent.length} turn=${turnNumber}`); // v1.88.40
@@ -6640,6 +6682,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         continuity_block_chars: _continuityBlock.length,
         continuity_snapshot: _continuityBlockSnapshot,
         continuity_block_text: _continuityBlock || null,  // v1.85.41: faithful record of what narrator received regardless of eviction state
+        bridge_constraint_block: _objectOperationBridgeBlock || null,  // v1.91.73: rendered [OBJECT OPERATION RESULT] block as supplied to narrator
         continuity_diagnostics: CB.getLastRunDiagnostics(), // v1.70.0
         engine_spatial_notes: _engineSpatialBlock || null,
         extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
@@ -6752,6 +6795,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     // v1.50.0: Observability for v1.47.0–1.49.0 narration blocks
     debug.expressive_block_active = _expressiveBlock !== '';
     debug.freeform_block_active = _freeformBlock !== '';
+    debug.bridge_constraint_active = debug.object_operation_bridge?.diagnostics?.constraint_supplied ?? false;
     debug.movement_flavor_active = _movementFlavorBlock !== '';
     debug.soliloquy_active = _soliloquyBlock !== '';
     // v1.52.0: Narration task override observability
