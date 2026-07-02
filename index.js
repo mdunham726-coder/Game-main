@@ -94,6 +94,27 @@ setInterval(() => {
     const _sess = sessionStates.get(_sid);
     const _maxAge = _sess?.session_type === 'game' ? SESSION_GAME_MAX_AGE_MS : SESSION_PROBE_MAX_AGE_MS;
     if (_sweepNow - _ts > _maxAge) {
+      // v1.91.74: Archive session evidence before eviction
+      try {
+        const _safeId = String(_sid).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const _archiveDir = path.join(__dirname, 'logs', 'archive');
+        fs.mkdirSync(_archiveDir, { recursive: true });
+        const _archiveLine = JSON.stringify({
+          schema_version: 'session_archive_v1',
+          archived_at: new Date().toISOString(),
+          session_id: _sid,
+          session_type: _sess?.session_type ?? null,
+          session_origin: _sess?.session_origin ?? null,
+          ttl_reason: _sess?.session_type === 'game' ? 'game_timeout' : 'probe_timeout',
+          last_used_ts: _ts,
+          game_state_summary: _sess?.gameState ? { turn_counter: _sess.gameState.turn_history?.length ?? 0, player_name: _sess.gameState.player?.name ?? null, player_location: _sess.gameState.player?.location ?? null, world_position: _sess.gameState.world?.position ?? null, active_site: _sess.gameState.world?.active_site ?? null, active_local_space: _sess.gameState.world?.active_local_space ?? null } : null,
+          witness_packet: _witnessStore.get(_sid) ?? null,
+          consult_history: _consultHistory.get(_sid) ?? null
+        });
+        fs.appendFileSync(path.join(_archiveDir, `session_${_safeId}.jsonl`), _archiveLine + '\n');
+      } catch (_archiveErr) {
+        console.error('[SESSION-ARCHIVE] Archive write failed for', _sid, _archiveErr.message);
+      }
       sessionStates.delete(_sid);
       _sessionLastUsed.delete(_sid);
       _consultHistory.delete(_sid);
@@ -145,7 +166,8 @@ function getSessionState(sessionId) {
     sessionStates.set(newSessionId, {
       gameState: newState.state,
       isFirstTurn: true,
-      logger: logger
+      logger: logger,
+      session_origin: 'unknown'
     });
     _sessionLastUsed.set(newSessionId, Date.now());
     console.log('[DIAG-3a-SERVER-GETSESSIONSTATE] New session stored in Map. Map size now:', sessionStates.size);
@@ -806,7 +828,7 @@ async function restoreAutosaveIfAvailable(sessionId, clientState) {
   // Primary: restore from client-provided state (survives Render sleep)
   if (clientState && typeof clientState === 'object' && clientState.world) {
     const logger = createLogger({ sessionId });
-    sessionStates.set(sessionId, { gameState: clientState, isFirstTurn: false, logger });
+    sessionStates.set(sessionId, { gameState: clientState, isFirstTurn: false, logger, session_type: 'game', session_origin: 'autosave_restore' });
     console.log('[AUTOSAVE] Restored session', sessionId, 'from client_state — turn', clientState?.turn_history?.length ?? '?');
     return;
   }
@@ -827,7 +849,7 @@ async function restoreAutosaveIfAvailable(sessionId, clientState) {
       data.gameState.payload_archive = data.gameState.payload_archive || {};
     }
     const logger = createLogger({ sessionId });
-    sessionStates.set(sessionId, { gameState: data.gameState, isFirstTurn: false, logger });
+    sessionStates.set(sessionId, { gameState: data.gameState, isFirstTurn: false, logger, session_type: 'game', session_origin: 'autosave_restore' });
     console.log('[AUTOSAVE] Restored session', sessionId, 'from disk autosave — turn', data.gameState?.turn_history?.length ?? '?');
   } catch (_) {
     // No autosave or unreadable — fall through to normal new-session creation
@@ -1315,8 +1337,9 @@ app.post('/narrate', async (req, res) => {
 
   if (isFirstTurn === true) {
     isFirstTurn = false;
-    const _sessionType = req.headers['x-progress-token'] ? 'game' : 'probe';
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger, session_type: _sessionType });
+    const _sessionType = (req.headers['x-progress-token'] || req.headers['x-mother-brain'] === 'true') ? 'game' : 'probe';
+    const _sessionOrigin = req.headers['x-progress-token'] ? 'browser' : req.headers['x-mother-brain'] === 'true' ? 'mother_brain' : 'probe';
+    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger, session_type: _sessionType, session_origin: _sessionOrigin });
     inputObj = mapActionToInput(action, "WORLD_PROMPT");
     inputObj.player_intent.channel = 'do';
     if (_rawWorldSeed != null && Number.isFinite(Number(_rawWorldSeed))) inputObj.WORLD_SEED = Number(_rawWorldSeed);

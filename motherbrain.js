@@ -41,7 +41,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.7.2';
+const MB_VERSION = '7.7.3';
+// MB v7.7.3 (July 2026): Patch — start_game sends x-mother-brain header for session TTL classification. MB_VERSION 7.7.2 -> 7.7.3.
 // MB v7.7.1 (June 2026): Patch — P5-0 archive foundation awareness: get_turn_data tool description updated with p5_witness_archive field. MB_VERSION 7.7.0 -> 7.7.1.
 // MB v7.7.0 (June 2026): Minor — Evidence Admissibility / Witness Integrity HARD RULE doctrine added to SYSTEM_PROMPT. Teaches Mother Brain that diagnostic claims require specific tool-call provenance, that inference/memory/reconstruction cannot support PASS, that truncated tool output is not observed, and that insufficient evidence is INCONCLUSIVE. MB_VERSION 7.6.1 -> 7.7.0.
 // MB v7.6.1 (June 2026): Patch — adds Mother Brain awareness of the P4 tls_executor_dry_run diagnostic surface. MB_VERSION 7.6.0 -> 7.6.1.
@@ -2218,7 +2219,7 @@ async function executeToolCall(name, args) {
       const _sgBody = { action: args.founding_premise, intent_channel: 'do' };
       if (args.world_seed !== undefined) _sgBody.WORLD_SEED = args.world_seed;
       const _sgResp = await axios.post(`http://${HOST}:${PORT}/narrate`, _sgBody, {
-        timeout: 120000, httpAgent: _toolHttpAgent, headers: { 'content-type': 'application/json' }
+        timeout: 120000, httpAgent: _toolHttpAgent, headers: { 'content-type': 'application/json', 'x-mother-brain': 'true' }
       });
       _activeSessionId = _sgResp.data.sessionId || null;
       _activeGameplayInvestigation = {
