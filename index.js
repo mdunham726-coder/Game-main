@@ -964,7 +964,7 @@ app.post('/narrate', async (req, res) => {
       logs
     };
     if (gameState.turn_history) gameState.turn_history.push(rec);
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+    sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
   };
 
   // =========================================================================
@@ -1692,7 +1692,7 @@ app.post('/narrate', async (req, res) => {
               } else {
                 console.warn(`[L2-START-SITE-FILL] WARN: mirror target missing — interior_key=${_lssIk}. Slot written, registry not updated.`);
               }
-              sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+              sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
             } catch (_lssErr) {
               console.error('[L2-START-SITE-FILL] DS call failed:', _lssErr.message);
               if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -1764,7 +1764,7 @@ app.post('/narrate', async (req, res) => {
               } else {
                 console.warn(`[L1-START-SITE-FILL] WARN: mirror target missing — interior_key=${_l1Ik}. Slot written, registry not updated.`);
               }
-              sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+              sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
             } catch (_l1Err) {
               console.error('[L1-START-SITE-FILL] DS call failed:', _l1Err.message);
               if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -1909,7 +1909,7 @@ app.post('/narrate', async (req, res) => {
       engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
-        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: false, logger });
+        sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn: false, logger });
       }
       _reportProgress('engine_build', 61, {});
 
@@ -2426,7 +2426,7 @@ app.post('/narrate', async (req, res) => {
             gameState = result.state;
             // [POINT-E] Log position persistence for movement diagnosis
             console.log('[POINT-E-PERSIST] Before sessionStates.set - gameState.world.position:', gameState.world.position);
-            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
+            sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn });
             console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
           }
 
@@ -2570,7 +2570,7 @@ app.post('/narrate', async (req, res) => {
           logger.playerMoved(oldPos, newPos);
         }
         
-        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+        sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
       }
     } catch (err) {
       console.error('Engine error:', err.message);
@@ -2775,7 +2775,7 @@ app.post('/narrate', async (req, res) => {
                 console.warn(`[SITE-FILL] WARN: identity missing from fill response for ${_sfUpd.site_id} — is_filled NOT set`);
               }
             }
-            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
             // v1.85.39: fill complete (SITE-FILL)
             diag.emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
           } else {
@@ -2859,7 +2859,7 @@ app.post('/narrate', async (req, res) => {
                 if (_lsfTgt._generated_interior) _lsfTgt._generated_interior.is_filled = true;
               }
             }
-            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
           } else {
             console.warn('[LS-FILL] Failed to parse fill response — blocking narration');
             if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -2972,7 +2972,7 @@ app.post('/narrate', async (req, res) => {
                   if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
                   return res.json({ sessionId: resolvedSessionId, error: 'ls_fill_active_failed', narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
                 }
-                sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+                sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
               } else {
                 console.warn('[LS-FILL-ACTIVE] Failed to parse fill response — blocking narration');
                 if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -6797,7 +6797,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     };
     
     // Persist updated gameState with turn history
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+    sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
 
     // v1.84.21: Background payload archive write — separate file to keep autosave.json lean
     // TODO: rolling cap at 200 turns if payload_archive.json grows too large
