@@ -41,6 +41,7 @@ const SemanticNormalizer = require('./SemanticNormalizer'); // v1.88.78: TSL Sta
 const diag = require('./diagnostics');
 const ObjectOperationResolver = require('./ObjectOperationResolver'); // v1.91.56: P1b witness diagnostics
 const TlsObjectOperationExecutor = require('./TlsObjectOperationExecutor'); // v1.91.64: P4 dry-run executor
+const ObjectOperationBridge = require('./ObjectOperationBridge'); // v1.91.73: Object Operation Bridge — fail-closed downstream routing
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -93,6 +94,27 @@ setInterval(() => {
     const _sess = sessionStates.get(_sid);
     const _maxAge = _sess?.session_type === 'game' ? SESSION_GAME_MAX_AGE_MS : SESSION_PROBE_MAX_AGE_MS;
     if (_sweepNow - _ts > _maxAge) {
+      // v1.91.74: Archive session evidence before eviction
+      try {
+        const _safeId = String(_sid).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const _archiveDir = path.join(__dirname, 'logs', 'archive');
+        fs.mkdirSync(_archiveDir, { recursive: true });
+        const _archiveLine = JSON.stringify({
+          schema_version: 'session_archive_v1',
+          archived_at: new Date().toISOString(),
+          session_id: _sid,
+          session_type: _sess?.session_type ?? null,
+          session_origin: _sess?.session_origin ?? null,
+          ttl_reason: _sess?.session_type === 'game' ? 'game_timeout' : 'probe_timeout',
+          last_used_ts: _ts,
+          game_state_summary: _sess?.gameState ? { turn_counter: _sess.gameState.turn_history?.length ?? 0, player_name: _sess.gameState.player?.name ?? null, player_location: _sess.gameState.player?.location ?? null, world_position: _sess.gameState.world?.position ?? null, active_site: _sess.gameState.world?.active_site ?? null, active_local_space: _sess.gameState.world?.active_local_space ?? null } : null,
+          witness_packet: _witnessStore.get(_sid) ?? null,
+          consult_history: _consultHistory.get(_sid) ?? null
+        });
+        fs.appendFileSync(path.join(_archiveDir, `session_${_safeId}.jsonl`), _archiveLine + '\n');
+      } catch (_archiveErr) {
+        console.error('[SESSION-ARCHIVE] Archive write failed for', _sid, _archiveErr.message);
+      }
       sessionStates.delete(_sid);
       _sessionLastUsed.delete(_sid);
       _consultHistory.delete(_sid);
@@ -144,7 +166,8 @@ function getSessionState(sessionId) {
     sessionStates.set(newSessionId, {
       gameState: newState.state,
       isFirstTurn: true,
-      logger: logger
+      logger: logger,
+      session_origin: 'unknown'
     });
     _sessionLastUsed.set(newSessionId, Date.now());
     console.log('[DIAG-3a-SERVER-GETSESSIONSTATE] New session stored in Map. Map size now:', sessionStates.size);
@@ -805,7 +828,7 @@ async function restoreAutosaveIfAvailable(sessionId, clientState) {
   // Primary: restore from client-provided state (survives Render sleep)
   if (clientState && typeof clientState === 'object' && clientState.world) {
     const logger = createLogger({ sessionId });
-    sessionStates.set(sessionId, { gameState: clientState, isFirstTurn: false, logger });
+    sessionStates.set(sessionId, { gameState: clientState, isFirstTurn: false, logger, session_type: 'game', session_origin: 'autosave_restore' });
     console.log('[AUTOSAVE] Restored session', sessionId, 'from client_state — turn', clientState?.turn_history?.length ?? '?');
     return;
   }
@@ -826,7 +849,7 @@ async function restoreAutosaveIfAvailable(sessionId, clientState) {
       data.gameState.payload_archive = data.gameState.payload_archive || {};
     }
     const logger = createLogger({ sessionId });
-    sessionStates.set(sessionId, { gameState: data.gameState, isFirstTurn: false, logger });
+    sessionStates.set(sessionId, { gameState: data.gameState, isFirstTurn: false, logger, session_type: 'game', session_origin: 'autosave_restore' });
     console.log('[AUTOSAVE] Restored session', sessionId, 'from disk autosave — turn', data.gameState?.turn_history?.length ?? '?');
   } catch (_) {
     // No autosave or unreadable — fall through to normal new-session creation
@@ -941,7 +964,7 @@ app.post('/narrate', async (req, res) => {
       logs
     };
     if (gameState.turn_history) gameState.turn_history.push(rec);
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+    sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
   };
 
   // =========================================================================
@@ -1314,8 +1337,9 @@ app.post('/narrate', async (req, res) => {
 
   if (isFirstTurn === true) {
     isFirstTurn = false;
-    const _sessionType = req.headers['x-progress-token'] ? 'game' : 'probe';
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger, session_type: _sessionType });
+    const _sessionType = (req.headers['x-progress-token'] || req.headers['x-mother-brain'] === 'true') ? 'game' : 'probe';
+    const _sessionOrigin = req.headers['x-progress-token'] ? 'browser' : req.headers['x-mother-brain'] === 'true' ? 'mother_brain' : 'probe';
+    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger, session_type: _sessionType, session_origin: _sessionOrigin });
     inputObj = mapActionToInput(action, "WORLD_PROMPT");
     inputObj.player_intent.channel = 'do';
     if (_rawWorldSeed != null && Number.isFinite(Number(_rawWorldSeed))) inputObj.WORLD_SEED = Number(_rawWorldSeed);
@@ -1668,7 +1692,7 @@ app.post('/narrate', async (req, res) => {
               } else {
                 console.warn(`[L2-START-SITE-FILL] WARN: mirror target missing — interior_key=${_lssIk}. Slot written, registry not updated.`);
               }
-              sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+              sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
             } catch (_lssErr) {
               console.error('[L2-START-SITE-FILL] DS call failed:', _lssErr.message);
               if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -1740,7 +1764,7 @@ app.post('/narrate', async (req, res) => {
               } else {
                 console.warn(`[L1-START-SITE-FILL] WARN: mirror target missing — interior_key=${_l1Ik}. Slot written, registry not updated.`);
               }
-              sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+              sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
             } catch (_l1Err) {
               console.error('[L1-START-SITE-FILL] DS call failed:', _l1Err.message);
               if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -1885,7 +1909,7 @@ app.post('/narrate', async (req, res) => {
       engineOutput = Engine.buildOutput(gameState, inputObj, logger);
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
-        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn: false, logger });
+        sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn: false, logger });
       }
       _reportProgress('engine_build', 61, {});
 
@@ -2402,7 +2426,7 @@ app.post('/narrate', async (req, res) => {
             gameState = result.state;
             // [POINT-E] Log position persistence for movement diagnosis
             console.log('[POINT-E-PERSIST] Before sessionStates.set - gameState.world.position:', gameState.world.position);
-            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn });
+            sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn });
             console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
           }
 
@@ -2546,7 +2570,7 @@ app.post('/narrate', async (req, res) => {
           logger.playerMoved(oldPos, newPos);
         }
         
-        sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+        sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
       }
     } catch (err) {
       console.error('Engine error:', err.message);
@@ -2751,7 +2775,7 @@ app.post('/narrate', async (req, res) => {
                 console.warn(`[SITE-FILL] WARN: identity missing from fill response for ${_sfUpd.site_id} — is_filled NOT set`);
               }
             }
-            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
             // v1.85.39: fill complete (SITE-FILL)
             diag.emitDiagnostics({ type: 'turn_stage', stage: 'fill', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId });
           } else {
@@ -2835,7 +2859,7 @@ app.post('/narrate', async (req, res) => {
                 if (_lsfTgt._generated_interior) _lsfTgt._generated_interior.is_filled = true;
               }
             }
-            sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+            sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
           } else {
             console.warn('[LS-FILL] Failed to parse fill response — blocking narration');
             if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -2948,7 +2972,7 @@ app.post('/narrate', async (req, res) => {
                   if (gameState.world._fillLog.length > 10) gameState.world._fillLog.shift();
                   return res.json({ sessionId: resolvedSessionId, error: 'ls_fill_active_failed', narrative: 'The location is coming into focus. Please try again.', state: gameState, diagnostics });
                 }
-                sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+                sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
               } else {
                 console.warn('[LS-FILL-ACTIVE] Failed to parse fill response — blocking narration');
                 if (!gameState.world._fillLog) gameState.world._fillLog = [];
@@ -3950,6 +3974,22 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       });
     }
 
+    // v1.91.73: Object Operation Bridge — evaluate fail-closed outcome, produce downstream routing receipt
+    debug.object_operation_bridge = ObjectOperationBridge.evaluateOperation({
+      dryRunEnvelope:        debug.tls_executor_dry_run ?? null,
+      apActuals:             gameState._apActuals ?? null,
+      tlsPartialStackResult: gameState._tlsPartialStackResult ?? null,
+      operationFamily:       debug.tls_instruction_v1?.operation_family ?? null
+    });
+    // Attach bridge receipt to witness store as flat sibling (follows tls_partial_stack_result pattern)
+    if (debug.object_operation_bridge?.active) {
+      const _existingWitness = _witnessStore.get(resolvedSessionId);
+      if (_existingWitness) {
+        _existingWitness.object_operation_bridge = debug.object_operation_bridge;
+        _witnessStore.set(resolvedSessionId, _existingWitness);
+      }
+    }
+
     // v1.91.66: P5-0 — immutable evidence archive freeze (pre-RC, post-witness, deep-cloned)
     // Fires only for partial-stack TAKE turns where tls_instruction_v1 exists.
     // Deep-cloned via JSON roundtrip — no references to mutable debug.* fields survive.
@@ -4082,6 +4122,12 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       // AP is authoritative on inventory state for these actions — RC must not fire.
       _rcSkippedReason = 'target_not_in_inventory';
     } else {
+      // v1.91.73: Object Operation Bridge — authoritative fail-closed suppression (ORS-direct)
+      // Placed at top of else block: only runs if no prior skip condition matched.
+      // Sets _rcSkippedReason early; RC API call is skipped at the if (!_rcSkippedReason) gate below.
+      if (!_rcSkippedReason && debug.object_operation_bridge?.active) {
+        _rcSkippedReason = debug.object_operation_bridge.rc_skip_reason;
+      }
       // Build query — SAY channel with matched NPC gets role context
       _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
         ? (_npcTalkResult?.npc?.job || _rawNpcTarget)
@@ -4247,6 +4293,18 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       diag.emitDiagnostics({ type: 'reality_check', turn: turnNumber, fired: false, skipped_reason: _rcSkippedReason, query: null, result: null, gameSessionId: resolvedSessionId });
       console.log(`[REALITY-CHECK] skipped — turn ${turnNumber}, reason: ${_rcSkippedReason}`);
     }
+    // v1.91.73: Object Operation Bridge — emit bridge diagnostic event for active fail-closed routing
+    if (debug.object_operation_bridge?.active) {
+      diag.emitDiagnostics({
+        type: 'tls_bridge',
+        turn: turnNumber,
+        active: true,
+        fail_closed_reason: debug.object_operation_bridge.diagnostics.fail_closed_reason,
+        rc_skipped: !!_rcSkippedReason,
+        constraint_supplied: debug.object_operation_bridge.diagnostics.constraint_supplied,
+        gameSessionId: resolvedSessionId
+      });
+    }
     // v1.87.0: Post-RC name-reveal resolver — detect whether RC signaled a true-name reveal and
     // substitute the engine's canonical NPC name before the narrator sees the anchor block.
     // Two-tier detection: (1) RC obeyed the placeholder instruction → [NPC_NAME_REVEAL] literal;
@@ -4285,6 +4343,12 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         ? `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has a canonical engine identity. If this NPC chooses to reveal their name in this response, the only valid name to reveal is "${_authorizedNameReveal.canonical_name}". Do not invent an alternate proper name or nickname as the answer to a name request. The NPC may still refuse, deflect, delay, or answer indirectly if that fits the scene.\n`
         : `\n\nENGINE AUTHORITY — NAME REVEAL: The NPC known as "${_authorizedNameReveal.label}" has just revealed their true canonical name: "${_authorizedNameReveal.canonical_name}". This is engine-verified fact. If your narration depicts the name reveal occurring this turn, use this exact name only — do not substitute, alter, or invent a different name. If your narration depicts a non-reveal outcome (refusal, deflection, interruption), you do not need to use this name.\n`)
       : '';
+
+    // v1.91.73: Object Operation Bridge — hard denial for definitively failed object operations
+    const _objectOperationBridgeBlock = (() => {
+      if (!debug.object_operation_bridge?.active) return '';
+      return `\n\n[OBJECT OPERATION RESULT]\n${debug.object_operation_bridge.narration_constraint}\n[/OBJECT OPERATION RESULT]\n`;
+    })();
     const _realityAnchorBlock = _realityAnchor
       ? `\n\nPossible consequences of the player's action (advisory):\n${_realityAnchor}\nUse these as guidance when narrating the outcome. Select, adapt, or ignore as appropriate. Honor the current scene, engine state, and system prompt.\n`
       : '';
@@ -4357,7 +4421,10 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
                     ? (inputObj?.player_intent?.target === '__all_worn__'
                       ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed ALL of their worn clothing and gear. Every item is now in their inventory. None of it landed on the ground, was dropped, or was discarded anywhere. Do not describe any item falling to the floor or being set down. Do not name items using shortened or informal versions of their names.)\n`
                       : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed a worn item from their body. The item is now in their inventory — it was not dropped, placed on the ground, or discarded. Do not describe it falling to the floor or ending up anywhere other than the player's possession.)\n`)
-                    : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`)))))))
+                    : (debug.object_operation_bridge?.active
+                        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted an object operation that the engine evaluated and denied for this turn. Narrate the failed attempt only. Do not describe the player gathering, picking up, taking, holding, receiving, possessing, or partially completing the object operation. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`
+                        : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`
+                    ))))))))
       : '';
     // v1.84.79: environmental gather block — fires when AP resolved a take against a CB-promoted env: feature.
     // v1.85.6: also fires for synthetic=true (ORS had no prior record — narrator resolves plausibility).
@@ -4749,7 +4816,7 @@ ${_narDepth === 2 ? `- You are outside individual buildings. Do NOT describe the
 - Only describe persons explicitly listed in NPCs PRESENT. Do not introduce, imply, or reference any other people anywhere in the scene — at this tile, in another room, behind a counter, arriving, or anywhere else. The LOCATION ATMOSPHERE text above is non-authoritative on occupancy — if it references any person, figure, or human presence, treat that as a drafting artifact and do not narrate that person. If NPCs PRESENT is '(None visible)', no person exists in this location: do not narrate any person performing actions. You may describe absence, expectation, or emptiness (an unwatched counter, empty chairs), but not an actual person doing anything.
 - If NPCs PRESENT contains one or more entries, those NPCs are physically present at the player's exact tile and MUST be acknowledged in your narration on this turn — describe them as encountered. Do NOT defer NPC presence to a follow-up 'look' command.
 - NPC names: npc_name:null means the player has not yet learned this NPC's name — describe by role, appearance, or behavior only. Never invent or assume a proper name when npc_name is null; if the fiction calls for a name to be spoken, wait for an ENGINE AUTHORITY block to supply it. npc_name non-null means the player knows this name — use it exactly as given, never alter or regenerate it. Do NOT emit [npc_updates:] blocks under any circumstances — name assignment and learning are handled entirely by the engine.
-${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_entityGroundingBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
+${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGateBlock}${_entityGroundingBlock}${_freeformBlock}${_environmentGatherBlock}${_expressiveBlock}${_npcTalkBlock}${_emoteBlock}${_movementFlavorBlock}${_soliloquyBlock}${_narratorModeBlock}${_emoteObjectAuthorityBlock}${_movementTaskBlock}${_lookTaskBlock}${_exitTaskBlock}${_enterTaskBlock}${_objectOperationBridgeBlock}${_realityAnchorBlock}${_nameRevealAuthorityBlock}`;
 
     console.log(`[NARRATE] Built narration prompt, length: ${narrationContent.length} chars`);
     if (narrationContent.length > 28000) console.warn(`[NARRATOR] WARN prompt_oversized len=${narrationContent.length} turn=${turnNumber}`); // v1.88.40
@@ -6640,6 +6707,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         continuity_block_chars: _continuityBlock.length,
         continuity_snapshot: _continuityBlockSnapshot,
         continuity_block_text: _continuityBlock || null,  // v1.85.41: faithful record of what narrator received regardless of eviction state
+        bridge_constraint_block: _objectOperationBridgeBlock || null,  // v1.91.73: rendered [OBJECT OPERATION RESULT] block as supplied to narrator
         continuity_diagnostics: CB.getLastRunDiagnostics(), // v1.70.0
         engine_spatial_notes: _engineSpatialBlock || null,
         extraction_packet: _extractionPacket,    // v1.66.0: post-freeze canonical archive (reused by history assembler — never recomputed)
@@ -6729,7 +6797,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     };
     
     // Persist updated gameState with turn history
-    sessionStates.set(resolvedSessionId, { gameState, isFirstTurn, logger });
+    sessionStates.set(resolvedSessionId, { ...sessionStates.get(resolvedSessionId), gameState, isFirstTurn, logger });
 
     // v1.84.21: Background payload archive write — separate file to keep autosave.json lean
     // TODO: rolling cap at 200 turns if payload_archive.json grows too large
@@ -6752,6 +6820,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     // v1.50.0: Observability for v1.47.0–1.49.0 narration blocks
     debug.expressive_block_active = _expressiveBlock !== '';
     debug.freeform_block_active = _freeformBlock !== '';
+    debug.bridge_constraint_active = debug.object_operation_bridge?.diagnostics?.constraint_supplied ?? false;
     debug.movement_flavor_active = _movementFlavorBlock !== '';
     debug.soliloquy_active = _soliloquyBlock !== '';
     // v1.52.0: Narration task override observability

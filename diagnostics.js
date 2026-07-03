@@ -2914,7 +2914,7 @@ function registerRoutes(app, opts = {}) {
       const gs = sess.gameState;
       const total_turns = gs?.turn_history?.length ?? 0;
       const depth = gs?.world?.active_local_space ? 3 : gs?.world?.active_site ? 2 : gs?.world?.position ? 1 : 0;
-      sessions.push({ session_id: sid, total_turns, depth });
+      sessions.push({ session_id: sid, total_turns, depth, session_type: sess.session_type ?? null, session_origin: sess.session_origin ?? null });
     }
     sessions.sort((a, b) => b.total_turns - a.total_turns);
     if (!_lastSessionId || !_lastGameState) {
