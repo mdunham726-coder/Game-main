@@ -31,7 +31,7 @@ const { createLogger } = require('./logger.js');
 const Actions = require('./ActionProcessor.js');
 
 const { validateAndQueueIntent, parseIntent } = require('./ActionProcessor.js');
-const { normalizeUserIntent, resolveEnterTarget } = require('./SemanticParser.js');
+const { normalizeUserIntent, resolveEnterTarget, _enrichPrimaryAction } = require('./SemanticParser.js');
 const NC = require('./NarrativeContinuity');
 const CB = require('./ContinuityBrain'); // v1.70.0
 const ObjectHelper = require('./ObjectHelper'); // v1.84.52
@@ -2531,6 +2531,82 @@ app.post('/narrate', async (req, res) => {
         if (parsed && parsed.action === "move" && parsed.dir) {
           inputObj.player_intent.dir = parsed.dir;
         }
+        // [FALLBACK-ENRICH] Digit-prefix TAKE quantity recovery.
+        // Recover digit-quantified TAKE from the fallback parser path.
+        // Enrichment produces quantity metadata; triage resolves ORS candidates
+        // and routes partial/whole/deny based on source quantity comparison.
+        debug._fallbackPartialTakeActive = false;
+        debug._fallbackPartialTakeQty = null;
+
+        // Deterministic ORS candidate collector for quantity triage.
+        // Scans active objects in the player's current container scope,
+        // scores against the normalized target using aliasScore.
+        // Returns strictly 0, 1, or many — count > 1 is always ambiguous.
+        const _collectFallbackCandidates = (state, query) => {
+          const objects = state?.objects;
+          if (!objects || typeof objects !== 'object') return { candidates: [], count: 0 };
+          const cellKey = (() => {
+            const p = state?.world?.position;
+            if (!p) return null;
+            return 'LOC:' + (p.mx ?? 0) + ',' + (p.my ?? 0) + ':' + (p.lx ?? 0) + ',' + (p.ly ?? 0);
+          })();
+          const lsId = state?.world?.active_local_space?.local_space_id || null;
+          const siteKey = !lsId ? 'SITE:' + ((state?.world?.active_site?.id) || '') : null;
+          const candidates = [];
+          for (const rec of Object.values(objects)) {
+            if (rec.status !== 'active') continue;
+            if (rec.current_container_type === 'player') continue;
+            if (rec.current_container_type === 'worn') continue;
+            let inScope = false;
+            if (rec.current_container_type === 'grid' && cellKey && rec.current_container_id === cellKey) inScope = true;
+            else if (rec.current_container_type === 'localspace' && lsId && rec.current_container_id === lsId) inScope = true;
+            else if (rec.current_container_type === 'site' && siteKey && rec.current_container_id === siteKey) inScope = true;
+            if (!inScope) continue;
+            const score = Actions.aliasScore(rec.name || '', query, Array.isArray(rec.aliases) ? rec.aliases : []);
+            if (score >= 6) {
+              candidates.push({ id: rec.id, name: rec.name, quantity: typeof rec.quantity === 'number' ? rec.quantity : 1, score });
+            }
+          }
+          return { candidates, count: candidates.length };
+        };
+
+        if (parsed && parsed.action === 'take' && typeof parsed.target === 'string' && /^\d+/.test(parsed.target)) {
+          const enriched = _enrichPrimaryAction({ action: parsed.action, target: parsed.target }, userInput || '');
+          if (enriched && enriched.selection_mode === 'partial_from_stack' && enriched.requested_quantity != null && enriched.normalized_target) {
+            const collected = _collectFallbackCandidates(gameState, enriched.normalized_target);
+            if (collected.count === 0) {
+              // No ORS match — bypass enrichment, proceed to existing env gather path
+            } else if (collected.count > 1) {
+              // Ambiguous candidates — fail closed, do not route to env gather
+              console.log('[FALLBACK-ENRICH] ambiguous_candidates count=%d query=%s', collected.count, enriched.normalized_target);
+            } else {
+              const candidate = collected.candidates[0];
+              const sourceQty = candidate.quantity;
+              if (enriched.requested_quantity > sourceQty) {
+                // Requested exceeds available — fail closed
+                console.log('[FALLBACK-ENRICH] over_quantity requested=%d available=%d', enriched.requested_quantity, sourceQty);
+              } else if (enriched.requested_quantity === sourceQty) {
+                // Equal quantity — route to whole-object transfer
+                delete enriched.selection_mode;
+                if (enriched.requested_quantity != null) inputObj.player_intent.requested_quantity = enriched.requested_quantity;
+                if (enriched.normalized_target != null) inputObj.player_intent.normalized_target = enriched.normalized_target;
+                if (enriched.quantity_mode != null) inputObj.player_intent.quantity_mode = enriched.quantity_mode;
+                if (enriched.operation_family != null) inputObj.player_intent.operation_family = enriched.operation_family;
+                inputObj.player_intent.raw_input = userInput || '';
+              } else {
+                // Partial quantity — route through AP quarantine + post-engine guardrail
+                inputObj.player_intent.selection_mode = 'partial_from_stack';
+                if (enriched.requested_quantity != null) inputObj.player_intent.requested_quantity = enriched.requested_quantity;
+                if (enriched.normalized_target != null) inputObj.player_intent.normalized_target = enriched.normalized_target;
+                if (enriched.quantity_mode != null) inputObj.player_intent.quantity_mode = enriched.quantity_mode;
+                if (enriched.operation_family != null) inputObj.player_intent.operation_family = enriched.operation_family;
+                inputObj.player_intent.raw_input = userInput || '';
+                debug._fallbackPartialTakeActive = true;
+                debug._fallbackPartialTakeQty = enriched.requested_quantity;
+              }
+            }
+          }
+        }
         // [PARSER-FAILURE-FALLBACK] Stamp degraded path so RC skip and anti-instantiation fire correctly.
         // Only applies to FREEFORM fallback — MOVE fallback (parsed.action==='move') never reaches _freeformBlock.
         if (inferredKind === 'FREEFORM') {
@@ -2570,6 +2646,48 @@ app.post('/narrate', async (req, res) => {
       
       if (engineOutput && engineOutput.state) {
         gameState = engineOutput.state;
+        // [FALLBACK-GUARDRAIL] Post-engine partial-stack TAKE guardrail.
+        // Tightly gated fallback-only call site for ObjectHelper.splitObjectDirect.
+        // Fires only when: enrichment active, AP quarantined, source object present,
+        // and no synthetic env gather contradiction. Fail-closed on any gap.
+        if (debug._fallbackPartialTakeActive) {
+          const _apActuals = gameState._apActuals;
+          if (_apActuals && _apActuals.outcome === 'refused_ownership' && _apActuals.source_object_id) {
+            if (!(gameState._environmentGatherIntent && gameState._environmentGatherIntent.synthetic)) {
+              const splitResult = ObjectHelper.splitObjectDirect(
+                gameState,
+                _apActuals.source_object_id,
+                debug._fallbackPartialTakeQty,
+                'player',
+                'player',
+                turnNumber,
+                'tls_partial_stack_take'
+              );
+              gameState._tlsPartialStackResult = {
+                schema_version: 'tls_partial_stack_execution_v1',
+                executed: splitResult.ok,
+                split_result: splitResult,
+                ap_actuals: _apActuals
+              };
+              if (splitResult.ok) {
+                if (!Array.isArray(gameState._objectRealityDebug?.audit)) {
+                  if (!gameState._objectRealityDebug) gameState._objectRealityDebug = {};
+                  gameState._objectRealityDebug.audit = [];
+                }
+                gameState._objectRealityDebug.audit.push({
+                  action: 'tls_partial_stack_take',
+                  source_object_id: _apActuals.source_object_id,
+                  extract_quantity: debug._fallbackPartialTakeQty,
+                  destination_container_type: 'player',
+                  destination_container_id: 'player',
+                  executed: true,
+                  turn: turnNumber,
+                  timestamp: new Date().toISOString()
+                });
+              }
+            }
+          }
+        }
         
         const newPos = { mx: gameState.world?.position?.mx || 0, my: gameState.world?.position?.my || 0, lx: gameState.world?.position?.lx || 0, ly: gameState.world?.position?.ly || 0 };
         

@@ -449,7 +449,7 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
   return result;
 }
 
-module.exports = { normalizeUserIntent, resolveEnterTarget };
+module.exports = { normalizeUserIntent, resolveEnterTarget, _enrichPrimaryAction };
 
 /**
  * Phase 2 entry resolver — constrained LLM interpretation.
