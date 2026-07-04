@@ -2562,7 +2562,7 @@ app.post('/narrate', async (req, res) => {
             else if (rec.current_container_type === 'localspace' && lsId && rec.current_container_id === lsId) inScope = true;
             else if (rec.current_container_type === 'site' && siteKey && rec.current_container_id === siteKey) inScope = true;
             if (!inScope) continue;
-            const score = Actions.aliasScore(rec.name || '', query, Array.isArray(rec.aliases) ? rec.aliases : []);
+            const score = Actions.aliasScore(query, rec.name || '', Array.isArray(rec.aliases) ? rec.aliases : []);
             if (score >= 6) {
               candidates.push({ id: rec.id, name: rec.name, quantity: typeof rec.quantity === 'number' ? rec.quantity : 1, score });
             }
@@ -2577,14 +2577,32 @@ app.post('/narrate', async (req, res) => {
             if (collected.count === 0) {
               // No ORS match — bypass enrichment, proceed to existing env gather path
             } else if (collected.count > 1) {
-              // Ambiguous candidates — fail closed, do not route to env gather
+              // Ambiguous candidates — fail closed, abort turn
               console.log('[FALLBACK-ENRICH] ambiguous_candidates count=%d query=%s', collected.count, enriched.normalized_target);
+              _abortTurn('PARTIAL_TAKE_AMBIGUOUS');
+              return res.json({
+                sessionId: resolvedSessionId,
+                success: true,
+                narrative: 'Which item do you mean?',
+                state: gameState,
+                turn_history: gameState?.turn_history || null,
+                debug: { ...debug, parser: 'legacy', error: 'PARTIAL_TAKE_AMBIGUOUS' }
+              });
             } else {
               const candidate = collected.candidates[0];
               const sourceQty = candidate.quantity;
               if (enriched.requested_quantity > sourceQty) {
-                // Requested exceeds available — fail closed
+                // Requested exceeds available — fail closed, abort turn
                 console.log('[FALLBACK-ENRICH] over_quantity requested=%d available=%d', enriched.requested_quantity, sourceQty);
+                _abortTurn('PARTIAL_TAKE_OVER_QUANTITY');
+                return res.json({
+                  sessionId: resolvedSessionId,
+                  success: true,
+                  narrative: 'There is not enough of that item available.',
+                  state: gameState,
+                  turn_history: gameState?.turn_history || null,
+                  debug: { ...debug, parser: 'legacy', error: 'PARTIAL_TAKE_OVER_QUANTITY' }
+                });
               } else if (enriched.requested_quantity === sourceQty) {
                 // Equal quantity — route to whole-object transfer
                 delete enriched.selection_mode;
