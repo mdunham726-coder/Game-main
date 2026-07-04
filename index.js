@@ -2107,6 +2107,14 @@ app.post('/narrate', async (req, res) => {
         console.log('[ROUTING-FIX] Coerced confidence to number:', normalizedConfidence);
       }
 
+      // Capture parser failure diagnostic fields for turn archive when semantic parser fails.
+      if (parseResult && parseResult.success !== true) {
+        debug.parser_error            = parseResult.error       || null;
+        debug.parser_error_code       = parseResult.error_code  || null;
+        debug.parser_error_confidence = parseResult.confidence  ?? null;
+        debug.parser_raw_content      = parseResult.raw_content || null;
+      }
+
       if (parseResult && parseResult.success === true && typeof normalizedConfidence === 'number' && normalizedConfidence >= 0.5) {
         console.log('[PARSER] semantic_ok input="%s" action="%s" confidence=%s', userInput, parseResult.intent?.primaryAction?.action, parseResult.confidence);
         // [POINT-A] Log parseResult details for movement diagnosis
@@ -6758,7 +6766,12 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       tls_executor_dry_run:     _cloneForArchive(debug.tls_executor_dry_run),  // v1.91.64: P4 dry-run envelope
       tls_execution_result:     _cloneForArchive(debug.tls_execution_result),
       tls_partial_stack_result: _cloneForArchive(gameState._tlsPartialStackResult ?? null),  // v1.91.71: P5-A2 live TLS partial-stack result
-      p5_witness_archive:       _p5Snapshot                                // v1.91.66: P5-0 immutable evidence archive
+      p5_witness_archive:       _p5Snapshot,                                // v1.91.66: P5-0 immutable evidence archive
+      // Diagnostic capture — SemanticParser failure evidence
+      parser_error:            debug.parser_error            || null,
+      parser_error_code:       debug.parser_error_code       || null,
+      parser_error_confidence: debug.parser_error_confidence ?? null,
+      parser_raw_content:      debug.parser_raw_content      || null,
     };
     
     // Store turn object in turn history

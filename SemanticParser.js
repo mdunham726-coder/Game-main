@@ -312,7 +312,7 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
 async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
   const raw = (typeof userInput === "string") ? userInput.trim() : "";
   if (!raw) {
-    return { success: false, error: "EMPTY_INPUT" };
+    return { success: false, error: "EMPTY_INPUT", error_code: "EMPTY_INPUT", raw_content: null };
   }
 
   // v1.84.99: Pre-LLM fast path for unambiguously imperative acquisition verbs.
@@ -398,14 +398,15 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
   const messages = buildPrompt(raw, contextStr, channel);
   const llm = await callDeepSeek(messages);
   if (!llm.ok) {
-    const out = { success: false, error: llm.error, intent: null };
+    const _errorCode = (llm.error === "PARSE_FAILED") ? "EMPTY_CONTENT" : llm.error;
+    const out = { success: false, error: llm.error, error_code: _errorCode, raw_content: null, intent: null };
     setToCache(cacheKey, out);
     return out;
   }
 
   const parsed = safeParseJSON(llm.content);
   if (!parsed.ok || typeof parsed.value !== "object" || parsed.value === null) {
-    const out = { success: false, error: "PARSE_FAILED", intent: null };
+    const out = { success: false, error: "PARSE_FAILED", error_code: "INVALID_JSON", raw_content: llm.content?.substring(0, 500) || null, intent: null };
     setToCache(cacheKey, out);
     return out;
   }
@@ -413,20 +414,20 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
   const v = parsed.value;
   const confidence = (typeof v.confidence === "number") ? v.confidence : NaN;
   if (!Number.isFinite(confidence)) {
-    const out = { success: false, error: "PARSE_FAILED", intent: null };
+    const out = { success: false, error: "PARSE_FAILED", error_code: "NON_FINITE_CONFIDENCE", raw_content: llm.content?.substring(0, 500) || null, intent: null };
     setToCache(cacheKey, out);
     return out;
   }
   if (confidence < 0.7) {
     log("warn", `error=LOW_CONFIDENCE input="${raw}" confidence=${confidence}`);
-    const out = { success: false, error: "LOW_CONFIDENCE", intent: null, confidence };
+    const out = { success: false, error: "LOW_CONFIDENCE", error_code: "LOW_CONFIDENCE", raw_content: llm.content?.substring(0, 500) || null, intent: null, confidence };
     setToCache(cacheKey, out);
     return out;
   }
 
   const primaryAction = v.primaryAction && typeof v.primaryAction === "object" ? v.primaryAction : null;
   if (!primaryAction || typeof primaryAction.action !== "string" || primaryAction.action.length === 0) {
-    const out = { success: false, error: "PARSE_FAILED", intent: null };
+    const out = { success: false, error: "PARSE_FAILED", error_code: "MISSING_PRIMARY_ACTION", raw_content: llm.content?.substring(0, 500) || null, intent: null };
     setToCache(cacheKey, out);
     return out;
   }
