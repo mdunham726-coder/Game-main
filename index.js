@@ -3284,7 +3284,15 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     // v1.84.78: build invStr from ORS (player.object_ids → gameState.objects) — legacy scene.inventory is always []
     const _orsIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : [];
     const _orsObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {};
-    const _invNames = _orsIds.map(id => _orsObjs[id]?.status === 'active' ? _orsObjs[id].name : null).filter(Boolean);
+    const _invNames = _orsIds.map(id => {
+      const _obj = _orsObjs[id];
+      if (!_obj || _obj.status !== 'active') return null;
+      const qty = typeof _obj.quantity === 'number' ? _obj.quantity : null;
+      const unit = (typeof _obj.unit === 'string' && _obj.unit.trim()) ? _obj.unit.trim() : null;
+      if (qty !== null && unit !== null) return `${_obj.name} (quantity: ${qty}, unit: ${unit})`;
+      if (qty !== null) return `${_obj.name} (quantity: ${qty})`;
+      return _obj.name;
+    }).filter(Boolean);
     let invStr = JSON.stringify(_invNames);
     // v1.85.22: build wornStr from ORS (player.worn_object_ids → gameState.objects)
     const _wornIds = Array.isArray(gameState.player?.worn_object_ids) ? gameState.player.worn_object_ids : [];
