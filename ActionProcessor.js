@@ -611,19 +611,48 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     } else if (res && res[0] === 'object_ids') {
       // v1.84.55: OR system object — route through ObjectHelper (sole mutation authority)
       const rec = res[1];
+      // v1.91.80: DROP destination container compliance — resolve correct container
+      // by layer instead of hardcoding 'grid'. L2 to localspace, L1 to site, L0 to grid.
+      // Fail-closed: any resolution failure sets _engineMessage and returns immediately.
+      const _dropTurnNum = actions?._turn || 0;
+      let _dropDestType, _dropDestId;
+      if (state.world?.active_local_space) {
+        _dropDestType = 'localspace';
+        _dropDestId = state.world.active_local_space.local_space_id;
+        if (!_dropDestId) {
+          console.warn('[ACTIONS] drop: active localspace exists but local_space_id is missing');
+          state.world._engineMessage = 'DROP failed: container resolution error (missing localspace identifier).';
+          if (logger) logger.action_resolved('drop', false, 'DROP_CONTAINER_FAIL: missing local_space_id');
+          return;
+        }
+      } else if (state.world?.active_site) {
+        _dropDestType = 'site';
+        const _siteId = state.world.active_site.site_id || state.world.active_site.id?.replace(/\/l2$/, '');
+        const _px = state.player?.position?.x;
+        const _py = state.player?.position?.y;
+        if (!_siteId || _px == null || _py == null) {
+          console.warn('[ACTIONS] drop: active site exists but site floor coordinates are missing');
+          state.world._engineMessage = 'DROP failed: container resolution error (missing site floor coordinates).';
+          if (logger) logger.action_resolved('drop', false, 'DROP_CONTAINER_FAIL: missing site floor coordinates');
+          return;
+        }
+        _dropDestId = `${_siteId}:${_px},${_py}`;
+      } else {
+        _dropDestType = 'grid';
+        const _pos = state.world?.position;
+        if (!_pos) {
+          console.warn('[ACTIONS] drop: could not derive cell key (no world.position)');
+          state.world._engineMessage = 'DROP failed: no world position available.';
+          if (logger) logger.action_resolved('drop', false, 'DROP_CONTAINER_FAIL: no world.position');
+          return;
+        }
+        _dropDestId = `LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`;
+      }
       // v1.91.19: partial-stack guard — reads parser-emitted selection_mode (per-action,
       // root fix). Delegates to splitObjectDirect so ObjectHelper owns all split arithmetic.
       if (actions?.selection_mode === 'partial_from_stack' && typeof rec.quantity === 'number' && rec.quantity > 1) {
-        const turnNum = actions?._turn || 0;
-        const pos = state.world?.position;
-        const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
-        if (!cellKey) {
-          console.warn('[ACTIONS] drop partial-split: could not derive cell key (no world.position)');
-          if (logger) logger.action_resolved('drop', false, `could not drop ${target}: no position`);
-          return;
-        }
         const splitResult = splitObjectDirect(
-          state, rec.id, 1, 'grid', cellKey, turnNum, 'ap_partial_split_drop'
+          state, rec.id, 1, _dropDestType, _dropDestId, _dropTurnNum, 'ap_partial_split_drop'
         );
         if (splitResult.ok) {
           deltas.push({ op: 'set', path: '/player/object_ids', value: state.player.object_ids });
@@ -633,7 +662,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           state._apExecutedTransfers.push(splitResult.successor_object_id);
           if (state._objectRealityDebug && Array.isArray(state._objectRealityDebug.audit)) {
             state._objectRealityDebug.audit.push({
-              turn:                   turnNum,
+              turn:                   _dropTurnNum,
               action:                 'ap_partial_split',
               source_object_id:       rec.id,
               successor_id:           splitResult.successor_object_id,
@@ -646,6 +675,9 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           }
         } else {
           console.warn(`[ACTIONS] drop partial-split failed: ${splitResult.error} (${rec.id})`);
+          state.world._engineMessage = `DROP failed: ObjectHelper rejected the destination container (${splitResult.error}).`;
+          if (logger) logger.action_resolved('drop', false, `DROP_FAIL: ObjectHelper rejected destination — ${splitResult.error}`);
+          return;
         }
         if (logger) {
           logger.action_resolved('drop', dropSucceeded,
@@ -665,11 +697,7 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
       ) {
         console.log(`[ACTIONS] drop: stack (qty:${rec.quantity}) but no selection_mode — parser may have missed quantity prefix`);
       }
-      const pos = state.world?.position;
-      const cellKey = pos ? `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}` : null;
-      if (cellKey) {
-        const turnNum = actions?._turn || 0;
-        const result = transferObjectDirect(state, rec.id, 'grid', cellKey, turnNum, 'player_drop');
+      const result = transferObjectDirect(state, rec.id, _dropDestType, _dropDestId, _dropTurnNum, 'player_drop');
         if (result.success) {
           deltas.push({ op:'set', path:'/player/object_ids', value: state.player.object_ids });
           flags.inventory_rev = true;
@@ -679,10 +707,10 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
           state._apExecutedTransfers.push(rec.id);
         } else {
           console.warn(`[ACTIONS] drop OR object failed: ${result.error} (${rec.id})`);
+          state.world._engineMessage = `DROP failed: ObjectHelper rejected the destination container (${result.error}).`;
+          if (logger) logger.action_resolved('drop', false, `DROP_FAIL: ObjectHelper rejected destination — ${result.error}`);
+          return;
         }
-      } else {
-        console.warn('[ACTIONS] drop OR object: could not derive cell key (no world.position)');
-      }
     }
     if (logger) {
       logger.action_resolved('drop', dropSucceeded, dropSucceeded ? `dropped ${target}` : `could not drop ${target}`);
