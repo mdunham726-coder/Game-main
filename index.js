@@ -3303,6 +3303,58 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     }).filter(Boolean);
     let wornStr = JSON.stringify(_wornNames);
 
+    // v1.91.78: build ground listing from ORS — local ground objects at player's current location
+    // Determine current layer from containment state (mirrors _narDepth at L3321)
+    const _groundDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
+
+    // Pre-compute layer-specific container IDs (null when unavailable for the current layer)
+    const _gPos = gameState.world?.position;
+    const _gridCellKey = _gPos ? `LOC:${_gPos.mx},${_gPos.my}:${_gPos.lx},${_gPos.ly}` : null;
+
+    let _siteFloorKey = null;
+    if (_groundDepth === 2) {
+      const _gSite = gameState.world.active_site;
+      const _gPx = gameState.player?.position?.x;
+      const _gPy = gameState.player?.position?.y;
+      const _gSiteId = _gSite?.site_id || _gSite?.id?.replace(/\/l2$/, '');
+      if (_gSiteId != null && _gPx != null && _gPy != null) {
+        _siteFloorKey = `${_gSiteId}:${_gPx},${_gPy}`;
+      }
+    }
+
+    let _localspaceKey = null;
+    if (_groundDepth === 3) {
+      const _gLs = gameState.world.active_local_space;
+      if (_gLs?.local_space_id) _localspaceKey = _gLs.local_space_id;
+    }
+
+    // Predicate: true only when (type, id) match an exact valid pair for the current layer.
+    // The type and id are bound together — a grid object only matches the cell key,
+    // a site object only matches the site floor key (and only at L1),
+    // a localspace object only matches the localspace key (and only at L2).
+    const _isGroundContainer = (_r) => {
+      if (!_r || _r.status !== 'active') return false;
+      // L0 grid — always includes the grid cell at every layer (backward compat for legacy DROP)
+      if (_r.current_container_type === 'grid' && _r.current_container_id === _gridCellKey) return true;
+      // L1 site floor — only when site key is available (player must be at L1)
+      if (_r.current_container_type === 'site' && _siteFloorKey !== null && _r.current_container_id === _siteFloorKey) return true;
+      // L2 localspace — only when localspace key is available (player must be at L2)
+      if (_r.current_container_type === 'localspace' && _localspaceKey !== null && _r.current_container_id === _localspaceKey) return true;
+      return false;
+    };
+
+    // Serialize ground objects using Phase 1 quantity/unit guard pattern
+    const _groundNames = Object.values(_orsObjs)
+      .filter(_r => _isGroundContainer(_r))
+      .map(_r => {
+        const qty = typeof _r.quantity === 'number' ? _r.quantity : null;
+        const unit = (typeof _r.unit === 'string' && _r.unit.trim()) ? _r.unit.trim() : null;
+        if (qty !== null && unit !== null) return `${_r.name} (quantity: ${qty}, unit: ${unit})`;
+        if (qty !== null) return `${_r.name} (quantity: ${qty})`;
+        return _r.name;
+      });
+    const _groundStr = JSON.stringify(_groundNames);
+
     // Phase 5B: Build site context block from current cell's sites (filled only — unfilled slots are engine-internal placeholders, never narrator-visible)
     let _siteContextBlock = '';
     const _narCellSites = _narCell?.sites ? Object.values(_narCell.sites).filter(s => s.is_filled === true) : [];
@@ -4947,6 +4999,7 @@ ${nearbyStr}
 
 INVENTORY: ${invStr}
 WORN: ${wornStr}
+GROUND: ${_groundStr}
 WORN RULE: Items listed in WORN are the player's worn clothing and equipment. WORN is the authoritative physical containment record — if an item appears in both WORN and in a birth possession attribute string, the WORN entry governs; do not treat it as separately carried or duplicate the object. Items marked (baseline) are standard everyday clothing present since game start; do not describe them unless they become damaged, removed, explicitly interacted with, or otherwise relevant to the current scene.
 POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
 DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability. The narrator also does not override declared founding abilities. If a founding ability has fired and the RC advisory confirms the outcome, render that outcome fully and without modification. You cannot decide the ability "didn't work this time," redirect to a softer result, have a character philosophically sidestep the effect, or substitute any framing that denies or dilutes the resolved event. Committing to founding ability outcomes is part of the same commitment as committing to engine truth — it is not optional.
