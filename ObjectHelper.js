@@ -48,6 +48,119 @@ function _generateObjectId(name, containerType, containerId, tempRef) {
   return 'obj_' + crypto.createHash('sha256').update(input, 'utf8').digest('hex').slice(0, 12);
 }
 
+function _escapeRegExp(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const _COUNT_WORD_BY_VALUE = {
+  1: 'one',
+  2: 'two',
+  3: 'three',
+  4: 'four',
+  5: 'five',
+  6: 'six',
+  7: 'seven',
+  8: 'eight',
+  9: 'nine',
+  10: 'ten',
+  11: 'eleven',
+  12: 'twelve',
+  13: 'thirteen',
+  14: 'fourteen',
+  15: 'fifteen',
+  16: 'sixteen',
+  17: 'seventeen',
+  18: 'eighteen',
+  19: 'nineteen',
+  20: 'twenty'
+};
+
+function _stripMatchedQuantityPrefix(label, quantity) {
+  let out = String(label || '').trim();
+  if (!Number.isInteger(quantity) || quantity < 1 || !out) return out;
+
+  const numericPattern = new RegExp(`^${quantity}\\b\\s*`, 'i');
+  if (numericPattern.test(out)) return out.replace(numericPattern, '').trim();
+
+  const word = _COUNT_WORD_BY_VALUE[quantity];
+  if (!word) return out;
+  const wordPattern = new RegExp(`^${_escapeRegExp(word)}\\b\\s*`, 'i');
+  return wordPattern.test(out) ? out.replace(wordPattern, '').trim() : out;
+}
+
+function _toSingularToken(token) {
+  const t = String(token || '');
+  const lower = t.toLowerCase();
+  if (lower.length > 3 && lower.endsWith('ies')) return t.slice(0, -3) + 'y';
+  if (lower.length > 3 && lower.endsWith('es')) {
+    const stem = t.slice(0, -2);
+    const stemLower = stem.toLowerCase();
+    if (/[sxz]$/.test(stemLower) || /(sh|ch)$/.test(stemLower)) return stem;
+  }
+  if (lower.length > 3 && lower.endsWith('s') && !lower.endsWith('ss')) return t.slice(0, -1);
+  return t;
+}
+
+function _toPluralToken(token) {
+  const t = String(token || '');
+  const lower = t.toLowerCase();
+  if (!t || lower.endsWith('s')) return t;
+  if (lower.length > 1 && /[^aeiou]y$/i.test(t)) return t.slice(0, -1) + 'ies';
+  if (/[sxz]$/.test(lower) || /(sh|ch)$/.test(lower)) return t + 'es';
+  return t + 's';
+}
+
+function _rewriteFinalToken(label, rewriter) {
+  const parts = String(label || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  parts[parts.length - 1] = rewriter(parts[parts.length - 1]);
+  return parts.join(' ');
+}
+
+function _toSingularLabel(label) {
+  return _rewriteFinalToken(label, _toSingularToken);
+}
+
+function _toPluralLabel(label) {
+  return _rewriteFinalToken(label, _toPluralToken);
+}
+
+function _replaceTrailingUnitLabel(label, unit, quantity) {
+  const base = String(label || '').trim();
+  const unitLabel = String(unit || '').trim();
+  if (!base || !unitLabel) return base;
+
+  const singularUnit = _toSingularLabel(unitLabel);
+  const pluralUnit = _toPluralLabel(singularUnit);
+  const desiredUnit = quantity === 1 ? singularUnit : pluralUnit;
+  const variants = [...new Set([unitLabel, singularUnit, pluralUnit].filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+
+  for (const variant of variants) {
+    const pattern = new RegExp(`(^|\\s)${_escapeRegExp(variant)}$`, 'i');
+    if (pattern.test(base)) {
+      return base.replace(pattern, (_, prefix) => `${prefix}${desiredUnit}`).trim();
+    }
+  }
+  return base;
+}
+
+function _buildPartialSplitChildMetadata(sourceRecord, extractQty, sourceQuantityBefore) {
+  const sourceName = String(sourceRecord?.name || '').trim();
+  const unitLabel = typeof sourceRecord?.unit === 'string' ? sourceRecord.unit.trim() : '';
+  const strippedName = _stripMatchedQuantityPrefix(sourceName, sourceQuantityBefore);
+  let childName = strippedName || sourceName;
+
+  if (unitLabel) {
+    childName = _replaceTrailingUnitLabel(childName, unitLabel, extractQty);
+  } else if (strippedName && strippedName !== sourceName) {
+    childName = extractQty === 1 ? _toSingularLabel(strippedName) : _toPluralLabel(strippedName);
+  }
+
+  const childDescription = childName && extractQty > 1 ? `${extractQty} ${childName}` : childName;
+  return { name: childName, description: childDescription };
+}
+
 // ── Name normalization ────────────────────────────────────────────────────────
 // Strips ONE leading quantity prefix or size/state adjective for soft-match dedup.
 // Single-pass only — intentionally conservative to avoid false positives.
@@ -978,13 +1091,16 @@ function _executePartialSplit(
   const successorId = _generateObjectId(
     sourceRecord.name, destContainerType, destContainerId, split_key
   );
+  const successorMetadata = _buildPartialSplitChildMetadata(
+    sourceRecord, extractQty, source_quantity_before
+  );
 
   // 3. Create successor record (mirrors Pass 3 successor shape)
   if (!gameState.objects[successorId]) {
     gameState.objects[successorId] = {
       id:                     successorId,
-      name:                   sourceRecord.name,
-      description:            sourceRecord.description || '',
+      name:                   successorMetadata.name,
+      description:            successorMetadata.description,
       created_turn:           turnNumber,
       current_container_type: destContainerType,
       current_container_id:   destContainerId,
