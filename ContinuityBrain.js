@@ -679,6 +679,7 @@ Key distinction from fission_events: fission = source is fully split or destroye
   "extracted_quantity": <integer count of items extracted, or null if not a discrete count>,
   "extracted_unit": "<unit of measure if applicable, or null>",
   "product_name": "<noun phrase naming the extracted portion — include the source material in the name>",
+  "description": "<brief physical description of the extracted product observed in the narration, or null when the narration provides none>",
   "destination_hint": "<player_hands | table | ground | unknown>",
   "actor_ref": "<entity ref who performed the extraction — player or npc_id>",
   "evidence": "<exact phrase from narration that describes the extraction>"
@@ -688,6 +689,8 @@ Rules:
 - source_ref: the source object's prose name as it appears in narration. Never an object_id.
 - extracted_quantity: emit only when the narration makes the count explicit as a discrete integer. Null otherwise.
 - product_name: a noun phrase referencing the source material — not just a bare count or generic word.
+- description: describe only the extracted product, not the surviving source. Base it on the frozen narration.
+- If the narration provides no description of the extracted product, emit description: null or omit the field.
 - Emit one entry per extraction event. If no extraction applies this turn, emit: "extraction_events": []
 
 ${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;

@@ -1105,6 +1105,7 @@ app.post('/narrate', async (req, res) => {
   // v1.91.57: P1b hotfix — resolver evidence must be visible to common witness assembly
   let objectOperationResolverEvidence = null;
   let objectOperationResolverError = null;
+  let _tlsPartialDescriptionTarget = null;
 
   // v1.91.62: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
   // Consumes resolver evidence + parser actions to produce a source-authoritative
@@ -2465,6 +2466,27 @@ app.post('/narrate', async (req, res) => {
               predicted_call: debug.tls_executor_dry_run.predicted_call,
               ap_actuals: gameState._apActuals ?? null
             };
+
+            if (splitResult.ok) {
+              const _tlsPartialSource = gameState.objects?.[splitResult.source_object_id];
+              const _tlsPartialSuccessor = gameState.objects?.[splitResult.successor_object_id];
+              if (_tlsPartialSource && _tlsPartialSuccessor) {
+                const _parentDescription = _tlsPartialSource.description || '';
+                const _clearDescription = ObjectHelper.setObjectDescriptionDirect(
+                  gameState, splitResult.successor_object_id, ''
+                );
+                if (_clearDescription.applied) {
+                  _tlsPartialDescriptionTarget = {
+                    source_object_id: splitResult.source_object_id,
+                    successor_object_id: splitResult.successor_object_id,
+                    extracted_quantity: splitResult.applied_quantity,
+                    destination_container_type: splitResult.dest_container_type,
+                    destination_container_id: splitResult.dest_container_id,
+                    parent_description: _parentDescription
+                  };
+                }
+              }
+            }
 
             // Audit entry
             if (!Array.isArray(gameState._objectRealityDebug?.audit)) {
@@ -5159,6 +5181,28 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       }
       const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, { suppressUnsupportedPlayerStatePromotion: _soliloquyFired });
       _continuityExtractionSuccess = _phaseBResult !== null;
+      if (_phaseBResult && _tlsPartialDescriptionTarget) {
+        const _extractionEvents = Array.isArray(_phaseBResult.extraction_events)
+          ? _phaseBResult.extraction_events : [];
+        if (_extractionEvents.length === 1) {
+          const _extractionEvent = _extractionEvents[0];
+          const _childDescription = _extractionEvent?.description;
+          if (
+            _extractionEvent?.extracted_quantity === _tlsPartialDescriptionTarget.extracted_quantity &&
+            _extractionEvent?.destination_hint === 'player_hands' &&
+            _extractionEvent?.actor_ref === 'player' &&
+            typeof _childDescription === 'string' &&
+            _childDescription.length > 0 &&
+            _childDescription !== _tlsPartialDescriptionTarget.parent_description
+          ) {
+            ObjectHelper.setObjectDescriptionDirect(
+              gameState,
+              _tlsPartialDescriptionTarget.successor_object_id,
+              _childDescription
+            );
+          }
+        }
+      }
       // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
       if (!_continuityExtractionSuccess && turnNumber === 1 && gameState.player?.birth_record) {
         gameState.player.birth_record._extraction_failed = true;

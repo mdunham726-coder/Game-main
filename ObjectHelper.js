@@ -1046,6 +1046,23 @@ function splitObjectDirect(
   );
 }
 
+// ── setObjectDescriptionDirect ────────────────────────────────────────────────
+// Exact-ID base-description mutation. The caller owns all content policy.
+function setObjectDescriptionDirect(gameState, objectId, description) {
+  const record = gameState?.objects?.[objectId];
+  if (!record) {
+    return { applied: false, object_id: objectId, reason: 'object_not_found' };
+  }
+  if (record.status !== 'active') {
+    return { applied: false, object_id: objectId, reason: 'object_not_active' };
+  }
+  if (typeof description !== 'string') {
+    return { applied: false, object_id: objectId, reason: 'description_not_string' };
+  }
+  record.description = description;
+  return { applied: true, object_id: objectId, reason: 'updated' };
+}
+
 // ── applyConditionUpdate ─────────────────────────────────────────────────────
 // Writes a condition entry to an ObjectRecord. Deduplicates by description
 // (case-insensitive). Caps at 10 entries FIFO. Safe to call multiple times per
@@ -1115,4 +1132,4 @@ function retireObject(gameState, objectId, reason, turnNumber) {
   return { retired: true, objectId, reason: 'consumed' };
 }
 
-module.exports = { run, transferObjectDirect, splitObjectDirect, applyConditionUpdate, retireObject, OH_VERSION };
+module.exports = { run, transferObjectDirect, splitObjectDirect, setObjectDescriptionDirect, applyConditionUpdate, retireObject, OH_VERSION };
