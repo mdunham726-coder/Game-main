@@ -55,7 +55,7 @@ function _setDiag(d) { _lastRunDiagnostics = d; }
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext, rawInput) {
+function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext, rawInput, currentTurn, tlsPartialStackTakeReceipt) {
   const location         = _describeLocation(gameState);
   const entities         = _describeVisibleEntities(gameState);
   const knownPlayerAttrs = _describePlayerAttributes(gameState);
@@ -80,8 +80,27 @@ function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot
   const _vcVisNpcs = (_vcLoc && _vcLoc._visible_npcs) || (gameState.world || {})._visible_npcs || [];
   for (const _vn of _vcVisNpcs) { if (_vn.id) _vcLines.push(`- ${_vn.id}  (NPC: ${_vn.npc_name || _vn.id})`); }
   const _validContainersList = _vcLines.join('\n');
+  const _authoritativeOperationReceiptContext = tlsPartialStackTakeReceipt ? `
+=== VALIDATED AUTHORITATIVE OPERATION RECEIPT — CURRENT TURN ===
+schema_version: "cb_tls_partial_stack_take_v1"
+authority: "tls_object_helper"
+turn_number: ${tlsPartialStackTakeReceipt.turn_number}
+operation_type: "tls_partial_stack_take"
+status: "executed"
+actor_ref: "player"
+source_object_id: ${tlsPartialStackTakeReceipt.source_object_id}
+source_persists: true
+successor_object_id: ${tlsPartialStackTakeReceipt.successor_object_id}
+successor_created_this_turn: true
+extracted_quantity: ${tlsPartialStackTakeReceipt.extracted_quantity}
+destination_container_type: "player"
+destination_container_id: "player"
 
-  return `EXTRACTION TASK — TURN ${(gameState.turn_history || []).length}
+This validated receipt is authoritative execution evidence for Continuity Brain reporting only. It proves that TLS/ObjectHelper already completed the identified operation during the current request. It does not authorize Continuity Brain to create, move, transfer, decrement, replay, repair, or otherwise mutate either object or any other authoritative state. Use the receipt IDs only as prompt-side classification anchors for the source and successor governed by AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE. Never copy either receipt ID into extraction_events[].source_ref; source_ref remains the prose source name required by the extraction-event schema. For this receipt's player/player destination, use destination_hint: "player_hands". If this validated block is absent, do not reconstruct or infer it from narration, object names, containers, verbs, ordering, pluralization, diagnostics, witnesses, AP evidence, persistent state, or fuzzy matching.
+=== END VALIDATED AUTHORITATIVE OPERATION RECEIPT ===
+` : '';
+
+  return `EXTRACTION TASK — TURN ${currentTurn}
 
 You are a forensic extraction system. Your job is to read the narration below and identify structured facts. You are NOT summarizing. You are NOT interpreting. You are identifying what a stationary camera in the room would capture.
 
@@ -100,13 +119,14 @@ Valid containers for object placement this turn:
 ${_validContainersList}
 Grid container_id MUST be an exact LOC:... value from this list. NPC container_id MUST be copied exactly from the ID shown in this list — do not construct or derive it from the NPC's name or any other string. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
 Current player input (this turn): "${rawInput || ''}"
-Confirmed player inventory (pre-turn): ${(() => { const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : []; const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {}; const _cbNames = _cbIds.map(id => _cbObjs[id]?.status === 'active' ? _cbObjs[id].name : null).filter(Boolean); return _cbNames.length ? _cbNames.join(', ') : '(empty)'; })()}
+CURRENT AUTHORITATIVE PLAYER INVENTORY (AFTER ENGINE/TLS PROCESSING): ${(() => { const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : []; const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {}; const _cbNames = _cbIds.map(id => _cbObjs[id]?.status === 'active' ? _cbObjs[id].name : null).filter(Boolean); return _cbNames.length ? _cbNames.join(', ') : '(empty)'; })()}
 Visible entities: ${entities}
 Player character: always present — entity_ref "player" | known attributes: ${knownPlayerAttrs}
 Active player conditions: ${activeConditions}
 Tracked objects in scene:
 ${trackedObjects}
 ${apContext ? `\nPlayer actions this turn (use to identify which specific object was physically affected):\n${apContext}` : ''}
+${_authoritativeOperationReceiptContext}
 
 PREVIOUS MOOD SNAPSHOT:
 ${prevMood}
@@ -343,6 +363,7 @@ quality — do not invent an object.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
 Objects annotated with "nearby (1 tile)" in TRACKED OBJECTS are placed objects at a fixed floor location adjacent to the player — treat them as tracked and do not emit promote candidates for them.
 Exception: a named portion or sub-unit physically separated from a tracked divisible object this turn — a slice cut from a loaf, a piece broken from a cake, a wedge taken from a wheel of cheese — is a new discrete object, not the same object as the tracked parent. Do not suppress it via the tracked-objects rule. Emit it as a candidate.
+The separated-subunit candidate exception does not apply to the exact successor identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT as the direct child of the already-completed authoritative partial extraction. That child is governed exclusively by AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
@@ -370,6 +391,7 @@ If the referent is ambiguous, leave the action unresolved — do not promote a d
 guess. Ambiguity is not an error; silence is the correct output.
 
 GROUP EXTRACTION RULE:
+Apply this promotion rule only when the VALIDATED AUTHORITATIVE OPERATION RECEIPT does not identify the object as the direct child of the already-completed authoritative persistent-source extraction. AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE overrides this rule for that receipt-identified operation.
 When a tracked object is plural, mass, or group-like in name (examples: "tacos", "napkins and
 straws", "large cups of soda", "chips", "coins"), and the narration shows an actor selecting or
 extracting a single item or small subset from it:
@@ -489,7 +511,7 @@ If no qualifying objects are present, emit: "object_candidates": []
 
 FISSION EXCEPTION: Do not emit object_candidates for pieces, portions, fragments, or halves that are the direct result of splitting, tearing, or dividing a tracked object. Those resulting pieces belong exclusively in the successors[] array of the parent's object_retirement entry. Emitting them as candidates alongside a retirement creates duplicate records and is always wrong when the parent is being retired.
 
-EXTRACTION EXCEPTION: Do not emit object_candidates for items that are the direct product of an extraction_events entry — whether as an aggregate object (e.g. "three arrows") or as individual unit objects (e.g. three separate "arrow" entries). The extracted product belongs exclusively in extraction_events[].product_name. Emitting the extracted units in any form as object_candidates creates duplicate records — the extraction pipeline handles all successor promotion.
+EXTRACTION EXCEPTION: Do not emit an \`object_candidates\` entry for the exact successor identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT as the direct child of the authoritative partial extraction. The child already exists in authoritative object state; CB reports the extraction and does not promote or recreate the child.
 
   Emit actor_npc_ref when the narration signals EITHER of the following:
 
@@ -529,6 +551,8 @@ OBJECT TRANSFERS (optional)
 
 Identify objects that clearly changed hands or location in this narration.
 Only emit when the narration explicitly describes the movement (e.g. handed over, dropped, taken).
+
+Do not classify the operation identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT as whole-object movement. The identified surviving source did not transfer, and the identified same-turn child was created in its destination rather than moved from a prior container. Report the operation through \`extraction_events\` only.
 
 Also emit a transfer when the narration shows an actor taking possession of, picking up, using,
 handling, or beginning to consume/use/handle an already-tracked object that appears in TRACKED
@@ -667,6 +691,8 @@ Rules:
 
 EXTRACTION EVENTS (optional)
 
+AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE OPERATION RECEIPT block for \`schema_version: "cb_tls_partial_stack_take_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_take\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. That validated receipt context proves that the identified source is the persistent parent and the identified successor is the same-turn child. Emit exactly one \`extraction_events\` entry for that operation, using the receipt's \`extracted_quantity\` and \`actor_ref\`, keeping \`source_ref\` as a prose source name, and mapping receipt destination \`player\`/\`player\` to \`destination_hint: "player_hands"\`. Do not emit the identified successor in \`object_candidates\`. Do not emit either identified object in \`object_transfers\`. The source was not moved as a whole, and the child was created directly in its authoritative destination rather than transferred from a prior container. This rule overrides separated-subunit promotion, Group Extraction promotion, candidate acquisition/handling classification, and broad moved/taken transfer classification for this operation only. Independent facts unrelated to this extraction may still use their normal channels. The receipt IDs are prompt-side classification anchors only: never copy either ID into \`extraction_events[].source_ref\`, and do not treat them as downstream enforcement keys. If the VALIDATED AUTHORITATIVE OPERATION RECEIPT block is absent, do not assume or infer that this TLS-specific precedence applies.
+
 When a portion of a tracked object is removed while the SOURCE PERSISTS with altered quantity or state, emit an entry in extraction_events. This is a witness report only — do not attempt to resolve object IDs.
 
 Verb examples: take from, pull from, pour from, draw from, remove from, scoop from, tear off, slice off, cut off, pluck, snap off
@@ -679,7 +705,7 @@ Key distinction from fission_events: fission = source is fully split or destroye
   "extracted_quantity": <integer count of items extracted, or null if not a discrete count>,
   "extracted_unit": "<unit of measure if applicable, or null>",
   "product_name": "<noun phrase naming the extracted portion — include the source material in the name>",
-  "description": "<brief physical description of the extracted product observed in the narration, or null when the narration provides none>",
+  "description": "<brief description of the extracted product observed in the narration>",
   "destination_hint": "<player_hands | table | ground | unknown>",
   "actor_ref": "<entity ref who performed the extraction — player or npc_id>",
   "evidence": "<exact phrase from narration that describes the extraction>"
@@ -690,7 +716,7 @@ Rules:
 - extracted_quantity: emit only when the narration makes the count explicit as a discrete integer. Null otherwise.
 - product_name: a noun phrase referencing the source material — not just a bare count or generic word.
 - description: describe only the extracted product, not the surviving source. Base it on the frozen narration.
-- If the narration provides no description of the extracted product, emit description: null or omit the field.
+- If the narration provides no usable description specifically grounded in the extracted items, emit a minimal generic description based only on product_name and extracted_quantity.
 - Emit one entry per extraction event. If no extraction applies this turn, emit: "extraction_events": []
 
 ${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
@@ -1042,6 +1068,54 @@ function _promoteConditions(conditionEvents, gameState, turn, options = {}) {
 async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length + 1;
+  const _receipt = options?.tlsPartialStackTakeReceipt;
+  const _receiptSourceId = _receipt?.source_object_id;
+  const _receiptSuccessorId = _receipt?.successor_object_id;
+  const _receiptSource = gameState.objects?.[_receiptSourceId];
+  const _receiptSuccessor = gameState.objects?.[_receiptSuccessorId];
+  let _sanitizedTlsPartialStackTakeReceipt = null;
+
+  if (
+    _receipt?.schema_version === 'cb_tls_partial_stack_take_v1' &&
+    _receipt.authority === 'tls_object_helper' &&
+    _receipt.operation_type === 'tls_partial_stack_take' &&
+    _receipt.status === 'executed' &&
+    _receipt.actor_ref === 'player' &&
+    _receipt.source_persists === true &&
+    _receipt.successor_created_this_turn === true &&
+    Number.isInteger(_receipt.turn_number) && _receipt.turn_number > 0 &&
+    _receipt.turn_number === turn &&
+    typeof _receiptSourceId === 'string' && _receiptSourceId.trim().length > 0 &&
+    typeof _receiptSuccessorId === 'string' && _receiptSuccessorId.trim().length > 0 &&
+    _receiptSourceId !== _receiptSuccessorId &&
+    Number.isInteger(_receipt.extracted_quantity) && _receipt.extracted_quantity > 0 &&
+    _receipt.destination_container_type === 'player' &&
+    _receipt.destination_container_id === 'player' &&
+    _receiptSource?.status === 'active' &&
+    Number.isInteger(_receiptSource.quantity) && _receiptSource.quantity >= 1 &&
+    _receiptSuccessor?.status === 'active' &&
+    _receiptSuccessor.parent_object_id === _receiptSourceId &&
+    _receiptSuccessor.created_turn === _receipt.turn_number &&
+    _receiptSuccessor.quantity === _receipt.extracted_quantity &&
+    _receiptSuccessor.current_container_type === _receipt.destination_container_type &&
+    _receiptSuccessor.current_container_id === _receipt.destination_container_id
+  ) {
+    _sanitizedTlsPartialStackTakeReceipt = {
+      schema_version: 'cb_tls_partial_stack_take_v1',
+      authority: 'tls_object_helper',
+      turn_number: _receipt.turn_number,
+      operation_type: 'tls_partial_stack_take',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: _receiptSourceId,
+      source_persists: true,
+      successor_object_id: _receiptSuccessorId,
+      successor_created_this_turn: true,
+      extracted_quantity: _receipt.extracted_quantity,
+      destination_container_type: 'player',
+      destination_container_id: 'player'
+    };
+  }
 
   _setDiag(null);
 
@@ -1062,7 +1136,15 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
   const previousMood = moodHistory.length ? moodHistory[moodHistory.length - 1] : null;
 
   // ── LLM extraction call ────────────────────────────────────────────────────
-  const prompt = _buildExtractionPrompt(frozenNarration, gameState, previousMood, watchContext, rawInput);
+  const prompt = _buildExtractionPrompt(
+    frozenNarration,
+    gameState,
+    previousMood,
+    watchContext,
+    rawInput,
+    turn,
+    _sanitizedTlsPartialStackTakeReceipt
+  );
   let raw = null;
   // v1.84.38: extract into closure for ECONNRESET retry
   const _makeExtractionCall = () => axios.post(

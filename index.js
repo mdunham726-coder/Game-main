@@ -1106,6 +1106,70 @@ app.post('/narrate', async (req, res) => {
   let objectOperationResolverEvidence = null;
   let objectOperationResolverError = null;
   let _tlsPartialDescriptionTarget = null;
+  let _cbTlsPartialStackTakeReceipt = null;
+  let _cbTlsPartialStackTakeReceiptState = 'empty';
+
+  function _captureCbTlsPartialStackTakeReceipt(splitResult) {
+    if (_cbTlsPartialStackTakeReceiptState !== 'empty') {
+      _cbTlsPartialStackTakeReceiptState = 'rejected';
+      _cbTlsPartialStackTakeReceipt = null;
+      return null;
+    }
+
+    const _rejectReceipt = () => {
+      _cbTlsPartialStackTakeReceiptState = 'rejected';
+      _cbTlsPartialStackTakeReceipt = null;
+      return null;
+    };
+    const sourceObjectId = splitResult?.source_object_id;
+    const successorObjectId = splitResult?.successor_object_id;
+    const sourceRecord = gameState.objects?.[sourceObjectId];
+    const successorRecord = gameState.objects?.[successorObjectId];
+
+    if (
+      splitResult?.ok !== true ||
+      splitResult.reason !== 'tls_partial_stack_take' ||
+      !Number.isInteger(turnNumber) || turnNumber < 1 ||
+      typeof sourceObjectId !== 'string' || sourceObjectId.trim().length === 0 ||
+      typeof successorObjectId !== 'string' || successorObjectId.trim().length === 0 ||
+      sourceObjectId === successorObjectId ||
+      !Number.isInteger(splitResult.applied_quantity) || splitResult.applied_quantity < 1 ||
+      !Number.isInteger(splitResult.source_quantity_before) ||
+      !Number.isInteger(splitResult.source_quantity_after) ||
+      splitResult.source_quantity_before - splitResult.applied_quantity !== splitResult.source_quantity_after ||
+      splitResult.source_quantity_after < 1 ||
+      !sourceRecord || sourceRecord.status !== 'active' ||
+      !successorRecord || successorRecord.status !== 'active' ||
+      sourceRecord.quantity !== splitResult.source_quantity_after ||
+      successorRecord.parent_object_id !== sourceObjectId ||
+      successorRecord.created_turn !== turnNumber ||
+      successorRecord.quantity !== splitResult.applied_quantity ||
+      successorRecord.current_container_type !== splitResult.dest_container_type ||
+      successorRecord.current_container_id !== splitResult.dest_container_id ||
+      splitResult.dest_container_type !== 'player' ||
+      splitResult.dest_container_id !== 'player'
+    ) {
+      return _rejectReceipt();
+    }
+
+    _cbTlsPartialStackTakeReceipt = {
+      schema_version: 'cb_tls_partial_stack_take_v1',
+      authority: 'tls_object_helper',
+      turn_number: turnNumber,
+      operation_type: 'tls_partial_stack_take',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: sourceObjectId,
+      source_persists: true,
+      successor_object_id: successorObjectId,
+      successor_created_this_turn: true,
+      extracted_quantity: splitResult.applied_quantity,
+      destination_container_type: 'player',
+      destination_container_id: 'player'
+    };
+    _cbTlsPartialStackTakeReceiptState = 'accepted';
+    return _cbTlsPartialStackTakeReceipt;
+  }
 
   // v1.91.62: P2 — TLS v1 instruction assembly (pre-AP, observe-only, diagnostic only).
   // Consumes resolver evidence + parser actions to produce a source-authoritative
@@ -2468,6 +2532,7 @@ app.post('/narrate', async (req, res) => {
             };
 
             if (splitResult.ok) {
+              _captureCbTlsPartialStackTakeReceipt(splitResult);
               const _tlsPartialSource = gameState.objects?.[splitResult.source_object_id];
               const _tlsPartialSuccessor = gameState.objects?.[splitResult.successor_object_id];
               if (_tlsPartialSource && _tlsPartialSuccessor) {
@@ -2710,6 +2775,25 @@ app.post('/narrate', async (req, res) => {
                 ap_actuals: _apActuals
               };
               if (splitResult.ok) {
+                _captureCbTlsPartialStackTakeReceipt(splitResult);
+                const _tlsPartialSource = gameState.objects?.[splitResult.source_object_id];
+                const _tlsPartialSuccessor = gameState.objects?.[splitResult.successor_object_id];
+                if (_tlsPartialSource && _tlsPartialSuccessor) {
+                  const _parentDescription = _tlsPartialSource.description || '';
+                  const _clearDescription = ObjectHelper.setObjectDescriptionDirect(
+                    gameState, splitResult.successor_object_id, ''
+                  );
+                  if (_clearDescription.applied) {
+                    _tlsPartialDescriptionTarget = {
+                      source_object_id: splitResult.source_object_id,
+                      successor_object_id: splitResult.successor_object_id,
+                      extracted_quantity: splitResult.applied_quantity,
+                      destination_container_type: splitResult.dest_container_type,
+                      destination_container_id: splitResult.dest_container_id,
+                      parent_description: _parentDescription
+                    };
+                  }
+                }
                 if (!Array.isArray(gameState._objectRealityDebug?.audit)) {
                   if (!gameState._objectRealityDebug) gameState._objectRealityDebug = {};
                   gameState._objectRealityDebug.audit = [];
@@ -5179,7 +5263,11 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           }
         }
       }
-      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, { suppressUnsupportedPlayerStatePromotion: _soliloquyFired });
+      const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, {
+        suppressUnsupportedPlayerStatePromotion: _soliloquyFired,
+        tlsPartialStackTakeReceipt: _cbTlsPartialStackTakeReceiptState === 'accepted'
+          ? _cbTlsPartialStackTakeReceipt : null
+      });
       _continuityExtractionSuccess = _phaseBResult !== null;
       if (_phaseBResult && _tlsPartialDescriptionTarget) {
         const _extractionEvents = Array.isArray(_phaseBResult.extraction_events)
