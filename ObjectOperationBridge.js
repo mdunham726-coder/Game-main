@@ -8,7 +8,8 @@
 // execute downstream effects — index.js owns setting _rcSkippedReason,
 // injecting narrator constraints, and emitting diagnostics.
 //
-// Activated case (v1.91.73): partial-stack TAKE over-stack.
+// Activated cases: partial-stack TAKE over-stack, plus supported single-action
+// semantic DROP turns whose AP refusal and lack of live execution are confirmed.
 // All other fail-closed reasons pass through inactive.
 //
 // Read-only guarantee: NEVER mutates gameState, debug, passed objects,
@@ -22,12 +23,96 @@
  * @param {Object|null} params.apActuals               — gameState._apActuals (optional, corroboration)
  * @param {Object|null} params.tlsPartialStackResult   — gameState._tlsPartialStackResult (optional, corroboration)
  * @param {string|null} params.operationFamily         — e.g. 'take' (optional, defensive guard)
- * @returns {Object} receipt — { active, rc_skip_reason, narration_constraint, diagnostics }
+ * @param {string|null} params.semanticOperationFamily — parser family independent of TLS instruction presence
+ * @param {boolean} params.semanticPathSingleAction    — true only for the supported semantic single-action path
+ * @param {Object|null} params.instructionEnvelope     — current TLS v1 instruction, when produced
+ * @param {Object|null} params.liveExecutionResult     — current-turn live execution receipt, when produced
+ * @returns {Object} receipt — { active, rc_skip_reason, narration_constraint, drop_dry_run_seal, diagnostics }
  */
 function evaluateOperation(params = {}) {
-  const { dryRunEnvelope, apActuals, tlsPartialStackResult, operationFamily } = params;
+  const {
+    dryRunEnvelope,
+    apActuals,
+    tlsPartialStackResult,
+    operationFamily,
+    semanticOperationFamily,
+    semanticPathSingleAction,
+    instructionEnvelope,
+    liveExecutionResult
+  } = params;
 
   // ── Null/missing guard ──────────────────────────────────────────────
+  if (semanticOperationFamily === 'drop' && semanticPathSingleAction === true) {
+    const apKeys = apActuals && typeof apActuals === 'object' ? Object.keys(apActuals) : [];
+    const ap_refusal_confirmed = !!(
+      apKeys.length === 4 &&
+      apActuals.operation_family === 'drop' &&
+      apActuals.routing === 'quarantined' &&
+      apActuals.helper_method === null &&
+      apActuals.outcome === 'refused_ownership'
+    );
+    const live_drop_execution_absent = liveExecutionResult === null || liveExecutionResult === undefined;
+
+    if (ap_refusal_confirmed && live_drop_execution_absent) {
+      const instruction_present = instructionEnvelope !== null && instructionEnvelope !== undefined;
+      const dry_run_present = dryRunEnvelope !== null && dryRunEnvelope !== undefined;
+      const dryRunOutcome = dryRunEnvelope?.outcome ?? null;
+      const failReason = dryRunEnvelope?.fail_closed_reason
+        ?? instructionEnvelope?.routing?.fail_closed_reason
+        ?? instructionEnvelope?.provenance?.fail_closed_reason
+        ?? null;
+      const validPrediction = dryRunEnvelope?.operation_allowed === true &&
+        (dryRunOutcome === 'partial_split' || dryRunOutcome === 'whole_transfer');
+      const narration_constraint = validPrediction
+        ? 'The player attempted a DROP object operation. TLS evaluated an authoritative dry-run prediction, but DROP execution is disabled in this phase. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the attempt as not executed and do not describe success or partial success.'
+        : failReason
+          ? `The player attempted a DROP object operation, but it failed closed (${failReason}). No object moved, split, transferred, appeared, disappeared, or changed. Narrate the failed attempt only and do not describe success or partial success.`
+          : 'The player attempted a DROP object operation, but no authoritative executable DROP result was produced and DROP execution is disabled in this phase. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the attempt as not executed.';
+
+      return {
+        active: true,
+        rc_skip_reason: 'tls_drop_dry_run',
+        narration_constraint,
+        drop_dry_run_seal: true,
+        diagnostics: {
+          fail_closed_reason: failReason,
+          operation_family: 'drop',
+          p4_outcome: dryRunOutcome,
+          p4_operation_allowed: dryRunEnvelope?.operation_allowed ?? null,
+          ap_quarantine_confirmed: true,
+          p5a2_absent_confirmed: null,
+          instruction_present,
+          dry_run_present,
+          ap_refusal_confirmed,
+          live_drop_execution_absent,
+          drop_dry_run_seal: true,
+          constraint_supplied: true
+        }
+      };
+    }
+
+    return {
+      active: false,
+      rc_skip_reason: null,
+      narration_constraint: '',
+      drop_dry_run_seal: false,
+      diagnostics: {
+        fail_closed_reason: null,
+        operation_family: 'drop',
+        p4_outcome: dryRunEnvelope?.outcome ?? null,
+        p4_operation_allowed: dryRunEnvelope?.operation_allowed ?? null,
+        ap_quarantine_confirmed: ap_refusal_confirmed,
+        p5a2_absent_confirmed: null,
+        instruction_present: instructionEnvelope !== null && instructionEnvelope !== undefined,
+        dry_run_present: dryRunEnvelope !== null && dryRunEnvelope !== undefined,
+        ap_refusal_confirmed,
+        live_drop_execution_absent,
+        drop_dry_run_seal: false,
+        constraint_supplied: false
+      }
+    };
+  }
+
   if (dryRunEnvelope == null) {
     return {
       active: false,

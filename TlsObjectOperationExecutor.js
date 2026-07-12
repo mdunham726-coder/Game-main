@@ -1,5 +1,7 @@
 'use strict';
 
+const { resolveCurrentGround } = require('./ObjectOperationResolver');
+
 // =============================================================================
 // TlsObjectOperationExecutor — P4 Dry-Run v0
 // Deterministic, synchronous, read-only pre-AP executor.
@@ -28,6 +30,7 @@ function executeTlsObjectInstruction(state, instruction, options) {
   // ── Base envelope skeleton ──────────────────────────────────────────────
   const _base = () => ({
     schema_version: 'tls_executor_dry_run_v1',
+    operation_family: instruction?.operation_family ?? null,
     dry_run: _dryRun,
     instruction_valid: false,
     operation_allowed: false,
@@ -66,7 +69,7 @@ function executeTlsObjectInstruction(state, instruction, options) {
   }
 
   // Step 3: unsupported operation family
-  if (instruction.operation_family !== 'take') {
+  if (instruction.operation_family !== 'take' && instruction.operation_family !== 'drop') {
     const env = _base();
     env.fail_closed_reason = 'unsupported_operation';
     return env;
@@ -185,11 +188,23 @@ function executeTlsObjectInstruction(state, instruction, options) {
     record.current_container_type === instruction.source.container_type &&
     record.current_container_id === instruction.source.container_id;
 
-  // Step 17-18: destination validation — must be 'player' with valid player object_ids array
-  const destValid =
-    instruction.destination.container_type === 'player' &&
-    state.player != null &&
-    Array.isArray(state.player.object_ids);
+  const dropSourceValid = instruction.operation_family !== 'drop' || (
+    record.current_container_type === 'player' &&
+    record.current_container_id === 'player' &&
+    Array.isArray(state.player?.object_ids) &&
+    state.player.object_ids.includes(sourceId)
+  );
+
+  // Step 17-18: destination validation — TAKE targets player; DROP must match current Ground
+  const currentGround = instruction.operation_family === 'drop'
+    ? resolveCurrentGround(state) : null;
+  const destValid = instruction.operation_family === 'take'
+    ? instruction.destination.container_type === 'player' &&
+      state.player != null &&
+      Array.isArray(state.player.object_ids)
+    : currentGround?.ok === true &&
+      instruction.destination.container_type === currentGround.container_type &&
+      instruction.destination.container_id === currentGround.container_id;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // PHASE C — Routing recomputation (independent of v1 routing block)
@@ -245,13 +260,25 @@ function executeTlsObjectInstruction(state, instruction, options) {
     return env;
   }
 
+  if (!dropSourceValid) {
+    const env = _base();
+    env.instruction_valid = true;
+    env.validation_attempted = true;
+    env.outcome = 'fail_closed';
+    env.fail_closed_reason = 'source_not_player_held';
+    env.validation = { source_exists: sourceExists, source_active: sourceActive, quantity_matches_instruction: quantityMatches, container_matches_instruction: false, destination_valid: destValid, routing_recomputed: routingRecomputed };
+    return env;
+  }
+
   // Steps 17-18: destination validation blocks operation
   if (!destValid) {
     const env = _base();
     env.instruction_valid = true;
     env.validation_attempted = true;
     env.outcome = 'fail_closed';
-    env.fail_closed_reason = instruction.destination.container_type !== 'player' ? 'unsupported_destination' : 'destination_not_found';
+    env.fail_closed_reason = instruction.operation_family === 'drop'
+      ? (currentGround?.fail_closed_reason || 'destination_mismatch')
+      : (instruction.destination.container_type !== 'player' ? 'unsupported_destination' : 'destination_not_found');
     env.validation = { source_exists: sourceExists, source_active: sourceActive, quantity_matches_instruction: quantityMatches, container_matches_instruction: containerMatches, destination_valid: false, routing_recomputed: routingRecomputed };
     return env;
   }
@@ -301,8 +328,8 @@ function executeTlsObjectInstruction(state, instruction, options) {
       parameters: {
         source_object_id: sourceId,
         extract_quantity: _reqQty,
-        destination_container_type: 'player',
-        destination_container_id: 'player'
+        destination_container_type: instruction.destination.container_type,
+        destination_container_id: instruction.destination.container_id
       }
     };
     predictedResult = {
@@ -316,8 +343,8 @@ function executeTlsObjectInstruction(state, instruction, options) {
       method: 'transferObjectDirect',
       parameters: {
         object_id: sourceId,
-        destination_container_type: 'player',
-        destination_container_id: 'player'
+        destination_container_type: instruction.destination.container_type,
+        destination_container_id: instruction.destination.container_id
       }
     };
     predictedResult = {
@@ -342,6 +369,7 @@ function executeTlsObjectInstruction(state, instruction, options) {
 
   return {
     schema_version: 'tls_executor_dry_run_v1',
+    operation_family: instruction.operation_family,
     dry_run: _dryRun,
     instruction_valid: true,
     operation_allowed: true,
