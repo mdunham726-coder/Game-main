@@ -595,6 +595,13 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     return;
   }
   if (act === 'drop'){
+    state._apActuals = {
+      operation_family: 'drop',
+      routing: 'quarantined',
+      helper_method: null,
+      outcome: 'refused_ownership'
+    };
+    return;
     const target = actions?.target||'';
     const res = resolveItemByName(state, target);
     let dropSucceeded = false;
