@@ -1269,7 +1269,8 @@ function registerRoutes(app, opts = {}) {
       logs:                'logs',
       object_reality:      'object_reality',
       arbiter_verdict:     'arbiter_verdict',
-      p5_witness_archive:  'p5_witness_archive'                               // v1.91.66: P5-0
+      p5_witness_archive:  'p5_witness_archive',                              // v1.91.66: P5-0
+      tls_execution_result: 'tls_execution_result'
     };
     const requested = fieldsParam.split(',').map(f => f.trim()).filter(Boolean);
     const result = { turn_number: turnObj.turn_number, timestamp: turnObj.timestamp };

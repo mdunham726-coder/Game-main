@@ -2535,6 +2535,56 @@ app.post('/narrate', async (req, res) => {
             console.log('[POINT-E-PERSIST] After sessionStates.set - verified in Map');
           }
 
+          // Live TLS whole-object DROP execution. Writes a receipt only after
+          // ObjectHelper confirms success; failures remain null and fail closed.
+          if (
+            debug.tls_instruction_v1?.operation_family === 'drop' &&
+            debug.tls_executor_dry_run?.operation_family === 'drop' &&
+            debug.tls_executor_dry_run?.operation_allowed === true &&
+            debug.tls_executor_dry_run?.outcome === 'whole_transfer' &&
+            debug.tls_executor_dry_run?.predicted_call?.method === 'transferObjectDirect'
+          ) {
+            const _tlsWholeDropParams = debug.tls_executor_dry_run.predicted_call.parameters;
+            const _tlsWholeDropResult = ObjectHelper.transferObjectDirect(
+              gameState,
+              _tlsWholeDropParams.object_id,
+              _tlsWholeDropParams.destination_container_type,
+              _tlsWholeDropParams.destination_container_id,
+              turnNumber,
+              'tls_whole_object_drop'
+            );
+            if (_tlsWholeDropResult.success) {
+              gameState._tlsExecutionResult = {
+                schema_version: 'tls_execution_result_v0',
+                operation_id: `tls_op_${turnNumber}`,
+                mode: 'live_execution',
+                authority: {
+                  executor: 'tls',
+                  mutation_engine: 'ObjectHelper',
+                  object_state_authority: 'ORS'
+                },
+                attempted: true,
+                executed_by: 'tls',
+                eligibility: { status: 'eligible', reason: null },
+                object: {
+                  id: _tlsWholeDropParams.object_id,
+                  name: debug.tls_instruction_v1.object.name
+                },
+                source: {
+                  container_type: debug.tls_instruction_v1.source.container_type,
+                  container_id: debug.tls_instruction_v1.source.container_id
+                },
+                destination: {
+                  container_type: _tlsWholeDropParams.destination_container_type,
+                  container_id: _tlsWholeDropParams.destination_container_id
+                },
+                transfer: { result: 'success', error: null },
+                fail_closed: false,
+                warnings: []
+              };
+            }
+          }
+
           // v1.91.71: P5-A2 — live TLS partial-stack TAKE execution
           // Consumes P4 dry-run prediction. Executes when P4 predicted a
           // valid partial_split. AP is not a precondition — the new lane
