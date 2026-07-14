@@ -342,6 +342,7 @@ async function performLoad(sessionId, saveName) {
 
     // Guard: remove null-keyed junk entries that may exist in older saves
     const _gs = saveData.gameState;
+    delete _gs._tlsPartialStackResult;
     if (_gs.world && _gs.world.sites) {
       delete _gs.world.sites['null'];
       delete _gs.world.sites[null];
@@ -871,6 +872,7 @@ app.post('/narrate', async (req, res) => {
   const { sessionId: resolvedSessionId, gameState: sessionGameState, isFirstTurn: sessionIsFirstTurn, logger } = getSessionState(sessionId);
   
   let gameState = sessionGameState;
+  if (gameState && typeof gameState === 'object') delete gameState._tlsPartialStackResult;
   let isFirstTurn = sessionIsFirstTurn;
   
   const { action, intent_channel: _rawChannel, npc_target: _rawNpcTarget, WORLD_SEED: _rawWorldSeed, WORLD_PROMPT: _rawWorldPrompt } = req.body;
@@ -1107,6 +1109,7 @@ app.post('/narrate', async (req, res) => {
   let objectOperationResolverError = null;
   let _authorityGateWholeDropObjectId = null;
   let _tlsPartialDescriptionTarget = null;
+  let _tlsPartialStackArchive = null;
   let _cbTlsPartialStackTakeReceipt = null;
   let _cbTlsPartialStackTakeReceiptState = 'empty';
 
@@ -2477,6 +2480,7 @@ app.post('/narrate', async (req, res) => {
           // v1.91.XX: Phase D — clear per-turn TLS execution diagnostic before AP runs
           gameState._tlsExecutionResult = null;
           gameState._apActuals = null;                // v1.91.XX P3: clear per-turn AP actuals
+          gameState._tlsPartialStackResult = null;
 
           // v1.91.58: P1b — pre-AP resolver evidence capture inside queue loop (observe-only, diagnostic only)
           if (
@@ -2585,6 +2589,32 @@ app.post('/narrate', async (req, res) => {
                 warnings: []
               };
             }
+          } else if (
+            debug.tls_instruction_v1?.operation_family === 'drop' &&
+            debug.tls_executor_dry_run?.operation_family === 'drop' &&
+            validation.queue.length === 1 &&
+            debug.tls_executor_dry_run?.operation_allowed === true &&
+            debug.tls_executor_dry_run?.outcome === 'partial_split' &&
+            debug.tls_executor_dry_run?.predicted_call?.method === 'splitObjectDirect'
+          ) {
+            const _tlsPartialDropParams = debug.tls_executor_dry_run.predicted_call.parameters;
+            const splitResult = ObjectHelper.splitObjectDirect(
+              gameState,
+              _tlsPartialDropParams.source_object_id,
+              _tlsPartialDropParams.extract_quantity,
+              _tlsPartialDropParams.destination_container_type,
+              _tlsPartialDropParams.destination_container_id,
+              turnNumber,
+              'tls_partial_stack_drop'
+            );
+            gameState._tlsPartialStackResult = {
+              schema_version: 'tls_partial_stack_execution_v1',
+              executed: splitResult.ok,
+              split_result: splitResult,
+              predicted_call: debug.tls_executor_dry_run.predicted_call,
+              ap_actuals: gameState._apActuals ?? null
+            };
+            _tlsPartialStackArchive = gameState._tlsPartialStackResult;
           }
 
           // v1.91.71: P5-A2 — live TLS partial-stack TAKE execution
@@ -2616,6 +2646,7 @@ app.post('/narrate', async (req, res) => {
               predicted_call: debug.tls_executor_dry_run.predicted_call,
               ap_actuals: gameState._apActuals ?? null
             };
+            _tlsPartialStackArchive = gameState._tlsPartialStackResult;
 
             if (splitResult.ok) {
               _captureCbTlsPartialStackTakeReceipt(splitResult);
@@ -2860,6 +2891,7 @@ app.post('/narrate', async (req, res) => {
                 split_result: splitResult,
                 ap_actuals: _apActuals
               };
+              _tlsPartialStackArchive = gameState._tlsPartialStackResult;
               if (splitResult.ok) {
                 _captureCbTlsPartialStackTakeReceipt(splitResult);
                 const _tlsPartialSource = gameState.objects?.[splitResult.source_object_id];
@@ -7238,7 +7270,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       tls_ors_alignment:        _cloneForArchive(debug.tls_ors_alignment),
       tls_executor_dry_run:     _cloneForArchive(debug.tls_executor_dry_run),  // v1.91.64: P4 dry-run envelope
       tls_execution_result:     _cloneForArchive(debug.tls_execution_result),
-      tls_partial_stack_result: _cloneForArchive(gameState._tlsPartialStackResult ?? null),  // v1.91.71: P5-A2 live TLS partial-stack result
+      tls_partial_stack_result: _cloneForArchive(_tlsPartialStackArchive ?? null),  // v1.91.71: P5-A2 live TLS partial-stack result
       object_operation_bridge:  _cloneForArchive(debug.object_operation_bridge),
       p5_witness_archive:       _p5Snapshot,                                // v1.91.66: P5-0 immutable evidence archive
       // Diagnostic capture — SemanticParser failure evidence
@@ -7250,6 +7282,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     
     // Store turn object in turn history
     gameState.turn_history.push(turnObject);
+    delete gameState._tlsPartialStackResult;
 
     // v1.85.98: Background flight recorder append — JSONL archive per session per day
     // Path: logs/flight-recorder/YYYY-MM-DD/session_{id}.jsonl — one line per turn, append-only

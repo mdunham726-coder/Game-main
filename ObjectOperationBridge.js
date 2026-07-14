@@ -51,7 +51,50 @@ function evaluateOperation(params = {}) {
       apActuals.helper_method === null &&
       apActuals.outcome === 'refused_ownership'
     );
-    const live_drop_execution_absent = liveExecutionResult === null || liveExecutionResult === undefined;
+    const dryRunPrediction = dryRunEnvelope?.predicted_call;
+    const dryRunPredictionParams = dryRunPrediction?.parameters;
+    const dryRunPredictedResult = dryRunEnvelope?.predicted_result;
+    const partialReceiptPrediction = tlsPartialStackResult?.predicted_call;
+    const partialReceiptParams = partialReceiptPrediction?.parameters;
+    const partialSplitResult = tlsPartialStackResult?.split_result;
+    const partialSourceId = partialSplitResult?.source_object_id;
+    const partialSuccessorId = partialSplitResult?.successor_object_id;
+    const partial_drop_execution_confirmed = !!(
+      instructionEnvelope?.operation_family === 'drop' &&
+      instructionEnvelope?.routing?.intended_mutation === 'partial_split' &&
+      instructionEnvelope?.executor?.expected_helper_method === 'splitObjectDirect' &&
+      dryRunEnvelope?.operation_family === 'drop' &&
+      dryRunEnvelope?.operation_allowed === true &&
+      dryRunEnvelope?.outcome === 'partial_split' &&
+      dryRunPrediction?.method === 'splitObjectDirect' &&
+      tlsPartialStackResult?.schema_version === 'tls_partial_stack_execution_v1' &&
+      tlsPartialStackResult?.executed === true &&
+      partialSplitResult?.ok === true &&
+      partialSplitResult?.reason === 'tls_partial_stack_drop' &&
+      typeof partialSourceId === 'string' && partialSourceId.trim().length > 0 &&
+      typeof partialSuccessorId === 'string' && partialSuccessorId.trim().length > 0 &&
+      partialSourceId !== partialSuccessorId &&
+      partialReceiptPrediction?.method === dryRunPrediction.method &&
+      partialReceiptParams?.source_object_id === dryRunPredictionParams?.source_object_id &&
+      partialReceiptParams?.extract_quantity === dryRunPredictionParams?.extract_quantity &&
+      partialReceiptParams?.destination_container_type === dryRunPredictionParams?.destination_container_type &&
+      partialReceiptParams?.destination_container_id === dryRunPredictionParams?.destination_container_id &&
+      partialSplitResult.source_object_id === dryRunPredictionParams?.source_object_id &&
+      partialSplitResult.requested_quantity === dryRunPredictionParams?.extract_quantity &&
+      partialSplitResult.applied_quantity === dryRunPredictionParams?.extract_quantity &&
+      partialSplitResult.dest_container_type === dryRunPredictionParams?.destination_container_type &&
+      partialSplitResult.dest_container_id === dryRunPredictionParams?.destination_container_id &&
+      partialSplitResult.source_quantity_before === dryRunPredictedResult?.source_quantity_before &&
+      partialSplitResult.source_quantity_after === dryRunPredictedResult?.source_quantity_after &&
+      Number.isInteger(partialSplitResult.source_quantity_before) &&
+      Number.isInteger(partialSplitResult.applied_quantity) &&
+      Number.isInteger(partialSplitResult.source_quantity_after) &&
+      partialSplitResult.source_quantity_before - partialSplitResult.applied_quantity === partialSplitResult.source_quantity_after &&
+      partialSplitResult.source_quantity_after > 0
+    );
+    const live_drop_execution_absent =
+      (liveExecutionResult === null || liveExecutionResult === undefined) &&
+      !partial_drop_execution_confirmed;
 
     if (ap_refusal_confirmed && live_drop_execution_absent) {
       const instruction_present = instructionEnvelope !== null && instructionEnvelope !== undefined;
