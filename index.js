@@ -1105,6 +1105,7 @@ app.post('/narrate', async (req, res) => {
   // v1.91.57: P1b hotfix — resolver evidence must be visible to common witness assembly
   let objectOperationResolverEvidence = null;
   let objectOperationResolverError = null;
+  let _authorityGateWholeDropObjectId = null;
   let _tlsPartialDescriptionTarget = null;
   let _cbTlsPartialStackTakeReceipt = null;
   let _cbTlsPartialStackTakeReceiptState = 'empty';
@@ -2554,6 +2555,7 @@ app.post('/narrate', async (req, res) => {
               'tls_whole_object_drop'
             );
             if (_tlsWholeDropResult.success) {
+              _authorityGateWholeDropObjectId = _tlsWholeDropParams.object_id;
               gameState._tlsExecutionResult = {
                 schema_version: 'tls_execution_result_v0',
                 operation_id: `tls_op_${turnNumber}`,
@@ -3879,18 +3881,24 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     const _rawInput = (action || '').trim();
 
     // v1.88.0: Authority Gate — pre-RC routing layer.
-    // Inject parsed target onto gameState for gate's object-existence helpers.
+    // Inject parsed target onto the gate's state view for object-existence helpers.
     // Cleared immediately after gate returns so it never pollutes other logic.
     let _authorityGateResult = null;
     let _agDurationMs = 0;
-    gameState._lastParsedTarget = inputObj?.player_intent?.target || null;
+    const _authorityGateState = _authorityGateWholeDropObjectId
+      ? {
+          ...gameState,
+          player: { ...gameState.player, object_ids: [...(gameState.player?.object_ids || []), _authorityGateWholeDropObjectId] }
+        }
+      : gameState;
+    _authorityGateState._lastParsedTarget = inputObj?.player_intent?.target || null;
     if (turnNumber === 1) {
       diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'skip', turn: turnNumber, gameSessionId: resolvedSessionId });
       _authorityGateResult = { decision: 'allow_no_rc', route: 'narrator', rc_allowed: false, input_type: 'valid_low_risk', reason_code: 'turn_1_founding', referenced_objects: [], referenced_entities: [], referenced_abilities: [], evidence: { engine_supported: true, matched_records: [] }, _llm_called: false, gate_fast_path_hit: false, llm_confidence: null };
     } else {
       diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'start', turn: turnNumber, gameSessionId: resolvedSessionId });
       const _agStart = Date.now();
-      _authorityGateResult = await AuthorityGate.runAuthorityGate(_rawInput, gameState, _parsedAction, process.env.DEEPSEEK_API_KEY);
+      _authorityGateResult = await AuthorityGate.runAuthorityGate(_rawInput, _authorityGateState, _parsedAction, process.env.DEEPSEEK_API_KEY);
       _agDurationMs = Date.now() - _agStart;
       diag.emitDiagnostics({ type: 'turn_stage', stage: 'authority_gate', status: 'complete', turn: turnNumber, gameSessionId: resolvedSessionId, decision: _authorityGateResult.decision, rc_allowed: _authorityGateResult.rc_allowed });
     }
@@ -3915,7 +3923,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       llm_confidence:      _authorityGateResult.llm_confidence ?? null,
       evidence_bundle:     _authorityGateResult._ag_evidence_bundle || null
     } : null;
-    delete gameState._lastParsedTarget;
+    delete _authorityGateState._lastParsedTarget;
     console.log(`[AUTHORITY-GATE] turn:${turnNumber} decision:${_authorityGateResult.decision} route:${_authorityGateResult.route} reason:${_authorityGateResult.reason_code} fast_path:${_authorityGateResult.gate_fast_path_hit ? 'L1' : 'L2'} llm:${_authorityGateResult._llm_called ? 'yes' : 'no'} dur:${_agDurationMs}ms`);
     if (_authorityGateResult.decision === 'freeform') {
       // Gate denied — block RC; narrator receives denial block assembled below.
