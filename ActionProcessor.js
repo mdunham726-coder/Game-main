@@ -1576,7 +1576,7 @@ function validateAndQueueIntent(state, normalizedIntent){
     }
 
     if (action === 'drop'){
-      const target = act?.target||'';
+      const target = act?.normalized_target || act?.target || '';
       const inInv = hasInventoryItem(state, target);
       sv.targetInInventory = inInv;
       if (!inInv) return { valid:false, queue:[], reason:"TARGET_NOT_IN_INVENTORY", stateValidation:sv };

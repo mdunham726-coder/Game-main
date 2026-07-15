@@ -106,8 +106,15 @@ function evaluateOperation(params = {}) {
         ?? null;
       const validPrediction = dryRunEnvelope?.operation_allowed === true &&
         (dryRunOutcome === 'partial_split' || dryRunOutcome === 'whole_transfer');
+      const requestedQuantity = instructionEnvelope?.quantity?.requested_quantity;
+      const availableQuantity = instructionEnvelope?.quantity?.observed_available_quantity;
+      const overStackQuantityExplanation = Number.isInteger(requestedQuantity) && Number.isInteger(availableQuantity)
+        ? `The player requested quantity ${requestedQuantity}, but only quantity ${availableQuantity} is currently available in their possession.`
+        : 'The player requested a greater quantity than they currently possess.';
       const narration_constraint = validPrediction
         ? 'The player attempted a DROP object operation. TLS evaluated an authoritative dry-run prediction, but DROP execution is disabled in this phase. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the attempt as not executed and do not describe success or partial success.'
+        : failReason === 'over_stack'
+          ? `${overStackQuantityExplanation} The requested quantity is unavailable, so the DROP operation failed completely. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the quantity shortfall clearly. Do not invent an environmental, spatial, physical, or motivational reason for the failure, and do not describe success or partial success.`
         : failReason
           ? `The player attempted a DROP object operation, but it failed closed (${failReason}). No object moved, split, transferred, appeared, disappeared, or changed. Narrate the failed attempt only and do not describe success or partial success.`
           : 'The player attempted a DROP object operation, but no authoritative executable DROP result was produced and DROP execution is disabled in this phase. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the attempt as not executed.';
