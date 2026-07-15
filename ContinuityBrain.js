@@ -523,12 +523,21 @@ TRANSFER ORIGIN RULES (apply when classifying new player-held objects):
   player_claimed        — Player input mentioned, implied, or gestured the item as currently
                           held, gathered, shown, or carried — in any form: speech ("I have X"),
                           emote (*holds up X*), assertion, or background claim
-                          ("I've been gathering X"). BLOCK.
+                          ("I've been gathering X").
+${isFoundingTurn ? `                          FOUNDING TURN EXCEPTION: When the PRIMARY SOURCE explicitly establishes a
+                          concrete portable possession, emit exactly one object_candidates entry
+                          for that possession with container_type: "player", container_id: "player",
+                          and transfer_origin: "player_claimed". Preserve any explicitly stated
+                          quantity. Also record the possession in founding_premise.possessions.
+                          This exception overrides the normal player_claimed block on the founding
+                          turn only. ALLOW.` : `                          BLOCK.`}
 
 TIE-BREAK: when in doubt, classify as player_claimed.
 
-OVERRIDE: if the item name or a clear reference to it appears in the player's input
-framed as held, shown, or gathered — that is player_claimed with no exceptions.
+${isFoundingTurn ? `FOUNDING TURN OVERRIDE: if the PRIMARY SOURCE names a concrete portable item as
+held, shown, carried, or possessed, it is an authorized founding possession and must follow the
+FOUNDING TURN EXCEPTION above.` : `OVERRIDE: if the item name or a clear reference to it appears in the player's input
+framed as held, shown, or gathered — that is player_claimed with no exceptions.`}
 The narrator's prose does not change this classification.
 
 If no qualifying objects are present, emit: "object_candidates": []
