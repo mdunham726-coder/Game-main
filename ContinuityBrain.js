@@ -55,7 +55,7 @@ function _setDiag(d) { _lastRunDiagnostics = d; }
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext, rawInput, currentTurn, tlsPartialStackTakeReceipt) {
+function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext, rawInput, currentTurn, tlsPartialStackTakeReceipt, tlsPartialStackDropReceipt) {
   const location         = _describeLocation(gameState);
   const entities         = _describeVisibleEntities(gameState);
   const knownPlayerAttrs = _describePlayerAttributes(gameState);
@@ -99,6 +99,30 @@ destination_container_id: "player"
 This validated receipt is authoritative execution evidence for Continuity Brain reporting only. It proves that TLS/ObjectHelper already completed the identified operation during the current request. It does not authorize Continuity Brain to create, move, transfer, decrement, replay, repair, or otherwise mutate either object or any other authoritative state. Use the receipt IDs only as prompt-side classification anchors for the source and successor governed by AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE. Never copy either receipt ID into extraction_events[].source_ref; source_ref remains the prose source name required by the extraction-event schema. For this receipt's player/player destination, use destination_hint: "player_hands". If this validated block is absent, do not reconstruct or infer it from narration, object names, containers, verbs, ordering, pluralization, diagnostics, witnesses, AP evidence, persistent state, or fuzzy matching.
 === END VALIDATED AUTHORITATIVE OPERATION RECEIPT ===
 ` : '';
+  const _authoritativePartialDropReceiptContext = tlsPartialStackDropReceipt ? `
+=== VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT - CURRENT TURN ===
+schema_version: "cb_tls_partial_stack_drop_v1"
+authority: "tls_object_helper"
+turn_number: ${tlsPartialStackDropReceipt.turn_number}
+operation_type: "tls_partial_stack_drop"
+status: "executed"
+actor_ref: "player"
+source_object_id: ${tlsPartialStackDropReceipt.source_object_id}
+source_persists: true
+successor_object_id: ${tlsPartialStackDropReceipt.successor_object_id}
+successor_created_this_turn: true
+requested_quantity: ${tlsPartialStackDropReceipt.requested_quantity}
+extracted_quantity: ${tlsPartialStackDropReceipt.extracted_quantity}
+source_quantity_before: ${tlsPartialStackDropReceipt.source_quantity_before}
+source_quantity_after: ${tlsPartialStackDropReceipt.source_quantity_after}
+source_container_type: "${tlsPartialStackDropReceipt.source_container_type}"
+source_container_id: "${tlsPartialStackDropReceipt.source_container_id}"
+destination_container_type: "${tlsPartialStackDropReceipt.destination_container_type}"
+destination_container_id: "${tlsPartialStackDropReceipt.destination_container_id}"
+
+TLS/ObjectHelper already executed this exact partial split during the current request. The identified source persisted at its reduced quantity in its retained authoritative container, and the distinct same-turn successor was created directly in the identified destination. Neither fact is whole-object movement. This receipt gives Continuity Brain reporting and classification context only; it does not authorize Continuity Brain to create, move, transfer, split, retire, replay, repair, or otherwise mutate either object or any authoritative state. Use the receipt IDs only as classification anchors for PARTIAL DROP RECEIPT PRECEDENCE, and never copy them into output witness fields as mutation authority. If this validated block is absent, do not reconstruct or infer it from narration, names, aliases, containers, diagnostics, AP evidence, persistent state, or fuzzy matching.
+=== END VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT ===
+` : '';
 
   return `EXTRACTION TASK — TURN ${currentTurn}
 
@@ -126,7 +150,7 @@ Active player conditions: ${activeConditions}
 Tracked objects in scene:
 ${trackedObjects}
 ${apContext ? `\nPlayer actions this turn (use to identify which specific object was physically affected):\n${apContext}` : ''}
-${_authoritativeOperationReceiptContext}
+${_authoritativeOperationReceiptContext}${_authoritativePartialDropReceiptContext}
 
 PREVIOUS MOOD SNAPSHOT:
 ${prevMood}
@@ -513,6 +537,8 @@ FISSION EXCEPTION: Do not emit object_candidates for pieces, portions, fragments
 
 EXTRACTION EXCEPTION: Do not emit an \`object_candidates\` entry for the exact successor identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT as the direct child of the authoritative partial extraction. The child already exists in authoritative object state; CB reports the extraction and does not promote or recreate the child.
 
+PARTIAL DROP RECEIPT EXCEPTION: When the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT identifies the source and successor of an already-executed partial DROP, do not emit either identified object in \`object_candidates\` for that receipt-governed operation. Do not recreate the successor or reinterpret the surviving source as a new object.
+
   Emit actor_npc_ref when the narration signals EITHER of the following:
 
   TRIGGER 1 — Active physical interaction:
@@ -553,6 +579,8 @@ Identify objects that clearly changed hands or location in this narration.
 Only emit when the narration explicitly describes the movement (e.g. handed over, dropped, taken).
 
 Do not classify the operation identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT as whole-object movement. The identified surviving source did not transfer, and the identified same-turn child was created in its destination rather than moved from a prior container. Report the operation through \`extraction_events\` only.
+
+PARTIAL DROP RECEIPT EXCEPTION: Do not emit either object identified by the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT in \`object_transfers\` for that receipt-governed operation. The source persisted in its retained container, and the successor was created directly at the destination; neither object transferred.
 
 Also emit a transfer when the narration shows an actor taking possession of, picking up, using,
 handling, or beginning to consume/use/handle an already-tracked object that appears in TRACKED
@@ -690,6 +718,8 @@ Rules:
 ---
 
 EXTRACTION EVENTS (optional)
+
+PARTIAL DROP RECEIPT PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT block for \`schema_version: "cb_tls_partial_stack_drop_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_drop\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. TLS/ObjectHelper already executed the receipt-governed operation: the source persisted at reduced quantity in its retained container, and the distinct successor was created directly at the destination. Emit no \`object_candidates\`, \`object_transfers\`, \`extraction_events\`, \`fission_events\`, or \`object_retirements\` for that operation. Do not redirect, restate, or repair the completed operation through another output channel. Independent facts unrelated to that operation may still use their normal channels. The receipt IDs are classification anchors only and must not be copied into witness fields as mutation authority. If the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT block is absent, do not assume or infer that this precedence applies.
 
 AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE OPERATION RECEIPT block for \`schema_version: "cb_tls_partial_stack_take_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_take\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. That validated receipt context proves that the identified source is the persistent parent and the identified successor is the same-turn child. Emit exactly one \`extraction_events\` entry for that operation, using the receipt's \`extracted_quantity\` and \`actor_ref\`, keeping \`source_ref\` as a prose source name, and mapping receipt destination \`player\`/\`player\` to \`destination_hint: "player_hands"\`. Do not emit the identified successor in \`object_candidates\`. Do not emit either identified object in \`object_transfers\`. The source was not moved as a whole, and the child was created directly in its authoritative destination rather than transferred from a prior container. This rule overrides separated-subunit promotion, Group Extraction promotion, candidate acquisition/handling classification, and broad moved/taken transfer classification for this operation only. Independent facts unrelated to this extraction may still use their normal channels. The receipt IDs are prompt-side classification anchors only: never copy either ID into \`extraction_events[].source_ref\`, and do not treat them as downstream enforcement keys. If the VALIDATED AUTHORITATIVE OPERATION RECEIPT block is absent, do not assume or infer that this TLS-specific precedence applies.
 
@@ -1117,6 +1147,71 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     };
   }
 
+  const _dropReceipt = options?.tlsPartialStackDropReceipt;
+  const _dropReceiptSourceId = _dropReceipt?.source_object_id;
+  const _dropReceiptSuccessorId = _dropReceipt?.successor_object_id;
+  const _dropReceiptSource = gameState.objects?.[_dropReceiptSourceId];
+  const _dropReceiptSuccessor = gameState.objects?.[_dropReceiptSuccessorId];
+  const _dropDestinationTypes = new Set(['grid', 'localspace', 'site']);
+  let _sanitizedTlsPartialStackDropReceipt = null;
+
+  if (
+    _dropReceipt?.schema_version === 'cb_tls_partial_stack_drop_v1' &&
+    _dropReceipt.authority === 'tls_object_helper' &&
+    _dropReceipt.operation_type === 'tls_partial_stack_drop' &&
+    _dropReceipt.status === 'executed' &&
+    _dropReceipt.actor_ref === 'player' &&
+    _dropReceipt.source_persists === true &&
+    _dropReceipt.successor_created_this_turn === true &&
+    Number.isInteger(_dropReceipt.turn_number) && _dropReceipt.turn_number > 0 &&
+    _dropReceipt.turn_number === turn &&
+    typeof _dropReceiptSourceId === 'string' && _dropReceiptSourceId.trim().length > 0 &&
+    typeof _dropReceiptSuccessorId === 'string' && _dropReceiptSuccessorId.trim().length > 0 &&
+    _dropReceiptSourceId !== _dropReceiptSuccessorId &&
+    Number.isInteger(_dropReceipt.requested_quantity) && _dropReceipt.requested_quantity > 0 &&
+    Number.isInteger(_dropReceipt.extracted_quantity) && _dropReceipt.extracted_quantity > 0 &&
+    _dropReceipt.requested_quantity === _dropReceipt.extracted_quantity &&
+    Number.isInteger(_dropReceipt.source_quantity_before) && _dropReceipt.source_quantity_before > 0 &&
+    Number.isInteger(_dropReceipt.source_quantity_after) && _dropReceipt.source_quantity_after > 0 &&
+    _dropReceipt.source_quantity_before - _dropReceipt.extracted_quantity === _dropReceipt.source_quantity_after &&
+    _dropReceipt.source_container_type === 'player' &&
+    _dropReceipt.source_container_id === 'player' &&
+    _dropDestinationTypes.has(_dropReceipt.destination_container_type) &&
+    typeof _dropReceipt.destination_container_id === 'string' && _dropReceipt.destination_container_id.trim().length > 0 &&
+    _dropReceiptSource?.status === 'active' &&
+    _dropReceiptSource.quantity === _dropReceipt.source_quantity_after &&
+    _dropReceiptSource.current_container_type === _dropReceipt.source_container_type &&
+    _dropReceiptSource.current_container_id === _dropReceipt.source_container_id &&
+    Array.isArray(gameState.player?.object_ids) && gameState.player.object_ids.includes(_dropReceiptSourceId) &&
+    _dropReceiptSuccessor?.status === 'active' &&
+    _dropReceiptSuccessor.parent_object_id === _dropReceiptSourceId &&
+    _dropReceiptSuccessor.created_turn === _dropReceipt.turn_number &&
+    _dropReceiptSuccessor.quantity === _dropReceipt.extracted_quantity &&
+    _dropReceiptSuccessor.current_container_type === _dropReceipt.destination_container_type &&
+    _dropReceiptSuccessor.current_container_id === _dropReceipt.destination_container_id
+  ) {
+    _sanitizedTlsPartialStackDropReceipt = {
+      schema_version: 'cb_tls_partial_stack_drop_v1',
+      authority: 'tls_object_helper',
+      turn_number: _dropReceipt.turn_number,
+      operation_type: 'tls_partial_stack_drop',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: _dropReceiptSourceId,
+      source_persists: true,
+      successor_object_id: _dropReceiptSuccessorId,
+      successor_created_this_turn: true,
+      requested_quantity: _dropReceipt.requested_quantity,
+      extracted_quantity: _dropReceipt.extracted_quantity,
+      source_quantity_before: _dropReceipt.source_quantity_before,
+      source_quantity_after: _dropReceipt.source_quantity_after,
+      source_container_type: 'player',
+      source_container_id: 'player',
+      destination_container_type: _dropReceipt.destination_container_type,
+      destination_container_id: _dropReceipt.destination_container_id
+    };
+  }
+
   _setDiag(null);
 
   // Guard
@@ -1143,7 +1238,8 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     watchContext,
     rawInput,
     turn,
-    _sanitizedTlsPartialStackTakeReceipt
+    _sanitizedTlsPartialStackTakeReceipt,
+    _sanitizedTlsPartialStackDropReceipt
   );
   let raw = null;
   // v1.84.38: extract into closure for ECONNRESET retry

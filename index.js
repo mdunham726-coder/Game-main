@@ -1030,6 +1030,7 @@ app.post('/narrate', async (req, res) => {
     skip_reason: null,
     cb_candidates: [],
     cb_transfers: [],
+    suppressed_replays: [],
     quarantine_size: 0,
     promoted: 0,
     transferred: 0,
@@ -1112,6 +1113,130 @@ app.post('/narrate', async (req, res) => {
   let _tlsPartialStackArchive = null;
   let _cbTlsPartialStackTakeReceipt = null;
   let _cbTlsPartialStackTakeReceiptState = 'empty';
+  let _cbTlsPartialStackDropReceipt = null;
+  let _cbTlsPartialStackDropReceiptState = 'empty';
+
+  function _sanitizeCbTlsPartialStackDropReceipt(receipt) {
+    const sourceObjectId = receipt?.source_object_id;
+    const successorObjectId = receipt?.successor_object_id;
+    const sourceRecord = gameState.objects?.[sourceObjectId];
+    const successorRecord = gameState.objects?.[successorObjectId];
+    const destinationTypes = new Set(['grid', 'localspace', 'site']);
+
+    if (
+      receipt?.schema_version !== 'cb_tls_partial_stack_drop_v1' ||
+      receipt.authority !== 'tls_object_helper' ||
+      receipt.operation_type !== 'tls_partial_stack_drop' ||
+      receipt.status !== 'executed' ||
+      receipt.actor_ref !== 'player' ||
+      receipt.source_persists !== true ||
+      receipt.successor_created_this_turn !== true ||
+      !Number.isInteger(receipt.turn_number) || receipt.turn_number < 1 ||
+      receipt.turn_number !== turnNumber ||
+      typeof sourceObjectId !== 'string' || sourceObjectId.trim().length === 0 ||
+      typeof successorObjectId !== 'string' || successorObjectId.trim().length === 0 ||
+      sourceObjectId === successorObjectId ||
+      !Number.isInteger(receipt.requested_quantity) || receipt.requested_quantity < 1 ||
+      !Number.isInteger(receipt.extracted_quantity) || receipt.extracted_quantity < 1 ||
+      receipt.requested_quantity !== receipt.extracted_quantity ||
+      !Number.isInteger(receipt.source_quantity_before) || receipt.source_quantity_before < 1 ||
+      !Number.isInteger(receipt.source_quantity_after) || receipt.source_quantity_after < 1 ||
+      receipt.source_quantity_before - receipt.extracted_quantity !== receipt.source_quantity_after ||
+      receipt.source_container_type !== 'player' ||
+      receipt.source_container_id !== 'player' ||
+      !destinationTypes.has(receipt.destination_container_type) ||
+      typeof receipt.destination_container_id !== 'string' || receipt.destination_container_id.trim().length === 0 ||
+      !sourceRecord || sourceRecord.status !== 'active' ||
+      sourceRecord.quantity !== receipt.source_quantity_after ||
+      sourceRecord.current_container_type !== receipt.source_container_type ||
+      sourceRecord.current_container_id !== receipt.source_container_id ||
+      !Array.isArray(gameState.player?.object_ids) || !gameState.player.object_ids.includes(sourceObjectId) ||
+      !successorRecord || successorRecord.status !== 'active' ||
+      successorRecord.parent_object_id !== sourceObjectId ||
+      successorRecord.created_turn !== receipt.turn_number ||
+      successorRecord.quantity !== receipt.extracted_quantity ||
+      successorRecord.current_container_type !== receipt.destination_container_type ||
+      successorRecord.current_container_id !== receipt.destination_container_id
+    ) {
+      return null;
+    }
+
+    return {
+      schema_version: 'cb_tls_partial_stack_drop_v1',
+      authority: 'tls_object_helper',
+      turn_number: receipt.turn_number,
+      operation_type: 'tls_partial_stack_drop',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: sourceObjectId,
+      source_persists: true,
+      successor_object_id: successorObjectId,
+      successor_created_this_turn: true,
+      requested_quantity: receipt.requested_quantity,
+      extracted_quantity: receipt.extracted_quantity,
+      source_quantity_before: receipt.source_quantity_before,
+      source_quantity_after: receipt.source_quantity_after,
+      source_container_type: 'player',
+      source_container_id: 'player',
+      destination_container_type: receipt.destination_container_type,
+      destination_container_id: receipt.destination_container_id
+    };
+  }
+
+  function _captureCbTlsPartialStackDropReceipt(splitResult, predictedCall) {
+    if (_cbTlsPartialStackDropReceiptState !== 'empty') {
+      _cbTlsPartialStackDropReceiptState = 'rejected';
+      _cbTlsPartialStackDropReceipt = null;
+      return null;
+    }
+
+    const _rejectReceipt = () => {
+      _cbTlsPartialStackDropReceiptState = 'rejected';
+      _cbTlsPartialStackDropReceipt = null;
+      return null;
+    };
+    const predictedParams = predictedCall?.parameters;
+
+    if (
+      splitResult?.ok !== true ||
+      splitResult.reason !== 'tls_partial_stack_drop' ||
+      predictedCall?.method !== 'splitObjectDirect' ||
+      !predictedParams ||
+      splitResult.source_object_id !== predictedParams.source_object_id ||
+      splitResult.requested_quantity !== predictedParams.extract_quantity ||
+      splitResult.applied_quantity !== predictedParams.extract_quantity ||
+      splitResult.dest_container_type !== predictedParams.destination_container_type ||
+      splitResult.dest_container_id !== predictedParams.destination_container_id
+    ) {
+      return _rejectReceipt();
+    }
+
+    const sanitizedReceipt = _sanitizeCbTlsPartialStackDropReceipt({
+      schema_version: 'cb_tls_partial_stack_drop_v1',
+      authority: 'tls_object_helper',
+      turn_number: turnNumber,
+      operation_type: 'tls_partial_stack_drop',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: splitResult.source_object_id,
+      source_persists: true,
+      successor_object_id: splitResult.successor_object_id,
+      successor_created_this_turn: true,
+      requested_quantity: splitResult.requested_quantity,
+      extracted_quantity: splitResult.applied_quantity,
+      source_quantity_before: splitResult.source_quantity_before,
+      source_quantity_after: splitResult.source_quantity_after,
+      source_container_type: 'player',
+      source_container_id: 'player',
+      destination_container_type: splitResult.dest_container_type,
+      destination_container_id: splitResult.dest_container_id
+    });
+    if (!sanitizedReceipt) return _rejectReceipt();
+
+    _cbTlsPartialStackDropReceipt = sanitizedReceipt;
+    _cbTlsPartialStackDropReceiptState = 'accepted';
+    return _cbTlsPartialStackDropReceipt;
+  }
 
   function _captureCbTlsPartialStackTakeReceipt(splitResult) {
     if (_cbTlsPartialStackTakeReceiptState !== 'empty') {
@@ -2615,6 +2740,12 @@ app.post('/narrate', async (req, res) => {
               ap_actuals: gameState._apActuals ?? null
             };
             _tlsPartialStackArchive = gameState._tlsPartialStackResult;
+            if (splitResult.ok) {
+              _captureCbTlsPartialStackDropReceipt(
+                splitResult,
+                debug.tls_executor_dry_run.predicted_call
+              );
+            }
           }
 
           // v1.91.71: P5-A2 — live TLS partial-stack TAKE execution
@@ -5406,7 +5537,9 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       const _phaseBResult = await CB.runPhaseB(narrative, gameState, _watchCtx, _rawInput, {
         suppressUnsupportedPlayerStatePromotion: _soliloquyFired,
         tlsPartialStackTakeReceipt: _cbTlsPartialStackTakeReceiptState === 'accepted'
-          ? _cbTlsPartialStackTakeReceipt : null
+          ? _cbTlsPartialStackTakeReceipt : null,
+        tlsPartialStackDropReceipt: _cbTlsPartialStackDropReceiptState === 'accepted'
+          ? _cbTlsPartialStackDropReceipt : null
       });
       _continuityExtractionSuccess = _phaseBResult !== null;
       if (_phaseBResult && _tlsPartialDescriptionTarget) {
@@ -6307,6 +6440,42 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               if (_qe.to_container_type   === 'grid') { _qe.to_container_type   = 'site'; _qe.to_container_id   = _txSiteKey; _txNormd = true; }
               if (_txNormd) _txNormalized++;
             }
+          }
+        }
+        const _validatedPartialDropReceipt = _sanitizeCbTlsPartialStackDropReceipt(
+          _cbTlsPartialStackDropReceiptState === 'accepted'
+            ? _cbTlsPartialStackDropReceipt : null
+        );
+        if (_validatedPartialDropReceipt) {
+          for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
+            const _qe = _quarantine[_i];
+            if (
+              _qe.action !== 'transfer' ||
+              _qe.temp_ref ||
+              _qe.object_id !== _validatedPartialDropReceipt.source_object_id ||
+              _qe.from_container_type !== _validatedPartialDropReceipt.source_container_type ||
+              _qe.from_container_id !== _validatedPartialDropReceipt.source_container_id ||
+              _qe.to_container_type !== _validatedPartialDropReceipt.destination_container_type ||
+              _qe.to_container_id !== _validatedPartialDropReceipt.destination_container_id
+            ) {
+              continue;
+            }
+
+            if (!Array.isArray(_objectRealityDebug.suppressed_replays)) {
+              _objectRealityDebug.suppressed_replays = [];
+            }
+            _objectRealityDebug.suppressed_replays.push({
+              reason: 'cb_partial_drop_source_replay_suppressed',
+              receipt_schema_version: _validatedPartialDropReceipt.schema_version,
+              object_id: _validatedPartialDropReceipt.source_object_id,
+              successor_object_id: _validatedPartialDropReceipt.successor_object_id,
+              from_container_type: _qe.from_container_type,
+              from_container_id: _qe.from_container_id,
+              to_container_type: _qe.to_container_type,
+              to_container_id: _qe.to_container_id,
+              turn: turnNumber
+            });
+            _quarantine.splice(_i, 1);
           }
         }
         _objectRealityDebug.pre_rejected = _preRejected;
