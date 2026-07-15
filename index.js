@@ -2741,10 +2741,17 @@ app.post('/narrate', async (req, res) => {
             };
             _tlsPartialStackArchive = gameState._tlsPartialStackResult;
             if (splitResult.ok) {
-              _captureCbTlsPartialStackDropReceipt(
+              const _capturedPartialDropReceipt = _captureCbTlsPartialStackDropReceipt(
                 splitResult,
                 debug.tls_executor_dry_run.predicted_call
               );
+              if (_capturedPartialDropReceipt) {
+                ObjectHelper.setObjectDescriptionDirect(
+                  gameState,
+                  _capturedPartialDropReceipt.successor_object_id,
+                  ''
+                );
+              }
             }
           }
 
@@ -5542,6 +5549,34 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           ? _cbTlsPartialStackDropReceipt : null
       });
       _continuityExtractionSuccess = _phaseBResult !== null;
+      if (_phaseBResult) {
+        const _partialDropDescription = _phaseBResult.partial_drop_successor_description;
+        const _validatedPartialDropDescriptionReceipt = _sanitizeCbTlsPartialStackDropReceipt(
+          _cbTlsPartialStackDropReceiptState === 'accepted'
+            ? _cbTlsPartialStackDropReceipt : null
+        );
+        if (
+          _validatedPartialDropDescriptionReceipt &&
+          _partialDropDescription &&
+          typeof _partialDropDescription.description === 'string' &&
+          _partialDropDescription.description.length > 0
+        ) {
+          const _sourceDescription = gameState.objects?.[
+            _validatedPartialDropDescriptionReceipt.source_object_id
+          ]?.description;
+          if (
+            _partialDropDescription.description.trim().toLowerCase() !==
+            String(_sourceDescription || '').trim().toLowerCase()
+          ) {
+            ObjectHelper.setObjectDescriptionDirect(
+              gameState,
+              _validatedPartialDropDescriptionReceipt.successor_object_id,
+              _partialDropDescription.description.trim()
+            );
+          }
+        }
+        delete _phaseBResult.partial_drop_successor_description;
+      }
       if (_phaseBResult && _tlsPartialDescriptionTarget) {
         const _extractionEvents = Array.isArray(_phaseBResult.extraction_events)
           ? _phaseBResult.extraction_events : [];

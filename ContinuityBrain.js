@@ -171,7 +171,11 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "object_condition_updates": [],
   "object_retirements": [],
   "fission_events": [],
-  "extraction_events": []${isFoundingTurn ? `,
+  "extraction_events": []${tlsPartialStackDropReceipt ? `,
+  "partial_drop_successor_description": {
+    "description": "<brief child-specific physical description grounded in the narration>",
+    "evidence": "<one contiguous verbatim supporting substring from the narration>"
+  }` : ''}${isFoundingTurn ? `,
   "founding_premise": {
     "form": null,
     "location_premise": null,
@@ -728,7 +732,9 @@ Rules:
 
 EXTRACTION EVENTS (optional)
 
-PARTIAL DROP RECEIPT PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT block for \`schema_version: "cb_tls_partial_stack_drop_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_drop\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. TLS/ObjectHelper already executed the receipt-governed operation: the source persisted at reduced quantity in its retained container, and the distinct successor was created directly at the destination. Emit no \`object_candidates\`, \`object_transfers\`, \`extraction_events\`, \`fission_events\`, or \`object_retirements\` for that operation. Do not redirect, restate, or repair the completed operation through another output channel. Independent facts unrelated to that operation may still use their normal channels. The receipt IDs are classification anchors only and must not be copied into witness fields as mutation authority. If the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT block is absent, do not assume or infer that this precedence applies.
+PARTIAL DROP RECEIPT PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT block for \`schema_version: "cb_tls_partial_stack_drop_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_drop\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. TLS/ObjectHelper already executed the receipt-governed operation: the source persisted at reduced quantity in its retained container, and the distinct successor was created directly at the destination. Emit no \`object_candidates\`, \`object_transfers\`, \`extraction_events\`, \`fission_events\`, or \`object_retirements\` for that operation. The only permitted receipt-governed output is \`partial_drop_successor_description\`, which is non-executable descriptive metadata and does not report, redirect, restate, or repair the completed operation. Independent facts unrelated to that operation may still use their normal channels. The receipt IDs are classification anchors only and must not be copied into witness fields as mutation authority. If the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT block is absent, do not assume or infer that this precedence applies.
+
+PARTIAL DROP SUCCESSOR DESCRIPTION: Apply this rule only when the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT is present. Write \`partial_drop_successor_description.description\` in the same compact style as \`object_candidates[].description\`: a brief physical noun phrase describing only the receipt-identified successor, not a sentence or summary of the narration. Include only appearance, material, or physical condition specifically supported by the frozen narration. Keep the description distinct from the evidence and do not copy the evidence wholesale. Set \`partial_drop_successor_description.evidence\` to exactly one contiguous verbatim substring from the frozen narration; never combine separate excerpts, insert an ellipsis, or paraphrase the evidence. Do not include movement, sound, location, spatial relations, action history, the surviving source, a copied parent description, invented details, object IDs, the DROP action, quantity change, containment, transfer, split, or any other operation. If the narration provides no usable child-specific physical description, emit \`partial_drop_successor_description\`: null.
 
 AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE OPERATION RECEIPT block for \`schema_version: "cb_tls_partial_stack_take_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_take\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. That validated receipt context proves that the identified source is the persistent parent and the identified successor is the same-turn child. Emit exactly one \`extraction_events\` entry for that operation, using the receipt's \`extracted_quantity\` and \`actor_ref\`, keeping \`source_ref\` as a prose source name, and mapping receipt destination \`player\`/\`player\` to \`destination_hint: "player_hands"\`. Do not emit the identified successor in \`object_candidates\`. Do not emit either identified object in \`object_transfers\`. The source was not moved as a whole, and the child was created directly in its authoritative destination rather than transferred from a prior container. This rule overrides separated-subunit promotion, Group Extraction promotion, candidate acquisition/handling classification, and broad moved/taken transfer classification for this operation only. Independent facts unrelated to this extraction may still use their normal channels. The receipt IDs are prompt-side classification anchors only: never copy either ID into \`extraction_events[].source_ref\`, and do not treat them as downstream enforcement keys. If the VALIDATED AUTHORITATIVE OPERATION RECEIPT block is absent, do not assume or infer that this TLS-specific precedence applies.
 
@@ -1306,6 +1312,35 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     return null;
   }
 
+  // Receipt-bound descriptive metadata only; remove it from the general extracted packet.
+  let partial_drop_successor_description = null;
+  const _rawPartialDropSuccessorDescription = extracted.partial_drop_successor_description;
+  if (
+    _sanitizedTlsPartialStackDropReceipt &&
+    _rawPartialDropSuccessorDescription &&
+    typeof _rawPartialDropSuccessorDescription === 'object' &&
+    !Array.isArray(_rawPartialDropSuccessorDescription)
+  ) {
+    const _description = typeof _rawPartialDropSuccessorDescription.description === 'string'
+      ? _rawPartialDropSuccessorDescription.description.trim() : '';
+    const _evidence = typeof _rawPartialDropSuccessorDescription.evidence === 'string'
+      ? _rawPartialDropSuccessorDescription.evidence.trim() : '';
+    const _parentDescription = typeof _dropReceiptSource?.description === 'string'
+      ? _dropReceiptSource.description.trim() : '';
+    if (
+      _description.length > 0 &&
+      _evidence.length > 0 &&
+      frozenNarration.includes(_evidence) &&
+      _description.toLowerCase() !== _parentDescription.toLowerCase()
+    ) {
+      partial_drop_successor_description = {
+        description: _description,
+        evidence: _evidence
+      };
+    }
+  }
+  delete extracted.partial_drop_successor_description;
+
   // Safely extract watch_message — optional, never blocks Phase B
   const watch_message = typeof extracted.watch_message === 'string' ? extracted.watch_message : null;
 
@@ -1469,6 +1504,7 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     object_retirements:       Array.isArray(extracted.object_retirements)       ? extracted.object_retirements       : [],
     fission_events:           Array.isArray(extracted.fission_events)           ? extracted.fission_events           : [],
     extraction_events:        Array.isArray(extracted.extraction_events)        ? extracted.extraction_events        : [],
+    partial_drop_successor_description,
   };
 }
 
