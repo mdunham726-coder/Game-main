@@ -25,7 +25,7 @@ try {
 
 // ── Constants ───────────────────────────────────────────────────────────────────
 const DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions";
-const DEEPSEEK_MODEL = "deepseek-chat";
+const DEEPSEEK_MODEL = "deepseek-v4-flash";
 const DEEPSEEK_TEMPERATURE = 0;
 const DEEPSEEK_MAX_TOKENS = 512;
 const DEEPSEEK_TIMEOUT_MS = 15000;
@@ -331,6 +331,7 @@ async function _callResolverModel(messages) {
       DEEPSEEK_URL,
       {
         model: DEEPSEEK_MODEL,
+        thinking: { type: "disabled" },
         messages,
         temperature: DEEPSEEK_TEMPERATURE,
         max_tokens: DEEPSEEK_MAX_TOKENS

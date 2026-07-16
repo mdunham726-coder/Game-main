@@ -485,7 +485,7 @@ async function runExplainThis() {
   async function callDeepSeek() {
     const resp = await axios.post(
       DEEPSEEK_URL,
-      { model: 'deepseek-chat', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMsg }], temperature: 0.3, max_tokens: 1000 },
+      { model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMsg }], temperature: 0.3, max_tokens: 1000 },
       { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 60000 }
     );
     return resp?.data?.choices?.[0]?.message?.content || '(no response)';

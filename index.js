@@ -1857,7 +1857,8 @@ app.post('/narrate', async (req, res) => {
             const _lssPrompt  = `${_lssFoundingClause}Biome: ${_lssBiome}.${_lssPurpose ? ` Site purpose: ${_lssPurpose}.` : ''} Site size: ${_startSlot.site_size ?? 'unknown'}.${_lssExclusionNote}\n\nReturn ONLY a single JSON object. No prose, no markdown. Required fields — all mandatory, none may be null or omitted:\n{"name":"<short proper name for this place>","description":"<one sentence describing it>","identity":"<short lowercase descriptor of the surrounding area>"}`;
             try {
               const _lssResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-                model: 'deepseek-chat',
+                model: 'deepseek-v4-flash',
+                thinking: { type: 'disabled' },
                 messages: [{ role: 'user', content: _lssPrompt }],
                 temperature: 0.4
               }, {
@@ -1929,7 +1930,8 @@ app.post('/narrate', async (req, res) => {
             const _l1Prompt  = `${_l1FoundingClause}Biome: ${_l1Biome}.${_l1Purpose ? ` Site purpose: ${_l1Purpose}.` : ''} Site size: ${_startSlot.site_size ?? 'unknown'}.\n\nReturn ONLY a single JSON object. No prose, no markdown. Required fields — all mandatory, none may be null or omitted:\n{"name":"<short proper name for this place>","description":"<one sentence describing it>","identity":"<short lowercase category, e.g. restaurant, blacksmith, inn>"}`;
             try {
               const _l1Resp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-                model: 'deepseek-chat',
+                model: 'deepseek-v4-flash',
+                thinking: { type: 'disabled' },
                 messages: [{ role: 'user', content: _l1Prompt }],
                 temperature: 0.4
               }, {
@@ -3278,7 +3280,8 @@ app.post('/narrate', async (req, res) => {
         const _sfPrompt = `${_sfFoundingClause}Cell terrain: ${_sfCellBiome}.\nSites requiring identity fill:\n${JSON.stringify(_sfSiteList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"site_id":"...","name":"...","identity":"...","description":"..."}. Fill every site in the list.`;
         try {
           const _sfResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: 'deepseek-chat',
+            model: 'deepseek-v4-flash',
+            thinking: { type: 'disabled' },
             messages: [{ role: 'user', content: _sfPrompt }],
             temperature: 0.3
           }, {
@@ -3365,7 +3368,8 @@ app.post('/narrate', async (req, res) => {
         const _lsfPrompt = `${_lsfSiteContext}\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfSpaceList)}\n\nScale interpretation: localspace_size 1 = tiny/compact interior; 2-4 = small; 5-7 = medium; 8-9 = large; 10 = major or exceptional. Names and descriptions must be consistent with the provided localspace_size, width, and height. A space with a large localspace_size must not be described as cramped, tiny, or compact. A space with a small localspace_size must not be described as vast, grand, or expansive.\n\nIf enterable is false, the space is a sealed, collapsed, blocked, or non-traversable structure. Describe it as such — as a visible landmark or external feature only. Do not describe it as an explorable interior. Do not mention any occupants, staff, or NPCs inside it.\n\nIf a space has npc_count 0 and enterable is true, its description must not mention any staff, employees, workers, or people — the space is unpopulated. If npc_count > 0, general presence is permitted but do not name or describe specific individuals.\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
         try {
           const _lsfResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: 'deepseek-chat',
+            model: 'deepseek-v4-flash',
+            thinking: { type: 'disabled' },
             messages: [{ role: 'user', content: _lsfPrompt }],
             temperature: 0.3
           }, {
@@ -3469,7 +3473,8 @@ app.post('/narrate', async (req, res) => {
             const _lsfaPrompt   = `${_lsfaSiteCtx}${_lsfaPremiseDirective}\nEach local space must be coherent with the parent site's identity and purpose. Derive its character from that identity — not from incidental words in the site name or from ambient environmental context.\nA description is a characterization of the space's physical and atmospheric properties. It is not a statement about who occupies it. Occupancy is determined entirely by the engine.\nScale interpretation: localspace_size 1 = tiny/compact interior; 2-4 = small; 5-7 = medium; 8-9 = large; 10 = major or exceptional. Names and descriptions must be consistent with the provided localspace_size, width, and height. A space with a large localspace_size must not be described as cramped, tiny, or compact. A space with a small localspace_size must not be described as vast, grand, or expansive.\nIf enterable is false, the space is a sealed, collapsed, blocked, or non-traversable structure. Describe it as such — as a visible landmark or external feature only. Do not describe it as an explorable interior. Do not mention any occupants, staff, or NPCs inside it.\nLocal spaces requiring name and description:\n${JSON.stringify(_lsfaSpaceList)}\n\nReturn ONLY a JSON array. No prose, no explanation, no markdown. Each element: {"local_space_id":"...","name":"...","description":"..."}. Fill every space in the list.`;
             try {
               const _lsfaResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-                model: 'deepseek-chat',
+                model: 'deepseek-v4-flash',
+                thinking: { type: 'disabled' },
                 messages: [{ role: 'user', content: _lsfaPrompt }],
                 temperature: 0.3
               }, {
@@ -3599,7 +3604,8 @@ RULES:
 OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
 {"is_humanoid_capable": true|false, "worn_items": [{"slot": "shirt|pants|underwear|socks|shoes", "name": "...", "description": "...", "source": "birth_default|birth_custom"}]}`;
           const _boResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: 'deepseek-chat',
+            model: 'deepseek-v4-flash',
+            thinking: { type: 'disabled' },
             messages: [
               { role: 'system', content: _boSystemMsg },
               { role: 'user', content: `Founding premise: "${_boFoundingText}"` }
@@ -3789,7 +3795,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           const _fillList = _fillNeeded.map(n => ({ id: n.id, traits: n.traits || [] }));
           const _fillPrompt = `${_fillSiteCtx}\n\nFor each NPC in this list, invent a fitting identity. Return ONLY a JSON array — no prose, no markdown.\n\nEach element must be:\n{"id":"<exact id from input>","npc_name":"<full name>","gender":"<male|female|nonbinary>","age":<integer 12-80>,"job_category":"<occupation string>"}\n\nNPC list:\n${JSON.stringify(_fillList)}\n\nRules:\n- id must match the input id exactly\n- npc_name, gender, age, job_category must ALL be non-null\n- age must be a number (integer)\n- job_category should fit the site context and the NPC's traits\n- Return one element per NPC in the input list`;
           const _fillResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: 'deepseek-chat',
+            model: 'deepseek-v4-flash',
+            thinking: { type: 'disabled' },
             messages: [{ role: 'user', content: _fillPrompt }],
             temperature: 0.7
           }, {
@@ -4884,7 +4891,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         try {
           _rcStart = Date.now();
           const _rcResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: 'deepseek-chat',
+            model: 'deepseek-v4-flash',
+            thinking: { type: 'disabled' },
             temperature: 0.3,
             max_tokens: 300,
             messages: [
@@ -5075,7 +5083,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           const _divResp = await axios.post(
             'https://api.deepseek.com/v1/chat/completions',
             {
-              model: 'deepseek-chat',
+              model: 'deepseek-v4-flash',
+              thinking: { type: 'disabled' },
               messages: [
                 { role: 'system', content: 'You are a semantic validator for a game engine. Reply with exactly one word: yes or no.' },
                 { role: 'user', content: `Can "${_envGatherIntent.label}" be non-destructively extracted from "${_envGatherIntent.sourceLabel}"? yes or no` }
@@ -5454,7 +5463,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       const _nWall = setTimeout(() => _nCtrl.abort(), 90000);
       try {
         return await axios.post('https://api.deepseek.com/v1/chat/completions', {
-          model: 'deepseek-chat',
+          model: 'deepseek-v4-flash',
+          thinking: { type: 'disabled' },
           messages: [{ role: 'user', content: narrationContent }],
           temperature: 0.7
         }, {
@@ -5474,7 +5484,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
     let response;
     let _narratorStart = null;
     let _narratorEnd = null;
-    const _nar = { model: 'deepseek-chat', temperature: 0.7, messages: [{ role: 'user', content: narrationContent }] };
+    const _nar = { model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, temperature: 0.7, messages: [{ role: 'user', content: narrationContent }] };
     diag.setNarratorPayload(_nar);
     try {
       // v1.85.39: narration stage start
@@ -7716,7 +7726,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // not a fault surface. Mother Brain chat still receives the full context.
         const _wCtxScan = _wCtx.replace(/(?:\r?\n)?=== VISIBLE CELLS \(Sample\) ===[\s\S]*?(?=\r?\n===|$)/, '');
         const _wResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-          model: 'deepseek-chat',
+          model: 'deepseek-v4-flash',
+          thinking: { type: 'disabled' },
           temperature: 0.3,
           max_tokens: 1500,
           messages: [
@@ -7782,7 +7793,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         const _arbSystemMsg = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Any statement that defines who the player is, what they possess, where they are, or what conditions they start under is a valid founding premise — regardless of its content, genre, or apparent implausibility. No founding input is cheating, invalid, or to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.\n\nAfter Turn 1, the world is locked. Player declarations are now constrained. They may clarify the player's self-state, including posture, condition, appearance, and activity, but they may not create inventory, teleport the player, grant authority or status, rewrite location, create NPCs or world objects, or directly alter world state. Statements that assert new possessions, claimed authority, new locations, or altered world state must not directly become truth unless supported by existing engine state or resolved through action systems. All founding premise data is stored in the player container under a birth record, which represents the conditions under which the player entered the world. This record is authoritative for initial identity, context, possessions, and claims. Narration must treat validated birth facts as real while allowing the world, including NPC behavior, physics, and constraints, to respond accordingly.\n\nThe player is free to attempt any action, express any idea, or describe any behavior at any time. There are no restricted verbs, no required formats, and no limit to creative expression. Freeform action is the primary mode of interaction, not a fallback. Every input from the player is treated as a genuine attempt to act within the world. Attempt is always allowed. Outcome is never guaranteed.\n\nAll actions exist within a world that has consequences. Objects have weight, volume, and presence. Locations impose constraints. NPCs observe, react, interpret, and respond according to their own perspective and the visible state of the world. Claims of authority, identity, or status do not automatically become accepted truth; they are treated as part of the player's expression and are subject to validation or rejection by the world through social and physical response. The system does not enforce balance through restriction. Instead, it enforces reality through consequence. Freedom of input is absolute, but reality is not negotiable.\n\n---\n\nYou are the Arbiter — a post-narration consequence engine for a text RPG. You have four responsibilities:\n\n1. REPUTATION: Evaluate whether any NPC's opinion of the player (reputation_player, 0-100, 50=neutral) should change.\n2. NAME LEARNING: Determine if the player learned an NPC's name this turn.\n3. PLAYER RECOGNITION: Determine if an NPC explicitly addressed or acknowledged the player by a specific name, title, or stated identity.\n4. FORM TRACKING: Detect whether the player's visible embodiment changed this turn.\n\nREPUTATION RULES:\n- Only change reputation for NPCs who were DIRECTLY involved in this turn (present, addressed, or observably affected).\n- Movement, exploration, and turns with no NPC interaction must produce an empty array.\n- Magnitude: trivial interaction ±1-3, meaningful ±4-8, significant social event ±9-15, exceptional ±16-20. Cap at ±25 per turn.\n- reason must be a terse factual phrase (max 10 words) describing what happened.\n\nNAME LEARNING RULES:\n- Only include an NPC in is_learned_changes if the narration explicitly shows the player learning their name via one of these event types: self_introduction, third_party_introduction, visible_label, document_or_record, direct_answer.\n- revealed_name must be the exact name as it appeared in the narration.\n- Do not infer name learning; it must be textually evident in the narration.\n- is_learned_changes is an empty array if no name was learned.\n\nPLAYER RECOGNITION RULES:\n- Emit an entry in player_recognition_changes when the narration explicitly shows an NPC addressing or acknowledging the player by a specific name, title, or stated identity.\n- event_type must be one of: name_addressed, title_used, identity_stated_by_npc, explicit_acknowledgment.\n- known_identity: the exact name, title, or label the NPC used when addressing or acknowledging the player.\n- evidence: a terse phrase or quote from the narration showing the acknowledgment (max 15 words).\n- Must be textually evident in the narration — do not infer.\n- player_recognition_changes is an empty array if no such event occurred.\n\nFORM TRACKING RULES:\n- Emit player_form_change ONLY when the narration confirms a COMPLETED visible embodiment change this turn — the player's outward appearance has definitively changed in a way NPCs would perceive differently.\n- Applies to any completed change: transformation, shapeshifting, disguise, costume change, or any mechanism that changes what NPCs see.\n- Does NOT apply to attempts, partial changes, or stated intentions that are not yet narrated as complete.\n- new_form: a short label describing the new visible form.\n- prior_form: what the form was before (include when inferrable from narration or context).\n- OMIT the player_form_change key entirely when no completed form change occurred this turn — never include it as null or empty.\n- EXCLUSIONS — the following are NOT form changes and must NEVER trigger player_form_change: empty-handed state or lack of held objects; failed inventory or possession claims; posture changes (crouching, reaching, kneeling, standing); equipment changes (putting on or removing clothing, accessories, or gear); emotional or expressive states (smiling, tired, tense, nervous); any transient physical condition that does not alter the player's fundamental visible shape or embodiment.\n\nReturn ONLY valid JSON. No prose, no explanation, no markdown fences.\n\nOUTPUT FORMAT (strict JSON only):\n{"reputation_changes":[{"npc_id":"...","delta":N,"reason":"..."}],"is_learned_changes":[{"npc_id":"...","revealed_name":"...","event_type":"self_introduction|third_party_introduction|visible_label|document_or_record|direct_answer","evidence":"..."}],"player_recognition_changes":[{"npc_id":"...","known_identity":"...","event_type":"name_addressed|title_used|identity_stated_by_npc|explicit_acknowledgment","evidence":"..."}],"player_form_change":{"new_form":"...","prior_form":"..."}}\nBaseline when no changes and no form change: {"reputation_changes":[],"is_learned_changes":[],"player_recognition_changes":[]}\nOmit player_form_change entirely when no completed form change occurred.`;
         const _arbUserMsg = `PLAYER ACTION: "${_rawInput}" (parsed: ${_parsedAction || 'unknown'})\nNARRATION: ${narrative}\nNPC REGISTRY: ${JSON.stringify(_arbNpcRegistry)}\nLOCATION: ${_arbDepthLabel}${_arbSiteName ? ` / ${_arbSiteName}` : ''}\n\nEvaluate this turn. Return JSON only.`;
         const _arbResp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-          model: 'deepseek-chat',
+          model: 'deepseek-v4-flash',
+          thinking: { type: 'disabled' },
           temperature: 0.3,
           max_tokens: 800,
           messages: [
@@ -8271,7 +8283,8 @@ app.post('/ask-deepseek', async (req, res) => {
         const resp = await axios.post(
           "https://api.deepseek.com/v1/chat/completions",
           {
-            model: "deepseek-chat",
+            model: "deepseek-v4-flash",
+            thinking: { type: "disabled" },
             messages,
             temperature: 0.7,
             max_tokens: 2000
@@ -8424,7 +8437,7 @@ app.post('/consult-deepseek', async (req, res) => {
     try {
       _resp = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
-        { model: 'deepseek-chat', messages: _messages, temperature: 0.7 },
+        { model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, messages: _messages, temperature: 0.7 },
         {
           headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
           timeout: 120000,
@@ -8435,7 +8448,7 @@ app.post('/consult-deepseek', async (req, res) => {
       if (_firstErr?.code === 'ECONNRESET') {
         _resp = await axios.post(
           'https://api.deepseek.com/v1/chat/completions',
-          { model: 'deepseek-chat', messages: _messages, temperature: 0.7 },
+          { model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, messages: _messages, temperature: 0.7 },
           {
             headers: { 'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
             timeout: 120000

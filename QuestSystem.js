@@ -334,7 +334,8 @@ class DeepSeekIntegration {
   async _callDeepSeekAPI(prompt) {
     
     const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
+      thinking: { type: 'disabled' },
       messages: [{
         role: 'user',
         content: prompt

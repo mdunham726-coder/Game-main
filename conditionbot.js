@@ -148,7 +148,8 @@ Rules:
     const resp = await axios.post(
       DEEPSEEK_URL,
       {
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-flash',
+        thinking: { type: 'disabled' },
         messages: _capturedMessages,
         temperature: 0.2,
         max_tokens: 800

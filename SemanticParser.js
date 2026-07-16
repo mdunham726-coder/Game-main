@@ -150,7 +150,8 @@ async function callDeepSeek(messages) {
     const resp = await axios.post(
       "https://api.deepseek.com/v1/chat/completions",
       {
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
+        thinking: { type: "disabled" },
         messages,
         temperature: 0,
         max_tokens: 256

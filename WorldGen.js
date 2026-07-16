@@ -301,7 +301,8 @@ async function detectBiomeWithDeepSeek(worldPrompt) {
     const resp = await axios.post(
       "https://api.deepseek.com/v1/chat/completions",
       {
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
+        thinking: { type: "disabled" },
         messages,
         temperature: 0,
         max_tokens: 20
@@ -382,7 +383,8 @@ async function detectWorldToneWithDeepSeek(worldPrompt) {
     const resp = await axios.post(
       "https://api.deepseek.com/v1/chat/completions",
       {
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
+        thinking: { type: "disabled" },
         messages,
         temperature: 0.5,  // Some variation to get natural tone descriptions
         max_tokens: 100
@@ -439,7 +441,8 @@ What location type should they START in? Choose one: village, town, city, outpos
     const resp = await axios.post(
       "https://api.deepseek.com/v1/chat/completions",
       {
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
+        thinking: { type: "disabled" },
         messages,
         temperature: 0,  // Deterministic for location choice
         max_tokens: 20
@@ -511,7 +514,7 @@ async function detectStartContextWithDeepSeek(desc) {
 
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
-      { model: 'deepseek-chat', messages, temperature: 0, max_tokens: 80 },
+      { model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, messages, temperature: 0, max_tokens: 80 },
       {
         headers: {
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
@@ -720,7 +723,8 @@ async function extractWorldBiasWithDeepSeek(worldPrompt) {
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-flash',
+        thinking: { type: 'disabled' },
         messages: [
           {
             role: 'system',

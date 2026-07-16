@@ -312,7 +312,8 @@ Return the JSON schema described in your instructions. No prose.`;
     const resp = await axios.post(
       DEEPSEEK_URL,
       {
-        model:       'deepseek-chat',
+        model:       'deepseek-v4-flash',
+        thinking:    { type: 'disabled' },
         messages:    [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: userMessage }],
         temperature: 0.1,
         max_tokens:  300,

@@ -1261,7 +1261,8 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
   const _makeExtractionCall = () => axios.post(
     DEEPSEEK_URL,
     {
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
+      thinking: { type: 'disabled' },
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1,  // low temperature — forensic, not creative
       max_tokens: 2800
@@ -1671,7 +1672,8 @@ async function extractFoundingNpc(gameState) {
     const resp = await axios.post(
       DEEPSEEK_URL,
       {
-        model: 'deepseek-chat',
+        model: 'deepseek-v4-flash',
+        thinking: { type: 'disabled' },
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         max_tokens: 300,

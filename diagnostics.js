@@ -706,7 +706,7 @@ function buildDebugContext(gameState, debugLevel = "detailed") {
     } else {
       context += `prompt_tokens: —  completion_tokens: —  total_tokens: — (no usage data)\n`;
     }
-    context += `model: deepseek-chat | max_tokens: not set (model cap: 8,192 output / 64K context window)\n`;
+    context += `model: deepseek-v4-flash | thinking: disabled | max_tokens: not set (model cap: 384K output / 1M context window)\n`;
   }
 
   // === SPATIAL BLOCK (last turn) ===

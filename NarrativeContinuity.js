@@ -252,7 +252,8 @@ async function runContinuityExtraction(narrationText, gameState) {
 
   try {
     const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-flash',
+      thinking: { type: 'disabled' },
       messages: [
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
         { role: 'user', content: userMessage }
