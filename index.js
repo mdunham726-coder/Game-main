@@ -2607,17 +2607,53 @@ app.post('/narrate', async (req, res) => {
           gameState._apActuals = null;                // v1.91.XX P3: clear per-turn AP actuals
           gameState._tlsPartialStackResult = null;
 
+          // Article TAKE promotion: resolve once through the existing TLS source resolver,
+          // then promote only a validated active stack. Singular, unresolved, ambiguous,
+          // stale, and non-article intents retain their existing execution paths.
+          const _articleTakeProbe = (
+            mapped?.player_intent?.operation_family === 'take' &&
+            mapped.player_intent.selection_mode == null &&
+            mapped.player_intent.requested_quantity == null &&
+            mapped.player_intent.quantity_mode === 'article' &&
+            (mapped.player_intent.quantity_word === 'a' || mapped.player_intent.quantity_word === 'an')
+          ) ? {
+            ...mapped.player_intent,
+            requested_quantity: 1,
+            selection_mode: 'partial_from_stack'
+          } : null;
+
           // v1.91.58: P1b — pre-AP resolver evidence capture inside queue loop (observe-only, diagnostic only)
           if (
             mapped?.player_intent &&
             mapped.player_intent.operation_family === 'take' &&
-            mapped.player_intent.selection_mode === 'partial_from_stack'
+            (mapped.player_intent.selection_mode === 'partial_from_stack' || _articleTakeProbe)
           ) {
             try {
               objectOperationResolverEvidence = await ObjectOperationResolver.resolvePartialStackTake(
                 gameState,
-                mapped.player_intent
+                _articleTakeProbe || mapped.player_intent
               );
+
+              if (_articleTakeProbe) {
+                const _articleSource = gameState.objects?.[objectOperationResolverEvidence?.source_object_id];
+                const _articleSourceIsValidatedStack = (
+                  objectOperationResolverEvidence?.resolution_basis === 'model_selected' &&
+                  objectOperationResolverEvidence?.fail_closed_reason == null &&
+                  _articleSource?.status === 'active' &&
+                  Number.isInteger(_articleSource.quantity) &&
+                  _articleSource.quantity > 1 &&
+                  _articleSource.quantity === objectOperationResolverEvidence.source_quantity_before &&
+                  _articleSource.current_container_type === objectOperationResolverEvidence.source_container_type &&
+                  _articleSource.current_container_id === objectOperationResolverEvidence.source_container_id
+                );
+
+                if (_articleSourceIsValidatedStack) {
+                  mapped.player_intent.requested_quantity = 1;
+                  mapped.player_intent.selection_mode = 'partial_from_stack';
+                } else {
+                  objectOperationResolverEvidence = null;
+                }
+              }
             } catch (_rErr) {
               objectOperationResolverEvidence = null;
               objectOperationResolverError = {
