@@ -7442,7 +7442,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       npc_target: _rawNpcTarget || null,
       needs_say_triggered: false,
       input: { raw: action, parsed_intent: parsedIntent, parsed_intent_source: parsedIntentSource },
-      authoritative_state: authoritativeState,
+      authoritative_state: _cloneForArchive(authoritativeState),
       visibility: visibilityPayload,
       movement: movement,
       nearby_cells: nearbyCellsSnapshot,
