@@ -595,6 +595,13 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     return;
   }
   if (act === 'drop'){
+    state._apActuals = {
+      operation_family: 'drop',
+      routing: 'quarantined',
+      helper_method: null,
+      outcome: 'refused_ownership'
+    };
+    return;
     const target = actions?.target||'';
     const res = resolveItemByName(state, target);
     let dropSucceeded = false;
@@ -1569,7 +1576,7 @@ function validateAndQueueIntent(state, normalizedIntent){
     }
 
     if (action === 'drop'){
-      const target = act?.target||'';
+      const target = act?.normalized_target || act?.target || '';
       const inInv = hasInventoryItem(state, target);
       sv.targetInInventory = inInv;
       if (!inInv) return { valid:false, queue:[], reason:"TARGET_NOT_IN_INVENTORY", stateValidation:sv };

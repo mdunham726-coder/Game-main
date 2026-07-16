@@ -31,7 +31,8 @@ const DEEPSEEK_MAX_TOKENS = 512;
 const DEEPSEEK_TIMEOUT_MS = 15000;
 
 const EVIDENCE_SCHEMA_VERSION = "resolver_evidence_v1";
-const RESOLVER_KIND = "resolvePartialStackTake";
+const TAKE_RESOLVER_KIND = "resolvePartialStackTake";
+const DROP_RESOLVER_KIND = "resolvePlayerHeldDrop";
 
 // ── Layer 1: Candidate Enumeration ──────────────────────────────────────────────
 
@@ -60,6 +61,48 @@ function _buildSiteKey(state) {
 }
 
 /**
+ * Resolve the player's authoritative current Ground container without mutation.
+ * Priority and accepted container shapes mirror ObjectHelper's DROP destination
+ * contract: localspace first, then site floor, otherwise the current grid cell.
+ */
+function resolveCurrentGround(state) {
+  const activeLocalSpace = state?.world?.active_local_space || null;
+  if (activeLocalSpace) {
+    const localSpaceId = activeLocalSpace.local_space_id || null;
+    if (!localSpaceId) {
+      return { ok: false, container_type: null, container_id: null, fail_closed_reason: "missing_localspace_id" };
+    }
+    const localSpaces = state?.world?.active_site?.local_spaces;
+    const resolvable = localSpaces && typeof localSpaces === "object" &&
+      Object.values(localSpaces).some(entry => entry?._generated_interior?.local_space_id === localSpaceId);
+    if (!resolvable) {
+      return { ok: false, container_type: null, container_id: null, fail_closed_reason: "localspace_not_resolvable" };
+    }
+    return { ok: true, container_type: "localspace", container_id: localSpaceId, fail_closed_reason: null };
+  }
+
+  if (state?.world?.active_site) {
+    const siteX = state?.player?.position?.x;
+    const siteY = state?.player?.position?.y;
+    const siteKey = _buildSiteKey(state);
+    if (!siteKey || !Number.isInteger(siteX) || !Number.isInteger(siteY)) {
+      return { ok: false, container_type: null, container_id: null, fail_closed_reason: "site_ground_not_resolvable" };
+    }
+    return { ok: true, container_type: "site", container_id: siteKey, fail_closed_reason: null };
+  }
+
+  const pos = state?.world?.position;
+  if (!pos || ![pos.mx, pos.my, pos.lx, pos.ly].every(Number.isFinite)) {
+    return { ok: false, container_type: null, container_id: null, fail_closed_reason: "grid_position_missing" };
+  }
+  const cellKey = _buildCellKey(state);
+  if (!cellKey || !state?.world?.cells?.[cellKey]) {
+    return { ok: false, container_type: null, container_id: null, fail_closed_reason: "grid_cell_not_resolvable" };
+  }
+  return { ok: true, container_type: "grid", container_id: cellKey, fail_closed_reason: null };
+}
+
+/**
  * Enumerate accessible ORS candidate objects for TAKE source.
  * Excludes: inactive, player-held, worn, non-current-container.
  * Scopes: grid cell → localspace → site floor.
@@ -67,7 +110,7 @@ function _buildSiteKey(state) {
  * @param {object} state
  * @returns {object[]} candidate_objects
  */
-function _enumerateCandidates(state) {
+function _enumerateTakeCandidates(state) {
   const objects = state?.objects;
   if (!objects || typeof objects !== "object") return [];
 
@@ -115,6 +158,61 @@ function _enumerateCandidates(state) {
   return candidates;
 }
 
+/**
+ * Enumerate authoritative player-held ORS candidates for DROP in membership
+ * order. Worn and legacy-only inventory entries are intentionally excluded.
+ */
+function _enumerateDropCandidates(state) {
+  const objects = state?.objects;
+  const playerIds = state?.player?.object_ids;
+  if (!objects || typeof objects !== "object" || !Array.isArray(playerIds)) return [];
+
+  const candidates = [];
+  const seen = new Set();
+  for (const objectId of playerIds) {
+    if (typeof objectId !== "string" || objectId.length === 0 || seen.has(objectId)) continue;
+    seen.add(objectId);
+    const record = objects[objectId];
+    if (!record || record.status !== "active") continue;
+    if (record.current_container_type !== "player" || record.current_container_id !== "player") continue;
+    candidates.push({
+      candidate_id:           objectId,
+      candidate_name:         record.name || "",
+      candidate_aliases:      Array.isArray(record.aliases) ? record.aliases : [],
+      candidate_quantity:     typeof record.quantity === "number" ? record.quantity : null,
+      candidate_unit:         record.unit || null,
+      candidate_container:    "player",
+      candidate_container_id: "player",
+      candidate_status:       record.status
+    });
+  }
+  return candidates;
+}
+
+function _takePolicy() {
+  return {
+    operationFamily: "take",
+    resolverKind: TAKE_RESOLVER_KIND,
+    enumerateCandidates: _enumerateTakeCandidates,
+    destination: { ok: true, container_type: "player", container_id: "player", fail_closed_reason: null },
+    strictDestinationValidation: false,
+    strictPlayerSourceValidation: false,
+    deterministicDuplicateAmbiguity: false
+  };
+}
+
+function _dropPolicy(state) {
+  return {
+    operationFamily: "drop",
+    resolverKind: DROP_RESOLVER_KIND,
+    enumerateCandidates: _enumerateDropCandidates,
+    destination: resolveCurrentGround(state),
+    strictDestinationValidation: true,
+    strictPlayerSourceValidation: true,
+    deterministicDuplicateAmbiguity: true
+  };
+}
+
 // ── Layer 2: LLM Evidence Analysis ──────────────────────────────────────────────
 
 /**
@@ -126,7 +224,7 @@ function _enumerateCandidates(state) {
  * @param {object[]} candidates
  * @returns {Array<{role:string, content:string}>} messages array
  */
-function _buildPromptMessages(actions, state, candidates) {
+function _buildPromptMessages(actions, state, candidates, policy = _takePolicy()) {
   const normalizedTarget = typeof actions.normalized_target === "string"
     ? actions.normalized_target : null;
   const rawTarget = typeof actions.target === "string" ? actions.target : null;
@@ -143,6 +241,8 @@ function _buildPromptMessages(actions, state, candidates) {
     || "none";
 
   const candidateListJson = JSON.stringify(candidates, null, 0);
+  const destinationType = policy.destination?.container_type || null;
+  const destinationId = policy.destination?.container_id || null;
 
   const systemText = "You are an object-reference resolver for a text adventure game. "
     + "Given a player command, parser-enriched fields, and a list of accessible candidate objects, "
@@ -175,7 +275,9 @@ function _buildPromptMessages(actions, state, candidates) {
     "If no candidate plausibly matches, return unresolved.",
     "Determine: is the source a stack (quantity > 1)? "
       + "Is the requested amount partial, the exact whole stack, or more than available?",
-    "The destination is always the player inventory for a take operation.",
+    policy.operationFamily === "take"
+      ? "The destination is always the player inventory for a take operation."
+      : `The destination must be the authoritative ${destinationType || "unresolved"}/${destinationId || "unresolved"} Ground container supplied by policy.`,
     "Provide reasoning_summary in 1-2 sentences explaining which candidate was selected and why, "
       + "or why the result is ambiguous/unresolved.",
     "",
@@ -191,8 +293,8 @@ function _buildPromptMessages(actions, state, candidates) {
     '  "requested_quantity": number or null,',
     '  "requested_vs_available": "partial" or "exact_stack" or "over_stack" or "unknown",',
     '  "is_stack": true or false,',
-    '  "intended_destination_type": "player",',
-    '  "intended_destination_id": "player",',
+    `  "intended_destination_type": ${JSON.stringify(destinationType)},`,
+    `  "intended_destination_id": ${JSON.stringify(destinationId)},`,
     '  "resolution_basis": "model_selected" or "ambiguous" or "unresolved",',
     '  "resolution_confidence": 0.0 to 1.0,',
     '  "reasoning_summary": "1-2 sentence explanation",',
@@ -271,6 +373,53 @@ async function _callResolverModel(messages) {
 
 // ── Layer 3: ORS Fact Validation ────────────────────────────────────────────────
 
+function _normalizeIdentityPart(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function _candidateIdentitySignature(candidate) {
+  const aliases = Array.isArray(candidate?.candidate_aliases)
+    ? candidate.candidate_aliases.map(_normalizeIdentityPart).filter(Boolean).sort()
+    : [];
+  return JSON.stringify([
+    _normalizeIdentityPart(candidate?.candidate_name),
+    aliases,
+    candidate?.candidate_quantity ?? null,
+    _normalizeIdentityPart(candidate?.candidate_unit),
+    _normalizeIdentityPart(candidate?.candidate_container),
+    _normalizeIdentityPart(candidate?.candidate_container_id)
+  ]);
+}
+
+function _deriveDropEffectiveQuantity(actions, availableQuantity) {
+  const requested = actions?.requested_quantity ?? null;
+  const quantityMode = actions?.quantity_mode ?? null;
+  const selectionMode = actions?.selection_mode ?? null;
+
+  if (quantityMode === "all") {
+    if (requested !== null || selectionMode !== "all_from_stack") {
+      return { ok: false, quantity: null, basis: null, reason: "contradictory_quantity_metadata" };
+    }
+    return { ok: true, quantity: availableQuantity, basis: "drop_all_available", reason: null };
+  }
+  if (quantityMode === "some") {
+    return { ok: false, quantity: null, basis: null, reason: "unsupported_quantity_mode" };
+  }
+  if (quantityMode === "unspecified" || quantityMode === "article") {
+    if (requested !== null) {
+      return { ok: false, quantity: null, basis: null, reason: "contradictory_quantity_metadata" };
+    }
+    return { ok: true, quantity: 1, basis: "drop_default_one", reason: null };
+  }
+  if (quantityMode === "exact") {
+    if (Number.isInteger(requested) && requested > 0) {
+      return { ok: true, quantity: requested, basis: "parser_explicit", reason: null };
+    }
+    return { ok: false, quantity: null, basis: null, reason: "invalid_quantity" };
+  }
+  return { ok: false, quantity: null, basis: null, reason: "unsupported_quantity_mode" };
+}
+
 /**
  * Validate model JSON response against ORS facts and schema.
  * Returns { valid, evidencePatch, warnings, validationErrors }
@@ -281,7 +430,7 @@ async function _callResolverModel(messages) {
  * @param {object} actions - Parser actions for field cross-reference
  * @returns {object}
  */
-function _validateModelResponse(modelJson, candidates, state, actions) {
+function _validateModelResponse(modelJson, candidates, state, actions, policy = _takePolicy()) {
   const result = {
     valid: true,
     evidencePatch: {},
@@ -418,6 +567,24 @@ function _validateModelResponse(modelJson, candidates, state, actions) {
   const orsContainerType = String(orsRecord.current_container_type || "");
   const orsContainerId = String(orsRecord.current_container_id || "");
 
+  if (policy.strictPlayerSourceValidation) {
+    const playerMembership = Array.isArray(state?.player?.object_ids) && state.player.object_ids.includes(sourceId);
+    if (orsContainerType !== "player" || orsContainerId !== "player" || !playerMembership) {
+      result.valid = false;
+      result.evidencePatch.resolution_basis = "validation_failed";
+      result.evidencePatch.source_object_id = null;
+      result.evidencePatch.fail_closed_reason = "source_not_player_held";
+      result.warnings.push({
+        code: "source_not_player_held",
+        severity: "blocking",
+        field: "source_container_type",
+        message: `DROP source "${sourceId}" is not an active player/player membership record.`,
+        candidate_ids: sourceId ? [sourceId] : null
+      });
+      return result;
+    }
+  }
+
   if (modelContainerType !== orsContainerType || modelContainerId !== orsContainerId) {
     result.valid = false;
     result.evidencePatch.resolution_basis = "validation_failed";
@@ -434,10 +601,27 @@ function _validateModelResponse(modelJson, candidates, state, actions) {
   }
 
   // V8: quantity matches ORS (allow null→1 normalization for single objects)
-  const orsQuantity = typeof orsRecord.quantity === "number" ? orsRecord.quantity : 1;
+  const orsQuantity = policy.operationFamily === "drop"
+    ? (Number.isInteger(orsRecord.quantity) && orsRecord.quantity > 0 ? orsRecord.quantity : null)
+    : (typeof orsRecord.quantity === "number" ? orsRecord.quantity : 1);
   const modelQuantity = typeof modelJson.source_quantity_before === "number"
     ? modelJson.source_quantity_before
     : null;
+
+  if (policy.operationFamily === "drop" && orsQuantity === null) {
+    result.valid = false;
+    result.evidencePatch.resolution_basis = "validation_failed";
+    result.evidencePatch.source_object_id = null;
+    result.evidencePatch.fail_closed_reason = "invalid_source_quantity";
+    result.warnings.push({
+      code: "invalid_source_quantity",
+      severity: "blocking",
+      field: "source_quantity_before",
+      message: `DROP source "${sourceId}" does not have a positive integer authoritative quantity.`,
+      candidate_ids: sourceId ? [sourceId] : null
+    });
+    return result;
+  }
 
   if (modelQuantity !== null && modelQuantity !== orsQuantity) {
     result.valid = false;
@@ -452,6 +636,61 @@ function _validateModelResponse(modelJson, candidates, state, actions) {
       candidate_ids: sourceId ? [sourceId] : null
     });
     return result;
+  }
+
+  if (policy.strictDestinationValidation) {
+    const expectedDestinationType = String(policy.destination?.container_type || "");
+    const expectedDestinationId = String(policy.destination?.container_id || "");
+    const modelDestinationType = String(modelJson.intended_destination_type || "");
+    const modelDestinationId = String(modelJson.intended_destination_id || "");
+    if (modelDestinationType !== expectedDestinationType || modelDestinationId !== expectedDestinationId) {
+      result.valid = false;
+      result.evidencePatch.resolution_basis = "validation_failed";
+      result.evidencePatch.source_object_id = null;
+      result.evidencePatch.fail_closed_reason = "destination_mismatch";
+      result.warnings.push({
+        code: "destination_mismatch",
+        severity: "blocking",
+        field: "intended_destination_type",
+        message: `Model destination (${modelDestinationType}/${modelDestinationId}) does not match policy (${expectedDestinationType}/${expectedDestinationId}).`,
+        candidate_ids: sourceId ? [sourceId] : null
+      });
+      return result;
+    }
+  }
+
+  if (policy.deterministicDuplicateAmbiguity) {
+    const selectedCandidate = candidates.find(candidate => candidate.candidate_id === sourceId);
+    const selectedSignature = _candidateIdentitySignature(selectedCandidate);
+    const collidingIds = candidates
+      .filter(candidate => _candidateIdentitySignature(candidate) === selectedSignature)
+      .map(candidate => candidate.candidate_id);
+    result.evidencePatch.candidate_identity_signature = {
+      signature: selectedSignature,
+      unique: collidingIds.length === 1,
+      colliding_candidate_ids: collidingIds
+    };
+    if (collidingIds.length > 1) {
+      result.valid = false;
+      result.evidencePatch.resolution_basis = "ambiguous";
+      result.evidencePatch.source_object_id = null;
+      result.evidencePatch.source_object_name = null;
+      result.evidencePatch.source_container_type = null;
+      result.evidencePatch.source_container_id = null;
+      result.evidencePatch.source_quantity_before = null;
+      result.evidencePatch.source_unit = null;
+      result.evidencePatch.effective_requested_quantity = null;
+      result.evidencePatch.effective_quantity_basis = null;
+      result.evidencePatch.fail_closed_reason = "ambiguous";
+      result.warnings.push({
+        code: "indistinguishable_candidate_signature",
+        severity: "blocking",
+        field: "source_object_id",
+        message: "Multiple DROP candidates expose the same model-visible identity signature.",
+        candidate_ids: collidingIds
+      });
+      return result;
+    }
   }
 
   // ── V9: Multiple candidate IDs check ───────────────────────────────────────
@@ -469,6 +708,30 @@ function _validateModelResponse(modelJson, candidates, state, actions) {
   result.evidencePatch.source_container_id = orsContainerId;
   result.evidencePatch.source_quantity_before = orsQuantity;
   result.evidencePatch.source_unit = orsRecord.unit || modelJson.source_unit || null;
+
+  if (policy.operationFamily === "drop") {
+    const effectiveQuantity = _deriveDropEffectiveQuantity(actions, orsQuantity);
+    result.evidencePatch.intended_destination_type = policy.destination.container_type;
+    result.evidencePatch.intended_destination_id = policy.destination.container_id;
+    result.evidencePatch.effective_requested_quantity = effectiveQuantity.quantity;
+    result.evidencePatch.effective_quantity_basis = effectiveQuantity.basis;
+    if (!effectiveQuantity.ok) {
+      result.valid = false;
+      result.evidencePatch.fail_closed_reason = effectiveQuantity.reason;
+      result.warnings.push({
+        code: effectiveQuantity.reason,
+        severity: "blocking",
+        field: "requested_quantity",
+        message: "DROP quantity metadata cannot be mapped to an approved effective quantity.",
+        candidate_ids: sourceId ? [sourceId] : null
+      });
+      return result;
+    }
+    result.evidencePatch.requested_vs_available = effectiveQuantity.quantity < orsQuantity
+      ? "partial"
+      : effectiveQuantity.quantity === orsQuantity ? "exact_stack" : "over_stack";
+    result.evidencePatch.is_stack = orsQuantity > 1;
+  }
 
   // Check for over-stack / exact-stack advisory warnings
   const requestedVsAvailable = String(modelJson.requested_vs_available || "");
@@ -535,11 +798,12 @@ function _validateModelResponse(modelJson, candidates, state, actions) {
  *   .selection_mode, .operation_family, .source_container_hint
  * @returns {Promise<object>} resolver_evidence_v1
  */
-async function resolvePartialStackTake(state, actions) {
+async function _resolveWithPolicy(state, actions, policy) {
   // ── Initialize evidence packet ─────────────────────────────────────────────
   const evidence = {
     schema_version: EVIDENCE_SCHEMA_VERSION,
-    resolver_kind: RESOLVER_KIND,
+    resolver_kind: policy.resolverKind,
+    operation_family: policy.operationFamily,
     evidence_source: "llm_model",
     provider: DEEPSEEK_MODEL,
 
@@ -551,13 +815,18 @@ async function resolvePartialStackTake(state, actions) {
     source_unit: null,
 
     requested_quantity: actions?.requested_quantity ?? null,
+    parser_requested_quantity: actions?.requested_quantity ?? null,
     quantity_mode: actions?.quantity_mode ?? null,
+    selection_mode: actions?.selection_mode ?? null,
+    effective_requested_quantity: policy.operationFamily === "take"
+      ? (actions?.requested_quantity ?? null) : null,
+    effective_quantity_basis: policy.operationFamily === "take" ? "take_existing" : null,
     normalized_target: actions?.normalized_target ?? null,
     requested_vs_available: null,
     is_stack: null,
 
-    intended_destination_type: "player",
-    intended_destination_id: "player",
+    intended_destination_type: policy.destination?.container_type ?? null,
+    intended_destination_id: policy.destination?.container_id ?? null,
 
     resolution_basis: "unresolved",
     resolution_confidence: 0,
@@ -567,6 +836,7 @@ async function resolvePartialStackTake(state, actions) {
 
     reasoning_summary: null,
     candidate_ids_considered: null,
+    candidate_identity_signature: null,
 
     resolution_warnings: [],
     fail_closed_reason: null,
@@ -577,7 +847,7 @@ async function resolvePartialStackTake(state, actions) {
   };
 
   // ── Layer 1: Candidate Enumeration ────────────────────────────────────────
-  const candidates = _enumerateCandidates(state);
+  const candidates = policy.enumerateCandidates(state);
   evidence.candidate_count = candidates.length;
   evidence.candidate_ids_sent = candidates.map(c => c.candidate_id);
 
@@ -595,8 +865,22 @@ async function resolvePartialStackTake(state, actions) {
     return evidence;
   }
 
+  if (policy.destination?.ok !== true) {
+    evidence.resolution_basis = "validation_failed";
+    evidence.resolution_confidence = 0;
+    evidence.fail_closed_reason = policy.destination?.fail_closed_reason || "destination_not_resolvable";
+    evidence.resolution_warnings.push({
+      code: evidence.fail_closed_reason,
+      severity: "blocking",
+      field: "intended_destination_id",
+      message: "The authoritative destination container could not be resolved without mutation.",
+      candidate_ids: null
+    });
+    return evidence;
+  }
+
   // ── Layer 2: LLM Evidence Analysis ─────────────────────────────────────────
-  const messages = _buildPromptMessages(actions || {}, state, candidates);
+  const messages = _buildPromptMessages(actions || {}, state, candidates, policy);
 
   const llmResult = await _callResolverModel(messages);
 
@@ -654,12 +938,17 @@ async function resolvePartialStackTake(state, actions) {
   }
 
   // ── Layer 3: ORS Fact Validation ──────────────────────────────────────────
-  const validation = _validateModelResponse(modelJson, candidates, state, actions || {});
+  const validation = _validateModelResponse(modelJson, candidates, state, actions || {}, policy);
 
   // Merge model fields into evidence
-  evidence.requested_quantity = modelJson.requested_quantity ?? evidence.requested_quantity;
-  evidence.requested_vs_available = modelJson.requested_vs_available ?? null;
-  evidence.is_stack = typeof modelJson.is_stack === "boolean" ? modelJson.is_stack : null;
+  if (policy.operationFamily === "take") {
+    evidence.requested_quantity = modelJson.requested_quantity ?? evidence.requested_quantity;
+  }
+  evidence.requested_vs_available = validation.evidencePatch.requested_vs_available
+    ?? modelJson.requested_vs_available ?? null;
+  evidence.is_stack = typeof validation.evidencePatch.is_stack === "boolean"
+    ? validation.evidencePatch.is_stack
+    : (typeof modelJson.is_stack === "boolean" ? modelJson.is_stack : null);
   evidence.reasoning_summary = modelJson.reasoning_summary ?? null;
   evidence.candidate_ids_considered = Array.isArray(modelJson.candidate_ids_considered)
     ? modelJson.candidate_ids_considered : null;
@@ -709,6 +998,22 @@ async function resolvePartialStackTake(state, actions) {
     evidence.source_unit = modelJson.source_unit ?? null;
   }
 
+  if (validation.evidencePatch.intended_destination_type !== undefined) {
+    evidence.intended_destination_type = validation.evidencePatch.intended_destination_type;
+  }
+  if (validation.evidencePatch.intended_destination_id !== undefined) {
+    evidence.intended_destination_id = validation.evidencePatch.intended_destination_id;
+  }
+  if (validation.evidencePatch.effective_requested_quantity !== undefined) {
+    evidence.effective_requested_quantity = validation.evidencePatch.effective_requested_quantity;
+  }
+  if (validation.evidencePatch.effective_quantity_basis !== undefined) {
+    evidence.effective_quantity_basis = validation.evidencePatch.effective_quantity_basis;
+  }
+  if (validation.evidencePatch.candidate_identity_signature !== undefined) {
+    evidence.candidate_identity_signature = validation.evidencePatch.candidate_identity_signature;
+  }
+
   if (validation.evidencePatch.fail_closed_reason) {
     evidence.fail_closed_reason = validation.evidencePatch.fail_closed_reason;
   }
@@ -724,4 +1029,12 @@ async function resolvePartialStackTake(state, actions) {
 }
 
 // ── Exports ──────────────────────────────────────────────────────────────────────
-module.exports = { resolvePartialStackTake };
+async function resolvePartialStackTake(state, actions) {
+  return _resolveWithPolicy(state, actions, _takePolicy());
+}
+
+async function resolvePlayerHeldDrop(state, actions) {
+  return _resolveWithPolicy(state, actions, _dropPolicy(state));
+}
+
+module.exports = { resolvePartialStackTake, resolvePlayerHeldDrop, resolveCurrentGround };
