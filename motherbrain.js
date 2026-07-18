@@ -1,5 +1,5 @@
 ﻿/**
- * motherbrain.js — Mother Brain v8.0.0
+ * motherbrain.js — Mother Brain v8.0.1
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -50,7 +50,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '8.0.0';
+const MB_VERSION = '8.0.1';
+// MB v8.0.1 (July 2026): Patch — add /copycot TUI-local command: copies the Activity pane's bounded plain-text projection (reasoning, round headers, tool calls/results, warnings) to the clipboard, exact to what is displayed and independent of scroll position or mouse selection. Handled entirely in motherbrain-tui.js as a _submitEditor() intercept before the controller round-trip; motherbrain-controller.js and COMMAND_REGISTRY are unchanged, so /copycot is TUI-native and not listed in /help. MB_VERSION 8.0.0 -> 8.0.1.
 // MB v8.0.0 (July 2026): Major — DeepSeek V4 and full-screen TUI rebuild. Mother Brain is now split into an import-safe composition root, terminal-independent controller, and Terminal Kit TUI, with exact V4 reasoning/tool replay, durable history and settings, context budgeting, telemetry, guarded sequential tool dispatch, and the existing 38-tool authority boundary preserved. MB_VERSION 7.7.3 -> 8.0.0.
 // MB v7.7.3 (July 2026): Patch — start_game sends x-mother-brain header for session TTL classification. MB_VERSION 7.7.2 -> 7.7.3.
 // MB v7.7.1 (June 2026): Patch — P5-0 archive foundation awareness: get_turn_data tool description updated with p5_witness_archive field. MB_VERSION 7.7.0 -> 7.7.1.

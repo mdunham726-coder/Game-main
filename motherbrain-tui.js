@@ -1644,6 +1644,21 @@ class MotherBrainTui {
     const value = this._state.draft;
     if (!value.trim()) return;
     const localCommand = value.trimStart().startsWith('/');
+    if (localCommand && value.trim().toLowerCase() === '/copycot') {
+      let result;
+      try {
+        const text = plainProjectionText(projectRecords(this._state.panes.activity.records));
+        await this._options.clipboardWriter(text);
+        result = { ok: true, bytes: Buffer.byteLength(text, 'utf8'), code: 'activity_copied', message: 'Copied activity pane.' };
+      } catch (error) {
+        result = { ok: false, bytes: null, code: 'clipboard_write_failed', message: `Copy failed: ${error.message}` };
+      }
+      this.renderCopyResult(result);
+      this._state.history.push(value);
+      this._setEditorValue('', 0);
+      this._requestDraw();
+      return;
+    }
     if (this._state.busy && !localCommand) {
       if (this._options.onBlockedSubmit) await this._options.onBlockedSubmit(value);
       return;
