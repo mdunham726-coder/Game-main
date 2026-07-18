@@ -1,12 +1,15 @@
 {
   "name": "roguelike-engine",
-  "version": "1.91.94",
+  "version": "1.91.95",
   "main": "index.js",
   "scripts": {
-    "start": "node --max-old-space-size=4096 index.js"
+    "start": "node --max-old-space-size=4096 index.js",
+    "smoke:motherbrain-tui": "node scripts/motherbrain-tui-smoke.cjs",
+    "test:motherbrain": "node --test tests/motherbrain-controller.test.cjs"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "terminal-kit": "3.1.3"
   }
 }

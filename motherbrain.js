@@ -11,19 +11,28 @@
 
 const http     = require('http');
 const https    = require('https');
-const readline = require('readline');
 const axios    = require('axios');
 const { spawn } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
+const {
+  MotherBrainController,
+  isObservedDeepSeekContextLengthError,
+} = require('./motherbrain-controller');
+const {
+  createMotherBrainTui,
+  copyToWindowsClipboard,
+} = require('./motherbrain-tui');
 
-// Inline .env loader — sets any KEY=VALUE lines from .env that are not already set to a non-empty value.
-try {
-  fs.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n').forEach(line => {
-    const m = line.match(/^([^#=\s][^=]*?)=(.*)$/);
-    if (m) { const k = m[1].trim(), v = m[2].trim(); if (k && !process.env[k]) process.env[k] = v; }
-  });
-} catch (_) {}
+// Runtime-only .env loading. Importing this module must not read files or boot Mother.
+function loadRuntimeEnvironment(env = process.env, fileSystem = fs) {
+  try {
+    fileSystem.readFileSync(path.join(__dirname, '.env'), 'utf8').split('\n').forEach(line => {
+      const m = line.match(/^([^#=\s][^=]*?)=(.*)$/);
+      if (m) { const k = m[1].trim(), v = m[2].trim(); if (k && !env[k]) env[k] = v; }
+    });
+  } catch (_) {}
+}
 
 // Dedicated HTTP agent for executeToolCall — keepAlive:false so each localhost
 // diagnostic request closes its socket immediately, preventing listener accumulation
@@ -939,14 +948,20 @@ const MB_TOOLS = [
   }
 ];
 const HOST         = 'localhost';
-const PORT         = process.env.PORT || 3000;
+let PORT           = process.env.PORT || 3000;
 const SSE_PATH     = '/diagnostics/stream';
 const CTX_PATH     = '/diagnostics/context';
 const RECONNECT_MS = 1000;
 const TURN_BUFFER  = 20;   // rolling turns kept for flight recorder history
 const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
-const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY || '';
-const GITHUB_PAT   = process.env.GITHUB_PAT || '';
+let DEEPSEEK_KEY   = process.env.DEEPSEEK_API_KEY || '';
+let GITHUB_PAT     = process.env.GITHUB_PAT || '';
+
+function refreshRuntimeCredentials(env = process.env) {
+  PORT = env.PORT || 3000;
+  DEEPSEEK_KEY = env.DEEPSEEK_API_KEY || '';
+  GITHUB_PAT = env.GITHUB_PAT || '';
+}
 
 // ── ANSI ───────────────────────────────────────────────────────────────────────
 const R   = '\x1b[0m';
@@ -969,19 +984,15 @@ function r(s)  { return `${RED}${s}${R}`; }
 
 // ── State ──────────────────────────────────────────────────────────────────────
 const HISTORY_PATH   = path.join(__dirname, 'logs', 'mb-history.json');
-const HISTORY_KEEP   = 5;    // exchanges (pairs) to persist across restarts
+const SETTINGS_PATH  = path.join(__dirname, 'logs', 'mb-settings.json');
 let _turnBuffer      = [];   // last TURN_BUFFER SSE turn payloads
 let _activeSessionId = null; // game session ID from latest turn event
 let _harnessAuthorized = false; // explicit operator consent: false=Offline, true=Connected
 let _activeGameplayInvestigation = null; // investigation context for autonomous gameplay — internal, never sent to engine
-let _history         = [];   // [{role,content}] — persistent for full CMD session
 let _cachedContext   = null; // pre-warmed game state context (updated after each successful fetch)
-let _lastExchange    = null; // { question, answer } — most recent completed exchange for /copy
-
-// ── Mother Brain session token tracking ───────────────────────────────────────
-let _mbSession          = { calls: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cache_hit_tokens: 0, est_cost_usd: 0.0 };
-let _mbCallHistory      = []; // rolling last 5 per-call stats
-let _mbUsageShapeLogged = false; // one-time: log raw usage shape on first successful call
+let _activeRuntime    = null;
+const _activeOperationalChildren = new Set();
+const _operationalChildCleanup = new Map();
 
 // ── System prompt (built once, injected as message[0] on every DeepSeek call) ──
 const SYSTEM_PROMPT = `Turn 1 is not a normal declaration. It is the world founding phase. Player input on Turn 1 is treated as founding premise, not as an action and not as a constrained state declaration. During this phase, the player may define their identity, form, starting location, possessions, status, and scenario conditions without restriction. Any statement that defines who the player is, what they possess, where they are, or what conditions they start under is a valid founding premise — regardless of its content, genre, or apparent implausibility. No founding input is cheating, invalid, or to be rejected. The system must interpret these inputs into structured starting state, record them in the player's birth record, and treat them as real starting conditions. Physical, spatial, and logistical constraints still apply, NPCs are not required to believe social claims, and all consequences are enforced through simulation rather than restriction. The goal of this phase is maximum expressive freedom at world creation, with consequences emerging naturally from the world.
@@ -1533,44 +1544,89 @@ Error handling: all GitHub tools return structured JSON errors rather than throw
 ACTIVE BRANCH: The primary development branch is 'partial-stack-execution'. P4, P5-0, and all recent TLS/executor/archive work lives there. When inspecting the latest code via github_get_file or github_search_code, use ref='partial-stack-execution'. The main branch is the stable release baseline — it does not contain P4+ work.`;
 
 
-// ── Readline interface ─────────────────────────────────────────────────────────
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-
-function prompt() {
-  const hLabel = _harnessAuthorized ? `${GRN}[Harness: Connected]${R} > `
-                                    : `${AMB}[Harness: Offline]${R} > `;
-  const gLabel = _activeGameplayInvestigation ? `${GRN}[Game: Active]${R} ` : `${DIM}[Game: ---]${R} `;
-  rl.setPrompt(gLabel + hLabel);
-  rl.prompt();
+// ── Structured production view boundary ───────────────────────────────────────
+// Legacy backends retain their status strings, but the composition root strips
+// terminal escapes and delivers them as records. Nothing writes behind the TUI.
+function stripTerminalEscapes(value) {
+  return String(value ?? '').replace(/\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, '');
 }
 
-// ── Print helpers (append-only — never clears screen) ─────────────────────────
-// Write a line above the current readline prompt without corrupting it.
-function printLine(text) {
-  readline.clearLine(process.stdout, 0);
-  readline.cursorTo(process.stdout, 0);
-  process.stdout.write(text + '\n');
-  rl.prompt(true);
+function emitActivityLine(text, options = {}) {
+  const runtime = _activeRuntime;
+  if (!runtime || runtime.stopping) return null;
+  return runtime.emitActivity({
+    role: options.role || 'tool',
+    kind: options.kind || 'operational-status',
+    text: stripTerminalEscapes(text),
+  });
 }
 
-function printBlank() { printLine(''); }
+function createStructuredChildActivityCapture(options = {}, emitLine = emitActivityLine) {
+  const prefix = String(options.prefix || '');
+  const suffix = String(options.suffix || '');
+  const activityOptions = options.activityOptions || {};
+  let pending = '';
 
-// Word-wrap text to terminal width with optional indent
-function wrap(text, indent) {
-  const width   = W() - (indent || '').length - 2;
-  const words   = text.split(' ');
-  const lines   = [];
-  let   current = '';
-  for (const word of words) {
-    if (current.length + word.length + 1 > width && current.length > 0) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = current.length ? current + ' ' + word : word;
-    }
+  const emitCompleteLine = line => {
+    const cleanLine = String(line).replace(/\r$/, '');
+    if (!cleanLine.trim()) return;
+    emitLine(`${prefix}${cleanLine}${suffix}`, activityOptions);
+  };
+
+  return {
+    push(chunk) {
+      pending += Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk ?? '');
+      const lines = pending.split('\n');
+      pending = lines.pop();
+      for (const line of lines) emitCompleteLine(line);
+    },
+    flush() {
+      if (pending) emitCompleteLine(pending);
+      pending = '';
+    },
+  };
+}
+
+function releaseOperationalChild(child) {
+  _activeOperationalChildren.delete(child);
+  const cleanup = _operationalChildCleanup.get(child);
+  _operationalChildCleanup.delete(child);
+  if (cleanup) {
+    try { cleanup(); } catch (_) {}
   }
-  if (current.length) lines.push(current);
-  return lines.map(l => (indent || '') + l).join('\n');
+}
+
+function trackOperationalChild(child, onStop = null) {
+  if (!child || typeof child !== 'object') return child;
+  _activeOperationalChildren.add(child);
+  if (typeof onStop === 'function') _operationalChildCleanup.set(child, onStop);
+  const release = () => releaseOperationalChild(child);
+  child.once?.('close', release);
+  child.once?.('error', release);
+  return child;
+}
+
+function stopOperationalChildren() {
+  let stopped = 0;
+  for (const child of _activeOperationalChildren) {
+    releaseOperationalChild(child);
+    try { child.stdout?.removeAllListeners?.('data'); } catch (_) {}
+    try { child.stderr?.removeAllListeners?.('data'); } catch (_) {}
+    try {
+      if (child.exitCode == null && child.signalCode == null) {
+        child.kill?.('SIGKILL');
+        stopped += 1;
+      }
+    } catch (_) {}
+  }
+  _activeOperationalChildren.clear();
+  _operationalChildCleanup.clear();
+  return stopped;
+}
+
+function refreshOperationalState() {
+  if (!_activeRuntime || _activeRuntime.stopping) return null;
+  return _activeRuntime.syncOperationalState();
 }
 
 // ── Flight recorder: format turn buffer for context block ─────────────────────
@@ -1754,14 +1810,14 @@ async function executeToolCall(name, args) {
           timeout: 8000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey }
         });
         _harnessAuthorized = true;
-        prompt();
+        refreshOperationalState();
         return JSON.stringify({ connected: true, status: resp.data });
       } catch (err) {
         return JSON.stringify({ connected: false, error: err.message });
       }
     } else if (name === 'harness_disconnect') {
       _harnessAuthorized = false;
-      prompt();
+      refreshOperationalState();
       return JSON.stringify({ disconnected: true });
     } else if (name === 'harness_status') {
       if (!_harnessAuthorized) return JSON.stringify({ error: 'Harness not connected. Ask the developer to connect first (harness_connect).' });
@@ -1837,16 +1893,22 @@ async function executeToolCall(name, args) {
         const _perRunMs  = (_probeSpec.expected_runtime_ms_per_run || 120000);
         const _probeTimeout = Math.min(_probeRuns * _perRunMs, 3600000);
         const _probeCmd = `node scripts/probe-runner.js --spec "${_specPath}" --runs ${_probeRuns}`;
-        printLine(`${DIM}[run_validation] ${_probeCmd}${R}`);
+        emitActivityLine(`${DIM}[run_validation] ${_probeCmd}${R}`);
         const { spawn } = require('child_process');
         return await new Promise((resolve) => {
           let _stdout = '', _stderr = '', _timedOut = false;
-          const _child = spawn(_probeCmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', shell: true, env: { ...process.env } });
-          const _timer = setTimeout(() => { _timedOut = true; _child.kill('SIGKILL'); }, _probeTimeout);
-          _child.stdout.on('data', (chunk) => { const _t = chunk.toString(); _stdout += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  ${l}${R}`); }); });
-          _child.stderr.on('data', (chunk) => { const _t = chunk.toString(); _stderr += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  [stderr] ${l}${R}`); }); });
-          _child.on('close', (code) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, runs: _probeRuns, stdout: _stdout, stderr: _timedOut ? 'ETIMEDOUT' : _stderr, exit_code: _timedOut ? 1 : (code ?? 0) })); });
-          _child.on('error', (err) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, stdout: _stdout, stderr: err.message, exit_code: 1 })); });
+          let _timer = null;
+          const _child = trackOperationalChild(
+            spawn(_probeCmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', shell: true, env: { ...process.env } }),
+            () => { if (_timer) clearTimeout(_timer); }
+          );
+          const _stdoutActivity = createStructuredChildActivityCapture({ prefix: `${DIM}  `, suffix: R });
+          const _stderrActivity = createStructuredChildActivityCapture({ prefix: `${DIM}  [stderr] `, suffix: R, activityOptions: { role: 'warning' } });
+          _timer = setTimeout(() => { _timedOut = true; _child.kill('SIGKILL'); }, _probeTimeout);
+          _child.stdout.on('data', (chunk) => { const _t = chunk.toString(); _stdout += _t; _stdoutActivity.push(_t); });
+          _child.stderr.on('data', (chunk) => { const _t = chunk.toString(); _stderr += _t; _stderrActivity.push(_t); });
+          _child.on('close', (code) => { clearTimeout(_timer); _stdoutActivity.flush(); _stderrActivity.flush(); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, runs: _probeRuns, stdout: _stdout, stderr: _timedOut ? 'ETIMEDOUT' : _stderr, exit_code: _timedOut ? 1 : (code ?? 0) })); });
+          _child.on('error', (err) => { clearTimeout(_timer); _stdoutActivity.flush(); _stderrActivity.flush(); resolve(JSON.stringify({ task: 'run_probe', spec_path: _specPath, stdout: _stdout, stderr: err.message, exit_code: 1 })); });
         });
       }
       // run_node_script: run a scripts/*.js|cjs|mjs file Mother has written
@@ -1857,49 +1919,63 @@ async function executeToolCall(name, args) {
           return JSON.stringify({ error: 'invalid_script_path', detail: 'Path must be scripts/<name>.js|cjs|mjs, relative, no ..' });
         }
         const _scriptCmd = `node "${_scriptPath}"`;
-        printLine(`${DIM}[run_validation] ${_scriptCmd}${R}`);
+        emitActivityLine(`${DIM}[run_validation] ${_scriptCmd}${R}`);
         const { spawn: _spawnScript } = require('child_process');
         return await new Promise((resolve) => {
           let _stdout = '', _stderr = '', _timedOut = false;
-          const _child = _spawnScript(_scriptCmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', shell: true, env: { ...process.env } });
-          const _timer = setTimeout(() => { _timedOut = true; _child.kill('SIGKILL'); }, 30000);
-          _child.stdout.on('data', (chunk) => { const _t = chunk.toString(); _stdout += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  ${l}${R}`); }); });
-          _child.stderr.on('data', (chunk) => { const _t = chunk.toString(); _stderr += _t; _t.split('\n').forEach(l => { if (l.trim()) printLine(`${DIM}  [stderr] ${l}${R}`); }); });
-          _child.on('close', (code) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_node_script', script_path: _scriptPath, stdout: _stdout, stderr: _timedOut ? 'ETIMEDOUT' : _stderr, exit_code: _timedOut ? 1 : (code ?? 0) })); });
-          _child.on('error', (err) => { clearTimeout(_timer); resolve(JSON.stringify({ task: 'run_node_script', script_path: _scriptPath, stdout: _stdout, stderr: err.message, exit_code: 1 })); });
+          let _timer = null;
+          const _child = trackOperationalChild(
+            _spawnScript(_scriptCmd, { cwd: 'c:\\Users\\daddy\\Desktop\\Game-main', shell: true, env: { ...process.env } }),
+            () => { if (_timer) clearTimeout(_timer); }
+          );
+          const _stdoutActivity = createStructuredChildActivityCapture({ prefix: `${DIM}  `, suffix: R });
+          const _stderrActivity = createStructuredChildActivityCapture({ prefix: `${DIM}  [stderr] `, suffix: R, activityOptions: { role: 'warning' } });
+          _timer = setTimeout(() => { _timedOut = true; _child.kill('SIGKILL'); }, 30000);
+          _child.stdout.on('data', (chunk) => { const _t = chunk.toString(); _stdout += _t; _stdoutActivity.push(_t); });
+          _child.stderr.on('data', (chunk) => { const _t = chunk.toString(); _stderr += _t; _stderrActivity.push(_t); });
+          _child.on('close', (code) => { clearTimeout(_timer); _stdoutActivity.flush(); _stderrActivity.flush(); resolve(JSON.stringify({ task: 'run_node_script', script_path: _scriptPath, stdout: _stdout, stderr: _timedOut ? 'ETIMEDOUT' : _stderr, exit_code: _timedOut ? 1 : (code ?? 0) })); });
+          _child.on('error', (err) => { clearTimeout(_timer); _stdoutActivity.flush(); _stderrActivity.flush(); resolve(JSON.stringify({ task: 'run_node_script', script_path: _scriptPath, stdout: _stdout, stderr: err.message, exit_code: 1 })); });
         });
       }
       if (!_taskMap[_task]) return JSON.stringify({ error: 'unknown_task', valid_tasks: Object.keys(_taskMap) });
       const _cmd = _taskMap[_task];
       const _timeout = _timeoutMap[_task] || 120000;
       const { spawn } = require('child_process');
-      printLine(`${DIM}[run_validation] ${_cmd}${R}`);
+      emitActivityLine(`${DIM}[run_validation] ${_cmd}${R}`);
       return await new Promise((resolve) => {
         let _stdout = '';
         let _stderr = '';
         let _timedOut = false;
+        let _timer = null;
         // Pass full command string directly — no split/args array — avoids DEP0190 and shell injection surface
-        const _child = spawn(_cmd, {
-          cwd: 'c:\\Users\\daddy\\Desktop\\Game-main',
-          shell: true,
-          env: { ...process.env },
-        });
-        const _timer = setTimeout(() => {
+        const _child = trackOperationalChild(
+          spawn(_cmd, {
+            cwd: 'c:\\Users\\daddy\\Desktop\\Game-main',
+            shell: true,
+            env: { ...process.env },
+          }),
+          () => { if (_timer) clearTimeout(_timer); }
+        );
+        const _stdoutActivity = createStructuredChildActivityCapture({ prefix: `${DIM}  `, suffix: R });
+        const _stderrActivity = createStructuredChildActivityCapture({ prefix: `${DIM}  [stderr] `, suffix: R, activityOptions: { role: 'warning' } });
+        _timer = setTimeout(() => {
           _timedOut = true;
           _child.kill('SIGKILL');
         }, _timeout);
         _child.stdout.on('data', (chunk) => {
           const _text = chunk.toString();
           _stdout += _text;
-          _text.split('\n').forEach(line => { if (line.trim()) printLine(`${DIM}  ${line}${R}`); });
+          _stdoutActivity.push(_text);
         });
         _child.stderr.on('data', (chunk) => {
           const _text = chunk.toString();
           _stderr += _text;
-          _text.split('\n').forEach(line => { if (line.trim()) printLine(`${DIM}  [stderr] ${line}${R}`); });
+          _stderrActivity.push(_text);
         });
         _child.on('close', (code) => {
           clearTimeout(_timer);
+          _stdoutActivity.flush();
+          _stderrActivity.flush();
           if (_timedOut) {
             resolve(JSON.stringify({ task: _task, command: _cmd, stdout: _stdout, stderr: 'ETIMEDOUT', exit_code: 1 }));
           } else {
@@ -1908,6 +1984,8 @@ async function executeToolCall(name, args) {
         });
         _child.on('error', (err) => {
           clearTimeout(_timer);
+          _stdoutActivity.flush();
+          _stderrActivity.flush();
           resolve(JSON.stringify({ task: _task, command: _cmd, stdout: _stdout, stderr: err.message, exit_code: 1 }));
         });
       });
@@ -2187,8 +2265,8 @@ async function executeToolCall(name, args) {
       //         session that happened to POST /narrate more recently than the real game session.
       if (args.session_id) {
         _activeSessionId = args.session_id;
-        printLine(`${DIM}[attach_session] Attached to session (manual)${R}`);
-        prompt();
+        emitActivityLine(`${DIM}[attach_session] Attached to session (manual)${R}`);
+        refreshOperationalState();
         return JSON.stringify({ ok: true, session_id: args.session_id, source: 'manual', hint: 'All diagnostic tools now active against this session.' });
       }
       const _asResp = await axios.get(`http://${HOST}:${PORT}/diagnostics/session`, { timeout: 5000, httpAgent: _toolHttpAgent });
@@ -2200,8 +2278,8 @@ async function executeToolCall(name, args) {
         return JSON.stringify({ error: 'no_active_session', hint: 'No session has run since server start. Use start_game to create one.' });
       }
       _activeSessionId = _asPickedId;
-      printLine(`${DIM}[attach_session] Attached to session (auto-detect, ${_asBest ? _asBest.total_turns + ' turns' : 'last-seen'})${R}`);
-      prompt();
+      emitActivityLine(`${DIM}[attach_session] Attached to session (auto-detect, ${_asBest ? _asBest.total_turns + ' turns' : 'last-seen'})${R}`);
+      refreshOperationalState();
       return JSON.stringify({ ok: true, session_id: _activeSessionId, total_turns: _asBest?.total_turns ?? _asResp.data.lastTurn, source: 'auto_detect', sessions: _asSessions, hint: 'All diagnostic tools now active. Use get_turn_data({turn:N}) to inspect any turn.' });
     } else if (name === 'start_game') {
       // v6.0.0: Autonomous gameplay — start a new game session (T1 founding premise)
@@ -2214,7 +2292,7 @@ async function executeToolCall(name, args) {
         } catch (_delErr) { /* swallow — proceed to new session regardless */ }
         _activeSessionId = null;
         _activeGameplayInvestigation = null;
-        prompt();
+        refreshOperationalState();
       }
       const _sgBody = { action: args.founding_premise, intent_channel: 'do' };
       if (args.world_seed !== undefined) _sgBody.WORLD_SEED = args.world_seed;
@@ -2232,8 +2310,8 @@ async function executeToolCall(name, args) {
         turns_taken:          0,
         recent_actions:       [],
       };
-      printLine(`${DIM}[start_game] Session active${R}`);
-      prompt();
+      emitActivityLine(`${DIM}[start_game] Session active${R}`);
+      refreshOperationalState();
       let _sgDiag = null;
       try {
         const _sgTurn = await axios.get(`http://${HOST}:${PORT}/diagnostics/turn/${encodeURIComponent(_activeSessionId)}/1`, { timeout: 10000, httpAgent: _toolHttpAgent });
@@ -2289,8 +2367,8 @@ async function executeToolCall(name, args) {
       } catch (_egErr) { /* swallow — clear state regardless */ }
       _activeSessionId = null;
       _activeGameplayInvestigation = null;
-      printLine(`${DIM}[end_game] Session ended${R}`);
-      prompt();
+      emitActivityLine(`${DIM}[end_game] Session ended${R}`);
+      refreshOperationalState();
       return JSON.stringify({ ok: true, session_ended: true });
     } else if (name === 'list_npcs') {
       const listUrl  = `http://${HOST}:${PORT}/diagnostics/npcs`;
@@ -2419,631 +2497,1092 @@ async function executeToolCall(name, args) {
   }
 }
 
-// ── Ask Mother Brain ───────────────────────────────────────────────────────────
-async function askMotherBrain(question) {
-  if (!DEEPSEEK_KEY) {
-    printLine(r('  DEEPSEEK_API_KEY not set. Launch via StartMotherBrain.bat.'));
-    prompt();
-    return;
+// ── Canonical structured dispatch seam (legacy executor remains authority) ────
+function _projectCanonicalToolMetadata(toolContent) {
+  if (typeof toolContent !== 'string') {
+    return { outcome: 'invalid_result', gateCode: 'non_string_tool_result' };
   }
+  let parsed;
+  try { parsed = JSON.parse(toolContent); } catch (_) { parsed = null; }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.error === 'string') {
+    const gateCode = /^[a-z][a-z0-9_]{0,63}$/.test(parsed.error)
+      ? parsed.error
+      : 'redacted_error';
+    return { outcome: 'rejected', gateCode };
+  }
+  return { outcome: 'executed', gateCode: null };
+}
 
-  // Show "thinking" indicator
-  const _now = new Date();
-  const _hour = _now.getHours();
-  const _tod = _hour < 6 ? 'night' : _hour < 12 ? 'morning' : _hour < 18 ? 'afternoon' : _hour < 21 ? 'evening' : 'night';
-  printLine('');
-  printLine(g('  Mother Brain: [thinking…]'));
+function createCanonicalToolDispatchAdapter(executor) {
+  if (typeof executor !== 'function') throw new TypeError('Canonical tool executor must be a function.');
+  return async function dispatchToolCall(call) {
+    const toolContent = await executor(call.name, call.args);
+    const metadata = _projectCanonicalToolMetadata(toolContent);
+    return { toolContent, outcome: metadata.outcome, gateCode: metadata.gateCode };
+  };
+}
 
-  // Fetch live game state from server (only available once a game session is active)
-  let gameContext = null;
-  let contextNote = '';
-  if (!_activeSessionId) {
-    contextNote = '[NOTE: No game session is active yet — no engine data available. Answering without game state context.]\n';
-    if (_cachedContext) gameContext = _cachedContext;
-  } else {
+const executeToolCallStructured = createCanonicalToolDispatchAdapter(executeToolCall);
+
+// ── Production controller/TUI composition ────────────────────────────────────
+function timeOfDay(now) {
+  const hour = now.getHours();
+  return hour < 6 ? 'night' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+}
+
+function createDeepSeekHttpClient(options = {}) {
+  const axiosClient = options.axiosClient || axios;
+  const getApiKey = options.getApiKey || (() => DEEPSEEK_KEY);
+  const httpsAgent = options.httpsAgent || _deepseekHttpsAgent;
+  const activeRequests = new Set();
+
+  const request = async ({ url, body }) => {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      const error = new Error('DEEPSEEK_API_KEY is not configured.');
+      error.code = 'missing_deepseek_api_key';
+      throw error;
+    }
+
+    const abortController = new AbortController();
+    activeRequests.add(abortController);
     try {
-      const resp = await axios.get(
-        `http://${HOST}:${PORT}${CTX_PATH}?sessionId=${encodeURIComponent(_activeSessionId)}&level=detailed`,
-        { timeout: 10000, httpAgent: _toolHttpAgent }
+      return await axiosClient.post(url, body, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 0,
+        httpsAgent,
+        signal: abortController.signal,
+      });
+    } finally {
+      activeRequests.delete(abortController);
+    }
+  };
+
+  request.isContextLengthError = isObservedDeepSeekContextLengthError;
+  request.cancelAll = () => {
+    for (const controller of activeRequests) controller.abort();
+    activeRequests.clear();
+  };
+  request.getActiveRequestCount = () => activeRequests.size;
+  return request;
+}
+
+function createLiveContextProvider(options = {}) {
+  const axiosClient = options.axiosClient || axios;
+  const httpAgent = options.httpAgent || _toolHttpAgent;
+  const activeRequests = new Set();
+
+  const prewarm = async sessionId => {
+    if (!sessionId) return null;
+    const abortController = new AbortController();
+    activeRequests.add(abortController);
+    try {
+      const response = await axiosClient.get(
+        `http://${HOST}:${PORT}${CTX_PATH}?sessionId=${encodeURIComponent(sessionId)}&level=detailed`,
+        { timeout: 10000, httpAgent, signal: abortController.signal }
       );
-      gameContext = resp.data?.context || null;
-      if (gameContext) _cachedContext = gameContext;
-    } catch (_) {
+      const context = response.data?.context || null;
+      if (context) _cachedContext = context;
+      return context;
+    } finally {
+      activeRequests.delete(abortController);
+    }
+  };
+
+  const getLiveContext = async () => {
+    let gameContext = null;
+    let contextNote = '';
+    let source = 'flight_recorder';
+
+    if (!_activeSessionId) {
+      contextNote = '[NOTE: No game session is active yet — no engine data available. Answering without game state context.]\n';
       if (_cachedContext) {
         gameContext = _cachedContext;
-        contextNote = '[NOTE: Live context fetch failed — using cached snapshot.]\n';
-      } else {
-        contextNote = '[WARNING: Could not fetch live game state from server — using flight recorder data only.]\n';
+        source = 'cached';
       }
-    }
-  }
-
-  // Build combined context
-  const flightHistory = formatTurnBuffer();
-  let fullContext = '';
-  if (gameContext) {
-    fullContext += '═══════════════════════════════════════════\n';
-    fullContext += 'CURRENT GAME STATE SNAPSHOT\n';
-    fullContext += '═══════════════════════════════════════════\n';
-    fullContext += gameContext + '\n\n';
-  }
-  if (contextNote) fullContext += contextNote + '\n';
-  fullContext += '═══════════════════════════════════════════\n';
-  fullContext += `FLIGHT RECORDER — TURN HISTORY (last ${_turnBuffer.length} turns, newest first)\n`;
-  fullContext += '═══════════════════════════════════════════\n';
-  fullContext += flightHistory;
-
-  // Build messages array: system + full history + new question with context
-  // _now / _hour / _tod already derived above (before [thinking…] display)
-  const _timeBlock = `\n\nSERVER-LOCAL TIME (this machine only — not universal):\n${_now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n${_now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}\nTime of day: ${_tod}`;
-  const systemMsg = { role: 'system', content: SYSTEM_PROMPT + _timeBlock };
-  const userMsg   = {
-    role: 'user',
-    content: `[LIVE ENGINE DATA]\n${fullContext}\n\n[DEVELOPER QUESTION]\n${question}`
-  };
-  const messages = [systemMsg, ..._history, userMsg];
-
-  // ── Tool-aware DeepSeek call loop ─────────────────────────────────────────
-  let aiText        = null;
-  let _mbCallStats  = null; // populated after loop — reflects totals across all rounds
-  const _loopMsgs   = [...messages]; // mutable local copy for tool rounds
-  const _totUsage   = { pt: 0, ct: 0, tt: 0, ht: 0, mt: 0, ec: 0 };
-  let   _round      = 0;
-  const _callStart  = Date.now();
-  // Tools that run silently — no [tool] line, no reasoning, no [synthesizing...] printed
-  const _SILENT_TOOLS = new Set(['harness_status']);
-
-  try {
-    while (true) {
-      _round++;
-
-      // Fire one DeepSeek call (ECONNRESET retry on first failure)
-      let resp;
-      try {
-        resp = await axios.post(
-          DEEPSEEK_URL,
-          { model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, messages: _loopMsgs, temperature: 0.7,
-            tools: MB_TOOLS, tool_choice: 'auto' },
-          { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 0, httpsAgent: _deepseekHttpsAgent }
-        );
-      } catch (firstErr) {
-        if (firstErr?.code === 'ECONNRESET') {
-          resp = await axios.post(
-            DEEPSEEK_URL,
-            { model: 'deepseek-v4-flash', thinking: { type: 'disabled' }, messages: _loopMsgs, temperature: 0.7,
-              tools: MB_TOOLS, tool_choice: 'auto' },
-            { headers: { Authorization: `Bearer ${DEEPSEEK_KEY}`, 'Content-Type': 'application/json' }, timeout: 0, httpsAgent: _deepseekHttpsAgent }
-          );
-        } else { throw firstErr; }
-      }
-
-      // ── Accumulate token usage across all rounds ──────────────────────────
-      const _u  = resp?.data?.usage || null;
-      if (!_mbUsageShapeLogged) { console.log('[MB] usage object shape:', JSON.stringify(_u)); _mbUsageShapeLogged = true; }
-      const _pt = _u?.prompt_tokens           ?? 0;
-      const _ct = _u?.completion_tokens        ?? 0;
-      const _tt = _u?.total_tokens             ?? 0;
-      const _ht = _u?.prompt_cache_hit_tokens  ?? 0;
-      const _mt = _u?.prompt_cache_miss_tokens ?? 0;
-      const _ec = (_ht > 0 || _mt > 0)
-        ? (_ht * 0.000000028) + (_mt * 0.00000014) + (_ct * 0.00000028)
-        : (_pt  * 0.00000014) + (_ct * 0.00000028);
-      _totUsage.pt += _pt; _totUsage.ct += _ct; _totUsage.tt += _tt;
-      _totUsage.ht += _ht; _totUsage.mt += _mt; _totUsage.ec += _ec;
-
-      const choice      = resp?.data?.choices?.[0];
-      const finishReason = choice?.finish_reason;
-      const message     = choice?.message;
-
-      if (finishReason === 'tool_calls' && message?.tool_calls?.length) {
-        // Detect silent-tool round (all calls in this round are silent tools)
-        const _isSilentRound = message.tool_calls.every(tc => _SILENT_TOOLS.has(tc.function?.name));
-
-        // Print her reasoning sentence — suppressed on silent rounds
-        if (!_isSilentRound && message.content && message.content.trim()) {
-          const _pre = message.content.trim().split(/\n+/);
-          for (const para of _pre) {
-            if (para.trim()) printLine(g(`  ${para.trim()}`));
-          }
-        }
-
-        // Append assistant message with tool_calls to loop context
-        _loopMsgs.push({ role: 'assistant', content: message.content || null, tool_calls: message.tool_calls });
-
-        // Execute each tool call and append results
-        let _toolParseError = false;
-        for (const tc of message.tool_calls) {
-          const tcName = tc.function?.name || 'unknown';
-          let tcArgs;
-          try {
-            tcArgs = JSON.parse(tc.function?.arguments || '{}');
-          } catch (parseErr) {
-            printLine(r(`  Mother Brain: Tool-call JSON parse failed (round ${_round}) — ${parseErr.message}. Ending trace.`));
-            aiText = `[Tool loop terminated: malformed tool-call JSON in round ${_round} — ${parseErr.message}. Evidence gathered before this point may still be useful for analysis.]`;
-            _toolParseError = true;
-            break;
-          }
-          const argsStr = Object.entries(tcArgs).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
-          const result  = await executeToolCall(tcName, tcArgs);
-          if (!_SILENT_TOOLS.has(tcName)) {
-            printLine(d(`  --> [tool] ${tcName}(${argsStr})   (${result.length.toLocaleString()} bytes)`));
-          }
-          _loopMsgs.push({ role: 'tool', tool_call_id: tc.id, content: result });
-        }
-        if (_toolParseError) break;
-
-        if (!_isSilentRound) printLine(g('  Mother Brain: [synthesizing...]'));
-        continue; // next round
-      }
-
-      // finish_reason === 'stop' (or anything else) — final response
-      aiText = message?.content || null;
-      break;
-    }
-
-    // ── Commit accumulated totals to session tracking ─────────────────────────
-    _mbSession.calls++;
-    _mbSession.prompt_tokens     += _totUsage.pt;
-    _mbSession.completion_tokens += _totUsage.ct;
-    _mbSession.total_tokens      += _totUsage.tt;
-    _mbSession.cache_hit_tokens  += _totUsage.ht;
-    _mbSession.est_cost_usd      += _totUsage.ec;
-    _mbCallHistory.push({ call_num: _mbSession.calls, total_tokens: _totUsage.tt, prompt_tokens: _totUsage.pt,
-      completion_tokens: _totUsage.ct, cache_hit_tokens: _totUsage.ht, cache_miss_tokens: _totUsage.mt, est_cost_usd: _totUsage.ec });
-    if (_mbCallHistory.length > 5) _mbCallHistory.shift();
-    _mbCallStats = { prompt_tokens: _totUsage.pt, completion_tokens: _totUsage.ct, total_tokens: _totUsage.tt,
-      cache_hit_tokens: _totUsage.ht, cache_miss_tokens: _totUsage.mt, est_cost_usd: _totUsage.ec,
-      elapsed_ms: Date.now() - _callStart, rounds: _round };
-
-  } catch (err) {
-    printLine(r(`  Mother Brain: Error — ${err.message}`));
-    prompt();
-    return;
-  }
-
-  if (!aiText) {
-    printLine(r('  Mother Brain: DeepSeek returned no content.'));
-    prompt();
-    return;
-  }
-
-  // Store exchange in rolling history (user msg WITHOUT the context block — keeps history lean)
-  _history.push({ role: 'user',      content: question });
-  _history.push({ role: 'assistant', content: aiText   });
-  _lastExchange = { question, answer: aiText };
-  _saveHistory();
-
-  // Display response — clear the [thinking…] / [synthesizing...] line first
-  readline.clearLine(process.stdout, 0);
-  readline.cursorTo(process.stdout, 0);
-  process.stdout.write(hr() + '\n');
-  process.stdout.write(`  ${RED}You: ${question}${R}\n\n`);
-  process.stdout.write(`  ${GRN}Mother Brain:${R}\n`);
-
-  // Word-wrap and print response
-  const paragraphs = aiText.split(/\n+/);
-  for (const para of paragraphs) {
-    if (para.trim() === '') {
-      process.stdout.write('\n');
     } else {
-      process.stdout.write(`${GRN}${wrap(para, '  ')}${R}\n`);
-    }
-  }
-  process.stdout.write('\n');
-
-  // ── Call stats block (prints after every successful Q&A response) ─────────
-  if (_mbCallStats) {
-    const { prompt_tokens: _sp, completion_tokens: _sc, total_tokens: _st,
-            cache_hit_tokens: _sh, cache_miss_tokens: _sm, est_cost_usd: _se,
-            elapsed_ms: _em, rounds: _rounds } = _mbCallStats;
-    const _histDepthEx = Math.floor(_history.length / 2);
-    const _histTokEst  = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
-    const _hitPctStr   = _st > 0 && (_sh + _sm) > 0 ? `  ${Math.round((_sh / (_sh + _sm)) * 100)}% hit` : '';
-    const _elapsed     = _em >= 60000 ? `${Math.floor(_em/60000)}m ${((_em%60000)/1000).toFixed(1)}s` : `${(_em/1000).toFixed(1)}s`;
-    const _roundsStr   = _rounds > 1 ? `  ${_rounds} rounds` : '';
-    const _callStr     = `${_st.toLocaleString()} tok${_hitPctStr}  (${_sh.toLocaleString()} hit / ${_sm.toLocaleString()} miss / ${_sc.toLocaleString()} out)  ~$${_se.toFixed(6)}  ${_elapsed}${_roundsStr}`;
-    const _sesStr      = `${_mbSession.calls} calls  ${_mbSession.total_tokens.toLocaleString()} tok  ~$${_mbSession.est_cost_usd.toFixed(4)}`;
-    const _histStr     = `${_histDepthEx} exchanges (~${_histTokEst.toLocaleString()} tok)`;
-    process.stdout.write(d('  ' + '─'.repeat(Math.max(0, W() - 4))) + '\n');
-    process.stdout.write(d(`  this call:  ${_callStr}`) + '\n');
-    process.stdout.write(d(`  session:    ${_sesStr}  |  history: ${_histStr}`) + '\n');
-    process.stdout.write(d(`  [server time] ${_now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} \u00b7 ${_now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} \u00b7 ${_tod}`) + '\n');
-    if (_mbCallHistory.length >= 2) {
-      const _recentStr = _mbCallHistory.map(e => e.total_tokens.toLocaleString()).join('  ');
-      process.stdout.write(d(`  recent:     ${_recentStr} tok`) + '\n');
-    }
-    process.stdout.write('\n');
-  }
-
-  rl.prompt(true);
-}
-
-// ── Compact turn status line printed on each SSE turn event ───────────────────
-function printTurnStatus(t) {
-  const sp   = t.spatial || {};
-  const tok  = t.tokens  || {};
-  const co   = t.continuity || {};
-  const depth = ['—', 'L0', 'L1', 'L2'][sp.depth ?? 0] || String(sp.depth);
-  let loc = '—';
-  if (sp.local_space_name)                          { loc = sp.local_space_name; }
-  else if (sp.site_name)                            { loc = sp.site_name; }
-  else if (sp.position && sp.position.mx != null)   { loc = `cell(${sp.position.mx},${sp.position.my}:${sp.position.lx},${sp.position.ly})`; }
-  const npcs = (t.entities?.visible || []).map(e => e.name || e.id).filter(Boolean).slice(0, 3).join(', ') || '—';
-  const sys  = tok.system_total != null ? `sys:${tok.system_total.toLocaleString()}tok` : '';
-  const dlt  = tok.delta != null ? ` Δ${tok.delta > 0 ? '+' : ''}${tok.delta}` : '';
-  const ok   = (t.violations || []).length === 0 ? g('✓') : r(`✗ ${t.violations.length}`);
-
-  const narStatus = t.narrator_status && t.narrator_status !== 'ok' ? ` │  ${r(`nar:${t.narrator_status}`)}` : '';
-  printLine(d(`  [T-${t.turn}]  ${depth}:${b(loc)}  │  ${c(npcs)}  │  ${sys}${dlt}  │  ${ok}${narStatus}`));
-}
-
-// ── Session bootstrap: pre-fetch session ID and warm context cache ───────────────
-
-
-async function bootstrapSession() {
-  try {
-    const resp = await axios.get(
-      `http://${HOST}:${PORT}/diagnostics/session`,
-      { timeout: 5000, httpAgent: _toolHttpAgent }
-    );
-    const sid = resp.data?.sessionId;
-    if (!sid) return false;
-    _activeSessionId = sid;
-    printLine(d(`  [MB] session bootstrapped: ${sid}`));
-    // Pre-warm context cache so first question has full data immediately
-    try {
-      const ctxResp = await axios.get(
-        `http://${HOST}:${PORT}${CTX_PATH}?sessionId=${encodeURIComponent(sid)}&level=detailed`,
-        { timeout: 10000, httpAgent: _toolHttpAgent }
-      );
-      const ctx = ctxResp.data?.context || null;
-      if (ctx) {
-        _cachedContext = ctx;
-        printLine(d(`  [MB] context pre-warmed (${ctx.length.toLocaleString()} chars)`));
+      try {
+        gameContext = await prewarm(_activeSessionId);
+        if (gameContext) source = 'live';
+      } catch (_) {
+        if (_cachedContext) {
+          gameContext = _cachedContext;
+          source = 'cached';
+          contextNote = '[NOTE: Live context fetch failed — using cached snapshot.]\n';
+        } else {
+          contextNote = '[WARNING: Could not fetch live game state from server — using flight recorder data only.]\n';
+        }
       }
-    } catch (_) {
-      // Context pre-warm failed — non-fatal, will fetch on first question
     }
-    return true;
-  } catch (_) {
-    return false;
+
+    let fullContext = '';
+    if (gameContext) {
+      fullContext += '═══════════════════════════════════════════\n';
+      fullContext += 'CURRENT GAME STATE SNAPSHOT\n';
+      fullContext += '═══════════════════════════════════════════\n';
+      fullContext += gameContext + '\n\n';
+    }
+    if (contextNote) fullContext += contextNote + '\n';
+    fullContext += '═══════════════════════════════════════════\n';
+    fullContext += `FLIGHT RECORDER — TURN HISTORY (last ${_turnBuffer.length} turns, newest first)\n`;
+    fullContext += '═══════════════════════════════════════════\n';
+    fullContext += formatTurnBuffer();
+
+    return {
+      fullContext,
+      contextNote,
+      source,
+      sessionId: _activeSessionId,
+    };
+  };
+
+  getLiveContext.prewarm = prewarm;
+  getLiveContext.cancelAll = () => {
+    for (const controller of activeRequests) controller.abort();
+    activeRequests.clear();
+  };
+  getLiveContext.getActiveRequestCount = () => activeRequests.size;
+  return getLiveContext;
+}
+
+function formatTurnStatusText(turn) {
+  const spatial = turn.spatial || {};
+  const tokens = turn.tokens || {};
+  const depth = ['—', 'L0', 'L1', 'L2'][spatial.depth ?? 0] || String(spatial.depth);
+  let location = '—';
+  if (spatial.local_space_name) location = spatial.local_space_name;
+  else if (spatial.site_name) location = spatial.site_name;
+  else if (spatial.position && spatial.position.mx != null) {
+    location = `cell(${spatial.position.mx},${spatial.position.my}:${spatial.position.lx},${spatial.position.ly})`;
   }
+  const npcs = (turn.entities?.visible || [])
+    .map(entity => entity.name || entity.id)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(', ') || '—';
+  const systemTokens = tokens.system_total != null ? `sys:${tokens.system_total.toLocaleString()}tok` : '';
+  const delta = tokens.delta != null ? ` Δ${tokens.delta > 0 ? '+' : ''}${tokens.delta}` : '';
+  const violations = (turn.violations || []).length;
+  const narrator = turn.narrator_status && turn.narrator_status !== 'ok'
+    ? ` | nar:${turn.narrator_status}`
+    : '';
+  return `[T-${turn.turn}] ${depth}:${location} | ${npcs} | ${systemTokens}${delta} | ${violations === 0 ? '✓' : `✗ ${violations}`}${narrator}`;
 }
 
-// ── SSE reconnect guard — prevents multiple parallel loops ──────────────────
-// When a connection drops, Node.js can fire res.on('error') + req.on('error')
-// on the same socket drop — two simultaneous setTimeout(connectSSE) calls.
-// After N drops this multiplies into 2^N live loops, each adding listeners.
-// This guard ensures exactly one reconnect can be pending at any time.
-let _sseReconnectPending = false;
-
-function scheduleSSEReconnect() {
-  if (_sseReconnectPending) return;
-  _sseReconnectPending = true;
-  setTimeout(() => {
-    _sseReconnectPending = false;
-    connectSSE();
-  }, RECONNECT_MS);
+function nextRuntimeRecordId(state, prefix) {
+  state.recordSequence += 1;
+  return `${prefix}-${state.recordSequence}`;
 }
 
-// ── SSE client ─────────────────────────────────────────────────────────────────
-function connectSSE() {
-  printLine(d(`  [SSE] connecting to http://${HOST}:${PORT}${SSE_PATH} …`));
+function commandResultLines(result) {
+  const lines = [`${result.command || '/command'}: ${result.code || (result.ok ? 'ok' : 'failed')}`];
+  if (result.data && Object.keys(result.data).length > 0) {
+    lines.push(...JSON.stringify(result.data, null, 2).split('\n'));
+  }
+  return lines;
+}
 
-  const req = http.get(
-    { host: HOST, port: PORT, path: SSE_PATH, headers: { Accept: 'text/event-stream' }, agent: _sseHttpAgent },
-    res => {
-      req.socket.setTimeout(0);
-      req.socket.setNoDelay(true);
-
-      if (res.statusCode !== 200) {
-        printLine(a(`  [SSE] HTTP ${res.statusCode} — retry in ${RECONNECT_MS}ms`));
-        res.resume();
-        scheduleSSEReconnect();
+function createControllerViewSink(tui, state) {
+  return event => {
+    if (state.stopping) return;
+    const payload = event.payload || {};
+    switch (event.type) {
+      case 'operational_state':
+        state.header = { ...state.header, ...(payload.state || {}) };
+        tui.renderHeaderOperationalState(state.header);
+        return;
+      case 'turn_state': {
+        const activity = payload.state || 'idle';
+        state.header = {
+          ...state.header,
+          activity,
+          busy: activity !== 'idle',
+          ...(payload.configured_model ? { configured_model: payload.configured_model } : {}),
+          ...(payload.configured_reasoning_effort
+            ? { configured_reasoning_effort: payload.configured_reasoning_effort }
+            : {}),
+        };
+        tui.renderHeaderOperationalState(state.header);
+        if (activity !== 'idle') {
+          tui.renderActivityRecord({
+            id: nextRuntimeRecordId(state, 'turn-state'),
+            kind: 'turn-state',
+            role: 'telemetry',
+            text: `State: ${activity}`,
+          });
+        }
         return;
       }
-
-      res.setEncoding('utf8');
-      let _buf = '';
-
-      res.on('data', chunk => {
-        _buf += chunk;
-        const parts = _buf.split('\n\n');
-        _buf = parts.pop();
-        for (const block of parts) {
-          for (const line of block.split('\n')) {
-            if (!line.startsWith('data:')) continue;
-            let p;
-            try { p = JSON.parse(line.slice(5).trim()); }
-            catch (_) { continue; }
-
-            if (p.type === 'narrator_error') {
-              // Hard narrator failure — no turn event was emitted; store as special marker in buffer
-              _turnBuffer.push(p);
-              if (_turnBuffer.length > TURN_BUFFER) _turnBuffer.shift();
-              printLine(r(`  [T-${p.turn}] NARRATION FAILED (${p.kind || 'error'}): ${p.message || '—'}`));
-              continue;
-            }
-
-            if (p.type === 'turn') {
-              _turnBuffer.push(p);
-              if (_turnBuffer.length > TURN_BUFFER) _turnBuffer.shift();
-              if (p.gameSessionId) {
-                const wasNull        = !_activeSessionId;
-                const sessionChanged = !wasNull && _activeSessionId !== p.gameSessionId;
-                _activeSessionId = p.gameSessionId;
-                if (sessionChanged) {
-                  // Browser created a new session while MB was running — clear stale cached context
-                  _cachedContext = null;
-                  printLine(d(`  [MB] session auto-attached: ${p.gameSessionId} (browser session changed)`));
-                }
-                // Pre-warm context on first attach OR after session change
-                if ((wasNull || sessionChanged) && !_cachedContext) {
-                  axios.get(
-                    `http://${HOST}:${PORT}${CTX_PATH}?sessionId=${encodeURIComponent(_activeSessionId)}&level=detailed`,
-                    { timeout: 10000, httpAgent: _toolHttpAgent }
-                  ).then(r => {
-                    const ctx = r.data?.context || null;
-                    if (ctx) _cachedContext = ctx;
-                  }).catch(() => {});
-                }
-              }
-              printTurnStatus(p);
-              // Auto-refresh session stats on every turn (visible without typing anything)
-              if (_mbSession.calls > 0) {
-                const _histTokT = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
-                const _histDepT = Math.floor(_history.length / 2);
-                printLine(d(`  [MB] ${_mbSession.calls} calls  ${_mbSession.total_tokens.toLocaleString()} tok  ~$${_mbSession.est_cost_usd.toFixed(4)}  |  history: ${_histDepT} ex (~${_histTokT.toLocaleString()} tok)`));
-              }
-              continue;
-            }
-
-            if (p.type === 'arbiter_verdict') {
-              // Patch matching turn buffer entry with arbiter data for flight recorder display
-              const _arbEntry = _turnBuffer.find(t => t.turn === p.turn);
-              if (_arbEntry) {
-                _arbEntry._arbiter = {
-                  changes: p.reputation_changes || [],
-                  error: p.error || null
-                };
-              }
-              continue;
-            }
-
-            if (p.type === 'lifecycle') {
-              if (p.event === 'online') {
-                printLine(g(`  ── ENGINE ONLINE  port:${p.port}  session:${p.sessionId || '—'} ──`));
-              } else if (p.event === 'offline') {
-                printLine(a(`  ── ENGINE OFFLINE  ${p.reason || '?'} ──`));
-              }
-              continue;
-            }
-          }
+      case 'provider_attempt':
+        tui.renderActivityRecord({
+          id: nextRuntimeRecordId(state, 'provider-attempt'),
+          kind: 'provider-attempt',
+          role: 'telemetry',
+          text: `Round ${payload.round} attempt ${payload.attempt} · ${payload.body_utf8_bytes} request bytes`,
+        });
+        return;
+      case 'provider_retry':
+        tui.renderActivityRecord({
+          id: nextRuntimeRecordId(state, 'provider-retry'),
+          kind: 'provider-retry',
+          role: 'warning',
+          text: `Round ${payload.round} retry ${payload.retry} · ${payload.category} · ${payload.delay_ms || 0} ms`,
+        });
+        return;
+      case 'provider_round':
+        state.header = {
+          ...state.header,
+          ...(payload.actual_model ? { actual_model: payload.actual_model } : {}),
+        };
+        tui.renderHeaderOperationalState(state.header);
+        tui.renderRoundActivityRecord({
+          id: nextRuntimeRecordId(state, 'provider-round'),
+          ...payload,
+        });
+        return;
+      case 'tool_call':
+        tui.renderActivityRecord({
+          id: nextRuntimeRecordId(state, 'tool-call'),
+          kind: 'tool-call',
+          role: payload.status === 'valid' ? 'tool' : 'failure',
+          text: `Call: ${payload.name} · ${payload.status}`
+            + (payload.validation_code ? ` · code ${payload.validation_code}` : '')
+            + (payload.argument_keys?.length ? ` · keys ${payload.argument_keys.join(', ')}` : ''),
+        });
+        return;
+      case 'tool_result':
+        tui.renderActivityRecord({
+          id: nextRuntimeRecordId(state, 'tool-result'),
+          kind: 'tool-result',
+          role: payload.outcome === 'executed' ? 'tool' : 'failure',
+          text: `Result: ${payload.name} · ${payload.outcome} · ${payload.bytes} bytes`
+            + (payload.gate_code ? ` · code ${payload.gate_code}` : ''),
+        });
+        return;
+      case 'turn_completed':
+        if (typeof payload.final_answer === 'string') {
+          tui.renderTranscriptRecord({
+            id: payload.exchange_id
+              ? `response-${payload.exchange_id}`
+              : nextRuntimeRecordId(state, 'response'),
+            kind: 'mother-response',
+            role: 'final',
+            text: payload.final_answer,
+          });
         }
-      });
-
-      res.on('end', () => {
-        printLine(a('  [SSE] stream ended — reconnecting …'));
-        scheduleSSEReconnect();
-      });
-
-      res.on('error', err => {
-        printLine(a(`  [SSE] error: ${err.message} — reconnecting …`));
-        scheduleSSEReconnect();
-      });
+        tui.renderActivityRecord({
+          id: nextRuntimeRecordId(state, 'turn-completed'),
+          kind: 'turn-completed',
+          role: 'telemetry',
+          text: 'State: completed',
+        });
+        return;
+      case 'turn_terminal':
+        tui.renderActivityRecord({
+          id: nextRuntimeRecordId(state, 'turn-terminal'),
+          kind: 'turn-terminal',
+          role: 'failure',
+          text: `State: ${payload.status || 'failed'}`
+            + (payload.error?.code ? ` · ${payload.error.code}` : ''),
+        });
+        return;
+      case 'telemetry':
+        // Step 11 owns the exact core/extended footer projection.
+        tui.renderTelemetrySnapshot({
+          source: payload.snapshot || {},
+          core: [],
+          extended: [],
+        });
+        return;
+      case 'command_result':
+        if (payload.command === '/clear' && payload.ok) tui.clearDisplay();
+        if (payload.command === '/copy') {
+          tui.renderCopyResult({
+            ok: Boolean(payload.ok),
+            bytes: payload.data?.utf8_bytes ?? null,
+            code: payload.code || null,
+            message: payload.ok ? 'Last completed exchange copied.' : 'Copy failed.',
+          });
+          return;
+        }
+        if (payload.data?.configured_model) state.header.configured_model = payload.data.configured_model;
+        if (payload.data?.configured_reasoning_effort) {
+          state.header.configured_reasoning_effort = payload.data.configured_reasoning_effort;
+        }
+        tui.renderHeaderOperationalState(state.header);
+        tui.renderCommandStatus({
+          id: nextRuntimeRecordId(state, 'command'),
+          status: payload.ok ? 'ok' : 'error',
+          lines: commandResultLines(payload),
+        });
+        return;
+      case 'persistence_warning':
+        tui.renderCommandStatus({
+          id: nextRuntimeRecordId(state, 'persistence'),
+          status: 'warning',
+          lines: [`Persistence degraded: ${payload.code || payload.reason || 'unknown'}`],
+        });
+        return;
+      default:
+        tui.renderActivityRecord({
+          id: nextRuntimeRecordId(state, 'controller-event'),
+          kind: 'controller-event',
+          role: 'telemetry',
+          text: `Controller event: ${event.type}`,
+        });
     }
+  };
+}
+
+function buildCrashReport(type, error, controller) {
+  const message = error?.message || String(error);
+  const stack = error?.stack || '';
+  const appFrames = stack.split('\n')
+    .filter(line => line.includes('    at ') && line.includes('Game-main') && !line.includes('node_modules'))
+    .map(line => line.trim());
+  const latestTurn = _turnBuffer.length ? _turnBuffer[_turnBuffer.length - 1]?.turn ?? 'none' : 'none';
+  const historyCount = controller?.getCompletedExchangeLedger
+    ? controller.getCompletedExchangeLedger().length
+    : 0;
+  return {
+    type: String(type),
+    message,
+    stack,
+    where: appFrames[0] || null,
+    session: _activeSessionId || 'none',
+    last_turn: latestTurn,
+    history_count: historyCount,
+    mb_version: MB_VERSION,
+  };
+}
+
+function deliverCrashReport(report, options = {}) {
+  const fileSystem = options.fileSystem || fs;
+  const httpModule = options.httpModule || http;
+  const crashTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const crashPath = path.join(__dirname, 'logs', `mb-crash-${crashTimestamp}.txt`);
+  const crashText = [
+    'MOTHER BRAIN CRASH REPORT',
+    `Type    : ${report.type}`,
+    `Error   : ${report.message}`,
+    `Session : ${report.session} | last turn : T-${report.last_turn} | history : ${report.history_count} exchanges`,
+    `Version : ${report.mb_version}`,
+    '',
+    'Full stack:',
+    report.stack || '(no stack)',
+  ].join('\n');
+
+  try {
+    fileSystem.mkdirSync(path.dirname(crashPath), { recursive: true });
+    fileSystem.writeFileSync(crashPath, crashText, 'utf8');
+  } catch (_) {}
+
+  const diagnosticKey = process.env.DIAGNOSTICS_KEY || '';
+  const body = JSON.stringify({
+    type: report.type,
+    message: report.message,
+    where: report.where,
+    stack: report.stack,
+    mb_version: report.mb_version,
+    session: report.session,
+    last_turn: report.last_turn,
+  });
+  try {
+    const request = httpModule.request({
+      hostname: HOST,
+      port: PORT,
+      path: '/diagnostics/mb-crash',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+        'x-diagnostics-key': diagnosticKey,
+      },
+    });
+    request.on('error', () => {});
+    request.write(body);
+    request.end();
+  } catch (_) {}
+
+  return crashPath;
+}
+
+function resetRuntimeOperationalState() {
+  _turnBuffer = [];
+  _activeSessionId = null;
+  _harnessAuthorized = false;
+  _activeGameplayInvestigation = null;
+  _cachedContext = null;
+}
+
+function createMotherBrainRuntime(options = {}) {
+  const state = {
+    started: false,
+    stopping: false,
+    stopped: false,
+    recordSequence: 0,
+    submissionSequence: 0,
+    engineStatus: 'offline',
+    sseStatus: 'disconnected',
+    header: { activity: 'idle', busy: false },
+    sseRequest: null,
+    sseResponse: null,
+    reconnectTimer: null,
+    bootstrapTimer: null,
+    bootstrapInFlight: false,
+    bootstrapAbortController: null,
+    shutdownPrepared: false,
+    pendingCrashReport: null,
+    shutdownPromise: null,
+    finalizePromise: null,
+  };
+  const runtime = {
+    state,
+    tui: null,
+    controller: null,
+    httpClient: null,
+    controllerHttpClient: null,
+    liveContextProvider: null,
+    get started() { return state.started; },
+    get stopping() { return state.stopping; },
+  };
+
+  const clock = options.clock || (() => new Date());
+  const axiosClient = options.axiosClient || axios;
+  const httpModule = options.httpModule || http;
+  const setTimer = options.setTimeout || setTimeout;
+  const clearTimer = options.clearTimeout || clearTimeout;
+  const startOperational = options.startOperational !== false;
+  const reportCrashes = options.reportCrashes !== false;
+  const hasProviderCredential = options.hasProviderCredential || (() => Boolean(DEEPSEEK_KEY));
+
+  runtime.httpClient = options.httpClient || createDeepSeekHttpClient({
+    axiosClient,
+    getApiKey: options.getApiKey || (() => DEEPSEEK_KEY),
+    httpsAgent: options.httpsAgent || _deepseekHttpsAgent,
+  });
+  runtime.liveContextProvider = options.getLiveContext || createLiveContextProvider({
+    axiosClient,
+    httpAgent: options.toolHttpAgent || _toolHttpAgent,
+  });
+  runtime.controllerHttpClient = async request => {
+    if (state.stopping) {
+      const error = new Error('Mother Brain runtime is stopping.');
+      error.code = 'runtime_stopping';
+      throw error;
+    }
+    return runtime.httpClient(request);
+  };
+  runtime.controllerHttpClient.isContextLengthError = error => (
+    typeof runtime.httpClient.isContextLengthError === 'function'
+      ? runtime.httpClient.isContextLengthError(error)
+      : false
   );
 
-  req.on('error', err => {
-    printLine(d(`  [SSE] offline (${err.message}) — retry in ${RECONNECT_MS}ms`));
-    scheduleSSEReconnect();
+  const createTui = options.createTui || createMotherBrainTui;
+  runtime.tui = createTui({
+    ...(options.tuiOptions || {}),
+    version: MB_VERSION,
+    onSubmit: input => runtime.submit(input),
+    onBlockedSubmit: input => runtime.blockedSubmit(input),
+    onBeforeShutdown: intent => runtime.prepareShutdown(intent),
+    onShutdown: result => runtime.finalize(result),
+    onSynchronousExit: result => {
+      runtime.prepareShutdown(result);
+      runtime.finalize(result);
+      if (options.onSynchronousExit) options.onSynchronousExit(result);
+    },
   });
 
-  req.end();
-}
+  const viewSink = createControllerViewSink(runtime.tui, state);
+  const controllerDependencies = {
+    httpClient: runtime.controllerHttpClient,
+    tools: MB_TOOLS,
+    dispatchToolCall: options.dispatchToolCall || executeToolCallStructured,
+    getLiveContext: runtime.liveContextProvider,
+    clock,
+    fsAdapter: options.fsAdapter || fs.promises,
+    paths: options.paths || {
+      historyFile: HISTORY_PATH,
+      settingsFile: SETTINGS_PATH,
+    },
+    delay: options.delay || (milliseconds => new Promise(resolve => setTimer(resolve, milliseconds))),
+    viewSink,
+    writeClipboard: options.writeClipboard || copyToWindowsClipboard,
+  };
+  const createController = options.createController
+    || (dependencies => new MotherBrainController(dependencies));
+  runtime.controller = createController(controllerDependencies);
 
-// ── Readline line handler — paste-debounced ────────────────────────────────────
-// Lines arriving within PASTE_WINDOW_MS of each other are buffered and joined
-// into a single message. Manual Enter fires after the same small pause.
-const PASTE_WINDOW_MS = 60;
-let _pasteBuffer = [];
-let _pasteTimer  = null;
+  runtime.emitActivity = record => {
+    if (state.stopping) return null;
+    return runtime.tui.renderActivityRecord({
+      id: record.id || nextRuntimeRecordId(state, 'activity'),
+      kind: record.kind || 'operational-status',
+      role: record.role || 'tool',
+      text: String(record.text ?? ''),
+    });
+  };
 
-function flushPaste() {
-  _pasteTimer = null;
-  const input = _pasteBuffer.join('\n').trim();
-  _pasteBuffer = [];
-  if (!input) { prompt(); return; }
-  if (input === '/clear') {
-    _history = [];
-    try { fs.writeFileSync(HISTORY_PATH, '[]', 'utf8'); } catch (_e) { /* ignore */ }
-    printLine(hr());
-    printLine(g('  Conversation cleared.') + d('  (Turn buffer retained — engine history preserved.)'));
-    printLine(hr());
-    prompt();
-    return;
-  }
-  if (input === '/copy') {
-    if (!_lastExchange) {
-      printLine(d('  [MB] Nothing to copy yet — no exchange in this session.'));
-      prompt();
+  runtime.syncOperationalState = () => {
+    if (state.stopping) return null;
+    return runtime.controller.updateOperationalState({
+      engine: state.engineStatus,
+      sse: state.sseStatus,
+      session: _activeSessionId ? 'attached' : 'none',
+      harness: _harnessAuthorized ? 'authorized' : 'offline',
+      game: _activeGameplayInvestigation ? 'active' : 'inactive',
+    });
+  };
+
+  runtime.blockedSubmit = async () => {
+    runtime.emitActivity({
+      kind: 'blocked-submit',
+      role: 'warning',
+      text: 'One provider turn is already active; the draft was preserved.',
+    });
+    return { accepted: false, code: 'controller_busy' };
+  };
+
+  runtime.submit = async input => {
+    if (state.stopping) return { accepted: false, code: 'runtime_stopping' };
+    const question = String(input);
+    const localCommand = question.trimStart().startsWith('/');
+    const snapshot = runtime.controller.getContractSnapshot();
+    if (!localCommand && snapshot.busy) return runtime.blockedSubmit(question);
+
+    state.submissionSequence += 1;
+    runtime.tui.renderTranscriptRecord({
+      id: `submitted-${state.submissionSequence}`,
+      kind: localCommand ? 'local-command' : 'developer-message',
+      role: 'developer',
+      text: question,
+    });
+
+    if (localCommand) {
+      await runtime.controller.handleLocalCommand(question);
+      return { accepted: true, local: true };
+    }
+
+    if (!hasProviderCredential()) {
+      runtime.emitActivity({
+        kind: 'provider-unavailable',
+        role: 'failure',
+        text: 'DEEPSEEK_API_KEY not set. Launch via StartMotherBrain.bat.',
+      });
+      return { accepted: true, local: false, providerCalled: false };
+    }
+
+    try {
+      const liveContext = await runtime.liveContextProvider();
+      runtime.emitActivity({
+        kind: 'context-source',
+        role: liveContext.source === 'live' ? 'telemetry' : 'warning',
+        text: liveContext.contextNote?.trim() || `Context source: ${liveContext.source || 'unknown'}`,
+      });
+      const clockValue = clock();
+      const now = clockValue instanceof Date ? new Date(clockValue.getTime()) : new Date(clockValue);
+      const timeBlock = `\n\nSERVER-LOCAL TIME (this machine only — not universal):\n`
+        + `${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n`
+        + `${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}\n`
+        + `Time of day: ${timeOfDay(now)}`;
+      const systemMessages = [{ role: 'system', content: SYSTEM_PROMPT + timeBlock }];
+      const userMessage = {
+        role: 'user',
+        content: `[LIVE ENGINE DATA]\n${liveContext.fullContext}\n\n[DEVELOPER QUESTION]\n${question}`,
+      };
+      const outcome = await runtime.controller.runTurn({
+        question,
+        systemMessages,
+        userMessage,
+      });
+
+      if (outcome.status !== 'completed') {
+        runtime.emitActivity({
+          kind: 'turn-failure',
+          role: 'failure',
+          text: `Mother Brain turn ${outcome.status}: ${outcome.error?.code || 'unknown_error'}`,
+        });
+      }
+      return { accepted: true, local: false, outcome };
+    } catch (error) {
+      runtime.tui.renderFatal({ code: error.code || 'composition_failure', message: error.message });
+      await runtime.shutdown('submit-error', { exitCode: 1, error });
+      return { accepted: true, local: false, error };
+    }
+  };
+
+  runtime.handleSsePayload = payload => {
+    if (!payload || typeof payload !== 'object' || state.stopping) return;
+
+    if (payload.type === 'narrator_error') {
+      _turnBuffer.push(payload);
+      if (_turnBuffer.length > TURN_BUFFER) _turnBuffer.shift();
+      runtime.emitActivity({
+        kind: 'narrator-error',
+        role: 'failure',
+        text: `[T-${payload.turn}] NARRATION FAILED (${payload.kind || 'error'}): ${payload.message || '—'}`,
+      });
       return;
     }
-    const text = `You: ${_lastExchange.question}\n\nMother Brain:\n${_lastExchange.answer}\n`;
-    const proc = spawn('clip');
-    proc.stdin.write(text, 'utf8');
-    proc.stdin.end();
-    proc.on('close', code => {
-      printLine(d(`  [MB] Last exchange copied to clipboard.`));
-      prompt();
-    });
-    proc.on('error', err => {
-      printLine(r(`  [MB] Clipboard copy failed: ${err.message}`));
-      prompt();
-    });
-    return;
-  }
-  if (input === '/stats') {
-    const _histDepS = Math.floor(_history.length / 2);
-    const _histTokS = Math.round(_history.reduce((s, m) => s + m.content.length, 0) / 4);
-    printLine(hr());
-    printLine(d('  MB SESSION STATS'));
-    if (_mbSession.calls === 0) {
-      printLine(d('  No calls made yet this session.'));
-    } else {
-      printLine(d(`  calls:         ${_mbSession.calls}`));
-      printLine(d(`  total tokens:  ${_mbSession.total_tokens.toLocaleString()}`));
-      printLine(d(`  prompt:        ${_mbSession.prompt_tokens.toLocaleString()}`));
-      printLine(d(`  output:        ${_mbSession.completion_tokens.toLocaleString()}`));
-      printLine(d(`  cache hits:    ${_mbSession.cache_hit_tokens.toLocaleString()}`));
-      printLine(d(`  est. cost:     ~$${_mbSession.est_cost_usd.toFixed(6)}`));
-      if (_mbCallHistory.length > 0) {
-        printLine(d('  per-call (oldest -> newest):'));
-        for (const e of _mbCallHistory) {
-          const _hitP = e.prompt_tokens > 0 ? `  ${Math.round((e.cache_hit_tokens / e.prompt_tokens) * 100)}% hit` : '';
-          printLine(d(`    call ${e.call_num}:  ${e.total_tokens.toLocaleString()} tok${_hitP}  ~$${e.est_cost_usd.toFixed(6)}`));
+
+    if (payload.type === 'turn') {
+      _turnBuffer.push(payload);
+      if (_turnBuffer.length > TURN_BUFFER) _turnBuffer.shift();
+      if (payload.gameSessionId) {
+        const wasEmpty = !_activeSessionId;
+        const sessionChanged = !wasEmpty && _activeSessionId !== payload.gameSessionId;
+        _activeSessionId = payload.gameSessionId;
+        if (sessionChanged) {
+          _cachedContext = null;
+          runtime.emitActivity({
+            kind: 'session-change',
+            role: 'telemetry',
+            text: 'Session auto-attached after browser session change.',
+          });
+        }
+        if ((wasEmpty || sessionChanged) && !_cachedContext && runtime.liveContextProvider.prewarm) {
+          runtime.liveContextProvider.prewarm(_activeSessionId).catch(() => {});
         }
       }
+      runtime.syncOperationalState();
+      runtime.emitActivity({
+        kind: 'sse-turn',
+        role: 'telemetry',
+        text: formatTurnStatusText(payload),
+      });
+      return;
     }
-    printLine(d(`  history depth: ${_histDepS} exchanges (~${_histTokS.toLocaleString()} tok estimated)`));
-    printLine(hr());
-    prompt();
-    return;
-  }
-  askMotherBrain(input);
-}
 
-rl.on('line', line => {
-  _pasteBuffer.push(line);
-  if (_pasteTimer) clearTimeout(_pasteTimer);
-  _pasteTimer = setTimeout(flushPaste, PASTE_WINDOW_MS);
-});
+    if (payload.type === 'arbiter_verdict') {
+      const turnEntry = _turnBuffer.find(turn => turn.turn === payload.turn);
+      if (turnEntry) {
+        turnEntry._arbiter = {
+          changes: payload.reputation_changes || [],
+          error: payload.error || null,
+        };
+      }
+      return;
+    }
 
-rl.on('close', () => {
-  process.stdout.write('\n' + g('  Mother Brain offline.') + '\n');
-  process.exit(0);
-});
-
-// ── Startup banner ─────────────────────────────────────────────────────────────
-function banner() {
-  const border = `${GRN}${B}${'═'.repeat(W())}${R}`;
-  const titleText = ` MOTHER BRAIN  v${MB_VERSION} `;
-  const titlePad  = ' '.repeat(Math.max(0, W() - titleText.length));
-  process.stdout.write(border + '\n');
-  process.stdout.write(`${GRN}${B}${titleText}${titlePad}${R}\n`);
-  process.stdout.write(border + '\n');
-  process.stdout.write('\n');
-  process.stdout.write(d('  Type a question and press Enter. Type /clear to reset conversation. Ctrl+C to exit.\n'));
-  process.stdout.write('\n');
-}
-
-// ── Crash reporters ────────────────────────────────────────────────────────────
-function _reportCrash(type, err) {
-  const line  = '═'.repeat(W());
-  const msg   = err?.message || String(err);
-  const stack = err?.stack   || '';
-
-  // Extract all app-code frames (skip Node internals / node_modules)
-  const appFrames = stack.split('\n')
-    .filter(l => l.includes('    at ') && l.includes('Game-main') && !l.includes('node_modules'))
-    .map(l => l.trim());
-  const appFrame = appFrames[0] || null;
-
-  // Context snapshot
-  const turn     = _turnBuffer.length ? _turnBuffer[_turnBuffer.length - 1]?.turnNumber ?? '?' : 'none';
-  const session  = _activeSessionId || 'none';
-  const histLen  = _history.length;
-
-  process.stdout.write('\n');
-  process.stdout.write(`${RED}${line}${R}\n`);
-  process.stdout.write(`${RED}  MOTHER BRAIN CRASHED  --  ${type}${R}\n`);
-  process.stdout.write(`${RED}${line}${R}\n`);
-  process.stdout.write(`${RED}  Error   : ${msg}${R}\n`);
-  if (appFrames.length) {
-    appFrames.forEach(f => process.stdout.write(`${AMB}  Stack   : ${f}${R}\n`));
-  } else if (stack) {
-    stack.split('\n').slice(0, 8).forEach(f => process.stdout.write(`${AMB}  Stack   : ${f.trim()}${R}\n`));
-  }
-  process.stdout.write(`${DIM}  Session : ${session}  |  last turn : T-${turn}  |  history : ${histLen} msgs${R}\n`);
-  process.stdout.write(`${DIM}  Restart : node motherbrain.js${R}\n`);
-
-  // Write crash to file synchronously — survives window close
-  try {
-    const _crashTs   = new Date().toISOString().replace(/[:.]/g, '-');
-    const _crashPath = require('path').join('C:\\Users\\daddy\\Desktop\\Game-main\\logs', `mb-crash-${_crashTs}.txt`);
-    const _crashText = [
-      `MOTHER BRAIN CRASH REPORT`,
-      `Type    : ${type}`,
-      `Error   : ${msg}`,
-      `Session : ${session}  |  last turn : T-${turn}  |  history : ${histLen} msgs`,
-      `Version : ${MB_VERSION}`,
-      ``,
-      `Full stack:`,
-      stack || '(no stack)',
-    ].join('\n');
-    require('fs').writeFileSync(_crashPath, _crashText, 'utf8');
-    process.stdout.write(`${DIM}  Log     : ${_crashPath}${R}\n`);
-  } catch (_) {}
-
-  process.stdout.write(`${RED}${line}${R}\n`);
-
-  // Best-effort POST to server so crash shows in server CMD window
-  const diagKey = process.env.DIAGNOSTICS_KEY || '';
-  const body    = JSON.stringify({ type, message: msg, where: appFrame, stack, mb_version: MB_VERSION, session, last_turn: turn });
-  const opts    = {
-    hostname: HOST, port: PORT, path: '/diagnostics/mb-crash',
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'x-diagnostics-key': diagKey }
+    if (payload.type === 'lifecycle') {
+      if (payload.event === 'online') {
+        state.engineStatus = 'online';
+        runtime.emitActivity({
+          kind: 'engine-lifecycle',
+          role: 'tool',
+          text: `ENGINE ONLINE · port ${payload.port} · session ${payload.sessionId || '—'}`,
+        });
+      } else if (payload.event === 'offline') {
+        state.engineStatus = 'offline';
+        runtime.emitActivity({
+          kind: 'engine-lifecycle',
+          role: 'warning',
+          text: `ENGINE OFFLINE · ${payload.reason || '?'}`,
+        });
+      }
+      runtime.syncOperationalState();
+    }
   };
-  try {
-    const req = require('http').request(opts);
-    req.on('error', () => {});
-    req.write(body);
-    req.end();
-  } catch (_) {}
-}
 
-process.on('uncaughtException', (err) => {
-  _reportCrash('uncaughtException', err);
-  process.exit(1);
-});
+  runtime.scheduleSseReconnect = () => {
+    if (state.stopping || state.reconnectTimer) return false;
+    state.sseStatus = 'reconnecting';
+    runtime.syncOperationalState();
+    state.reconnectTimer = setTimer(() => {
+      state.reconnectTimer = null;
+      runtime.connectSse();
+    }, RECONNECT_MS);
+    return true;
+  };
 
-process.on('unhandledRejection', (reason) => {
-  _reportCrash('unhandledRejection', reason instanceof Error ? reason : new Error(String(reason)));
-  process.exit(1);
-});
+  runtime.connectSse = () => {
+    if (state.stopping || !state.started) return null;
+    if (state.sseRequest || state.sseResponse) return state.sseRequest || state.sseResponse;
+    state.sseStatus = 'connecting';
+    runtime.syncOperationalState();
+    runtime.emitActivity({
+      kind: 'sse-state',
+      role: 'telemetry',
+      text: `SSE connecting to http://${HOST}:${PORT}${SSE_PATH}`,
+    });
 
-// ── Helpers: history persistence ─────────────────────────────────────────────
-function _saveHistory() {
-  try {
-    const keep = _history.slice(-(HISTORY_KEEP * 2));
-    fs.writeFileSync(HISTORY_PATH, JSON.stringify(keep, null, 2), 'utf8');
-  } catch (_e) { /* non-fatal */ }
-}
-function _loadHistory() {
-  try {
-    const raw = fs.readFileSync(HISTORY_PATH, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      _history = parsed.slice(-(HISTORY_KEEP * 2));
-      const exchanges = Math.floor(_history.length / 2);
-      process.stdout.write(d(`  [MB] Loaded ${exchanges} prior exchange${exchanges === 1 ? '' : 's'} from disk.\n\n`));
+    try {
+      const request = httpModule.get(
+        {
+          host: HOST,
+          port: PORT,
+          path: SSE_PATH,
+          headers: { Accept: 'text/event-stream' },
+          agent: options.sseHttpAgent || _sseHttpAgent,
+        },
+        response => {
+          if (state.stopping) {
+            response.destroy?.();
+            return;
+          }
+          state.sseResponse = response;
+          request.socket?.setTimeout(0);
+          request.socket?.setNoDelay(true);
+
+          if (response.statusCode !== 200) {
+            state.sseStatus = 'reconnecting';
+            runtime.syncOperationalState();
+            runtime.emitActivity({
+              kind: 'sse-state',
+              role: 'warning',
+              text: `SSE HTTP ${response.statusCode} · retry in ${RECONNECT_MS} ms`,
+            });
+            let released = false;
+            const releaseAndRetry = () => {
+              if (released || state.stopping) return;
+              released = true;
+              if (state.sseResponse === response) state.sseResponse = null;
+              if (state.sseRequest === request) state.sseRequest = null;
+              runtime.scheduleSseReconnect();
+            };
+            response.once?.('end', releaseAndRetry);
+            response.once?.('close', releaseAndRetry);
+            response.once?.('error', releaseAndRetry);
+            response.resume();
+            return;
+          }
+
+          if (state.reconnectTimer) {
+            clearTimer(state.reconnectTimer);
+            state.reconnectTimer = null;
+          }
+          state.sseStatus = 'connected';
+          runtime.syncOperationalState();
+          response.setEncoding('utf8');
+          let buffer = '';
+          let streamFinished = false;
+          const reconnectAfterStream = (role, text) => {
+            if (streamFinished || state.stopping) return;
+            streamFinished = true;
+            if (state.sseResponse === response) state.sseResponse = null;
+            if (state.sseRequest === request) state.sseRequest = null;
+            runtime.emitActivity({ kind: 'sse-state', role, text });
+            runtime.scheduleSseReconnect();
+          };
+          response.on('data', chunk => {
+            buffer += chunk;
+            const blocks = buffer.split('\n\n');
+            buffer = blocks.pop();
+            for (const block of blocks) {
+              for (const line of block.split('\n')) {
+                if (!line.startsWith('data:')) continue;
+                try {
+                  runtime.handleSsePayload(JSON.parse(line.slice(5).trim()));
+                } catch (_) {}
+              }
+            }
+          });
+          response.on('end', () => reconnectAfterStream('warning', 'SSE stream ended · reconnecting'));
+          response.on('close', () => reconnectAfterStream('warning', 'SSE stream closed · reconnecting'));
+          response.on('error', error => reconnectAfterStream('warning', `SSE error: ${error.message} · reconnecting`));
+        }
+      );
+      state.sseRequest = request;
+      request.on('error', error => {
+        if (state.stopping) return;
+        if (state.sseResponse) return;
+        state.sseRequest = null;
+        runtime.emitActivity({
+          kind: 'sse-state',
+          role: 'telemetry',
+          text: `SSE offline (${error.message}) · retry in ${RECONNECT_MS} ms`,
+        });
+        runtime.scheduleSseReconnect();
+      });
+      return request;
+    } catch (error) {
+      runtime.emitActivity({
+        kind: 'sse-state',
+        role: 'warning',
+        text: `SSE setup failed (${error.message}) · retry in ${RECONNECT_MS} ms`,
+      });
+      runtime.scheduleSseReconnect();
+      return null;
     }
-  } catch (_e) { /* file absent or corrupt — start fresh */ }
+  };
+
+  runtime.bootstrapSession = async () => {
+    const abortController = new AbortController();
+    state.bootstrapAbortController = abortController;
+    try {
+      const response = await axiosClient.get(
+        `http://${HOST}:${PORT}/diagnostics/session`,
+        { timeout: 5000, httpAgent: options.toolHttpAgent || _toolHttpAgent, signal: abortController.signal }
+      );
+      if (state.stopping) return false;
+      const sessionId = response.data?.sessionId;
+      if (!sessionId) return false;
+      _activeSessionId = sessionId;
+      runtime.emitActivity({
+        kind: 'session-bootstrap',
+        role: 'telemetry',
+        text: 'Session bootstrapped.',
+      });
+      try {
+        if (runtime.liveContextProvider.prewarm) {
+          const context = await runtime.liveContextProvider.prewarm(sessionId);
+          if (context && !state.stopping) {
+            runtime.emitActivity({
+              kind: 'context-prewarm',
+              role: 'telemetry',
+              text: `Context pre-warmed (${context.length.toLocaleString()} chars).`,
+            });
+          }
+        }
+      } catch (_) {}
+      runtime.syncOperationalState();
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      if (state.bootstrapAbortController === abortController) state.bootstrapAbortController = null;
+    }
+  };
+
+  runtime.startBootstrapLoop = () => {
+    if (state.stopping || state.bootstrapInFlight || state.bootstrapTimer || _activeSessionId) return false;
+    state.bootstrapInFlight = true;
+    runtime.bootstrapSession()
+      .then(found => {
+        if (!found && !state.stopping && !_activeSessionId && !state.bootstrapTimer) {
+          state.bootstrapTimer = setTimer(() => {
+            state.bootstrapTimer = null;
+            runtime.startBootstrapLoop();
+          }, RECONNECT_MS);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        state.bootstrapInFlight = false;
+      });
+    return true;
+  };
+
+  runtime.cleanupLifecycle = () => {
+    if (typeof runtime.httpClient.cancelAll === 'function') runtime.httpClient.cancelAll();
+    if (typeof runtime.liveContextProvider.cancelAll === 'function') runtime.liveContextProvider.cancelAll();
+    if (state.bootstrapAbortController) {
+      try { state.bootstrapAbortController.abort(); } catch (_) {}
+      state.bootstrapAbortController = null;
+    }
+    state.bootstrapInFlight = false;
+    if (state.reconnectTimer) {
+      clearTimer(state.reconnectTimer);
+      state.reconnectTimer = null;
+    }
+    if (state.bootstrapTimer) {
+      clearTimer(state.bootstrapTimer);
+      state.bootstrapTimer = null;
+    }
+    if (state.sseResponse) {
+      const response = state.sseResponse;
+      state.sseResponse = null;
+      try { response.removeAllListeners?.('data'); } catch (_) {}
+      try { response.removeAllListeners?.('end'); } catch (_) {}
+      try { response.removeAllListeners?.('close'); } catch (_) {}
+      try { response.removeAllListeners?.('error'); } catch (_) {}
+      try { response.once?.('error', () => {}); } catch (_) {}
+      try { response.destroy?.(); } catch (_) {}
+    }
+    if (state.sseRequest) {
+      const request = state.sseRequest;
+      state.sseRequest = null;
+      try { request.removeAllListeners?.('error'); } catch (_) {}
+      try { request.once?.('error', () => {}); } catch (_) {}
+      try { request.destroy?.(); } catch (_) {}
+    }
+    stopOperationalChildren();
+  };
+
+  runtime.prepareShutdown = intent => {
+    if (state.shutdownPrepared) return false;
+    state.shutdownPrepared = true;
+    state.stopping = true;
+    runtime.tui.stopAcceptingInput?.();
+
+    if (intent?.error && reportCrashes) {
+      const source = intent.error;
+      const error = source instanceof Error
+        ? source
+        : Object.assign(
+          new Error(source.message || String(source)),
+          { name: source.name || 'Error', code: source.code || null }
+        );
+      state.pendingCrashReport = buildCrashReport(
+        intent.reason || 'runtime-failure',
+        error,
+        runtime.controller
+      );
+    }
+
+    runtime.cleanupLifecycle();
+    return true;
+  };
+
+  runtime.finalize = result => {
+    if (state.finalizePromise) return state.finalizePromise;
+    state.finalizePromise = (async () => {
+      runtime.prepareShutdown(result);
+      if (state.pendingCrashReport) {
+        deliverCrashReport(
+          state.pendingCrashReport,
+          {
+            fileSystem: options.crashFileSystem || fs,
+            httpModule: options.crashHttpModule || http,
+          }
+        );
+        state.pendingCrashReport = null;
+      }
+      state.started = false;
+      state.stopped = true;
+      if (_activeRuntime === runtime) _activeRuntime = null;
+      return result;
+    })();
+    return state.finalizePromise;
+  };
+
+  runtime.shutdown = (reason = 'normal', shutdownOptions = {}) => {
+    if (state.shutdownPromise) return state.shutdownPromise;
+    runtime.prepareShutdown({ reason: String(reason), ...shutdownOptions });
+    state.shutdownPromise = (async () => {
+      const result = runtime.tui.started
+        ? await runtime.tui.shutdown(reason, shutdownOptions)
+        : {
+            reason: String(reason),
+            exitCode: Number.isInteger(shutdownOptions.exitCode) ? shutdownOptions.exitCode : 0,
+            error: shutdownOptions.error
+              ? {
+                  name: shutdownOptions.error.name || 'Error',
+                  message: shutdownOptions.error.message || String(shutdownOptions.error),
+                  code: shutdownOptions.error.code || null,
+                }
+              : null,
+          };
+      return runtime.finalize(result);
+    })();
+    return state.shutdownPromise;
+  };
+
+  runtime.getLifecycleSnapshot = () => ({
+    started: state.started,
+    stopping: state.stopping,
+    stopped: state.stopped,
+    reconnect_scheduled: Boolean(state.reconnectTimer),
+    bootstrap_scheduled: Boolean(state.bootstrapTimer),
+    bootstrap_in_flight: state.bootstrapInFlight,
+    bootstrap_request_active: Boolean(state.bootstrapAbortController),
+    sse_request_active: Boolean(state.sseRequest),
+    sse_response_active: Boolean(state.sseResponse),
+    provider_requests_active: typeof runtime.httpClient.getActiveRequestCount === 'function'
+      ? runtime.httpClient.getActiveRequestCount()
+      : null,
+    context_requests_active: typeof runtime.liveContextProvider.getActiveRequestCount === 'function'
+      ? runtime.liveContextProvider.getActiveRequestCount()
+      : null,
+    operational_children_active: _activeOperationalChildren.size,
+  });
+
+  runtime.start = async () => {
+    if (state.started) return { started: true, reused: true };
+    if (_activeRuntime && _activeRuntime !== runtime && !_activeRuntime.state.stopped) {
+      throw new Error('A Mother Brain runtime is already active.');
+    }
+    resetRuntimeOperationalState();
+    _activeRuntime = runtime;
+
+    try {
+      const tuiStart = await runtime.tui.start();
+      if (!tuiStart.started) {
+        state.stopped = true;
+        if (_activeRuntime === runtime) _activeRuntime = null;
+        return tuiStart;
+      }
+      state.started = true;
+
+      const contractSnapshot = await runtime.controller.loadPersistentState();
+      state.header = {
+        ...state.header,
+        configured_model: contractSnapshot.configured_settings.model,
+        configured_reasoning_effort: contractSnapshot.configured_settings.reasoning_effort,
+      };
+      runtime.tui.renderHeaderOperationalState(state.header);
+
+      for (const exchange of runtime.controller.getCompletedExchangeLedger()) {
+        runtime.tui.renderTranscriptRecord({
+          id: `restored-${exchange.id}-developer`,
+          kind: 'restored-developer-message',
+          role: 'developer',
+          text: exchange.question,
+        });
+        runtime.tui.renderTranscriptRecord({
+          id: `restored-${exchange.id}-response`,
+          kind: 'restored-mother-response',
+          role: 'final',
+          text: exchange.final_answer,
+        });
+      }
+
+      runtime.syncOperationalState();
+      if (startOperational) {
+        runtime.connectSse();
+        runtime.startBootstrapLoop();
+      }
+      return { ...tuiStart, persistence: contractSnapshot.persistence };
+    } catch (error) {
+      try {
+        runtime.tui.renderFatal({ code: error.code || 'startup_failure', message: error.message });
+      } catch (_) {}
+      await runtime.shutdown('startup-error', { exitCode: 1, error });
+      throw error;
+    }
+  };
+
+  return runtime;
 }
 
-// ── Boot ───────────────────────────────────────────────────────────────────────
-process.stdout.write(`\x1b]0;MOTHER BRAIN v${MB_VERSION}\x07`);
-banner();
-_loadHistory();
-connectSSE();
-prompt();
+async function main(options = {}) {
+  loadRuntimeEnvironment(options.env || process.env, options.environmentFileSystem || fs);
+  refreshRuntimeCredentials(options.env || process.env);
+  const runtime = createMotherBrainRuntime(options);
+  await runtime.start();
+  return runtime;
+}
 
-// Attempt to bootstrap session + pre-warm context immediately on startup.
-// Retries silently every RECONNECT_MS until a session is found.
-// Aborts if SSE already delivered _activeSessionId — they race each other.
-(async function tryBootstrap() {
-  if (_activeSessionId) return; // SSE beat us to it
-  const found = await bootstrapSession();
-  if (!found && !_activeSessionId) setTimeout(tryBootstrap, RECONNECT_MS);
-})();
+if (require.main === module) {
+  main().catch(error => {
+    // This path runs only after startup failed or the TUI intentionally tore down.
+    process.stderr.write(`Mother Brain failed to start: ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  MB_VERSION,
+  MB_TOOLS,
+  SYSTEM_PROMPT,
+  executeToolCall,
+  executeToolCallStructured,
+  createCanonicalToolDispatchAdapter,
+  loadRuntimeEnvironment,
+  refreshRuntimeCredentials,
+  stripTerminalEscapes,
+  createStructuredChildActivityCapture,
+  trackOperationalChild,
+  stopOperationalChildren,
+  createDeepSeekHttpClient,
+  createLiveContextProvider,
+  createControllerViewSink,
+  createMotherBrainRuntime,
+  buildCrashReport,
+  deliverCrashReport,
+  main,
+};
