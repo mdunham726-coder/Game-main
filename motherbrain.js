@@ -1,5 +1,5 @@
 ﻿/**
- * motherbrain.js — Mother Brain v3.0.0
+ * motherbrain.js — Mother Brain v8.0.0
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -50,7 +50,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '7.7.3';
+const MB_VERSION = '8.0.0';
+// MB v8.0.0 (July 2026): Major — DeepSeek V4 and full-screen TUI rebuild. Mother Brain is now split into an import-safe composition root, terminal-independent controller, and Terminal Kit TUI, with exact V4 reasoning/tool replay, durable history and settings, context budgeting, telemetry, guarded sequential tool dispatch, and the existing 38-tool authority boundary preserved. MB_VERSION 7.7.3 -> 8.0.0.
 // MB v7.7.3 (July 2026): Patch — start_game sends x-mother-brain header for session TTL classification. MB_VERSION 7.7.2 -> 7.7.3.
 // MB v7.7.1 (June 2026): Patch — P5-0 archive foundation awareness: get_turn_data tool description updated with p5_witness_archive field. MB_VERSION 7.7.0 -> 7.7.1.
 // MB v7.7.0 (June 2026): Minor — Evidence Admissibility / Witness Integrity HARD RULE doctrine added to SYSTEM_PROMPT. Teaches Mother Brain that diagnostic claims require specific tool-call provenance, that inference/memory/reconstruction cannot support PASS, that truncated tool output is not observed, and that insufficient evidence is INCONCLUSIVE. MB_VERSION 7.6.1 -> 7.7.0.
