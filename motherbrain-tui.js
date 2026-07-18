@@ -951,6 +951,8 @@ class MotherBrainTui {
       stopping: false,
       recordCounter: 0,
       activeTurnActivityStart: null,
+      exchangeActivityStart: null,
+      lastExchangeRange: null,
     };
     this._runtime = {
       termkit: null,
@@ -1004,6 +1006,8 @@ class MotherBrainTui {
       selection: this._state.selection,
       copyResult: this._state.copyResult,
       activeTurnActivityStart: this._state.activeTurnActivityStart,
+      exchangeActivityStart: this._state.exchangeActivityStart,
+      lastExchangeRange: this._state.lastExchangeRange,
       fatal: this._state.fatal,
       resizeOverlay: this._state.resizeOverlay,
       layout: this._runtime.layout,
@@ -1034,10 +1038,24 @@ class MotherBrainTui {
 
   renderActivityRecord(record) {
     const normalized = normalizeDisplayRecord(record, 'tool');
+    const pane = this._state.panes.activity;
     if (normalized.kind === 'turn-state' && normalized.text === 'State: waiting') {
-      this._state.activeTurnActivityStart = this._state.panes.activity.records.length;
+      this._state.activeTurnActivityStart = pane.records.length;
+      if (this._state.exchangeActivityStart === null) {
+        this._state.exchangeActivityStart = pane.records.length;
+      }
     }
-    appendPaneRecord(this._state.panes.activity, normalized);
+    appendPaneRecord(pane, normalized);
+    if (
+      (normalized.kind === 'turn-completed' || normalized.kind === 'turn-terminal')
+      && this._state.exchangeActivityStart !== null
+    ) {
+      this._state.lastExchangeRange = {
+        start: clamp(this._state.exchangeActivityStart, 0, pane.records.length),
+        end: pane.records.length,
+      };
+      this._state.exchangeActivityStart = null;
+    }
     this._requestDraw();
     return cloneValue(normalized);
   }
@@ -1127,6 +1145,8 @@ class MotherBrainTui {
     this._state.panes.activity = createPaneState();
     this._state.selection = { pane: null, status: 'none', bytes: 0 };
     this._state.activeTurnActivityStart = null;
+    this._state.exchangeActivityStart = null;
+    this._state.lastExchangeRange = null;
     this._requestDraw();
   }
 
@@ -1646,12 +1666,18 @@ class MotherBrainTui {
     const localCommand = value.trimStart().startsWith('/');
     if (localCommand && value.trim().toLowerCase() === '/copycot') {
       let result;
-      try {
-        const text = plainProjectionText(projectRecords(this._state.panes.activity.records));
-        await this._options.clipboardWriter(text);
-        result = { ok: true, bytes: Buffer.byteLength(text, 'utf8'), code: 'activity_copied', message: 'Copied activity pane.' };
-      } catch (error) {
-        result = { ok: false, bytes: null, code: 'clipboard_write_failed', message: `Copy failed: ${error.message}` };
+      const range = this._state.lastExchangeRange;
+      if (!range) {
+        result = { ok: false, bytes: null, code: 'no_completed_exchange', message: 'No completed exchange to copy.' };
+      } else {
+        try {
+          const records = this._state.panes.activity.records.slice(range.start, range.end);
+          const text = plainProjectionText(projectRecords(records));
+          await this._options.clipboardWriter(text);
+          result = { ok: true, bytes: Buffer.byteLength(text, 'utf8'), code: 'exchange_copied', message: 'Copied last exchange.' };
+        } catch (error) {
+          result = { ok: false, bytes: null, code: 'clipboard_write_failed', message: `Copy failed: ${error.message}` };
+        }
       }
       this.renderCopyResult(result);
       this._state.history.push(value);

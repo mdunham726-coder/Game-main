@@ -792,6 +792,124 @@ function testNonTtyGuard() {
   assert.equal(child.stdout.includes('\x1b'), false, 'non-TTY output activated terminal escapes');
 }
 
+function copycotHarness(clipboardWriter) {
+  const app = new PRODUCTION_TUI.MotherBrainTui({ scheduleFrame: () => {}, clipboardWriter });
+  app._runtime.layout = { supported: true };
+  return app;
+}
+
+async function runCopycot(app) {
+  app.setDraft('/copycot', 8);
+  await app._submitEditor();
+  return app.getSnapshot();
+}
+
+function driveExchange(app, label, endKind, endText) {
+  app.renderActivityRecord({ id: `${label}-wait`, kind: 'turn-state', role: 'telemetry', text: 'State: waiting' });
+  app.renderActivityRecord({ id: `${label}-tool`, kind: 'tool-result', role: 'tool', text: `Result: ${label} tool marker` });
+  app.renderActivityRecord({ id: `${label}-end`, kind: endKind, role: 'telemetry', text: endText });
+}
+
+async function testCopycotExchangeBoundary() {
+  // 1: two completed exchanges -> copies only the second, range untouched by success
+  {
+    const writes = [];
+    const app = copycotHarness(async (text) => { writes.push(text); });
+    driveExchange(app, 'alpha', 'turn-completed', 'State: completed');
+    driveExchange(app, 'bravo', 'turn-completed', 'State: completed');
+    const rangeBefore = app.getSnapshot().lastExchangeRange;
+    const snapshot = await runCopycot(app);
+    assert.equal(writes.length, 1, 'copycot did not write to clipboard exactly once');
+    assert.ok(writes[0].includes('bravo tool marker'), 'copycot omitted the second exchange');
+    assert.equal(writes[0].includes('alpha tool marker'), false, 'copycot leaked the first exchange');
+    assert.equal(snapshot.copyResult.code, 'exchange_copied');
+    assert.deepEqual(snapshot.lastExchangeRange, rangeBefore, 'successful copy mutated lastExchangeRange');
+  }
+
+  // 2: multi-round exchange -> all rounds included
+  {
+    const writes = [];
+    const app = copycotHarness(async (text) => { writes.push(text); });
+    app.renderActivityRecord({ id: 'r1-wait', kind: 'turn-state', role: 'telemetry', text: 'State: waiting' });
+    app.renderActivityRecord({ id: 'r1-tool', kind: 'tool-result', role: 'tool', text: 'Result: round one marker' });
+    app.renderActivityRecord({ id: 'r2-wait', kind: 'turn-state', role: 'telemetry', text: 'State: waiting' });
+    app.renderActivityRecord({ id: 'r2-tool', kind: 'tool-result', role: 'tool', text: 'Result: round two marker' });
+    app.renderActivityRecord({ id: 'r-end', kind: 'turn-completed', role: 'telemetry', text: 'State: completed' });
+    await runCopycot(app);
+    assert.ok(writes[0].includes('round one marker'), 'copycot omitted an earlier round of the same exchange');
+    assert.ok(writes[0].includes('round two marker'), 'copycot omitted the final round of the same exchange');
+  }
+
+  // 3: terminal/failure exchange -> terminal line included
+  {
+    const writes = [];
+    const app = copycotHarness(async (text) => { writes.push(text); });
+    driveExchange(app, 'gamma', 'turn-terminal', 'State: failed · timeout');
+    await runCopycot(app);
+    assert.ok(writes[0].includes('gamma tool marker'), 'copycot omitted the failed exchange body');
+    assert.ok(writes[0].includes('State: failed'), 'copycot omitted the terminal state line');
+  }
+
+  // 4: repeated /copycot -> the prior "Copied..." status line is not itself copied
+  {
+    const writes = [];
+    const app = copycotHarness(async (text) => { writes.push(text); });
+    driveExchange(app, 'delta', 'turn-completed', 'State: completed');
+    await runCopycot(app);
+    await runCopycot(app);
+    assert.equal(writes.length, 2);
+    assert.equal(writes[0], writes[1], 'second copycot picked up the first copy-result line');
+    assert.equal(writes[1].includes('Copied last exchange'), false, 'copycot copied its own prior status line');
+  }
+
+  // 5: /clear resets both boundary fields
+  {
+    const app = copycotHarness(async () => {});
+    driveExchange(app, 'epsilon', 'turn-completed', 'State: completed');
+    app.renderActivityRecord({ id: 'zeta-wait', kind: 'turn-state', role: 'telemetry', text: 'State: waiting' });
+    app.clearDisplay();
+    const snapshot = app.getSnapshot();
+    assert.equal(snapshot.exchangeActivityStart, null, '/clear did not reset exchangeActivityStart');
+    assert.equal(snapshot.lastExchangeRange, null, '/clear did not reset lastExchangeRange');
+  }
+
+  // 6: no completed exchange -> explicit no-op result, clipboard never touched, range untouched
+  {
+    const writes = [];
+    const app = copycotHarness(async (text) => { writes.push(text); });
+    app.renderActivityRecord({ id: 'eta-wait', kind: 'turn-state', role: 'telemetry', text: 'State: waiting' });
+    const rangeBefore = app.getSnapshot().lastExchangeRange;
+    const snapshot = await runCopycot(app);
+    assert.equal(writes.length, 0, 'copycot invoked the clipboard writer with no completed exchange');
+    assert.equal(snapshot.copyResult.code, 'no_completed_exchange');
+    assert.deepEqual(snapshot.lastExchangeRange, rangeBefore, 'no-op copy mutated lastExchangeRange');
+  }
+
+  // 7: exchange A completed, exchange B in progress -> copies only A
+  {
+    const writes = [];
+    const app = copycotHarness(async (text) => { writes.push(text); });
+    driveExchange(app, 'theta', 'turn-completed', 'State: completed');
+    app.renderActivityRecord({ id: 'iota-wait', kind: 'turn-state', role: 'telemetry', text: 'State: waiting' });
+    app.renderActivityRecord({ id: 'iota-tool', kind: 'tool-result', role: 'tool', text: 'Result: iota tool marker' });
+    const snapshot = await runCopycot(app);
+    assert.ok(writes[0].includes('theta tool marker'), 'copycot omitted the completed exchange while a newer one was in progress');
+    assert.equal(writes[0].includes('iota tool marker'), false, 'copycot leaked the in-progress exchange');
+    assert.equal(snapshot.copyResult.code, 'exchange_copied');
+  }
+
+  // 8: thrown clipboard writer -> clipboard_write_failed, range untouched
+  {
+    const app = copycotHarness(async () => { throw new Error('injected clipboard failure'); });
+    driveExchange(app, 'kappa', 'turn-completed', 'State: completed');
+    const rangeBefore = app.getSnapshot().lastExchangeRange;
+    const snapshot = await runCopycot(app);
+    assert.equal(snapshot.copyResult.code, 'clipboard_write_failed');
+    assert.ok(snapshot.copyResult.message.includes('injected clipboard failure'));
+    assert.deepEqual(snapshot.lastExchangeRange, rangeBefore, 'failed copy mutated lastExchangeRange');
+  }
+}
+
 function comparableLayout(layout) {
   if (!layout.supported) {
     return {
@@ -1343,6 +1461,7 @@ async function runAutomatedMatrix() {
   assert.equal(new Set(pasteHashes).size, 1, 'paste trials were not byte-identical');
   assert.equal(pasteHashes[0], sha256(FIXED_PASTE_FIXTURE));
   testNonTtyGuard();
+  await testCopycotExchangeBoundary();
   const productionRenderer = await testProductionRendererContract(termkit);
 
   return {
