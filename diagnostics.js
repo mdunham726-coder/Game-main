@@ -1056,7 +1056,11 @@ const _SOURCE_ALLOWLIST = new Set([
   'SemanticNormalizer.js',                                                     // v1.88.78: TSL Stage 1
   'authoritygate.js',                                                          // v1.91.XX: Source access for MB
   'ObjectOperationResolver.js',                                                // v1.91.55: P1a resolver
-  'TlsObjectOperationExecutor.js'                                              // v1.91.64: P4 dry-run executor
+  'TlsObjectOperationExecutor.js',                                             // v1.91.64: P4 dry-run executor
+  'ObjectOperationBridge.js',                                                  // post-witness/pre-RC routing gate
+  'motherbrain-controller.js', 'motherbrain-tui.js',                           // v8.0.0: TUI/controller split
+  'scripts/motherbrain-tui-smoke.cjs', 'scripts/motherbrain-v4-smoke.cjs',     // v8.0.0: TUI/controller validation
+  'tests/motherbrain-controller.test.cjs'                                      // v8.0.0: controller test suite
 ]);
 // Allow any file in the Set OR any scenario JSON: tests/scenarios/<name>.json
 // OR any probe spec: tests/probes/<name>.probe.json
@@ -2336,12 +2340,16 @@ function registerRoutes(app, opts = {}) {
     if (!sessionId) {
       return res.status(400).json({ error: 'no_session', message: 'sessionId query param required.' });
     }
-    if (!_lastGameState) {
-      return res.status(404).json({ error: 'no_data', message: 'No turns played yet.' });
+    const session = opts.getSessionStates().get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'session_not_found', sessionId });
+    }
+    if (!session.gameState) {
+      return res.json({ no_data: true, reason: 'Session has no game state yet.', sessionId });
     }
     let context;
     try {
-      context = buildDebugContext(_lastGameState, level);
+      context = buildDebugContext(session.gameState, level);
     } catch (err) {
       return res.status(500).json({ error: 'context_build_failed', message: err.message });
     }
