@@ -34,18 +34,21 @@ function levenshtein(a,b){
 // Collapses surface plurals to canonical singular for comparison, enabling "fries"→"fry",
 // "cokes"→"coke", etc. Protects non-plural -ss endings (dress, glass, boss).
 // Lexical only — no semantic interpretation, packaging stripping, or quantity handling.
+// Exact-match irregular plural → singular (bounded English map). Exported for reuse by
+// other exact-match-only consumers (e.g. index.js's DROP successor rename) — the suffix
+// heuristics below are tuned for forgiving alias comparison and are NOT safe for display
+// text (e.g. "cases"→"cas", "species"→"specy"), so only this map is shared.
+const IRREGULAR_PLURALS = {
+  fries:'fry', cokes:'coke', loaves:'loaf', knives:'knife', berries:'berry',
+  tomatoes:'tomato', potatoes:'potato', men:'man', women:'woman', children:'child',
+  people:'person', teeth:'tooth', feet:'foot', mice:'mouse', oxen:'ox'
+};
 function _lexicalNormalizeToken(token) {
   let t = String(token || '').toLowerCase().trim();
   // Strip leading/trailing boundary punctuation only (preserves internal hyphens/apostrophes)
   t = t.replace(/^[,.!?;:'"]+|[,.!?;:'"]+$/g, '');
   if (!t) return t;
-  // Irregular plural → singular (bounded English map)
-  const IRREGULAR = {
-    fries:'fry', cokes:'coke', loaves:'loaf', knives:'knife', berries:'berry',
-    tomatoes:'tomato', potatoes:'potato', men:'man', women:'woman', children:'child',
-    people:'person', teeth:'tooth', feet:'foot', mice:'mouse', oxen:'ox'
-  };
-  if (IRREGULAR[t]) return IRREGULAR[t];
+  if (IRREGULAR_PLURALS[t]) return IRREGULAR_PLURALS[t];
   // -ies → -y (berries→berry, ladies→lady)
   if (t.length > 3 && t.endsWith('ies')) return t.slice(0, -3) + 'y';
   // -es where stem ends in s/x/z or sh/ch (boxes→box, bushes→bush)
@@ -1591,6 +1594,7 @@ module.exports = {
   merchantRegenOnTurn,
   aliasScore,
   levenshtein,
+  IRREGULAR_PLURALS,
   parseISO,
   toISO,
   sha256Hex,

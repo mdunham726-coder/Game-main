@@ -1183,6 +1183,59 @@ app.post('/narrate', async (req, res) => {
     };
   }
 
+  // v1.91.10x: #24 — DROP-only quantity-one successor rename. Generates candidate
+  // singular forms from bounded English rules, then only renames if the already-
+  // validated command's own target text confirms the candidate — never guesses from
+  // spelling alone (see IRREGULAR_PLURALS comment in ActionProcessor.js for why the
+  // suffix heuristics there are unsafe for display text unconfirmed).
+  function _dropSuccessorSingularCandidates(lastWord) {
+    const lower = String(lastWord || '').toLowerCase();
+    const candidates = new Set();
+    if (Actions.IRREGULAR_PLURALS[lower]) candidates.add(Actions.IRREGULAR_PLURALS[lower]);
+    if (lower.length > 3 && lower.endsWith('ies')) {
+      candidates.add(lower.slice(0, -3) + 'y'); // berries -> berry
+      candidates.add(lower.slice(0, -1));       // cookies -> cookie
+    }
+    if (
+      lower.length > 3 &&
+      (lower.endsWith('ches') || lower.endsWith('shes') || lower.endsWith('xes') || lower.endsWith('zes') || lower.endsWith('sses'))
+    ) {
+      candidates.add(lower.slice(0, -2)); // torches -> torch, glasses -> glass
+    }
+    if (lower.length > 3 && lower.endsWith('s') && !lower.endsWith('ss')) {
+      candidates.add(lower.slice(0, -1)); // traps -> trap
+    }
+    return candidates;
+  }
+
+  function _matchWordCase(original, lowerReplacement) {
+    const word = String(original || '');
+    if (word && word === word.toUpperCase() && word !== word.toLowerCase()) {
+      return lowerReplacement.toUpperCase();
+    }
+    if (word && word[0] === word[0].toUpperCase() && word[0] !== word[0].toLowerCase()) {
+      return lowerReplacement.charAt(0).toUpperCase() + lowerReplacement.slice(1);
+    }
+    return lowerReplacement;
+  }
+
+  function _singularizeDropSuccessorName(name, targetText) {
+    const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0 || !targetText) return { name, changed: false };
+    const lastIndex = words.length - 1;
+    const lastWord = words[lastIndex];
+    const candidates = _dropSuccessorSingularCandidates(lastWord);
+    if (candidates.size === 0) return { name, changed: false };
+
+    const targetWords = String(targetText).trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const targetLastWord = targetWords[targetWords.length - 1] || '';
+    if (!candidates.has(targetLastWord)) return { name, changed: false };
+
+    const newWords = words.slice();
+    newWords[lastIndex] = _matchWordCase(lastWord, targetLastWord);
+    return { name: newWords.join(' '), changed: true };
+  }
+
   function _captureCbTlsPartialStackDropReceipt(splitResult, predictedCall) {
     if (_cbTlsPartialStackDropReceiptState !== 'empty') {
       _cbTlsPartialStackDropReceiptState = 'rejected';
@@ -2779,6 +2832,15 @@ app.post('/narrate', async (req, res) => {
             };
             _tlsPartialStackArchive = gameState._tlsPartialStackResult;
             if (splitResult.ok) {
+              // #24 — quantity-one successor rename, independent of the CB receipt below.
+              if (splitResult.applied_quantity === 1) {
+                const _dropSuccessorRecord = gameState.objects?.[splitResult.successor_object_id];
+                if (_dropSuccessorRecord) {
+                  const _dropTargetText = mapped.player_intent?.normalized_target || mapped.player_intent?.target || null;
+                  const _dropSuccessorRename = _singularizeDropSuccessorName(_dropSuccessorRecord.name, _dropTargetText);
+                  if (_dropSuccessorRename.changed) _dropSuccessorRecord.name = _dropSuccessorRename.name;
+                }
+              }
               const _capturedPartialDropReceipt = _captureCbTlsPartialStackDropReceipt(
                 splitResult,
                 debug.tls_executor_dry_run.predicted_call
