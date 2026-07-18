@@ -2609,7 +2609,7 @@ async function runProductionInteractiveProof(options) {
   };
 
   tui = PRODUCTION_TUI.createMotherBrainTui({
-    version: '8.0.1',
+    version: '8.0.2',
     onSubmit: async (value) => {
       metrics.submissions += 1;
       if (value.includes('\n')) metrics.multiline_submissions += 1;
