@@ -1,5 +1,5 @@
 ﻿/**
- * motherbrain.js — Mother Brain v8.0.2
+ * motherbrain.js — Mother Brain v8.0.3
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -50,7 +50,8 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '8.0.2';
+const MB_VERSION = '8.0.3';
+// MB v8.0.3 (July 2026): Patch — fix partial_stack_comparison diagnostic tool: it silently accepted DROP turns despite being scoped to partial-stack TAKE only, producing a false "source_id_mismatch" verdict instead of recognizing the operation was out of scope. Added an operation_family guard in diagnostics.js's _buildPartialStackComparison that fails closed with the existing skipped_not_applicable verdict shape when tls_instruction_v1.operation_family !== 'take', before TAKE-shaped field extraction runs. Surfaced by watching Mother self-correct around the misleading verdict during a live regression test. No motherbrain.js prompt text changed by this fix. MB_VERSION 8.0.2 -> 8.0.3.
 // MB v8.0.2 (July 2026): Patch — fix stale AP/TLS object-operation mutation-ownership doctrine in SYSTEM_PROMPT (Pipeline A summary, P2 doctrine, ActionProcessor.js SOURCE FILE GUIDE entry). Ownership was described as a single blanket rule; corrected to the actual verb- and shape-specific model (whole-object TAKE/THROW/REMOVE stay AP-executed; partial-stack TAKE and DROP of both shapes are AP-quarantined and executed via a separate index.js pipeline). Motivated by a live reasoning trace showing Mother relied on the stale text and had to self-correct against runtime evidence. MB_VERSION 8.0.1 -> 8.0.2.
 // MB v8.0.1 (July 2026): Patch — add /copycot TUI-local command: copies the Activity pane's bounded plain-text projection (reasoning, round headers, tool calls/results, warnings) to the clipboard, exact to what is displayed and independent of scroll position or mouse selection. Handled entirely in motherbrain-tui.js as a _submitEditor() intercept before the controller round-trip; motherbrain-controller.js and COMMAND_REGISTRY are unchanged, so /copycot is TUI-native and not listed in /help. MB_VERSION 8.0.0 -> 8.0.1.
 // MB v8.0.0 (July 2026): Major — DeepSeek V4 and full-screen TUI rebuild. Mother Brain is now split into an import-safe composition root, terminal-independent controller, and Terminal Kit TUI, with exact V4 reasoning/tool replay, durable history and settings, context budgeting, telemetry, guarded sequential tool dispatch, and the existing 38-tool authority boundary preserved. MB_VERSION 7.7.3 -> 8.0.0.

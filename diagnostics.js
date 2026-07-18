@@ -1573,6 +1573,32 @@ function registerRoutes(app, opts = {}) {
 
     // State 4: both exist — proceed to comparison
 
+    // ── Operation-family guard: this comparison's contract is TAKE-only ─────
+    // v1/apActuals both existing does not mean this was a partial-stack TAKE --
+    // DROP goes through the same P2/P4/AP-quarantine pipeline. Fail closed with
+    // the same skipped_not_applicable shape used above rather than falling
+    // through into TAKE-shaped field extraction and manufacturing a mismatch.
+    if (v1?.operation_family !== 'take') {
+      const result = {
+        verdict: 'skipped_not_applicable',
+        reason: 'operation_family_' + (v1?.operation_family || 'unknown') + '_not_supported',
+        scope: 'single_action_partial_stack_take',
+        turn_number: turnObj?.turn_number ?? null,
+        evidence_basis: 'archived_turn',
+        note: 'This comparison is scoped to partial-stack TAKE only. Turn ' + (turnObj?.turn_number ?? '?') + ' was operation_family=' + (v1?.operation_family ?? 'unknown') + '.'
+      };
+      if (effectiveMode === 'compact') {
+        result.summary = 'Turn ' + (turnObj?.turn_number ?? '?') + ': Not applicable — this comparison only covers partial-stack TAKE, not ' + (v1?.operation_family ?? 'this operation') + '.';
+        return result;
+      }
+      result.details = [];
+      result.warnings = [];
+      result.comparison = [];
+      result.prediction = null;
+      result.actuals = null;
+      return result;
+    }
+
     // ── Schema version guard (only when v1 !== null, already confirmed) ─────
     if (v1.schema_version !== 'tls_ors_instruction_v1') {
       const result = {
