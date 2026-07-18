@@ -1,5 +1,5 @@
 ﻿/**
- * motherbrain.js — Mother Brain v8.0.5
+ * motherbrain.js — Mother Brain v8.0.6
  * Intelligent terminal coprocessor for the Dungeon Master game engine.
  * Monitors engine state via SSE, maintains a rolling conversation with DeepSeek,
  * and provides authoritative real-time analysis to the developer.
@@ -49,8 +49,13 @@ const _sseHttpAgent = new http.Agent({ keepAlive: true });
 // on the global HTTPS agent across multi-round tool chains.
 const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 
+// ── Default per-tool-result truncation limit, in characters. Shared default only —
+// any call site may assign a different local limit instead without affecting others. ──
+const DEFAULT_TOOL_RESULT_LIMIT = 64000;
+
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '8.0.5';
+const MB_VERSION = '8.0.6';
+// MB v8.0.6 (July 2026): Patch — double the shared tool-result truncation limit from 32000 to 64000 chars via a new DEFAULT_TOOL_RESULT_LIMIT constant, replacing scattered hardcoded literals across 10 runtime call sites (get_source_slice, search_source, harness_run_scenario, harness_read_result, read_probe_results success/catch paths, github_get_commit, github_get_file, github_compare, get_payload) and 3 SYSTEM_PROMPT prose mentions (now real ${DEFAULT_TOOL_RESULT_LIMIT} interpolation, verified to actually render "64000" rather than print literally). One historical v6.1.0 changelog mention of 32000 and the unrelated pre-existing 60000 runs.jsonl pagination override were deliberately left untouched. Both boundaries proven deterministically by mocking response size: a ~40000-char result now arrives intact (old 32K ceiling confirmed gone), a ~70000-char result truncates to exactly 64000 chars with the correct notice. Deliberately updated EXECUTOR_BODY_BASELINE_SHA256 in tests/motherbrain-controller.test.cjs after confirming via git diff the drift was exactly this change; MB_TOOLS_BASELINE_SHA256 was unaffected since none of these edits fall inside the MB_TOOLS array. MB_VERSION 8.0.5 -> 8.0.6.
 // MB v8.0.5 (July 2026): Patch — batch prompt-doctrine correction from the forensic audit (commit 0f20725) plus Mother/Bridge source-visibility expansion. Doctrine fixes: ObjectOperationResolver source guide (exports both TAKE and DROP resolvers, plus the deterministic resolveCurrentGround Ground helper, distinct from the two evidence resolvers), P1b scope (partial-stack TAKE and single-action DROP, not TAKE-only), P4 doctrine (three separate verdicts -- AP refusal, downstream execution, final ORS state -- scoped to only the operation families TlsObjectOperationExecutor actually accepts), diagnostics session-scope doctrine (explicit-session vs last-active-session vs global, replacing a false "no per-session querying" claim), capability boundaries (named tool classes instead of a blanket "cannot execute/write/command" prohibition contradicted elsewhere in the same prompt), SemanticParser internals (real signature, cache-key composition, model config), diagnostics auth doctrine (exact per-route disabled/unauthorized/forbidden codes, replacing a wrong "401 on missing key" claim). Also fixed a genuine diagnostics defect surfaced during this pass: GET /diagnostics/context required and echoed a sessionId but read _lastGameState regardless, so it could silently return a different session's state under the caller's session label -- now resolves the supplied sessionId through getSessionStates() and returns session_not_found when it does not exist. Source-visibility: added ObjectOperationBridge.js, motherbrain-controller.js, motherbrain-tui.js, scripts/motherbrain-tui-smoke.cjs, scripts/motherbrain-v4-smoke.cjs, and tests/motherbrain-controller.test.cjs to the backend source allowlist and both prompt-side allowed-file descriptions, with new SOURCE FILE GUIDE entries for the three runtime modules -- ObjectOperationBridge.js's entry is explicit that it only returns routing guidance (rc_skip_reason, narration_constraint); index.js is what actually skips Reality Check or injects the narrator constraint. MB_VERSION 8.0.4 -> 8.0.5.
 // MB v8.0.4 (July 2026): Patch — fix whole-object TAKE authority-vocabulary ambiguity in SYSTEM_PROMPT (Pipeline A summary). Whole-object TAKE is AP-executed but the same call also writes gameState._tlsExecutionResult with executed_by:'tls' and ap_bypass.take_bypassed:true -- the prior ownership doctrine didn't account for this overlap. Corrected to teach that both _apExecutedTransfers and _tlsExecutionResult populating for one event is expected, not a contradiction; and separated four previously conflated facts -- AP refusal, downstream execution, AP-side execution, and final mutation/state correctness -- each requiring its own evidence rather than inferring one from another. Surfaced by an independent forensic prompt-vs-source audit (MBP-005), refined across four review rounds. MB_VERSION 8.0.3 -> 8.0.4.
 // MB v8.0.3 (July 2026): Patch — fix partial_stack_comparison diagnostic tool: it silently accepted DROP turns despite being scoped to partial-stack TAKE only, producing a false "source_id_mismatch" verdict instead of recognizing the operation was out of scope. Added an operation_family guard in diagnostics.js's _buildPartialStackComparison that fails closed with the existing skipped_not_applicable verdict shape when tls_instruction_v1.operation_family !== 'take', before TAKE-shaped field extraction runs. Surfaced by watching Mother self-correct around the misleading verdict during a live regression test. No motherbrain.js prompt text changed by this fix. MB_VERSION 8.0.2 -> 8.0.3.
@@ -1547,11 +1552,11 @@ GITHUB TOOLS: Five read-only tools give you direct access to the Game-main GitHu
 
 github_list_commits -- List recent commits (SHA, short SHA, message, author, date). Use to find a specific SHA or verify the most recent push reached GitHub. Default count is 10; max 50.
 
-github_get_commit -- Fetch the full unified diff for a specific commit SHA. Use to verify a patch landed correctly or inspect what changed in a regression-introducing commit. Diffs are truncated at 32000 chars.
+github_get_commit -- Fetch the full unified diff for a specific commit SHA. Use to verify a patch landed correctly or inspect what changed in a regression-introducing commit. Diffs are truncated at ${DEFAULT_TOOL_RESULT_LIMIT} chars.
 
-github_get_file -- Read a file's content from the repository at HEAD or any ref (branch, tag, or SHA). Use to confirm a patched file on GitHub matches the expected state. Content is truncated at 32000 chars. Returns an error if the path resolves to a directory.
+github_get_file -- Read a file's content from the repository at HEAD or any ref (branch, tag, or SHA). Use to confirm a patched file on GitHub matches the expected state. Content is truncated at ${DEFAULT_TOOL_RESULT_LIMIT} chars. Returns an error if the path resolves to a directory.
 
-github_compare -- Return the unified diff between two refs (commit SHAs, branches, or tags). Use to see exactly what changed between two named versions. Diffs are truncated at 32000 chars.
+github_compare -- Return the unified diff between two refs (commit SHAs, branches, or tags). Use to see exactly what changed between two named versions. Diffs are truncated at ${DEFAULT_TOOL_RESULT_LIMIT} chars.
 
 github_search_code -- Search for a string or pattern across all files in the repository. Returns file paths, URLs, and text fragments for each match (up to 20 results). Uses GitHub code search syntax.
 
@@ -1788,8 +1793,8 @@ async function executeToolCall(name, args) {
       const diagKey = process.env.DIAGNOSTICS_KEY || '';
       const resp = await axios.get(url, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
       const raw  = JSON.stringify(resp.data);
-      if (raw.length > 32000) {
-        return raw.slice(0, 32000) + '\n[TRUNCATED — narrow the range with from= and to=]';
+      if (raw.length > DEFAULT_TOOL_RESULT_LIMIT) {
+        return raw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED — narrow the range with from= and to=]';
       }
       return raw;
     } else if (name === 'search_source') {
@@ -1799,8 +1804,8 @@ async function executeToolCall(name, args) {
       const searchKey  = process.env.DIAGNOSTICS_KEY || '';
       const searchResp = await axios.get(searchUrl, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': searchKey } });
       const searchRaw  = JSON.stringify(searchResp.data);
-      if (searchRaw.length > 32000) {
-        return searchRaw.slice(0, 32000) + '\n[TRUNCATED — scope to a specific file with file= to reduce results]';
+      if (searchRaw.length > DEFAULT_TOOL_RESULT_LIMIT) {
+        return searchRaw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED — scope to a specific file with file= to reduce results]';
       }
       return searchRaw;
     } else if (name === 'query_objects') {
@@ -1852,14 +1857,14 @@ async function executeToolCall(name, args) {
       if (args.runs !== undefined) body.runs = args.runs;
       const resp = await axios.post(`http://${HOST}:${PORT}/harness/run`, body, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey, 'content-type': 'application/json' } });
       const raw = JSON.stringify(resp.data);
-      if (raw.length > 32000) return raw.slice(0, 32000) + '\n[TRUNCATED]';
+      if (raw.length > DEFAULT_TOOL_RESULT_LIMIT) return raw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED]';
       return raw;
     } else if (name === 'harness_read_result') {
       if (!_harnessAuthorized) return JSON.stringify({ error: 'Harness not connected. Ask the developer to connect first (harness_connect).' });
       const diagKey = process.env.DIAGNOSTICS_KEY || '';
       const resp = await axios.get(`http://${HOST}:${PORT}/harness/result/last`, { timeout: 8000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
       const raw = JSON.stringify(resp.data);
-      if (raw.length > 32000) return raw.slice(0, 32000) + '\n[TRUNCATED]';
+      if (raw.length > DEFAULT_TOOL_RESULT_LIMIT) return raw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED]';
       return raw;
     } else if (name === 'run_validation') {
       const _taskMap = {
@@ -2206,10 +2211,10 @@ async function executeToolCall(name, args) {
       try {
         const _parsed = JSON.parse(_content);
         const _raw = JSON.stringify(_parsed, null, 2);
-        if (_raw.length > 32000) return _raw.slice(0, 32000) + '\n[TRUNCATED]';
+        if (_raw.length > DEFAULT_TOOL_RESULT_LIMIT) return _raw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED]';
         return _raw;
       } catch {
-        return _content.slice(0, 32000);
+        return _content.slice(0, DEFAULT_TOOL_RESULT_LIMIT);
       }
     } else if (name === 'write_file') {
       const _fs   = require('fs');
@@ -2422,7 +2427,7 @@ async function executeToolCall(name, args) {
           headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github.v3.diff', 'User-Agent': 'MotherBrain/6.1.0' }
         });
         const _ghRaw = typeof _ghResp.data === 'string' ? _ghResp.data : JSON.stringify(_ghResp.data);
-        return _ghRaw.length > 32000 ? _ghRaw.slice(0, 32000) + '\n[TRUNCATED — diff exceeds 32000 chars]' : _ghRaw;
+        return _ghRaw.length > DEFAULT_TOOL_RESULT_LIMIT ? _ghRaw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + `\n[TRUNCATED — diff exceeds ${DEFAULT_TOOL_RESULT_LIMIT} chars]` : _ghRaw;
       } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
     } else if (name === 'github_get_file') {
       if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
@@ -2437,7 +2442,7 @@ async function executeToolCall(name, args) {
         if (Array.isArray(_ghResp.data)) return JSON.stringify({ error: 'github_path_is_directory', hint: 'Provide a file path, not a directory.' });
         const _ghContent = Buffer.from(_ghResp.data.content, 'base64').toString('utf8');
         const _ghResult  = `// ${args.path} @ ${_ghRef} (sha: ${_ghResp.data.sha})\n${_ghContent}`;
-        return _ghResult.length > 32000 ? _ghResult.slice(0, 32000) + '\n[TRUNCATED]' : _ghResult;
+        return _ghResult.length > DEFAULT_TOOL_RESULT_LIMIT ? _ghResult.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED]' : _ghResult;
       } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
     } else if (name === 'github_compare') {
       if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
@@ -2448,7 +2453,7 @@ async function executeToolCall(name, args) {
           headers: { 'Authorization': `token ${GITHUB_PAT}`, 'Accept': 'application/vnd.github.v3.diff', 'User-Agent': 'MotherBrain/6.1.0' }
         });
         const _ghRaw = typeof _ghResp.data === 'string' ? _ghResp.data : JSON.stringify(_ghResp.data);
-        return _ghRaw.length > 32000 ? _ghRaw.slice(0, 32000) + '\n[TRUNCATED — diff exceeds 32000 chars]' : _ghRaw;
+        return _ghRaw.length > DEFAULT_TOOL_RESULT_LIMIT ? _ghRaw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + `\n[TRUNCATED — diff exceeds ${DEFAULT_TOOL_RESULT_LIMIT} chars]` : _ghRaw;
       } catch (_ghErr) { return JSON.stringify(_githubApiError(_ghErr)); }
     } else if (name === 'github_search_code') {
       if (!GITHUB_PAT) return JSON.stringify({ error: 'github_pat_not_configured', hint: 'Add GITHUB_PAT to .env in the Game-main directory.' });
@@ -2504,8 +2509,8 @@ async function executeToolCall(name, args) {
     }
     const resp = await axios.get(url, { timeout: 10000, httpAgent: _toolHttpAgent });
     const raw  = JSON.stringify(resp.data);
-    if (raw.length > 32000) {
-      return raw.slice(0, 32000) + '\n[TRUNCATED — response exceeds 32000 chars. Use stage= and part= to narrow the query.]';
+    if (raw.length > DEFAULT_TOOL_RESULT_LIMIT) {
+      return raw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + `\n[TRUNCATED — response exceeds ${DEFAULT_TOOL_RESULT_LIMIT} chars. Use stage= and part= to narrow the query.]`;
     }
     return raw;
   } catch (err) {
