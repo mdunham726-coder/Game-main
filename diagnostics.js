@@ -2090,7 +2090,8 @@ function registerRoutes(app, opts = {}) {
       const rec = { id: o.id, name: o.name, description: o.description, status: o.status || 'active',
                     created_turn: o.created_turn, current_container_type: o.current_container_type,
                     current_container_id: o.current_container_id,
-                    associated_actor_id: o.associated_actor_id ?? null };  // v1.88.66
+                    associated_actor_id: o.associated_actor_id ?? null,  // v1.88.66
+                    quantity: o.quantity ?? null, unit: o.unit ?? null };  // v1.91.99: expose real quantity/unit; null means the object's creation path doesn't carry these fields (see #28), not that quantity is 1
       if (includeEvents) rec.events = o.events || [];
       return rec;
     });
