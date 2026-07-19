@@ -807,9 +807,19 @@ function _describeTrackedObjects(gameState) {
   // v1.88.45: use player.position (has site-local x/y at depth 2) not world.position (lx/ly only)
   const pos     = gameState.player?.position || w.position;
   const loc     = w.active_local_space || w.active_site;
+  // v1.92.5: mutually-exclusive current-layer container, mirroring index.js's #15-validated
+  // _groundDepth pattern — grid only at L0, site floor only at L1, localspace only at L2.
+  const depth   = w.active_local_space ? 3 : w.active_site ? 2 : 1;
 
   const validContainers = new Set(['player']);
-  if (pos) validContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
+  if (depth === 1 && pos) validContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
+  if (depth === 3 && loc?.local_space_id) validContainers.add(loc.local_space_id);
+  if (depth === 2) {
+    const siteId = w.active_site?.site_id || (w.active_site?.id ? w.active_site.id.replace(/\/l2$/, '') : null);
+    if (siteId != null && typeof pos?.x === 'number' && typeof pos?.y === 'number') {
+      validContainers.add(`${siteId}:${pos.x},${pos.y}`);
+    }
+  }
   // v1.88.8: L0 fallback — include world._visible_npcs NPC IDs as valid containers
   const visible = loc ? (loc._visible_npcs || []) : (w._visible_npcs || []);
   for (const npc of visible) { if (npc.id) validContainers.add(npc.id); }
@@ -1466,9 +1476,13 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     if (!gameState.world.mood_history) gameState.world.mood_history = [];
     // v1.84.89: tag each snapshot with the current location so stale cross-location entries
     // can be filtered out of the MOOD BLOCK when the player changes scenes.
+    // v1.92.5: L0 now gets a real grid-cell key instead of null — null previously collided
+    // with the legacy-save "absent field" sentinel, letting every L0 snapshot pass every filter.
     const _moodLocKey = gameState.world.active_local_space?.local_space_id
       || gameState.world.active_site?.site_id
-      || null;
+      || (gameState.world.position
+            ? `LOC:${gameState.world.position.mx},${gameState.world.position.my}:${gameState.world.position.lx},${gameState.world.position.ly}`
+            : null);
     gameState.world.mood_history.push({ turn, location_key: _moodLocKey, ...moodSnapshot });
     // Hard cap
     if (gameState.world.mood_history.length > MOOD_HISTORY_CAP) {
@@ -1588,13 +1602,18 @@ function assembleContinuityPacket(gameState, turnContext) {
 
   const moodHistory = w.mood_history || [];
   // v1.84.89: filter mood history to current location before slicing.
-  // Prevents stale cross-location snapshots (e.g. "exiting into parking lot") from
-  // bleeding into the narrator when the player re-enters a localspace or site.
-  // Snapshots with no location_key (old saves) pass through unconditionally.
-  const _moodLocKey = w.active_local_space?.local_space_id || w.active_site?.site_id || null;
-  const _moodFiltered = _moodLocKey
-    ? moodHistory.filter(m => m.location_key == null || m.location_key === _moodLocKey)
-    : moodHistory;
+  // v1.92.5: filtering now applies unconditionally, including at L0 — previously L0 applied
+  // no filter at all, letting every other location's mood history bleed in when the player
+  // returned to L0. Snapshots with a genuinely absent location_key (pre-fix saves) pass through
+  // as a narrow legacy exception; snapshots with an explicit null location_key (written by the
+  // prior version's L0 tagging) do not match and are correctly excluded — they carry no provable
+  // cell identity.
+  const _moodLocKey = w.active_local_space?.local_space_id
+    || w.active_site?.site_id
+    || (w.position
+          ? `LOC:${w.position.mx},${w.position.my}:${w.position.lx},${w.position.ly}`
+          : null);
+  const _moodFiltered = moodHistory.filter(m => m.location_key === undefined || m.location_key === _moodLocKey);
   const recent = _moodFiltered.slice(-MOOD_WINDOW);
 
   if (!recent.length) {
@@ -1628,7 +1647,10 @@ function assembleContinuityPacket(gameState, turnContext) {
   const _pos = w.position;
   const _currentCellRef = _pos ? `cell(${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly})` : null;
   const _ctxIsMoved = _ctxLoc && _currentCellRef && _ctxLoc.locationRef !== _currentCellRef;
-  if (_ctxLoc && !_ctxIsMoved && Array.isArray(_ctxLoc.features) && _ctxLoc.features.length > 0) {
+  // v1.92.5: enforce the "L0 only" doctrine stated above — a same-cell layer transition
+  // (entering a site/localspace without world.position changing) must not inject prior-L0 context.
+  const _ctxAtL0 = !w.active_local_space && !w.active_site;
+  if (_ctxLoc && !_ctxIsMoved && _ctxAtL0 && Array.isArray(_ctxLoc.features) && _ctxLoc.features.length > 0) {
     lines.push('');
     lines.push('CONTEXT — RECENT LOCATION');
     lines.push('─────────────────────────────────────────────');

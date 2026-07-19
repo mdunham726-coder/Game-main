@@ -5341,14 +5341,13 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     const _objectConditionsBlock = (() => {
       const _objs = gameState.objects || {};
       const _w    = gameState.world || {};
-      const _pos  = _w.position;
       const _loc  = _w.active_local_space || _w.active_site;
-      // Collect in-scene container IDs
+      // v1.92.5: reuse #15's already-validated depth-gated keys instead of an independent,
+      // depth-unaware container set — grid/site/localspace are mutually exclusive by current layer.
       const _sceneCids = new Set(['player']);
-      if (_pos) _sceneCids.add(`LOC:${_pos.mx},${_pos.my}:${_pos.lx},${_pos.ly}`);
-      // v1.85.81: include active localspace or site floor
-      if (_loc && _loc.local_space_id) _sceneCids.add(_loc.local_space_id);
-      else if (_loc && _loc.site_id)   _sceneCids.add(_loc.site_id);
+      if (_groundDepth === 1 && _gridCellKey) _sceneCids.add(_gridCellKey);
+      if (_siteFloorKey !== null) _sceneCids.add(_siteFloorKey);
+      if (_localspaceKey !== null) _sceneCids.add(_localspaceKey);
       const _visNpcs = (_loc && _loc._visible_npcs) || [];
       for (const _npc of _visNpcs) { if (_npc.id) _sceneCids.add(_npc.id); }
       // Build lines for objects with conditions
