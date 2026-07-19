@@ -392,6 +392,48 @@ function _candidateIdentitySignature(candidate) {
   ]);
 }
 
+// TAKE's "unspecified" case deliberately does NOT mirror DROP's default-to-1 —
+// a bare "take X" against a stack means "resolve intent", not "assume one".
+// "article" ("take a coin") always means exactly one regardless of stack size —
+// distinct from "unspecified", where the correct quantity depends on how many
+// exist. When ORS ground truth shows only one unit available, "unspecified"
+// resolves to it directly (no model judgment needed — there's nothing else it
+// could mean); for a genuine multi-item stack it falls back to the resolver's
+// own model-resolved quantity, bounds-checked against ORS truth rather than
+// trusted blindly. Explicit quantities still come from the parser, unchanged,
+// including over-availability values — requested_vs_available classifies those.
+function _deriveTakeEffectiveQuantity(actions, modelJson, availableQuantity) {
+  const requested = actions?.requested_quantity ?? null;
+  const quantityMode = actions?.quantity_mode ?? null;
+
+  if (quantityMode === "exact") {
+    if (Number.isInteger(requested) && requested > 0) {
+      return { ok: true, quantity: requested, basis: "parser_explicit", reason: null };
+    }
+    return { ok: false, quantity: null, basis: null, reason: "invalid_quantity" };
+  }
+  if (quantityMode === "article") {
+    if (requested !== null && requested !== 1) {
+      return { ok: false, quantity: null, basis: null, reason: "contradictory_quantity_metadata" };
+    }
+    return { ok: true, quantity: 1, basis: "take_article_single", reason: null };
+  }
+  if (quantityMode === "unspecified") {
+    if (requested !== null) {
+      return { ok: false, quantity: null, basis: null, reason: "contradictory_quantity_metadata" };
+    }
+    if (availableQuantity === 1) {
+      return { ok: true, quantity: 1, basis: "take_only_available_unit", reason: null };
+    }
+    const modelQty = modelJson?.requested_quantity;
+    if (Number.isInteger(modelQty) && modelQty > 0 && modelQty <= availableQuantity) {
+      return { ok: true, quantity: modelQty, basis: "take_model_resolved", reason: null };
+    }
+    return { ok: false, quantity: null, basis: null, reason: "invalid_quantity" };
+  }
+  return { ok: false, quantity: null, basis: null, reason: "unsupported_quantity_mode" };
+}
+
 function _deriveDropEffectiveQuantity(actions, availableQuantity) {
   const requested = actions?.requested_quantity ?? null;
   const quantityMode = actions?.quantity_mode ?? null;
@@ -724,6 +766,26 @@ function _validateModelResponse(modelJson, candidates, state, actions, policy = 
         severity: "blocking",
         field: "requested_quantity",
         message: "DROP quantity metadata cannot be mapped to an approved effective quantity.",
+        candidate_ids: sourceId ? [sourceId] : null
+      });
+      return result;
+    }
+    result.evidencePatch.requested_vs_available = effectiveQuantity.quantity < orsQuantity
+      ? "partial"
+      : effectiveQuantity.quantity === orsQuantity ? "exact_stack" : "over_stack";
+    result.evidencePatch.is_stack = orsQuantity > 1;
+  } else if (policy.operationFamily === "take") {
+    const effectiveQuantity = _deriveTakeEffectiveQuantity(actions, modelJson, orsQuantity);
+    result.evidencePatch.effective_requested_quantity = effectiveQuantity.quantity;
+    result.evidencePatch.effective_quantity_basis = effectiveQuantity.basis;
+    if (!effectiveQuantity.ok) {
+      result.valid = false;
+      result.evidencePatch.fail_closed_reason = effectiveQuantity.reason;
+      result.warnings.push({
+        code: effectiveQuantity.reason,
+        severity: "blocking",
+        field: "requested_quantity",
+        message: "TAKE quantity metadata cannot be mapped to an approved effective quantity.",
         candidate_ids: sourceId ? [sourceId] : null
       });
       return result;

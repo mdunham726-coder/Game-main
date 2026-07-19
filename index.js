@@ -1236,6 +1236,35 @@ app.post('/narrate', async (req, res) => {
     return { name: newWords.join(' '), changed: true };
   }
 
+  // Pure reroute decision for a TAKE misclassified as partial-stack whose resolver
+  // evidence proves the effective quantity is the entire available stack. No closure
+  // dependencies — takes the intent, resolver evidence, and live gameState directly,
+  // and returns a boolean only. The caller owns the actual mutation (clearing
+  // selection_mode / nulling the evidence) at the existing live call site; this
+  // function performs no mutation itself.
+  function _shouldNormalizeExactStackTake(playerIntent, resolverEvidence, gameState) {
+    if (
+      playerIntent?.operation_family !== 'take' ||
+      playerIntent?.selection_mode !== 'partial_from_stack' ||
+      resolverEvidence?.resolution_basis !== 'model_selected' ||
+      resolverEvidence?.fail_closed_reason != null ||
+      resolverEvidence?.requested_vs_available !== 'exact_stack'
+    ) {
+      return false;
+    }
+    const source = gameState.objects?.[resolverEvidence.source_object_id];
+    return (
+      source?.status === 'active' &&
+      Number.isInteger(source.quantity) &&
+      source.quantity === resolverEvidence.source_quantity_before &&
+      source.current_container_type === resolverEvidence.source_container_type &&
+      source.current_container_id === resolverEvidence.source_container_id &&
+      Number.isInteger(resolverEvidence.effective_requested_quantity) &&
+      resolverEvidence.effective_requested_quantity > 0 &&
+      resolverEvidence.effective_requested_quantity === resolverEvidence.source_quantity_before
+    );
+  }
+
   function _captureCbTlsPartialStackDropReceipt(splitResult, predictedCall) {
     if (_cbTlsPartialStackDropReceiptState !== 'empty') {
       _cbTlsPartialStackDropReceiptState = 'rejected';
@@ -2726,6 +2755,18 @@ app.post('/narrate', async (req, res) => {
               objectOperationResolverEvidence = null;
               objectOperationResolverError = { error_type: 'unexpected_exception', message: _rErr?.message || 'unknown' };
             }
+          }
+
+          // P1c — normalize a mistaken partial-stack TAKE classification back to whole-object
+          // before P2 assembly, when ORS-backed resolver evidence proves the resolved quantity
+          // is the entire available stack (an ordinary object, not a real stack selection). AP's
+          // existing whole-object TAKE lane already handles this correctly (transferObjectDirect);
+          // this only stops a single unambiguous object from being misrouted into the partial-
+          // stack path by an incorrect parser classification. Genuine partial requests
+          // (effective_requested_quantity < source_quantity_before) are left untouched.
+          if (_shouldNormalizeExactStackTake(mapped.player_intent, objectOperationResolverEvidence, gameState)) {
+            delete mapped.player_intent.selection_mode;
+            objectOperationResolverEvidence = null;
           }
 
           // v1.91.62: P2 — pre-AP TLS v1 instruction assembly (observe-only, diagnostic only)
