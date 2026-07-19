@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-05-16T12:10:29.408Z",
-  "scenariosPassed": 0,
-  "scenariosFailed": 1,
+  "timestamp": "2026-07-18T23:05:55.376Z",
+  "scenariosPassed": 1,
+  "scenariosFailed": 0,
   "scenariosSkipped": 0,
   "turnsPassed": 1,
-  "turnsFailed": 1,
+  "turnsFailed": 0,
   "results": [
     {
-      "name": "condition_dedup_v2",
+      "name": "smoke_test_no_error",
       "skipped": false,
       "passed": 1,
-      "failed": 1,
-      "total": 2,
-      "sessionId": "1778933396802-7ewmdkazn"
+      "failed": 0,
+      "total": 1,
+      "sessionId": "1784415935056-7v8m2a3dv"
     }
   ]
 }
