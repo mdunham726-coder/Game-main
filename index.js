@@ -1110,6 +1110,7 @@ app.post('/narrate', async (req, res) => {
   let objectOperationResolverError = null;
   let _authorityGateWholeDropObjectId = null;
   let _tlsPartialDescriptionTarget = null;
+  let _tlsPartialStackDropDescriptionTarget = null;
   let _tlsPartialStackArchive = null;
   let _cbTlsPartialStackTakeReceipt = null;
   let _cbTlsPartialStackTakeReceiptState = 'empty';
@@ -1263,6 +1264,76 @@ app.post('/narrate', async (req, res) => {
       resolverEvidence.effective_requested_quantity > 0 &&
       resolverEvidence.effective_requested_quantity === resolverEvidence.source_quantity_before
     );
+  }
+
+  // #17 — surviving-source description normalization after a partial split.
+  // _executePartialSplit()'s source-side mutation is a deliberate hard constraint
+  // (quantity + events only) — the description is never touched there, so a
+  // description written at creation time ("five dusty potatoes...") goes stale
+  // once quantity changes. This repairs it, but only after every successor
+  // clear/fill/copied-parent-rejection step has already run using the ORIGINAL
+  // source description: DROP's copied-parent check reads the source description
+  // live at comparison time, so normalizing before that runs would silently
+  // defeat it. Callers capture a target snapshot at split-success time and this
+  // is invoked once, after CB's phase-B reconciliation fully completes.
+  const _PARTIAL_SPLIT_COUNT_WORDS = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+    seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+  };
+  const _PARTIAL_SPLIT_PHRASE_BOUNDARY_WORDS = new Set([
+    'a', 'an', 'the', 'of', 'in', 'on', 'at', 'by', 'to', 'with', 'for', 'from',
+    'into', 'onto', 'over', 'under', 'near', 'beside', 'between', 'among',
+    'through', 'during', 'before', 'after', 'since', 'until', 'and', 'or', 'but',
+  ]);
+
+  function _leadingCountModifiesSourceNoun(description, sourceQuantityBefore, sourceName, sourceUnit) {
+    const words = String(description || '').trim().split(/\s+/);
+    if (words.length < 2) return false;
+    const first = words[0].toLowerCase().replace(/[.,;:!?]+$/, '');
+    const leadingValue = /^\d+$/.test(first) ? Number(first) : _PARTIAL_SPLIT_COUNT_WORDS[first];
+    if (leadingValue === undefined || leadingValue !== sourceQuantityBefore) return false;
+
+    const headNounTokens = new Set(
+      [sourceName, sourceUnit].filter(Boolean)
+        .map((phrase) => String(phrase).trim().split(/\s+/).pop().toLowerCase())
+        .filter(Boolean)
+    );
+    if (headNounTokens.size === 0) return false;
+
+    const MAX_LOOKAHEAD = 4;
+    for (let i = 1; i <= MAX_LOOKAHEAD && i < words.length; i++) {
+      const raw = words[i];
+      const token = raw.replace(/[.,;:!?]+$/, '').toLowerCase();
+      if (headNounTokens.has(token)) return true;
+      if (/[,;:]$/.test(raw)) return false; // clause boundary
+      if (_PARTIAL_SPLIT_PHRASE_BOUNDARY_WORDS.has(token)) return false; // article/preposition/conjunction
+      if (/^\d+$/.test(token) || _PARTIAL_SPLIT_COUNT_WORDS[token] !== undefined) return false; // a second number
+    }
+    return false;
+  }
+
+  function _stripLeadingCountToken(description) {
+    return String(description).replace(/^(\s*)\S+(\s+)/, '$1');
+  }
+
+  function _normalizePartialSplitSourceDescription(gameState, target) {
+    if (!target) return { applied: false, reason: 'no_target' };
+    const source = gameState.objects?.[target.source_object_id];
+    if (!source || source.status !== 'active') return { applied: false, reason: 'source_not_active' };
+    if (source.quantity !== target.source_quantity_after) return { applied: false, reason: 'quantity_drifted' };
+    if (
+      source.current_container_type !== target.source_container_type ||
+      source.current_container_id !== target.source_container_id
+    ) return { applied: false, reason: 'container_drifted' };
+    if ((source.description || '') !== target.original_description) return { applied: false, reason: 'description_drifted' };
+
+    if (!_leadingCountModifiesSourceNoun(
+      target.original_description, target.source_quantity_before, target.source_name, target.source_unit
+    )) return { applied: false, reason: 'no_leading_count_match' };
+
+    const stripped = _stripLeadingCountToken(target.original_description);
+    return ObjectHelper.setObjectDescriptionDirect(gameState, target.source_object_id, stripped);
   }
 
   function _captureCbTlsPartialStackDropReceipt(splitResult, predictedCall) {
@@ -2873,6 +2944,24 @@ app.post('/narrate', async (req, res) => {
             };
             _tlsPartialStackArchive = gameState._tlsPartialStackResult;
             if (splitResult.ok) {
+              // #17 — capture the surviving source's description-normalization target
+              // before anything else in this block runs. Nothing here mutates the
+              // source's description (only the successor's, below), so ordering
+              // relative to the rename/receipt steps doesn't matter — this just needs
+              // to read the source record before the normalizer fires later.
+              const _dropDescriptionSource = gameState.objects?.[splitResult.source_object_id];
+              if (_dropDescriptionSource) {
+                _tlsPartialStackDropDescriptionTarget = {
+                  source_object_id: splitResult.source_object_id,
+                  original_description: _dropDescriptionSource.description || '',
+                  source_quantity_before: splitResult.source_quantity_before,
+                  source_quantity_after: splitResult.source_quantity_after,
+                  source_container_type: _dropDescriptionSource.current_container_type,
+                  source_container_id: _dropDescriptionSource.current_container_id,
+                  source_name: _dropDescriptionSource.name,
+                  source_unit: _dropDescriptionSource.unit
+                };
+              }
               // #24 — quantity-one successor rename, independent of the CB receipt below.
               if (splitResult.applied_quantity === 1) {
                 const _dropSuccessorRecord = gameState.objects?.[splitResult.successor_object_id];
@@ -2943,7 +3032,14 @@ app.post('/narrate', async (req, res) => {
                     extracted_quantity: splitResult.applied_quantity,
                     destination_container_type: splitResult.dest_container_type,
                     destination_container_id: splitResult.dest_container_id,
-                    parent_description: _parentDescription
+                    parent_description: _parentDescription,
+                    original_description: _parentDescription,
+                    source_quantity_before: splitResult.source_quantity_before,
+                    source_quantity_after: splitResult.source_quantity_after,
+                    source_container_type: _tlsPartialSource.current_container_type,
+                    source_container_id: _tlsPartialSource.current_container_id,
+                    source_name: _tlsPartialSource.name,
+                    source_unit: _tlsPartialSource.unit
                   };
                 }
               }
@@ -3187,7 +3283,14 @@ app.post('/narrate', async (req, res) => {
                       extracted_quantity: splitResult.applied_quantity,
                       destination_container_type: splitResult.dest_container_type,
                       destination_container_id: splitResult.dest_container_id,
-                      parent_description: _parentDescription
+                      parent_description: _parentDescription,
+                      original_description: _parentDescription,
+                      source_quantity_before: splitResult.source_quantity_before,
+                      source_quantity_after: splitResult.source_quantity_after,
+                      source_container_type: _tlsPartialSource.current_container_type,
+                      source_container_id: _tlsPartialSource.current_container_id,
+                      source_name: _tlsPartialSource.name,
+                      source_unit: _tlsPartialSource.unit
                     };
                   }
                 }
@@ -5748,6 +5851,13 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           }
         }
       }
+      // #17 — surviving-source description normalization. Runs only now, after every
+      // successor clear/fill and copied-parent-rejection step above has already used
+      // the original (pre-normalization) source description — normalizing any earlier
+      // would let a stale CB-echoed description slip past DROP's live comparison at
+      // line ~5713 above.
+      _normalizePartialSplitSourceDescription(gameState, _tlsPartialDescriptionTarget);
+      _normalizePartialSplitSourceDescription(gameState, _tlsPartialStackDropDescriptionTarget);
       // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
       if (!_continuityExtractionSuccess && turnNumber === 1 && gameState.player?.birth_record) {
         gameState.player.birth_record._extraction_failed = true;
