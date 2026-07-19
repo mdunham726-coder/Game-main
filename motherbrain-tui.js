@@ -831,7 +831,11 @@ function copyToWindowsClipboard(value) {
       if (code === 0) resolve();
       else reject(new Error(errorText.trim() || `clip.exe exited ${code}`));
     });
-    child.stdin.end(String(value), 'utf8');
+    // Windows clipboard's native text format (CF_UNICODETEXT) is UTF-16LE, and
+    // clip.exe decodes piped stdin using the console's OEM code page rather than
+    // UTF-8 — feeding it UTF-8 bytes corrupts any multi-byte character. UTF-16LE
+    // round-trips exactly, verified empirically, no BOM needed.
+    child.stdin.end(String(value), 'utf16le');
   });
 }
 
