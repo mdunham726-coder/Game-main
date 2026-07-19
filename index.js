@@ -4812,7 +4812,9 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       semanticOperationFamily: inputObj?.player_intent?.operation_family ?? null,
       semanticPathSingleAction: debug.parser === 'semantic' && debug.queue_length === 1,
       instructionEnvelope:   debug.tls_instruction_v1 ?? null,
-      liveExecutionResult:   gameState._tlsExecutionResult ?? null
+      liveExecutionResult:   gameState._tlsExecutionResult ?? null,
+      resolverEvidence:      objectOperationResolverEvidence ?? null,
+      apExecutedTransfers:   gameState._apExecutedTransfers ?? null
     });
     const _dropDryRunSealActive = !!(debug.object_operation_bridge?.active === true &&
       debug.object_operation_bridge?.drop_dry_run_seal === true && debug.parser === 'semantic' && debug.queue_length === 1);

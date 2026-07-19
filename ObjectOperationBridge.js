@@ -8,8 +8,10 @@
 // execute downstream effects — index.js owns setting _rcSkippedReason,
 // injecting narrator constraints, and emitting diagnostics.
 //
-// Activated cases: partial-stack TAKE over-stack, plus supported single-action
-// semantic DROP turns whose AP refusal and lack of live execution are confirmed.
+// Activated cases: partial-stack TAKE over-stack; single-action semantic TAKE
+// with no matching resolver candidate (Phase-A P4 envelope, no-mutation proven
+// via absent AP/TLS execution evidence); plus supported single-action semantic
+// DROP turns whose AP refusal and lack of live execution are confirmed.
 // All other fail-closed reasons pass through inactive.
 //
 // Read-only guarantee: NEVER mutates gameState, debug, passed objects,
@@ -27,6 +29,8 @@
  * @param {boolean} params.semanticPathSingleAction    — true only for the supported semantic single-action path
  * @param {Object|null} params.instructionEnvelope     — current TLS v1 instruction, when produced
  * @param {Object|null} params.liveExecutionResult     — current-turn live execution receipt, when produced
+ * @param {Object|null} params.resolverEvidence        — current-turn resolver_evidence_v1, when produced (optional, no-candidates TAKE only)
+ * @param {Array|null}  params.apExecutedTransfers     — gameState._apExecutedTransfers, when produced (optional, no-candidates TAKE only)
  * @returns {Object} receipt — { active, rc_skip_reason, narration_constraint, drop_dry_run_seal, diagnostics }
  */
 function evaluateOperation(params = {}) {
@@ -38,7 +42,9 @@ function evaluateOperation(params = {}) {
     semanticOperationFamily,
     semanticPathSingleAction,
     instructionEnvelope,
-    liveExecutionResult
+    liveExecutionResult,
+    resolverEvidence,
+    apExecutedTransfers
   } = params;
 
   // ── Null/missing guard ──────────────────────────────────────────────
@@ -176,6 +182,61 @@ function evaluateOperation(params = {}) {
         ap_quarantine_confirmed: false,
         p5a2_absent_confirmed: false,
         constraint_supplied: false
+      }
+    };
+  }
+
+  // ── Supported case: single-action TAKE with no matching resolver candidate ──
+  // These are Phase-A P4 failures (TlsObjectOperationExecutor validates the
+  // instruction's own shape before touching ORS), so P4 leaves outcome:null —
+  // they never reach the generic outcome==='fail_closed' gate below. A real
+  // object can still exist while P4 reports missing_source/missing_quantity/
+  // invalid_quantity for unrelated reasons, so P4's mechanical reason alone is
+  // not sufficient evidence; the resolver's own no_candidates result is what
+  // proves nothing existed to take. No-candidate TAKEs bypass AP's quarantine
+  // receipt entirely (AP only writes it when resolveCellItemByName finds a
+  // match first) and fall into AP's environmental-gather branch instead, so
+  // apActuals is deliberately not required here — absence of AP/TLS execution
+  // evidence is proven directly via apExecutedTransfers/tlsPartialStackResult/
+  // liveExecutionResult instead. dryRunEnvelope.operation_family is checked
+  // directly (not just the semantic layer) so a malformed envelope cannot
+  // borrow TAKE containment merely because the outer classification said TAKE.
+  const _PHASE_A_NO_CANDIDATE_COMPATIBLE_REASONS = new Set(['missing_source', 'missing_quantity', 'invalid_quantity']);
+  if (
+    semanticOperationFamily === 'take' &&
+    semanticPathSingleAction === true &&
+    resolverEvidence?.fail_closed_reason === 'no_candidates' &&
+    dryRunEnvelope.operation_family === 'take' &&
+    dryRunEnvelope.operation_allowed === false &&
+    dryRunEnvelope.outcome === null &&
+    _PHASE_A_NO_CANDIDATE_COMPATIBLE_REASONS.has(dryRunEnvelope.fail_closed_reason) &&
+    (apExecutedTransfers == null || apExecutedTransfers.length === 0) &&
+    tlsPartialStackResult == null &&
+    liveExecutionResult == null
+  ) {
+    const narration_constraint =
+      'No tracked item matching the request was available to take from the current location. ' +
+      'This action definitively failed — no items were moved, transferred, taken, or added to ' +
+      'the player\'s inventory. Do not describe the player obtaining, holding, or possessing any ' +
+      'items as a result of this action, and do not invent an item, an item count, or a location ' +
+      'for one. Do not describe partial success or partial transfer — this object operation had ' +
+      'no effect. Honor the attempt, but describe the failure.';
+
+    return {
+      active: true,
+      rc_skip_reason: 'tls_no_candidates',
+      narration_constraint,
+      diagnostics: {
+        fail_closed_reason: 'no_candidates',
+        resolver_fail_closed_reason: resolverEvidence.fail_closed_reason,
+        p4_fail_closed_reason: dryRunEnvelope.fail_closed_reason,
+        operation_family: operationFamily ?? null,
+        p4_outcome: dryRunEnvelope.outcome,
+        p4_operation_allowed: dryRunEnvelope.operation_allowed,
+        ap_transfer_absent: true,
+        partial_stack_result_absent: true,
+        live_execution_absent: true,
+        constraint_supplied: true
       }
     };
   }
