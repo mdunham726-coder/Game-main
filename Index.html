@@ -2432,6 +2432,9 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
     }
 
     // v1.84.74: Ground box — reads strictly from object registry, current cell container only
+    // v1.92.4: layer-exclusive — grid/site/localspace are mutually exclusive by current depth,
+    // matching the server-side narrator GROUND: predicate (index.js _isGroundContainer). Malformed
+    // location data at L1/L2 fails closed to an empty listing rather than falling back to grid.
     function updateCellObjectsBox(data) {
       const dom = document.getElementById('cell-objects-live');
       if (!dom) return;
@@ -2440,19 +2443,18 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       if (!pos) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
       const cellKey = `LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`;
       const objects = (data.state.objects && typeof data.state.objects === 'object') ? data.state.objects : {};
-      // v1.84.86: also show localspace floor objects when player is at L2 depth
-      const _activeLsId = data.state.world?.active_local_space?.local_space_id || null;
-      // v1.84.92: also show site floor objects when player is at L1 depth inside a site
-      const _activeSite92 = data.state.world?.active_site;
       const _activeLs92 = data.state.world?.active_local_space;
+      const _activeSite92 = data.state.world?.active_site;
+      const _uiGroundDepth = _activeLs92 ? 3 : _activeSite92 ? 2 : 1;
+      const _activeLsId = _activeLs92?.local_space_id || null;
       const _siteId92 = (_activeSite92 && !_activeLs92) ? (_activeSite92.site_id || _activeSite92.id?.replace(/\/l2$/, '')) : null;
       const _siteX92 = data.state.player?.position?.x;
       const _siteY92 = data.state.player?.position?.y;
       const _activeSiteKey = (_siteId92 != null && _siteX92 != null && _siteY92 != null) ? `${_siteId92}:${_siteX92},${_siteY92}` : null;
       const cellItems = Object.values(objects).filter(r => r.status === 'active' &&
-        (r.current_container_id === cellKey ||
-         (_activeLsId && r.current_container_type === 'localspace' && r.current_container_id === _activeLsId) ||
-         (_activeSiteKey && r.current_container_type === 'site' && r.current_container_id === _activeSiteKey)));
+        (_uiGroundDepth === 1 ? (r.current_container_type === 'grid' && r.current_container_id === cellKey) :
+         _uiGroundDepth === 2 ? (_activeSiteKey !== null && r.current_container_type === 'site' && r.current_container_id === _activeSiteKey) :
+         (_activeLsId !== null && r.current_container_type === 'localspace' && r.current_container_id === _activeLsId)));
       if (cellItems.length === 0) { dom.innerHTML = '<span style="color:#888;">Nothing on the ground here.</span>'; return; }
       const lines = cellItems.map(rec => {
         const name = _escHtml(rec.name || '(unnamed)');

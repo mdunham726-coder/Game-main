@@ -3939,13 +3939,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     }
 
     // Predicate: true only when (type, id) match an exact valid pair for the current layer.
-    // The type and id are bound together — a grid object only matches the cell key,
+    // The type and id are bound together — a grid object only matches the cell key (and only at L0),
     // a site object only matches the site floor key (and only at L1),
     // a localspace object only matches the localspace key (and only at L2).
     const _isGroundContainer = (_r) => {
       if (!_r || _r.status !== 'active') return false;
-      // L0 grid — always includes the grid cell at every layer (backward compat for legacy DROP)
-      if (_r.current_container_type === 'grid' && _r.current_container_id === _gridCellKey) return true;
+      // v1.92.4: L0 grid — only when player is at L0. Grid is the parent container at L1/L2
+      // and must not leak inward; DROP has been layer-correct via TLS since v1.91.80/TLS migration.
+      if (_groundDepth === 1 && _r.current_container_type === 'grid' && _r.current_container_id === _gridCellKey) return true;
       // L1 site floor — only when site key is available (player must be at L1)
       if (_r.current_container_type === 'site' && _siteFloorKey !== null && _r.current_container_id === _siteFloorKey) return true;
       // L2 localspace — only when localspace key is available (player must be at L2)
