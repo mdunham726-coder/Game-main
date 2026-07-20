@@ -61,11 +61,19 @@ const sessionStates = new Map();
 const _mbSessionId = Date.now();
 
 // ── Harness control state ────────────────────────────────────────────────────
-let _harnessRunning       = false;     // blocks concurrent POST /harness/run
-let _lastHarnessResult    = null;      // last result from POST /harness/run
+// v1.92.6: _harnessRunning replaced by _activeHarnessRun (Decision G/J) — live
+// run-level state spanning the whole multi-iteration operation, including the
+// gaps between iterations when no child process may be alive. _lastHarnessResult
+// remains the separate durable terminal snapshot, written only by the run-level
+// finalizer (Decision H/J), never cleared by _activeHarnessRun's lifecycle.
+let _activeHarnessRun     = null;      // live state; null when no run is active
+let _lastHarnessResult    = null;      // durable terminal snapshot of the most recent run
 const MAX_MOTHER_RUNS     = 5;         // Mother Brain run cap per call
 const HARNESS_RESULT_PATH = path.join(__dirname, 'tests', '.last-harness-result.json');
 const HARNESS_SCENARIOS_DIR = path.join(__dirname, 'tests', 'scenarios');
+const HARNESS_MAX_RUNTIME_MS_PER_RUN = 600000;   // 10 min per requested run (Minimal Safe Plan #2)
+const HARNESS_MAX_RUNTIME_CEILING_MS = 2400000;  // 40 min absolute ceiling
+const HARNESS_TAIL_CAP = 16000;                  // chars retained per stream, independently (Minimal Safe Plan #4)
 
 // Consult DeepSeek — rolling conversation history per session
 // Stored as exchange objects so future trimming/summarization touches only exchanges[]
@@ -8882,6 +8890,184 @@ const server = app.listen(PORT, () => {
 // All endpoints gated by x-diagnostics-key. Used by Mother Brain to drive QA.
 // =============================================================================
 
+// ── Harness run-lifecycle helpers (v1.92.6 — Decisions E, G, H, I, J) ───────
+
+// Deletes HARNESS_RESULT_PATH before a spawn so a stale file from a prior
+// run/iteration can never be misread as the current one's result (Decision I).
+// Returns true on success (including "already absent"), false on real failure.
+function _deleteHarnessResultFile() {
+  try {
+    fs.unlinkSync(HARNESS_RESULT_PATH);
+    return true;
+  } catch (err) {
+    if (err.code === 'ENOENT') return true;
+    console.error('[HARNESS] Could not clear previous result file:', err.message);
+    return false;
+  }
+}
+
+// Live snapshot fields exposed via /harness/status and harness_run_scenario's
+// still_running result. current_run/total_runs always paired with current_turn
+// (Decision E/J) — current_turn alone is ambiguous once runs >= 2.
+function _harnessLiveSnapshot(run) {
+  return {
+    scenario: run.scenario,
+    lifecycle: 'running',
+    verdict: null,
+    current_run: run.current_run,
+    total_runs: run.total_runs,
+    current_turn: run.current_turn,
+    last_completed_turn: run.last_completed_turn,
+    turns_passed: run.turns_passed,
+    turns_failed: run.turns_failed,
+    last_output_at: run.last_output_at,
+    last_progress_at: run.last_progress_at,
+    pending_termination_reason: run.pending_termination_reason,
+    stdout_tail: run.stdout_tail,
+    stderr_tail: run.stderr_tail,
+  };
+}
+
+// Parses stdout for the two known test-harness.js output shapes (Decision E):
+//   - turn-start frame: "  T{idx} {label} ... " — no trailing newline, matched
+//     directly against the raw accumulating buffer, recorded once per
+//     (current_run, turn_index) composite (not bare turn_index — runScenario()
+//     restarts numbering at T1 every iteration).
+//   - completion record: "\r  [T{idx}] PASS|FAIL ...\n" — newline-terminated,
+//     but the \r is not necessarily at the start of the assembled line (the
+//     un-terminated start frame is still concatenated ahead of it). Extract the
+//     substring after the LAST \r, strip ANSI, then match.
+function _appendHarnessOutput(run, streamKey, chunk) {
+  const text = chunk.toString();
+  run.last_output_at = new Date().toISOString();
+  if (streamKey === 'stdout') {
+    run.stdout_tail = (run.stdout_tail + text).slice(-HARNESS_TAIL_CAP);
+    run._pendingStdout += text;
+
+    const startMatch = /T(\d+)[^\n]*? \.\.\. /.exec(run._pendingStdout);
+    if (startMatch) {
+      const turnIdx = parseInt(startMatch[1], 10);
+      const key = `${run.current_run}:${turnIdx}`;
+      if (!run._seenTurnStarts.has(key)) {
+        run._seenTurnStarts.add(key);
+        run.current_turn = turnIdx;
+        run.last_progress_at = new Date().toISOString();
+      }
+    }
+
+    const lines = run._pendingStdout.split('\n');
+    run._pendingStdout = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const afterCr = line.slice(line.lastIndexOf('\r') + 1);
+      const clean = afterCr.replace(/\x1b\[[0-9;]*m/g, '');
+      const m = /\[T(\d+)\]\s+(PASS|FAIL)/.exec(clean);
+      if (m) {
+        if (m[2] === 'PASS') run.turns_passed++; else run.turns_failed++;
+        run.last_completed_turn = parseInt(m[1], 10);
+        run.last_progress_at = new Date().toISOString();
+      }
+    }
+  } else {
+    run.stderr_tail = (run.stderr_tail + text).slice(-HARNESS_TAIL_CAP);
+  }
+}
+
+// Run-level finalizer (Decision G/H/J) — reached only from _onHarnessChildClose
+// / _onHarnessChildError, never called directly by cancel/timeout handlers.
+// Writes the durable snapshot exactly once and clears the active-run lock.
+function _finalizeHarnessRun(run, lifecycle, verdict, extra = {}) {
+  if (run.timer) clearTimeout(run.timer);
+  _lastHarnessResult = {
+    scenario: run.scenario,
+    runs: run.total_runs,
+    completedAt: new Date().toISOString(),
+    lifecycle,
+    verdict,
+    turnsPassed: run.turns_passed,
+    turnsFailed: run.turns_failed,
+    results: run.results,
+    ...extra,
+  };
+  _activeHarnessRun = null;
+}
+
+function _onHarnessChildError(run, err) {
+  if (_activeHarnessRun !== run) return; // stale listener from an already-finalized run
+  _finalizeHarnessRun(run, 'infrastructure_failure', 'incomplete', { error: err.message });
+}
+
+// Per-child close handling, Decision J's corrected five-step order:
+// pending termination reason is checked BEFORE result validity — a missing
+// result file is the expected, normal case for a killed-mid-turn child and
+// must never override an intentional cancellation/timeout.
+function _onHarnessChildClose(run) {
+  if (_activeHarnessRun !== run) return;
+
+  if (run.pending_termination_reason) {
+    let partial = null;
+    try { partial = JSON.parse(fs.readFileSync(HARNESS_RESULT_PATH, 'utf8')); } catch (_) {}
+    if (partial) run.results.push({ run: run.current_run, summary: partial, partial: true });
+    _finalizeHarnessRun(run, run.pending_termination_reason, 'incomplete');
+    return;
+  }
+
+  let summary = null;
+  try { summary = JSON.parse(fs.readFileSync(HARNESS_RESULT_PATH, 'utf8')); } catch (_) {}
+  if (!summary) {
+    _finalizeHarnessRun(run, 'infrastructure_failure', 'incomplete', { error: 'missing_or_invalid_result_file' });
+    return;
+  }
+
+  run.results.push({ run: run.current_run, summary });
+
+  if (run.current_run < run.total_runs) {
+    run.current_run += 1;
+    if (!_deleteHarnessResultFile()) {
+      _finalizeHarnessRun(run, 'infrastructure_failure', 'incomplete', { error: 'result_file_cleanup_failed' });
+      return;
+    }
+    _spawnHarnessChild(run);
+    return;
+  }
+
+  const anyFailed = run.results.some(r => (r.summary?.scenariosFailed || 0) > 0 || (r.summary?.turnsFailed || 0) > 0);
+  _finalizeHarnessRun(run, 'completed', anyFailed ? 'failed' : 'passed');
+}
+
+function _spawnHarnessChild(run) {
+  const args = run.useFile
+    ? [path.join(__dirname, 'test-harness.js'), '--file', run.filePath, '--yes', '--result-file', HARNESS_RESULT_PATH]
+    : [path.join(__dirname, 'test-harness.js'), '--scenario', run.scenario, '--yes', '--result-file', HARNESS_RESULT_PATH];
+  const child = spawn(process.execPath, args, {
+    cwd: __dirname,
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  run.child = child;
+  child.stdout.on('data', d => _appendHarnessOutput(run, 'stdout', d));
+  child.stderr.on('data', d => _appendHarnessOutput(run, 'stderr', d));
+  child.on('close', () => _onHarnessChildClose(run));
+  child.on('error', err => _onHarnessChildError(run, err));
+}
+
+// Decision H: cancel/timeout only REQUEST termination — first reason wins, the
+// lock is not released here. If no child is currently alive (the gap between
+// iterations), there is nothing to kill and nothing further will trigger
+// _onHarnessChildClose, so this finalizes directly in that case.
+function _requestHarnessTermination(run, reason) {
+  if (run.pending_termination_reason) {
+    return { alreadyPending: true, reason: run.pending_termination_reason };
+  }
+  run.pending_termination_reason = reason;
+  if (run.child) {
+    try { run.child.kill('SIGKILL'); } catch (_) { /* false/throw handled by close/error either way, per Decision H step 3 */ }
+  } else {
+    _finalizeHarnessRun(run, reason, 'incomplete');
+  }
+  return { alreadyPending: false, reason };
+}
+
 // GET /harness/status — availability check (does not require server state)
 app.get('/harness/status', (req, res) => {
   const diagKey = process.env.DIAGNOSTICS_KEY;
@@ -8890,7 +9076,18 @@ app.get('/harness/status', (req, res) => {
   let externalCount = 0;
   try { externalCount = fs.readdirSync(HARNESS_SCENARIOS_DIR).filter(f => f.endsWith('.json')).length; } catch (_) {}
   const HARNESS_BUILTIN_COUNT = 4; // worldgen_basic, founding_premise, multi_turn_session, site_placement_endpoint
-  res.json({ available: true, running: _harnessRunning, scenarios: HARNESS_BUILTIN_COUNT + externalCount });
+  const base = { available: true, running: !!_activeHarnessRun, scenarios: HARNESS_BUILTIN_COUNT + externalCount };
+  if (_activeHarnessRun) {
+    Object.assign(base, _harnessLiveSnapshot(_activeHarnessRun));
+  } else if (_lastHarnessResult) {
+    base.last_result = {
+      scenario: _lastHarnessResult.scenario,
+      lifecycle: _lastHarnessResult.lifecycle,
+      verdict: _lastHarnessResult.verdict,
+      completedAt: _lastHarnessResult.completedAt,
+    };
+  }
+  res.json(base);
 });
 
 // GET /harness/scenarios — enumerate all available scenarios (spawns --list)
@@ -8913,16 +9110,16 @@ app.get('/harness/scenarios', (req, res) => {
 });
 
 // POST /harness/run — async (fire-and-forget) scenario run; body: { scenario: string, runs?: number }
-// Returns immediately with { started: true }. Poll GET /harness/status until running:false,
-// then call GET /harness/result/last for the full result.
-// Guardrails: rejects with { started: false } when already running; captures errors in _lastHarnessResult.
+// v1.92.6: hardened per Decisions D/G/H/I/J. Same-scenario request while active
+// attaches to the live run instead of 409ing; a different scenario returns an
+// explicit active_run_conflict. A bounded server-side timeout and POST
+// /harness/cancel now exist — see the helpers above for the actual lifecycle.
 // Scenario name must be alphanumeric with underscores/hyphens only (no path traversal).
-// Server-side cap: MAX_MOTHER_RUNS per call. Lock: only one run at a time.
+// Server-side cap: MAX_MOTHER_RUNS per call. Lock: only one run at a time (Decision B).
 app.post('/harness/run', (req, res) => {
   const diagKey = process.env.DIAGNOSTICS_KEY;
   if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
   if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
-  if (_harnessRunning) return res.status(409).json({ started: false, error: 'harness already running', message: 'A harness run is already in progress. Poll /harness/status until running:false, then read /harness/result/last.' });
 
   const scenarioName = typeof req.body?.scenario === 'string' ? req.body.scenario.trim() : null;
   if (!scenarioName) return res.status(400).json({ error: 'scenario_required', message: 'Body must include { scenario: string }.' });
@@ -8930,47 +9127,106 @@ app.post('/harness/run', (req, res) => {
   if (!/^[a-zA-Z0-9_-]+$/.test(scenarioName)) {
     return res.status(400).json({ error: 'invalid_scenario_name', message: 'Scenario name must be alphanumeric with underscores/hyphens only.' });
   }
+  const requestedRuns = Math.min(Math.max(1, parseInt(req.body?.runs, 10) || 1), MAX_MOTHER_RUNS);
 
-  const runs     = Math.min(Math.max(1, parseInt(req.body?.runs, 10) || 1), MAX_MOTHER_RUNS);
+  // Decision D: resumptive same-scenario attach; explicit conflict for a different scenario.
+  if (_activeHarnessRun) {
+    if (_activeHarnessRun.scenario === scenarioName) {
+      const snapshot = _harnessLiveSnapshot(_activeHarnessRun);
+      snapshot.attached = true;
+      if (requestedRuns !== _activeHarnessRun.total_runs) {
+        snapshot.runs_ignored = requestedRuns; // active-run parameters are immutable (Decision D)
+      }
+      return res.json(snapshot);
+    }
+    return res.status(409).json({
+      started: false,
+      error: 'active_run_conflict',
+      active_scenario: _activeHarnessRun.scenario,
+      message: `A different scenario ("${_activeHarnessRun.scenario}") is already active. Cancel it first (POST /harness/cancel) or wait for it to finish.`,
+    });
+  }
+
   const filePath = path.join(HARNESS_SCENARIOS_DIR, scenarioName + '.json');
   const useFile  = fs.existsSync(filePath);
 
-  _harnessRunning = true;
-  res.json({ started: true, scenario: scenarioName, runs, message: 'Run started. Poll /harness/status until running:false, then call /harness/result/last.' });
+  // Decision I: delete the previous result file before the first iteration's spawn.
+  // Failure here rejects the request synchronously — nothing has been promised yet.
+  if (!_deleteHarnessResultFile()) {
+    return res.status(500).json({
+      started: false,
+      lifecycle: 'infrastructure_failure',
+      verdict: 'incomplete',
+      error: 'result_file_cleanup_failed',
+      message: 'Could not clear the previous harness result file before starting a new run.',
+    });
+  }
 
-  // Fire-and-forget: run loop detached from HTTP response
-  (async () => {
-    const runDetails = [];
-    try {
-      for (let i = 0; i < runs; i++) {
-        const result = await new Promise(resolve => {
-          const args = useFile
-            ? [path.join(__dirname, 'test-harness.js'), '--file', filePath, '--yes', '--result-file', HARNESS_RESULT_PATH]
-            : [path.join(__dirname, 'test-harness.js'), '--scenario', scenarioName, '--yes', '--result-file', HARNESS_RESULT_PATH];
-          const child = spawn(process.execPath, args, {
-            cwd: __dirname,
-            env: { ...process.env },
-            stdio: ['ignore', 'pipe', 'pipe'],
-          });
-          let stdout = '';
-          let stderr = '';
-          child.stdout.on('data', d => { stdout += d; });
-          child.stderr.on('data', d => { stderr += d; });
-          child.on('close',  code => resolve({ run: i + 1, exitCode: code, stdout: stdout.slice(0, 32000), stderr: stderr.slice(0, 4000) }));
-          child.on('error', err  => resolve({ run: i + 1, exitCode: -1, error: err.message }));
-        });
-        runDetails.push(result);
-      }
-      let summary = null;
-      try { summary = JSON.parse(fs.readFileSync(HARNESS_RESULT_PATH, 'utf8')); } catch (_) {}
-      _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, summary, failed: false };
-    } catch (err) {
-      _lastHarnessResult = { scenario: scenarioName, runs, completedAt: new Date().toISOString(), runDetails, error: err.message, failed: true };
-      console.error('[HARNESS] Background run error:', err.message);
-    } finally {
-      _harnessRunning = false;
-    }
-  })();
+  const startedAt = new Date().toISOString();
+  const run = {
+    scenario: scenarioName,
+    useFile,
+    filePath,
+    total_runs: requestedRuns,
+    current_run: 1,
+    child: null,
+    startedAt,
+    last_output_at: startedAt,
+    last_progress_at: startedAt,
+    current_turn: null,
+    last_completed_turn: null,
+    turns_passed: 0,
+    turns_failed: 0,
+    stdout_tail: '',
+    stderr_tail: '',
+    _pendingStdout: '',
+    _seenTurnStarts: new Set(),
+    pending_termination_reason: null,
+    results: [],
+    timer: null,
+  };
+  _activeHarnessRun = run;
+  run.timer = setTimeout(
+    () => _requestHarnessTermination(run, 'timed_out'),
+    Math.min(HARNESS_MAX_RUNTIME_MS_PER_RUN * requestedRuns, HARNESS_MAX_RUNTIME_CEILING_MS)
+  );
+
+  res.json({
+    started: true,
+    scenario: scenarioName,
+    runs: requestedRuns,
+    message: 'Run started. Call GET /harness/status for live progress, or POST /harness/cancel to stop it.',
+  });
+
+  _spawnHarnessChild(run);
+});
+
+// POST /harness/cancel — requests termination of the active run (Decision H/J).
+// Idempotent: no-op if nothing is active, explicit "already pending" if a
+// termination was already requested. Does not itself record a terminal result —
+// only the confirmed close/error event does that (see _onHarnessChildClose).
+app.post('/harness/cancel', (req, res) => {
+  const diagKey = process.env.DIAGNOSTICS_KEY;
+  if (!diagKey) return res.status(503).json({ error: 'harness_disabled', message: 'DIAGNOSTICS_KEY not set.' });
+  if (req.headers['x-diagnostics-key'] !== diagKey) return res.status(403).json({ error: 'forbidden' });
+
+  if (!_activeHarnessRun) {
+    return res.json({ cancelled: false, message: 'Nothing to cancel — no harness run is currently active.' });
+  }
+
+  const result = _requestHarnessTermination(_activeHarnessRun, 'cancelled');
+  if (result.alreadyPending) {
+    return res.json({
+      cancelled: false,
+      already_pending: true,
+      pending_reason: result.reason,
+      message: `Termination already requested (${result.reason}) — waiting for the current process to exit.`,
+    });
+  }
+  res.json({
+    cancelled: true,
+    message: 'Cancellation requested. This stops future turns/requests for this run; it does not retroactively cancel or un-bill any provider request already in flight.',
+  });
 });
 
 // GET /harness/result/last — retrieve the last completed harness run result

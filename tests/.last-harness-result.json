@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-07-18T23:05:55.376Z",
+  "timestamp": "2026-07-20T16:07:19.739Z",
   "scenariosPassed": 1,
   "scenariosFailed": 0,
   "scenariosSkipped": 0,
-  "turnsPassed": 1,
+  "turnsPassed": 10,
   "turnsFailed": 0,
   "results": [
     {
-      "name": "smoke_test_no_error",
+      "name": "semantic_duplicate_redescribe",
       "skipped": false,
-      "passed": 1,
+      "passed": 10,
       "failed": 0,
-      "total": 1,
-      "sessionId": "1784415935056-7v8m2a3dv"
+      "total": 10,
+      "sessionId": "1784563462114-f1q2ok5sm"
     }
   ]
 }
