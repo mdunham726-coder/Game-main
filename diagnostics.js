@@ -1026,17 +1026,14 @@ function getDiagHistory() {
 // LAST GAME STATE CACHE (Cluster 5)
 // Live references written by index.js turn handler; read by Cluster 5–7 routes.
 // Reference semantics preserved intentionally — no clone, no serialize.
-// _lastWatchMessage is write-only / reserved for future diagnostics surface.
 // =============================================================================
 let _lastGameState     = null; // most-recent gameState — live reference, not snapshot
 let _lastRenderedBlock = null; // exact continuity text injected into narrator each turn
 let _lastSessionId     = null; // most-recent resolved session ID (used by /diagnostics/session)
-let _lastWatchMessage  = null; // Mother's last watch_message — write-only / reserved for future diagnostics surface
 
 function setLastGameState(gs)        { _lastGameState    = gs; }
 function setLastRenderedBlock(block) { _lastRenderedBlock = block; }
 function setLastSessionId(id)        { _lastSessionId    = id; }
-function setLastWatchMessage(msg)    { _lastWatchMessage  = msg; }  // write-only — no route reads this yet
 function getLastGameState()          { return _lastGameState; }
 function getLastSessionId()          { return _lastSessionId; }
 
@@ -1048,7 +1045,7 @@ const _SOURCE_ALLOWLIST = new Set([
   'NarrativeContinuity.js', 'ContinuityBrain.js', 'SemanticParser.js',
   'continuity.js', 'QuestSystem.js', 'logger.js', 'logging.js',
   'flight-recorder.js', 'motherbrain.js', 'conditionbot.js', 'ObjectHelper.js',  // v1.84.54
-  'cbpanel.js', 'npcpanel.js', 'sitelens.js', 'motherwatch.js',              // v1.85.1
+  'cbpanel.js', 'npcpanel.js', 'sitelens.js',                                // v1.85.1
   'summary.js', 'dmletter.js', 'Index.html', 'Map.html',                     // v1.85.1
   'test-harness.js',                                                           // v1.85.53
   'scripts/probe-runner.js', 'scripts/probe-metrics.js',                      // v1.85.75
@@ -2989,7 +2986,6 @@ module.exports = {
   setLastGameState,
   setLastRenderedBlock,
   setLastSessionId,
-  setLastWatchMessage,
   getLastGameState,
   getLastSessionId,
   // route registration

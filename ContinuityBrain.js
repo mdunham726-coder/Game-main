@@ -55,7 +55,7 @@ function _setDiag(d) { _lastRunDiagnostics = d; }
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, watchContext, rawInput, currentTurn, tlsPartialStackTakeReceipt, tlsPartialStackDropReceipt) {
+function _buildExtractionPrompt(frozenNarration, gameState, previousMoodSnapshot, rawInput, currentTurn, tlsPartialStackTakeReceipt, tlsPartialStackDropReceipt) {
   const location         = _describeLocation(gameState);
   const entities         = _describeVisibleEntities(gameState);
   const knownPlayerAttrs = _describePlayerAttributes(gameState);
@@ -764,7 +764,7 @@ Rules:
 - If the narration provides no usable description specifically grounded in the extracted items, emit a minimal generic description based only on product_name and extracted_quantity.
 - Emit one entry per extraction event. If no extraction applies this turn, emit: "extraction_events": []
 
-${watchContext ? `\n---\n\nMOTHER WATCH BRIEF\nEngine state for this turn. Use this to write watch_message only.\n\nCONTINUITY: ${watchContext.continuity_injected ? 'injected' : watchContext.continuity_evicted ? 'evicted (' + (watchContext.continuity_eviction_reason || 'unknown') + ')' : 'not injected'}\nNARRATOR:   ${watchContext.narrator_status || 'ok'}\nMOVE:       ${watchContext.move_summary || 'none'}\nVIOLATIONS: ${watchContext.violation_count || 0}${watchContext.top_violation ? ' | top: "' + watchContext.top_violation + '"' : ''}\nCHANNEL:    ${watchContext.channel || '—'}\n\nAdd one optional field to your JSON output:\n\"watch_message\": \"<one sentence: your system health judgment for this turn. Start with ✓ if clean, ⚠ for a warning, ✗ for an error. Highest-priority issue only. Omit the field entirely if you have nothing to add.>\"\n` : ''}` ;
+` ;
 }
 
 // ── Location / entity description helpers ─────────────────────────────────────
@@ -1120,7 +1120,7 @@ function _promoteConditions(conditionEvents, gameState, turn, options = {}) {
   }
 }
 
-async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, options = {}) {
+async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
   const turn   = (gameState.turn_history || []).length + 1;
   const _receipt = options?.tlsPartialStackTakeReceipt;
@@ -1260,7 +1260,6 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     frozenNarration,
     gameState,
     previousMood,
-    watchContext,
     rawInput,
     turn,
     _sanitizedTlsPartialStackTakeReceipt,
@@ -1351,9 +1350,6 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     }
   }
   delete extracted.partial_drop_successor_description;
-
-  // Safely extract watch_message — optional, never blocks Phase B
-  const watch_message = typeof extracted.watch_message === 'string' ? extracted.watch_message : null;
 
   // v1.84.33 — write founding_premise into birth_record on Turn 1
   if (turn === 1 && extracted.founding_premise && gameState.player?.birth_record) {
@@ -1510,7 +1506,6 @@ async function runPhaseB(frozenNarration, gameState, watchContext, rawInput, opt
     log_entries:     logEntries,
     mood_snapshot:   moodSnapshot,
     diagnostics:     diag,
-    watch_message,          // Mother's one-sentence system health judgment (null if omitted or Phase B failed)
     raw,                    // v1.84.21: raw LLM response string (for payload archive)
     prompt,                 // v1.84.21: extraction prompt string (for payload archive)
     object_candidates:        Array.isArray(extracted.object_candidates)        ? extracted.object_candidates        : [],
