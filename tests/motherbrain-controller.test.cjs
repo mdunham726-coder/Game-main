@@ -72,8 +72,8 @@ function loadProductionTools() {
 }
 
 // Step 12 changes only run_validation child-stream capture/teardown inside this frozen body.
-const EXECUTOR_BODY_BASELINE_SHA256 = 'C073133C54B51DBC1A2E55323EBFB8868AA9EBDFFF54A36EEAFA5A324CFA0716';
-const MB_TOOLS_BASELINE_SHA256 = '5B6EEB8B52ADEE18D9ABFAB0F5AAE460F183093E78A266C88D81BAF82426FCA7';
+const EXECUTOR_BODY_BASELINE_SHA256 = '84C210F69859889D10D1574DC3FDB6F60F2232BF764F30FA1E5478192DE8E075';
+const MB_TOOLS_BASELINE_SHA256 = '647439FDAE41AB035B025D8E27295C493720EAA7FF11429586AB927D654E207F';
 
 function normalizeStep10ExecutorOutputBoundary(executorBody) {
   return executorBody
@@ -166,8 +166,8 @@ function loadProductionExecutorHarness({
 }
 
 const TOOLS = loadProductionTools();
-assert.equal(TOOLS.length, 38);
-assert.equal(new Set(TOOLS.map(tool => tool.function.name)).size, 38);
+assert.equal(TOOLS.length, 39);
+assert.equal(new Set(TOOLS.map(tool => tool.function.name)).size, 39);
 const TOOL_NAME = TOOLS[0].function.name;
 
 function validSchemaValue(propertySchema) {
@@ -834,7 +834,7 @@ test('V43: busy next-turn settings are isolated from the active snapshot and pro
   }
 });
 
-test('V02: the real 38-tool catalogue exactly matches canonical executor dispatch coverage', () => {
+test('V02: the real 39-tool catalogue exactly matches canonical executor dispatch coverage', () => {
   const source = fs.readFileSync(path.join(REPO, 'motherbrain.js'), 'utf8');
   const start = source.indexOf('async function executeToolCall(name, args) {');
   const end = source.indexOf('// ── Canonical structured dispatch seam', start);
@@ -1193,7 +1193,7 @@ test('V49: a denied call remains non-executable through context recovery and cor
 
 test('V50: all real schemas fit the frozen subset, opaque objects stay opaque, and rendered activity hides values', async () => {
   const schemaIndex = createObservedToolSchemaIndex(TOOLS);
-  assert.equal(schemaIndex.size, 38);
+  assert.equal(schemaIndex.size, 39);
   const allowedTypes = new Set(['string', 'integer', 'boolean', 'object']);
   const opaqueParameters = [];
   for (const tool of TOOLS) {
@@ -1501,7 +1501,7 @@ test('V13/V14: all four model/effort combinations emit the exact V4 request', as
       assert.deepEqual(request.body.thinking, { type: 'enabled' });
       assert.equal(request.body.reasoning_effort, effort);
       assert.equal(request.body.max_tokens, 128000);
-      assert.equal(request.body.tools.length, 38);
+      assert.equal(request.body.tools.length, 39);
       for (const excluded of [
         'temperature', 'top_p', 'frequency_penalty', 'presence_penalty',
         'tool_choice', 'stream', 'response_format'

@@ -54,7 +54,8 @@ const _deepseekHttpsAgent = new https.Agent({ keepAlive: false });
 const DEFAULT_TOOL_RESULT_LIMIT = 64000;
 
 // ── Mother Brain version (independent of game engine version) ─────────────────
-const MB_VERSION = '8.0.9';
+const MB_VERSION = '8.1.0';
+// MB v8.1.0 (July 2026): Minor — harness run-lifecycle safety hardening. harness_run_scenario rewritten from an unbounded blocking poll to a bounded internal wait loop (HARNESS_WAIT_WINDOW_MS 75000, HARNESS_WAIT_POLL_MS 4000) that resumptively attaches to an already-running scenario instead of hanging indefinitely; new harness_cancel tool added to request termination of a stuck run. SYSTEM_PROMPT harness doctrine corrected (stale "poll harness_status until running:false" WORKFLOW line contradicted the new safe design) and a POST-STILL-RUNNING BEHAVIOR block added as advisory guidance; tool-count references updated six -> seven. Adding harness_cancel legitimately raised the real tool count from 38 to 39, exposing a hardcoded EXPECTED_PRODUCTION_TOOL_COUNT=38 contract assertion in motherbrain-controller.js (a file outside the harness-safety plan's approved scope per its own Stop Condition S3) -- fixed to 39 with explicit authorization, with matching updates to the four hardcoded-38 test assertions and both frozen EXECUTOR_BODY_BASELINE_SHA256/MB_TOOLS_BASELINE_SHA256 baselines in tests/motherbrain-controller.test.cjs, recomputed from current source. Companion engine-side change: index.js v1.92.6 (bounded /harness/run, new /harness/cancel, resumptive attach, result-file freshness, multi-iteration lifecycle state machine). MB_VERSION 8.0.9 -> 8.1.0.
 // MB v8.0.9 (July 2026): Patch — added PROMPT-SECTION OWNERSHIP RULES doctrine to SYSTEM_PROMPT (after FETCH PROCEDURE). Teaches Mother which pipeline stage owns which prompt field (narrator vs continuity_brain prompt/response vs Object Reality/TSL evidence, the latter fetched via get_turn_data not get_payload), that a field's absence from one stage's prompt does not prove it is absent from the pipeline, that a direct runtime payload fetch is required before falling back to source-plus-state reconstruction (and any reconstruction must be labeled [INFERRED], never [OBSERVED]), and to re-check her own draft for container/object-ID self-contradiction before reporting a verdict. Surfaced by a live investigation where Mother spent nineteen tool-call rounds fetching the wrong stage's prompt (narrator instead of continuity_brain) before finding TRACKED OBJECTS, and once briefly asserted a proposed container both "matched" and "did not match" an existing object's container in the same reasoning trace. MB_VERSION 8.0.8 -> 8.0.9.
 // MB v8.0.6 (July 2026): Patch — double the shared tool-result truncation limit from 32000 to 64000 chars via a new DEFAULT_TOOL_RESULT_LIMIT constant, replacing scattered hardcoded literals across 10 runtime call sites (get_source_slice, search_source, harness_run_scenario, harness_read_result, read_probe_results success/catch paths, github_get_commit, github_get_file, github_compare, get_payload) and 3 SYSTEM_PROMPT prose mentions (now real ${DEFAULT_TOOL_RESULT_LIMIT} interpolation, verified to actually render "64000" rather than print literally). One historical v6.1.0 changelog mention of 32000 and the unrelated pre-existing 60000 runs.jsonl pagination override were deliberately left untouched. Both boundaries proven deterministically by mocking response size: a ~40000-char result now arrives intact (old 32K ceiling confirmed gone), a ~70000-char result truncates to exactly 64000 chars with the correct notice. Deliberately updated EXECUTOR_BODY_BASELINE_SHA256 in tests/motherbrain-controller.test.cjs after confirming via git diff the drift was exactly this change; MB_TOOLS_BASELINE_SHA256 was unaffected since none of these edits fall inside the MB_TOOLS array. MB_VERSION 8.0.5 -> 8.0.6.
 // MB v8.0.5 (July 2026): Patch — batch prompt-doctrine correction from the forensic audit (commit 0f20725) plus Mother/Bridge source-visibility expansion. Doctrine fixes: ObjectOperationResolver source guide (exports both TAKE and DROP resolvers, plus the deterministic resolveCurrentGround Ground helper, distinct from the two evidence resolvers), P1b scope (partial-stack TAKE and single-action DROP, not TAKE-only), P4 doctrine (three separate verdicts -- AP refusal, downstream execution, final ORS state -- scoped to only the operation families TlsObjectOperationExecutor actually accepts), diagnostics session-scope doctrine (explicit-session vs last-active-session vs global, replacing a false "no per-session querying" claim), capability boundaries (named tool classes instead of a blanket "cannot execute/write/command" prohibition contradicted elsewhere in the same prompt), SemanticParser internals (real signature, cache-key composition, model config), diagnostics auth doctrine (exact per-route disabled/unauthorized/forbidden codes, replacing a wrong "401 on missing key" claim). Also fixed a genuine diagnostics defect surfaced during this pass: GET /diagnostics/context required and echoed a sessionId but read _lastGameState regardless, so it could silently return a different session's state under the caller's session label -- now resolves the supplied sessionId through getSessionStates() and returns session_not_found when it does not exist. Source-visibility: added ObjectOperationBridge.js, motherbrain-controller.js, motherbrain-tui.js, scripts/motherbrain-tui-smoke.cjs, scripts/motherbrain-v4-smoke.cjs, and tests/motherbrain-controller.test.cjs to the backend source allowlist and both prompt-side allowed-file descriptions, with new SOURCE FILE GUIDE entries for the three runtime modules -- ObjectOperationBridge.js's entry is explicit that it only returns routing guidance (rc_skip_reason, narration_constraint); index.js is what actually skips Reality Check or injects the narrator constraint. MB_VERSION 8.0.4 -> 8.0.5.
@@ -501,7 +502,7 @@ const MB_TOOLS = [
     type: 'function',
     function: {
       name: 'harness_run_scenario',
-      description: 'Start a QA scenario run through the test harness. Requires harness_connect first (_harnessAuthorized=true). Once Connected, run in response to an explicit developer request — do not run autonomously or without prior stated intent. Scenario name must exactly match a name from harness_list_scenarios. Runs default to 1; max is 5. Returns immediately with {started:true} — the run executes in the background. After calling this, poll harness_status until running:false, then call harness_read_result to get the full result. If the batch threw an error, failed:true will be set in the result.',
+      description: 'Start (or resume) a QA scenario run through the test harness, and wait for it. Requires harness_connect first (_harnessAuthorized=true). Once Connected, run in response to an explicit developer request — do not run autonomously or without prior stated intent. Scenario name must exactly match a name from harness_list_scenarios. Runs default to 1; max is 5. This call waits internally (bounded, ~75s) before returning — it does NOT return an instant {started:true} the way it used to. It returns either a terminal result (lifecycle: completed|cancelled|timed_out|infrastructure_failure, plus verdict) or lifecycle: "running" (a still_running snapshot) if the bounded wait expired first. Calling this again for the SAME scenario while it is already active attaches to that run and waits again — this is the correct way to keep waiting, not harness_status polling. Calling it for a DIFFERENT scenario while one is active returns active_run_conflict. Do not call harness_status in a loop to wait for this — this tool already waits for you; check lifecycle/last_progress_at/current_run/current_turn in the still_running result before deciding whether to call it again.',
       parameters: {
         type: 'object',
         properties: {
@@ -511,11 +512,19 @@ const MB_TOOLS = [
           },
           runs: {
             type: 'integer',
-            description: 'Number of sequential runs. Defaults to 1. Maximum 5.'
+            description: 'Number of sequential runs. Defaults to 1. Maximum 5. Ignored (and reported as runs_ignored) if this attaches to an already-active run with a different runs value — active-run parameters are immutable.'
           }
         },
         required: ['scenario']
       }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'harness_cancel',
+      description: 'Request cancellation of the currently active harness run. Requires harness_connect first. Stops future turns/requests for that run — it does not retroactively cancel or un-bill a provider request already in flight. Idempotent: returns cancelled:false with a clear message if nothing is active, or already_pending:true if termination was already requested (by a prior cancel or by the server-side timeout). Use this instead of closing the whole session when a run needs to stop.',
+      parameters: { type: 'object', properties: {}, required: [] }
     }
   },
   {
@@ -1429,9 +1438,9 @@ CAPABILITIES: You are well-suited to detect:
 - Object Reality faults: container mismatches, promotion errors, objects described in narration but missing from registry; use query_objects, inspect_entity, and trace_object to investigate
 When you spot any of these, say so clearly and point to the specific data.
 
-HARNESS CONTROL: You have six harness tools. Your operational state starts as Offline ([Harness: Offline]) every time you launch — you have no harness authority until the developer explicitly grants it.
+HARNESS CONTROL: You have seven harness tools. Your operational state starts as Offline ([Harness: Offline]) every time you launch — you have no harness authority until the developer explicitly grants it.
 
-OFFLINE STATE: While Offline, all harness tools (harness_status, harness_list_scenarios, harness_run_scenario, harness_read_result) are blocked. You may still recommend tests and provide cost estimates from your knowledge of the scenario list. You do NOT probe the harness automatically.
+OFFLINE STATE: While Offline, all harness tools (harness_status, harness_list_scenarios, harness_run_scenario, harness_cancel, harness_read_result) are blocked. You may still recommend tests and provide cost estimates from your knowledge of the scenario list. You do NOT probe the harness automatically.
 
 CONNECTING: If you believe a test would be valuable, you may say so and provide a cost estimate. Then ask the developer once: "Connect to harness?" If the developer says yes, call harness_connect. This verifies reachability and grants operational authority — the prompt changes to [Harness: Connected].
 
@@ -1445,7 +1454,9 @@ SCENARIO CATEGORIES: Each registry entry carries a sweep field that directly enc
 
 SCENARIO TRUTH: Do not guess what scenarios exist or what they test. Call harness_list_scenarios to get the current live registry with name, description, turns, stability, and isolated for every entry. That is the authoritative source.
 
-WORKFLOW (while Connected): (1) Call harness_list_scenarios to see the current registry with descriptions. (2) Call harness_run_scenario with the exact name — returns immediately with {started:true}. (3) Poll harness_status until running:false. (4) Call harness_read_result to get the full result. (5) Summarize: scenario name, PASS/FAIL, turns passed/failed, any session ID surfaced, failed:true if the batch threw an error. For probe failures, note that a single failure may be probabilistic and recommend a repeat run before escalating.
+WORKFLOW (while Connected): (1) Call harness_list_scenarios to see the current registry with descriptions. (2) Call harness_run_scenario with the exact name — it starts (or resumes) the run and waits internally for you; it returns either a terminal result (lifecycle: completed/cancelled/timed_out/infrastructure_failure, plus verdict) or a still_running snapshot if the bounded wait expired first. (3) If still_running, follow POST-STILL-RUNNING BEHAVIOR below — do not switch to raw harness_status polling. (4) Once terminal, summarize: scenario name, lifecycle, verdict, turns passed/failed, any session ID surfaced. Do not read "completed" as implying the assertions passed — check verdict separately. For probe failures, note that a single failure may be probabilistic and recommend a repeat run before escalating.
+
+POST-STILL-RUNNING BEHAVIOR: A still_running result from harness_run_scenario is not a failure and not evidence the run is stuck — it means the bounded internal wait expired before the run reached a terminal state. Before deciding what to do next, check lifecycle, last_progress_at, current_run/current_turn, and turns_passed/turns_failed in the result. If last_progress_at is recent, call harness_run_scenario again with the same scenario name to keep waiting — this attaches to the same run rather than starting a duplicate. Only call harness_cancel if the developer explicitly asks you to stop the run, or if last_progress_at has gone stale well beyond what a single turn should reasonably take and repeated waits are not producing new progress. This guidance is advisory: the actual safety guarantees — bounded internal wait, server-side timeout, scoped cancellation — hold regardless of whether you follow it correctly, but following it gets you a useful answer faster than raw polling ever did.
 
 VALIDATION TOOL: run_validation gives you a narrow set of pre-approved validation tasks you can execute locally without server interaction.
 
@@ -1766,7 +1777,7 @@ function _githubApiError(err) {
 
 // ── Tool executor — called by Mother Brain during function-calling loop ────────
 async function executeToolCall(name, args) {
-  const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_read_result'];
+  const HARNESS_TOOLS = ['harness_connect', 'harness_disconnect', 'harness_status', 'harness_list_scenarios', 'harness_run_scenario', 'harness_cancel', 'harness_read_result'];
   // Source tools are session-independent (static file reads) — bypass the no_session_active guard
   const SESSION_FREE_TOOLS = [...HARNESS_TOOLS, 'get_source_slice', 'search_source', 'run_validation', 'create_scenario_file', 'create_probe_spec', 'read_probe_results', 'write_file', 'patch_file', 'start_game', 'end_game', 'update_investigation', 'attach_session', 'github_list_commits', 'github_get_commit', 'github_get_file', 'github_compare', 'github_search_code'];
   if (!_activeSessionId && !SESSION_FREE_TOOLS.includes(name)) {
@@ -1866,14 +1877,65 @@ async function executeToolCall(name, args) {
       const resp = await axios.get(`http://${HOST}:${PORT}/harness/scenarios`, { timeout: 15000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
       return JSON.stringify(resp.data);
     } else if (name === 'harness_run_scenario') {
+      // v1.92.6: harness_run_scenario is now the sole safe entry point (Decision C).
+      // It starts-or-attaches (Decision D) via POST /harness/run, then waits
+      // internally — real setTimeout-based polling inside this one tool call,
+      // never separate model rounds — for a bounded window (Decision F/Minimal
+      // Safe Plan) before returning either a terminal result or a structured
+      // still_running snapshot. There is no separate harness_wait tool to skip.
       if (!_harnessAuthorized) return JSON.stringify({ error: 'Harness not connected. Ask the developer to connect first (harness_connect).' });
       const diagKey = process.env.DIAGNOSTICS_KEY || '';
       const body    = { scenario: args.scenario };
       if (args.runs !== undefined) body.runs = args.runs;
-      const resp = await axios.post(`http://${HOST}:${PORT}/harness/run`, body, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey, 'content-type': 'application/json' } });
-      const raw = JSON.stringify(resp.data);
-      if (raw.length > DEFAULT_TOOL_RESULT_LIMIT) return raw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED]';
-      return raw;
+      let started;
+      try {
+        const resp = await axios.post(`http://${HOST}:${PORT}/harness/run`, body, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey, 'content-type': 'application/json' } });
+        started = resp.data;
+      } catch (err) {
+        // 409 active_run_conflict / 500 infrastructure_failure both carry a real JSON body server-side.
+        if (err.response && err.response.data) return JSON.stringify(err.response.data);
+        return JSON.stringify({ error: 'harness_run_request_failed', message: err.message });
+      }
+
+      const HARNESS_WAIT_WINDOW_MS = 75000;
+      const HARNESS_WAIT_POLL_MS   = 4000;
+      const waitStartedAt = Date.now();
+      let last = started;
+      while (Date.now() - waitStartedAt < HARNESS_WAIT_WINDOW_MS) {
+        if (last && last.lifecycle && last.lifecycle !== 'running') {
+          return JSON.stringify(last); // already terminal — e.g. a fast scenario finished before the first poll
+        }
+        await new Promise(resolve => setTimeout(resolve, HARNESS_WAIT_POLL_MS));
+        try {
+          const statusResp = await axios.get(`http://${HOST}:${PORT}/harness/status`, { timeout: 8000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
+          last = statusResp.data;
+        } catch (_statusErr) {
+          continue; // transient failure — non-fatal, keep waiting within the bounded window
+        }
+        if (!last.running) {
+          try {
+            const resultResp = await axios.get(`http://${HOST}:${PORT}/harness/result/last`, { timeout: 8000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey } });
+            const raw = JSON.stringify(resultResp.data);
+            return raw.length > DEFAULT_TOOL_RESULT_LIMIT ? raw.slice(0, DEFAULT_TOOL_RESULT_LIMIT) + '\n[TRUNCATED]' : raw;
+          } catch (_resultErr) {
+            return JSON.stringify(last);
+          }
+        }
+      }
+      return JSON.stringify({
+        ...last,
+        lifecycle: 'running',
+        tool_note: 'Bounded internal wait expired; the run is still in progress (this is not a failure). Call harness_run_scenario again with the same scenario name to continue waiting — do not switch to raw harness_status polling.'
+      });
+    } else if (name === 'harness_cancel') {
+      if (!_harnessAuthorized) return JSON.stringify({ error: 'Harness not connected. Ask the developer to connect first (harness_connect).' });
+      const diagKey = process.env.DIAGNOSTICS_KEY || '';
+      try {
+        const resp = await axios.post(`http://${HOST}:${PORT}/harness/cancel`, {}, { timeout: 10000, httpAgent: _toolHttpAgent, headers: { 'x-diagnostics-key': diagKey, 'content-type': 'application/json' } });
+        return JSON.stringify(resp.data);
+      } catch (err) {
+        return JSON.stringify({ error: 'harness_cancel_request_failed', message: err.message });
+      }
     } else if (name === 'harness_read_result') {
       if (!_harnessAuthorized) return JSON.stringify({ error: 'Harness not connected. Ask the developer to connect first (harness_connect).' });
       const diagKey = process.env.DIAGNOSTICS_KEY || '';
