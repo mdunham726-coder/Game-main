@@ -665,6 +665,13 @@ function applyPlayerActions(state, actions, deltas, flags, logger){
     return;
   }
   if (act === 'throw'){
+    state._apActuals = {
+      operation_family: 'throw',
+      routing: 'quarantined',
+      helper_method: null,
+      outcome: 'refused_ownership'
+    };
+    return;
     // v1.84.59: throw transfers object to current cell — same path as drop
     const target = actions?.target||'';
     const res = resolveItemByName(state, target);
