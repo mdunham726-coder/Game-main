@@ -319,10 +319,11 @@ async function normalizeUserIntent(userInput, gameContext, channel = 'do') {
   // v1.84.99: Pre-LLM fast path for unambiguously imperative acquisition verbs.
   // "grab" and "snatch" have no false-positive risk in text adventure context —
   // they always mean take. Parser classifies intent; engine validates existence.
+  // "acquire" added — same no-false-positive-risk criterion, always means take.
   // Do channel only; target text required after article-strip.
   if (channel === 'do') {
     const _rawLower = raw.toLowerCase();
-    const _fastMatch = _rawLower.match(/^(grab|snatch)\s+(.+)$/);
+    const _fastMatch = _rawLower.match(/^(grab|snatch|acquire)\s+(.+)$/);
     if (_fastMatch) {
       const _verb = _fastMatch[1];
       const _targetRaw = _fastMatch[2].replace(/^(a|an|the)\s+/i, '').trim();
