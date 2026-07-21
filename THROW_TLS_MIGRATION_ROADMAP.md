@@ -8,7 +8,7 @@
 
 ## FINAL CONTRACT
 
-AP recognizes THROW but has no object-operation authority. TLS owns THROW resolution and execution policy. ObjectHelper performs the authoritative mutation. ORS remains authoritative state. THROW moves a player-held ORS object — one unit by default, an explicitly requested quantity, or the entire stack — to the authoritative current Ground (active localspace → active site tile → current L0 grid cell). Over-stack, vague, malformed, contradictory, zero, negative, fractional, or otherwise unsupported quantity requests fail closed without mutation. Single-action turns only; compound queues do not enter the THROW TLS lane. THROW has no impact-target mechanics (parser-proven current design, preserved).
+AP recognizes THROW but has no object-operation authority. TLS owns THROW resolution and execution policy. ObjectHelper performs the authoritative mutation. ORS remains authoritative state. THROW moves a player-held ORS object — one unit by default, an explicitly requested quantity, or the entire stack — to the authoritative current Ground (active localspace → active site tile → current L0 grid cell). Over-stack, vague, malformed, contradictory, zero, negative, fractional, or otherwise unsupported quantity requests fail closed without mutation. Single-action turns only; compound queues do not enter the THROW TLS lane. Existing interpretation and narration of trailing target phrasing ("throw X at Y") are preserved unchanged: there is no authoritative structured impact-target mechanic, and this migration adds, removes, and redesigns none — it only moves object-operation authority and corrects authoritative Ground placement.
 
 ## MIGRATION METHOD
 
@@ -53,13 +53,13 @@ First make THROW inert. Then restore capability one authority layer at a time. E
 - **Exit condition:** stub live; AP performs zero THROW mutation.
 - **Stop/rollback boundary:** revert = remove the stub (legacy code is intact beneath it, restoring prior behavior exactly). Stop if the AP branch shape has drifted from the plan's anchor.
 
-### Stage 4 — Prove the controlled no-op
+### Stage 4 — Prove AP quarantine (engine-lane invariance)
 
-- **Objective:** demonstrate exact ORS invariance for THROW attempts across whole, partial, and unsupported input classes.
+- **Objective:** demonstrate that ActionProcessor no longer mutates: exact engine-lane ORS invariance for THROW attempts across whole, partial, and unsupported input classes. This stage does **not** claim a full-turn controlled no-op — full-turn inertness (narration seal + CB containment) is established at Stage 6 and proven at Stage 7 (V11).
 - **Authority transition:** none (proof stage).
 - **Dependencies:** Stage 3.
-- **Validation gate:** plan row V2 — identical membership, quantities, object count; empty THROW audit. **Known transitional exposure (mirrors DROP's equivalent phase):** the engine lane is proven inert, but no narration seal exists yet, so narration may still describe success and CB may act on that narration. The no-op proof is scoped to the engine lane; full-turn zero mutation is guaranteed only from Stage 6's seal onward. This exposure is dev-only and is the reason Stages 3-6 should be traversed promptly.
-- **Exit condition:** V2 PASS on the engine lane; any observed CB-lane mutation documented and carried as Stage-6 motivation, not treated as a Stage-4 failure of the stub.
+- **Validation gate:** plan row V2 — identical membership, quantities, object count; empty THROW audit — scoped explicitly to the engine lane. **Known transitional exposure (mirrors DROP's equivalent phase):** no narration seal exists yet, so narration may still describe success and CB may act on that narration. This exposure is dev-only and is the reason Stages 3-6 should be traversed promptly.
+- **Exit condition:** V2 PASS on the engine lane; any observed CB-lane mutation documented and carried as Stage-6 motivation, not treated as a Stage-4 failure of the stub — and not represented as a passed no-op either.
 - **Stop/rollback boundary:** any engine-lane mutation → stop immediately; the quarantine is defective.
 
 ### Stage 5 — Preserve the narrow AP recognition/refusal receipt
@@ -85,7 +85,7 @@ First make THROW inert. Then restore capability one authority layer at a time. E
 - **Objective:** prove TLS understands THROW: correct source ID, authoritative quantity, effective quantity per the frozen table, whole/partial/over routing, Ground destination per layer, fail-closed classes, ambiguity override, and full-turn zero mutation under the seal.
 - **Authority transition:** none (proof stage).
 - **Dependencies:** Stage 6.
-- **Validation gate:** plan rows V3-V12, V20, V21; TAKE/DROP regressions V23, V24. This is the stage where parser "all"/`selection_mode` runtime behavior for THROW (plan Uncertainties 1-2) is first observed; fail-closed outcomes are acceptable passes.
+- **Validation gate:** plan rows V3-V12, V20, V21, V27 (compound-turn full-turn inertness — if the thrown object mutates during a compound turn, stop for a bounded containment decision per Stop Condition 10b); TAKE/DROP regressions V23, V24. This is the stage where parser "all"/`selection_mode` runtime behavior for THROW (plan Uncertainties 1-2) is first observed. Individual fail-closed outcomes are acceptable passes, **except**: if normal entire-stack phrasing consistently fails closed because the parser never emits the metadata, that is NEEDS USER DECISION (plan Stop Condition 10a), not a completed entire-stack contract.
 - **Exit condition:** all listed rows PASS, including full-turn zero mutation (V11) — the seal now covers the Stage-4 exposure.
 - **Stop/rollback boundary:** any mutation on an observe-only turn → stop immediately (V11 fail). Any TAKE/DROP regression → stop.
 
@@ -130,7 +130,7 @@ First make THROW inert. Then restore capability one authority layer at a time. E
 - **Objective:** run the entire verification matrix: quantity classes (default-one, explicit partial, exact stack, all, over-stack, vague, zero/negative/fractional/malformed), ambiguity, unresolved targets, invalid destinations, all three Ground layers, identity and lineage, surviving-source replay, the two-assertion duplication check (`object_reality.promoted === 0` AND exactly one TLS successor — never collapsed into one assertion), persistence, narration, diagnostics labeling, bridge behavior, issue-#37 guard behavior on THROW turns, single-action scope, TAKE regression, DROP regression, unrelated-CB preservation.
 - **Authority transition:** none (proof stage).
 - **Dependencies:** Stages 8-11 live; Slice D1 landed.
-- **Validation gate:** every plan matrix row V1-V26 PASS, each reported individually with its evidence surface.
+- **Validation gate:** every plan matrix row V1-V27 PASS, each reported individually with its evidence surface. The V7 entire-stack escalation and the V27 compound-inertness proof are explicitly re-checked here on the final build.
 - **Exit condition:** full matrix green; parity with the frozen contract demonstrated; results archived for Mother Brain.
 - **Stop/rollback boundary:** any failed row stops Stage 13 unconditionally; a failed row is never summarized as partial success.
 
@@ -148,6 +148,11 @@ First make THROW inert. Then restore capability one authority layer at a time. E
 - ObjectHelper/ORS remains the sole mutation authority; AP remains diagnostic-only; narration and CB are never authority.
 - No stage may enable compound-command THROW, impact-target semantics, parser changes, ObjectHelper changes, Authority Gate logic changes, or a generalized verb framework.
 - Every live-mutation activation begins from the previously proven no-mutation state.
-- Denied, unresolved, stale, ambiguous, or unsupported THROW turns remain non-mutating and truthfully narrated at every stage.
+- Denied, unresolved, stale, ambiguous, or unsupported THROW turns remain non-mutating and truthfully narrated at every stage from Stage 6 onward; during the Stage 3-5 transitional window only engine-lane invariance is guaranteed (see Stage 4), and compound-turn inertness is proven by V27 rather than assumed.
 - Any newly discovered requirement touching a subsystem this roadmap defers must be reported for approval before implementation.
 - Nothing in this roadmap is complete until its validation gate has actually been run and observed; planning is not completion.
+
+## REVISION HISTORY
+
+- **2026-07-21 — Revision 1 (post-review; GPT forensic audit + user runtime clarification).** Stage 4 retitled "Prove AP quarantine (engine-lane invariance)" — it no longer claims a controlled full-turn no-op, which is proven at Stage 7; FINAL CONTRACT impact-target sentence replaced with preservation language (existing trailing-target interpretation/narration unchanged; no authoritative structured mechanic exists; migration only moves authority and corrects Ground placement); Stage 7 and Stage 12 gates gained V27 (compound-turn full-turn inertness) and the V7 entire-stack NEEDS USER DECISION escalation; PERMANENT BOUNDARIES non-mutating claim scoped to Stage 6 onward. Status remains READY FOR REVIEW.
+- **2026-07-21 — Initial READY FOR REVIEW.**

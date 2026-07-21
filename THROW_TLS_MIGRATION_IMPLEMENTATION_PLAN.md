@@ -35,7 +35,7 @@ Do not invent a new THROW subsystem. Do not broaden compound-command support. Do
 3. Destination is the authoritative current Ground resolved by `resolveCurrentGround(state)` ([ObjectOperationResolver.js:68-103](ObjectOperationResolver.js:68)): active localspace → active site tile → current L0 grid cell, each branch fail-closed.
 4. Over-stack, vague ("some"), malformed, contradictory, zero, negative, fractional, or otherwise unsupported quantity requests fail closed with no mutation.
 5. Single-action TLS boundary only (`validation.queue.length === 1`), identical to DROP. Compound queues do not enter the THROW TLS lane.
-6. THROW has no impact-target mechanics ("throw X at Y"): the parser schema (`SemanticParser.js:127-128`) carries no impact-target field and the THROW instruction (`SemanticParser.js:81`) directs target to the base item name only. This is preserved unchanged — proven current design, not a regression.
+6. Impact-target language ("throw X at Y"): the parser schema (`SemanticParser.js:127-128`) carries no structured impact-target field and the THROW instruction (`SemanticParser.js:81`) directs target to the base item name only — there is no **authoritative** impact-target mechanic. However, trailing target phrasing is already interpreted and narrated by the existing narration layers (user runtime evidence: a thrown object narrated as striking a named structure and coming to rest on the ground; the defect in that session was wrong-layer authoritative placement, not target comprehension). That observable behavior is preserved unchanged. This migration does not add, remove, or redesign impact-target behavior; it only moves object-operation authority and corrects authoritative Ground placement. Coding must not treat trailing target phrasing as unsupported or suppress its narration.
 
 ## Research Basis
 
@@ -53,7 +53,7 @@ Do not invent a new THROW subsystem. Do not broaden compound-command support. Do
 
 6. `SemanticParser.js:81` — THROW LLM instruction already directs quantity-prefix phrases to set `selection_mode:"partial_from_stack"` and target to base item name only. Identical in shape to DROP's instruction at line 82.
 7. Generic enrichment (`_enrichPrimaryAction`) supplies `requested_quantity`, `quantity_word`, `quantity_mode`, `normalized_target`, and `operation_family` (map includes `throw:'throw'`) for THROW already; the deterministic `selection_mode` backstop is gated to `take` only (research Addendum; DROP also lacks it and works — mirror DROP: no parser change).
-8. Parser output schema (`SemanticParser.js:127-128`) has no impact-target field of any kind; repo-wide grep for impact-target field names returned zero hits (research Addendum 3 Item 4, closed).
+8. Parser output schema (`SemanticParser.js:127-128`) has no structured impact-target field of any kind; repo-wide grep for impact-target field names returned zero hits (research Addendum 3 Item 4). This proves absence of an authoritative impact-target mechanic only — it does not prove trailing target phrasing has no effect. User runtime evidence shows the narrator already renders impact against a named trailing target with the object landing on the ground. That narration behavior is non-authoritative, currently working, and out of scope to change (frozen contract item 6).
 
 **TLS lane (DROP precedent, live on main):**
 
@@ -86,7 +86,7 @@ Do not invent a new THROW subsystem. Do not broaden compound-command support. Do
 
 ### Uncertainties
 
-1. **Parser "all" metadata for THROW (runtime-unverified):** DROP runtime evidence showed the LLM parser emitting `quantity_mode:'all'` + `selection_mode:'all_from_stack'` for all-stack DROP phrasing. Whether it does the same for THROW phrasing has never been observed. Fail-safe: if it does not, `_deriveThrowEffectiveQuantity` fails closed (`contradictory_quantity_metadata`) — no mutation, truthful refusal. Covered by verification row V7; not a blocker.
+1. **Parser "all" metadata for THROW (runtime-unverified):** DROP runtime evidence showed the LLM parser emitting `quantity_mode:'all'` + `selection_mode:'all_from_stack'` for all-stack DROP phrasing. Whether it does the same for THROW phrasing has never been observed. Fail-safe: if it does not, `_deriveThrowEffectiveQuantity` fails closed (`contradictory_quantity_metadata`) — no mutation, truthful refusal. However, fail-closed is a safety floor, not contract completion: if runtime observation (Stage 7 / Stage 12) shows normal entire-stack phrasing consistently failing closed because the parser never emits the metadata, the entire-stack contract item is unmet — stop and return NEEDS USER DECISION rather than shipping it as contract-complete (Stop Condition 10a, row V7). Not a planning blocker.
 2. **Parser `selection_mode` reliability for THROW partial phrasing:** depends on the line-81 LLM instruction (no deterministic backstop, same as DROP). Not load-bearing for routing (partial-vs-whole derives from effective quantity vs available), only for the `all` branch above and parse-quality. Runtime observation required; not a blocker.
 3. **CB prompt-precedence effectiveness for the THROW receipt** is probabilistic (LLM compliance), exactly as for TAKE/DROP. The deterministic post-CB suppression filter is the enforced invariant; prompt precedence is defense-in-depth. Runtime validation required.
 4. **Authority Gate Layer-1 fast-path firing conditions for THROW** were not exhaustively traced (research left this open; the observed Turn-8 transcript escalated to LLM). The fast path's existing drop/throw grouping is verified; whether it fires on a given input is runtime-dependent. Not load-bearing: both routes reach the same TLS lane.
@@ -222,7 +222,7 @@ Do not invent a new THROW subsystem. Do not broaden compound-command support. Do
 1. TAKE: resolver, policies, quantity derivation, live execution, receipts, prompt blocks, suppression filters, fast paths — byte-untouched surfaces; behavior identical.
 2. DROP: everything listed in Observed 9-22 remains byte-untouched except the shared gates explicitly extended (`6499`/`6531-6532` seal OR-condition, executor family points, alignment tree) — and at those points DROP-family inputs must produce identical outputs to today.
 3. SemanticParser.js, authoritygate.js, ObjectHelper.js, Engine.js: no edits anywhere in this migration.
-4. THROW semantics outside the migration scope: no impact-target mechanics added or removed (none exist); smash/throw parser boundary (`SemanticParser.js:81/83`) unchanged; compound-queue THROW remains outside TLS (becomes a recognized no-op after quarantine, exactly like compound DROP today — pre-existing limitation, preserved not extended).
+4. THROW semantics outside the migration scope: existing interpretation and narration of trailing target phrasing ("at [target]") preserved unchanged — no structured impact-target subsystem added, and no suppression of the currently working impact narration; smash/throw parser boundary (`SemanticParser.js:81/83`) unchanged; compound-queue THROW remains outside TLS (becomes a recognized no-op after quarantine, exactly like compound DROP today — pre-existing limitation, preserved not extended, with full-turn inertness proven by V27 rather than assumed).
 5. Unrelated CB operations: transfers/promotes/condition updates/retirements not matching the exact THROW receipt or seal conditions remain eligible; non-object CB continuity output untouched.
 6. Legacy fallback parser: no THROW TLS enrichment (mirrors DROP exclusion).
 7. Persistence: no schema changes; the existing request-local receipt lifecycle (active slot reset/archive/delete) already covers the shared `_tlsPartialStackResult` slot for any family.
@@ -340,7 +340,7 @@ Validation types: SRC = source/diff review; SYN = `node --check`; RT = runtime/m
 | V4 | Default-one on bare-noun stack | unspecified-quantity THROW of stack > 1 | evidence + dry-run | effective 1, `throw_default_one`, outcome `partial_split` | whole-stack routing | intended change / MB |
 | V5 | Fail-closed: vague | "some"-class THROW | evidence `fail_closed_reason` | `unsupported_quantity_mode`; no prediction; no mutation | any prediction/mutation or invented number | negative / MB+RT |
 | V6 | Fail-closed: zero/negative/fractional/malformed | exact-mode THROW with non-positive/non-integer quantity | evidence | `invalid_quantity`; no prediction; no mutation | any prediction/mutation | negative / MB |
-| V7 | Fail-closed: contradictory all | all-mode without `all_from_stack` or with numeric request | evidence | `contradictory_quantity_metadata`; no mutation | silent whole transfer | negative / MB+RT (Uncertainty 1) |
+| V7 | Fail-closed: contradictory all | all-mode without `all_from_stack` or with numeric request | evidence | `contradictory_quantity_metadata`; no mutation. **Escalation:** if normal entire-stack phrasing consistently lands here at runtime, the outcome is NEEDS USER DECISION (Stop Condition 10a), not a completed contract | silent whole transfer | negative / MB+RT (Uncertainty 1) |
 | V8 | Over-stack denial | explicit quantity > available | dry-run | `fail_closed` `over_stack`; no helper call; sealed narration | prediction or mutation | negative / MB+RT |
 | V9 | Duplicate-signature ambiguity | two player-held candidates with identical identity signatures | evidence | deterministic ambiguous override; null source; no prediction | model/first-match selection accepted | authority / MB (fixture per DROP precedent: direct/white-box; do not alter architecture to manufacture it) |
 | V10 | Invalid destination fail-closed | Ground unresolvable for current layer | dry-run `fail_closed_reason` | exact `resolveCurrentGround` reason; no prediction | grid/player fallback | negative / MB |
@@ -360,6 +360,7 @@ Validation types: SRC = source/diff review; SYN = `node --check`; RT = runtime/m
 | V24 | DROP regression | whole, partial, all, over-stack, ambiguous DROP after each slice | DROP receipts, seal, ORS, audit | identical to pre-slice baseline incl. seal behavior on shared gates | any delta | regression / RT+MB |
 | V25 | Persistence | save/reload after whole and partial THROW | reloaded ORS; top-level state | moved objects/lineage survive reload; no top-level active `_tlsPartialStackResult` persisted (existing lifecycle) | lost/duplicated objects; leaked active receipt | intended / RT |
 | V26 | Syntax + diff scope | after every slice | `node --check` each edited file; `git diff --name-only` | checks pass; only the slice's files changed | any failure or out-of-scope file | scope / SYN+SRC |
+| V27 | Compound-turn full-turn inertness | compound queue containing THROW + another action, run after T1 (quarantine) and again after T2 (seal landed) | thrown object's ORS record before/after (container, quantity, status); quarantine contents; narration | thrown object unchanged end-to-end; no CB-derived mutation of it executes; the other queued action unaffected | any mutation of the thrown object during a compound turn | authority-boundary / RT+MB — V20 proves the resolver was not invoked; this row proves the *outcome* is inert, which V20 alone does not establish |
 
 ## Stop Conditions (hard abort gates for Coding)
 
@@ -373,6 +374,8 @@ Validation types: SRC = source/diff review; SYN = `node --check`; RT = runtime/m
 8. Any observe-only stage shows THROW-caused mutation (V11 fail) → stop immediately.
 9. Issue #37 guard cannot be added without changing TAKE output (V22 TAKE half fails) → stop.
 10. A required user decision emerges (any input class whose behavior the D2 table does not determine) → NEEDS USER DECISION; do not improvise semantics.
+10a. Runtime observation shows normal entire-stack THROW phrasing consistently failing closed for missing parser metadata (V7 escalation) → NEEDS USER DECISION; do not declare the entire-stack contract item complete.
+10b. V27 shows any mutation of the thrown object during a compound-queue turn → stop for a bounded containment decision; "resolver not invoked" (V20) is not sufficient proof of inertness.
 11. Implementation would require >1 slice's files in one change, or the plan and roadmap disagree → stop; reconcile documents first.
 12. User approval absent: this plan is READY FOR REVIEW; no slice may be implemented until the user approves and explicitly instructs implementation.
 
@@ -389,11 +392,11 @@ Validation types: SRC = source/diff review; SYN = `node --check`; RT = runtime/m
 ## QA / Mother Brain Handoff
 
 - Establish pre-turn snapshots (player membership, Ground membership, ORS key count, source record, ObjectHelper audit) for every RT row; judge from state and receipts, never narrator prose.
-- Stage gates: V1-V2 close T1; V3-V12+V20-V21+V23-V24 close T2; V13-V14+V21+V23-V24 close T3; V15-V19+V23-V25 close T4; the full matrix closes Stage 12; V22 closes slice D1.
+- Stage gates: V1-V2 close T1; V3-V12+V20-V21+V23-V24+V27 close T2; V13-V14+V21+V23-V24 close T3; V15-V19+V23-V25 close T4; the full matrix (V1-V27) closes Stage 12; V22 closes slice D1.
 - Run TAKE/DROP regression baselines after THROW checks as well as before (shared-gate drift detection).
 - The two-assertion duplicate check (V17) must never be collapsed into one assertion.
 - Report each row PASS/FAIL with its evidence surface; a failed row is never "partial success."
-- Runtime-only rows (V2, V5, V7, V8, V11-V19, V23-V25) require a deployed or locally run build; source review cannot close them.
+- Runtime-only rows (V2, V5, V7, V8, V11-V19, V23-V25, V27) require a deployed or locally run build; source review cannot close them.
 
 ## Open Questions / Blockers
 
@@ -405,4 +408,5 @@ Validation types: SRC = source/diff review; SYN = `node --check`; RT = runtime/m
 
 ## Revision History
 
+- **2026-07-21 — Revision 1 (post-review; GPT forensic audit + user runtime clarification).** Four focused corrections, no architectural change, status remains READY FOR REVIEW: (1) impact-target claims narrowed per user runtime evidence — the engine already interprets and narrates trailing target phrasing (the observed defect was wrong-layer authoritative placement, not target comprehension); plan now states that behavior is preserved unchanged and Coding must not suppress it (frozen contract 6, Observed 8, Unchanged 4). (2) Stage-4 no-op claim narrowed to engine-lane invariance in the companion roadmap; full-turn inertness is proven at Stage 7. (3) Added V27 (compound-turn full-turn inertness) + Stop Condition 10b — compound THROW turns must be proven inert, not assumed inert from resolver non-invocation. (4) V7/Uncertainty-1 escalation + Stop Condition 10a — consistent runtime failure of normal entire-stack phrasing becomes NEEDS USER DECISION rather than an automatic pass.
 - **2026-07-21 — Initial READY FOR REVIEW.** Created from research-notes(226) (same-day research, fully re-verified against `main` @ `41dff60` in a bounded planning pass), the four DROP precedent documents, and live issue #37. Root `plan.md` intentionally not used per explicit user override for this task. Key decisions: mirror DROP end-to-end (policy/executor/live-blocks/bridge/seal/receipt-chain/descriptions); clone quantity derivation with throw-named basis strings; reuse Ground resolver, candidate enumerator, AG compensation variable, and successor-rename helper unchanged; treat Bug A (promote duplicate) and Bug B (surviving-source replay) as distinct with distinct protections; issue #37 as an independent diagnostics slice; partial-live + CB protections bound into one deployment unit. Precedent-document revision discrepancy (v1.91.84 file supplied where task named reconciled v1.91.88) recorded as non-blocking.
