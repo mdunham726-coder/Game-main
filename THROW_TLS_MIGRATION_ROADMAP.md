@@ -1,9 +1,9 @@
 # THROW → TLS MIGRATION ROADMAP
 
-- **Status:** READY FOR REVIEW — no stage is complete; no stage may be marked complete merely because it is planned.
+- **Status:** APPROVED — Stages 1-2 complete; Stage 3 next. Beyond Stage 2, no stage may be marked complete merely because it is planned — each still requires its own validation gate to actually be run and observed.
 - **Derived from:** `THROW_TLS_MIGRATION_IMPLEMENTATION_PLAN.md` (the detailed planning contract; this roadmap is the staged sequence view of that contract and must not diverge from it).
-- **Source state at planning:** `main` @ `41dff601d5c56516eee8a9e6a5281b7530b43724` (v1.92.8).
-- **Approval:** NOT approved. Only the user may approve. Each stage additionally requires the plan's Gate A (source re-verification + explicit implementation instruction) before its slice is coded.
+- **Source state at planning:** `main` @ `41dff601d5c56516eee8a9e6a5281b7530b43724` (v1.92.8). Implementation is proceeding on branch `throw-migration-branch`.
+- **Approval:** APPROVED by the user via direct conversational authorization on 2026-07-21, given after the GPT forensic review revision (Revision 1) was pushed. The user explicitly stated this authorization is to be treated as "ceremonial authority" in place of a file edit; this Revision 2 now syncs the file text to match. Each remaining stage still requires the plan's Gate A (source re-verification + explicit implementation instruction) before its slice is coded.
 - **Precedent:** the completed DROP → TLS migration (12-step staged sequence, quarantine-first / inert-first / one-authority-layer-at-a-time). The supplied precedent file is the v1.91.84-checkpoint revision of that roadmap; its endpoint is corroborated by current source, where DROP is fully live through TLS.
 
 ## FINAL CONTRACT
@@ -24,7 +24,7 @@ First make THROW inert. Then restore capability one authority layer at a time. E
 - **Validation gate:** user review of the implementation plan's frozen contract and D2 behavior-change table (three intentional divergences from legacy AP THROW are surfaced there for sign-off).
 - **Exit condition:** implementation plan + this roadmap APPROVED by the user.
 - **Stop/rollback boundary:** any contract ambiguity the D2 table does not determine → NEEDS USER DECISION before any code.
-- **Status:** planned (this document); awaiting review.
+- **Status:** COMPLETE (2026-07-21). Both the implementation plan and this roadmap were revised once after GPT forensic review (impact-target claim narrowed per user's live spoon-at-house evidence; Stage 4 no-op claim narrowed; V27 compound-inertness row added; V7 entire-stack escalation added), then explicitly approved by the user in conversation. No open contract ambiguities remained.
 
 ### Stage 2 — Establish baseline source and runtime evidence
 
@@ -34,6 +34,12 @@ First make THROW inert. Then restore capability one authority layer at a time. E
 - **Validation gate:** baseline evidence archived (witness/Mother Brain captures) sufficient for later parity comparison; source anchors re-verified.
 - **Exit condition:** baseline recorded; no source drift from the plan's anchors.
 - **Stop/rollback boundary:** material anchor drift → NEEDS SOURCE RE-VERIFICATION of the plan before proceeding.
+- **Status:** COMPLETE (2026-07-21). Captured live against a locally-run isolated server instance (port 3001, `throw-migration-branch`, pre-quarantine code) via direct adaptive turn-by-turn play — not a scripted harness file. Three classes recorded with real object IDs and witness data:
+  - **Partial-quantity defect** — session `1784659562098-rsssplmj0`: `obj_c757a03911bf` "rock" qty 5, `player/player`. Command "I throw 3 rocks onto the ground." Result: source landed at qty **4** (not 2) — AP hardcoded the split-extract quantity to 1 regardless of the requested 3 (`ActionProcessor.js:695`). Successor `obj_814f9dd686b4` qty 1 at `grid/LOC:7,5:19,8`, correct `parent_object_id` lineage.
+  - **Whole-object control** — same session: `obj_943d5bc68cc6` "spoon" qty 1, `player/player`. Command "I throw the spoon onto the ground." Result: same object ID moved intact to `grid/LOC:7,5:19,8` — correct Ground at L0 (open ground, no active site/localspace). Witness confirmed `ap_executed_transfer_ids: ["obj_943d5bc68cc6"]`, count 1.
+  - **Wrong-layer defect** — session `1784661280145-ufmvr1i9x`, L1 (`active_site: M2x7:site_start`, "Spooner's Diner"; player container `site/M2x7:site_start:4,8`): `obj_27862089d196` "spoon" qty 1. Command "I throw the spoon at the counter." Result: same object ID landed in `grid/LOC:2,7:89,55` instead of the correct site container — confirms the exact destination-layer defect `resolveCurrentGround` (localspace → site → grid) is designed to fix. Identity preserved; no CB duplicate on this particular run.
+  - **Side observations, out of scope, not acted on:** narration disagreed with authoritative state on the partial-stack turn (claimed "one rock left" vs actual qty 4 — reinforces why validation uses ORS, not prose); Authority Gate returned `freeform`/`unsupported_referenced_object` for the wrong-layer turn yet AP executed the transfer anyway (witness-flagged `gate_denied_but_executed`) — pre-existing AG/AP behavior, unrelated to THROW ownership, explicitly not touched by this migration (Scope Exclusion 6).
+  - Full session IDs, exact commands, before/after state, and raw witness JSON are additionally preserved in the implementing session's task record.
 
 ### Slice D1 (independent) — Issue #37 diagnostics guard
 
@@ -154,5 +160,6 @@ First make THROW inert. Then restore capability one authority layer at a time. E
 
 ## REVISION HISTORY
 
+- **2026-07-21 — Revision 2 (status sync; Stage 1-2 closure).** Status changed READY FOR REVIEW → APPROVED per explicit user conversational approval (given as "ceremonial authority" rather than a prior file edit; this revision syncs the text to match). Stage 1 marked COMPLETE. Stage 2 marked COMPLETE with live baseline evidence recorded directly in this document (partial-quantity defect, whole-object control, wrong-layer defect, two out-of-scope side observations). No architectural or contract change — this is a status/evidence update only.
 - **2026-07-21 — Revision 1 (post-review; GPT forensic audit + user runtime clarification).** Stage 4 retitled "Prove AP quarantine (engine-lane invariance)" — it no longer claims a controlled full-turn no-op, which is proven at Stage 7; FINAL CONTRACT impact-target sentence replaced with preservation language (existing trailing-target interpretation/narration unchanged; no authoritative structured mechanic exists; migration only moves authority and corrects Ground placement); Stage 7 and Stage 12 gates gained V27 (compound-turn full-turn inertness) and the V7 entire-stack NEEDS USER DECISION escalation; PERMANENT BOUNDARIES non-mutating claim scoped to Stage 6 onward. Status remains READY FOR REVIEW.
 - **2026-07-21 — Initial READY FOR REVIEW.**
