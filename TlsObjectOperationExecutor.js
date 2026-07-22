@@ -69,7 +69,7 @@ function executeTlsObjectInstruction(state, instruction, options) {
   }
 
   // Step 3: unsupported operation family
-  if (instruction.operation_family !== 'take' && instruction.operation_family !== 'drop') {
+  if (instruction.operation_family !== 'take' && instruction.operation_family !== 'drop' && instruction.operation_family !== 'throw') {
     const env = _base();
     env.fail_closed_reason = 'unsupported_operation';
     return env;
@@ -188,15 +188,15 @@ function executeTlsObjectInstruction(state, instruction, options) {
     record.current_container_type === instruction.source.container_type &&
     record.current_container_id === instruction.source.container_id;
 
-  const dropSourceValid = instruction.operation_family !== 'drop' || (
+  const dropSourceValid = (instruction.operation_family !== 'drop' && instruction.operation_family !== 'throw') || (
     record.current_container_type === 'player' &&
     record.current_container_id === 'player' &&
     Array.isArray(state.player?.object_ids) &&
     state.player.object_ids.includes(sourceId)
   );
 
-  // Step 17-18: destination validation — TAKE targets player; DROP must match current Ground
-  const currentGround = instruction.operation_family === 'drop'
+  // Step 17-18: destination validation — TAKE targets player; DROP/THROW must match current Ground
+  const currentGround = (instruction.operation_family === 'drop' || instruction.operation_family === 'throw')
     ? resolveCurrentGround(state) : null;
   const destValid = instruction.operation_family === 'take'
     ? instruction.destination.container_type === 'player' &&
@@ -276,7 +276,7 @@ function executeTlsObjectInstruction(state, instruction, options) {
     env.instruction_valid = true;
     env.validation_attempted = true;
     env.outcome = 'fail_closed';
-    env.fail_closed_reason = instruction.operation_family === 'drop'
+    env.fail_closed_reason = (instruction.operation_family === 'drop' || instruction.operation_family === 'throw')
       ? (currentGround?.fail_closed_reason || 'destination_mismatch')
       : (instruction.destination.container_type !== 'player' ? 'unsupported_destination' : 'destination_not_found');
     env.validation = { source_exists: sourceExists, source_active: sourceActive, quantity_matches_instruction: quantityMatches, container_matches_instruction: containerMatches, destination_valid: false, routing_recomputed: routingRecomputed };

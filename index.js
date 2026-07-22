@@ -2833,6 +2833,16 @@ app.post('/narrate', async (req, res) => {
               objectOperationResolverEvidence = null;
               objectOperationResolverError = { error_type: 'unexpected_exception', message: _rErr?.message || 'unknown' };
             }
+          } else if (
+            mapped?.player_intent?.operation_family === 'throw' &&
+            validation.queue.length === 1
+          ) {
+            try {
+              objectOperationResolverEvidence = await ObjectOperationResolver.resolvePlayerHeldThrow(gameState, mapped.player_intent);
+            } catch (_rErr) {
+              objectOperationResolverEvidence = null;
+              objectOperationResolverError = { error_type: 'unexpected_exception', message: _rErr?.message || 'unknown' };
+            }
           }
 
           // P1c — normalize a mistaken partial-stack TAKE classification back to whole-object
@@ -4512,6 +4522,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         status = 'not_executed';
         reason = 'drop_tls_dry_run_no_transfer_expected';
       }
+      else if (
+        opType === null &&
+        instructionV1?.operation_family === 'throw' &&
+        (w.ap_executed_transfer_count ?? 0) === 0
+      ) {
+        status = 'not_executed';
+        reason = 'throw_tls_dry_run_no_transfer_expected';
+      }
       else if (opType === null && (w.ap_executed_transfer_count ?? 0) === 0) {
         status = 'not_applicable';
         reason = 'non_object_turn_no_transfer_expected';
@@ -4631,7 +4649,9 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         checks,
         warnings,
         evidence_basis:     (status === 'insufficient_evidence') ? 'insufficient' : 'same_turn',
-        scope:              instructionV1?.operation_family === 'drop' ? 'drop_tls_dry_run' : 'whole_object_take_known_ors_only'
+        scope:              instructionV1?.operation_family === 'drop' ? 'drop_tls_dry_run'
+                              : instructionV1?.operation_family === 'throw' ? 'throw_tls_dry_run'
+                              : 'whole_object_take_known_ors_only'
       };
     }
 
@@ -4826,6 +4846,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
     });
     const _dropDryRunSealActive = !!(debug.object_operation_bridge?.active === true &&
       debug.object_operation_bridge?.drop_dry_run_seal === true && debug.parser === 'semantic' && debug.queue_length === 1);
+    const _throwDryRunSealActive = !!(debug.object_operation_bridge?.active === true &&
+      debug.object_operation_bridge?.throw_dry_run_seal === true && debug.parser === 'semantic' && debug.queue_length === 1);
     // Attach bridge receipt to witness store as flat sibling (follows tls_partial_stack_result pattern)
     if (debug.object_operation_bridge?.active) {
       const _existingWitness = _witnessStore.get(resolvedSessionId);
@@ -5049,7 +5071,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
           const _EMOTE_REMOVE_RE = /\btake[\s_]off|remove|strip[\s_]off|unequip|undress\b/i;
           const _emoteIsWorn = Array.isArray(gameState?.player?.worn_object_ids) &&
             gameState.player.worn_object_ids.includes(_emoteBestRec.id);
-          if (!_dropDryRunSealActive && _emoteIsWorn && _EMOTE_REMOVE_RE.test(_rawInput)) {
+          if (!_dropDryRunSealActive && !_throwDryRunSealActive && _emoteIsWorn && _EMOTE_REMOVE_RE.test(_rawInput)) {
             const _erResult = ObjectHelper.transferObjectDirect(
               gameState, _emoteBestRec.id, 'player', 'player', turnNumber, 'emote_remove'
             );
@@ -5270,7 +5292,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
                       ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed ALL of their worn clothing and gear. Every item is now in their inventory. None of it landed on the ground, was dropped, or was discarded anywhere. Do not describe any item falling to the floor or being set down. Do not name items using shortened or informal versions of their names.)\n`
                       : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player has successfully removed a worn item from their body. The item is now in their inventory — it was not dropped, placed on the ground, or discarded. Do not describe it falling to the floor or ending up anywhere other than the player's possession.)\n`)
                     : (debug.object_operation_bridge?.active
-                        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The player attempted an object operation that the engine evaluated and denied for this turn. Narrate the failed attempt only. Do not describe the player gathering, picking up, taking, holding, receiving, possessing, or partially completing the object operation. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`
+                        ? `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(The attempted object operation did not execute. Narrate only the attempt. Do not describe success, partial success, or any resulting state change. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`
                         : `\nPLAYER'S ATTEMPTED ACTION: "${_rawInput}"\n(This action has no mechanical effect. Briefly acknowledge what the player tried to do within the narrative. Do not change world state. Remain grounded in the current location. The player's input cannot be the causal origin of any new item entering the narrative — do not introduce, name, or describe any item not already in confirmed engine state, including as a substitute or consolation.)\n`
                     ))))))))
       : '';
@@ -5432,7 +5454,7 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _parsedAction !== 'move' &&
       _parsedAction !== 'established_trait_action'
     )
-      ? `\nPLAYER INTENT (for flavor only): "${_rawInput}"\nVALIDATED ACTION: ${_parsedAction}${_doIntentTarget ? ' \u2014 ' + _doIntentTarget : ''}\nUse the phrasing, tone, and body language from PLAYER INTENT freely to color how the moment feels. VALIDATED ACTION is the only mechanical reality — do NOT narrate any capability, outcome, or consequence for elements of PLAYER INTENT that are not reflected in VALIDATED ACTION. "Sneak," "run," "fly," and similar verbs describe expressive style only — not checks, not conditions, not systems.\n`
+      ? `\nPLAYER INTENT (for flavor only): "${_rawInput}"\nVALIDATED ACTION: ${_parsedAction}${_doIntentTarget ? ' \u2014 ' + _doIntentTarget : ''}\nUse the phrasing, tone, and body language from PLAYER INTENT freely to color how the moment feels. ${debug.object_operation_bridge?.active ? 'VALIDATED ACTION identifies what the player attempted — it does not by itself mean the action executed or succeeded. The Object Operation Result below determines whether it executed and what physically occurred; follow it exactly.' : 'VALIDATED ACTION is the only mechanical reality — do NOT narrate any capability, outcome, or consequence for elements of PLAYER INTENT that are not reflected in VALIDATED ACTION.'} "Sneak," "run," "fly," and similar verbs describe expressive style only — not checks, not conditions, not systems.\n`
       : '';
 
     // Phase 3 (v1.51.0): Generalized emote block — fires on any channel when asterisk-wrapped gesture/body language is present.
@@ -6148,6 +6170,16 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           },
           suppressed_refs: {}
         };
+      } else if (_throwDryRunSealActive) {
+        _objectRealityDebug.throw_dry_run_seal = {
+          active: true,
+          activation_basis: 'semantic_single_action_bridge_receipt',
+          suppressed_counts: {
+            cb_candidates: 0, cb_transfers: 0, cb_condition_updates: 0,
+            cb_retirements: 0, tsl_fission: 0, tsl_extraction: 0
+          },
+          suppressed_refs: {}
+        };
       }
       // v1.91.44: merge preserved AP direct-mutation audit entries into the new audit array
       if (_priorDirectAudit.length > 0) {
@@ -6172,7 +6204,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         ].filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
         let _npcIntroCaptureCount = 0;
         const _t1Registry = gameState.world?._turn1_founded_entities || [];  // v1.88.9: Turn 1 Founding Registry
-        if (!_dropDryRunSealActive && Array.isArray(_phaseBResult.entity_candidates)) {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive && Array.isArray(_phaseBResult.entity_candidates)) {
           for (const _intrNpc of _visibleNpcsForCapture) {
             if (_intrNpc.object_capture_turn !== null && _intrNpc.object_capture_turn !== undefined) continue;
             let _intrCand = _phaseBResult.entity_candidates.find(ec => {
@@ -6281,7 +6313,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         _objectRealityDebug.npc_intro_materialized = _npcIntroCaptureCount;
 
         // v6.0.18: soliloquy gate — drop player-targeted object candidates on soliloquy turns
-        if (!_dropDryRunSealActive && _soliloquyFired && Array.isArray(_phaseBResult.object_candidates)) {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive && _soliloquyFired && Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
             if (c.container_type === 'player') {
               _turnLog(_objectRealityDebug, 'warn', 'SOLILOQUY-GATE', `player-targeted object_candidate blocked on soliloquy turn: "${c.name}"`, {name: c.name});
@@ -6309,8 +6341,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _objectRealityDebug.tsl    = _tslR.tsl;
           _objectRealityDebug.tsl_ms = _tslR.processing_time_ms;
         }
-        if (_dropDryRunSealActive) {
-          const _sealDiag = _objectRealityDebug.drop_dry_run_seal;
+        if (_dropDryRunSealActive || _throwDryRunSealActive) {
+          const _sealDiag = _dropDryRunSealActive
+            ? _objectRealityDebug.drop_dry_run_seal
+            : _objectRealityDebug.throw_dry_run_seal;
           const _rawCandidates = Array.isArray(_phaseBResult.object_candidates) ? _phaseBResult.object_candidates : [];
           const _rawTransfers = Array.isArray(_phaseBResult.object_transfers) ? _phaseBResult.object_transfers : [];
           const _rawConditions = Array.isArray(_phaseBResult.object_condition_updates) ? _phaseBResult.object_condition_updates : [];
@@ -6335,7 +6369,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
 
         // v1.84.78: origin gate — drop player_claimed new player-held objects before quarantine assembly
         // v1.85.7: Turn 1 founding premise items are exempt — they are legitimate starting inventory
-        if (!_dropDryRunSealActive && Array.isArray(_phaseBResult.object_candidates)) {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive && Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
             if (c.transfer_origin === 'npc_introduction') return true; // v1.85.28: NPC intro capture — always pass through
             if (c.container_type === 'player' && c.transfer_origin === 'player_claimed' && turnNumber !== 1) {
@@ -6402,7 +6436,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // for that item. Invariant: successful grab → CB emits container_type:'player' (not caught here);
         // failed grab → CB emits container_type:'grid' → name matches label → blocked.
         // Deterministic: matches _envGatherLabel derived from AP's _environmentGatherIntent, not prose inspection.
-        if (!_dropDryRunSealActive && _envGatherLabel && Array.isArray(_phaseBResult.object_candidates)) {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive && _envGatherLabel && Array.isArray(_phaseBResult.object_candidates)) {
           _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
             if (c.container_type === 'grid' && c.transfer_origin === 'environment_interaction' && String(c.name || '').toLowerCase() === _envGatherLabel) {
               _turnLog(_objectRealityDebug, 'warn', 'ORIGIN-GATE', `env_gather_not_acquired blocked: "${c.name}"`, {name: c.name, transfer_origin: c.transfer_origin});
@@ -6422,7 +6456,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // Only blocks candidates targeting world containers (grid/localspace/site).
         const _apRemovedWornNames = Array.isArray(gameState._apRemovedWornNames) ? gameState._apRemovedWornNames : [];
         gameState._apRemovedWornNames = []; // consume and clear for next turn
-        if (!_dropDryRunSealActive && (_parsedAction === 'remove' || _emoteRemoveExecuted) && _apRemovedWornNames.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive && (_parsedAction === 'remove' || _emoteRemoveExecuted) && _apRemovedWornNames.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
           const _wornRemoveTokenize = str => String(str || '').toLowerCase().split(/[\s\-_\/]+/).map(t => t.replace(/[^a-z0-9]/g, '')).filter(t => t.length > 0);
           // Pre-build token sets for each removed worn item name
           const _removedTokenSets = _apRemovedWornNames.map(n => ({ name: n, tokens: new Set(_wornRemoveTokenize(n)) }));
@@ -6452,7 +6486,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // Container scope prevents false positives (e.g. floor arrow ≠ player container).
         // FALLBACK: ops with unresolved:true excluded from both match structures — CB candidate
         // survives as resilience fallback when TLS normalization fails for that product.
-        if (!_dropDryRunSealActive && Array.isArray(_tslR?.tsl?.extraction_operations) && _tslR.tsl.extraction_operations.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive && Array.isArray(_tslR?.tsl?.extraction_operations) && _tslR.tsl.extraction_operations.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
           const _resolvedExtractionOps = _tslR.tsl.extraction_operations
             .filter(op => !op.unresolved && !op.quantity_unresolved);
           // Match 1: aggregate product name (exact normalized)
@@ -6496,7 +6530,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // Operates on structural signals only — no name matching.
         // Temporary — will be narrowed in P5-A2 when the live execution lane goes live.
         let _cbCandidateTakeSuppressed = 0;
-        if (!_dropDryRunSealActive) _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive) _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
           if (
             c.container_type === 'player' &&
             c.transfer_origin === 'environment_interaction' &&
@@ -6528,8 +6562,8 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         const _cbTransfers  = Array.isArray(_phaseBResult.object_transfers)  ? _phaseBResult.object_transfers  : [];
         _objectRealityDebug.cb_candidates = _cbCandidates;
         _objectRealityDebug.cb_transfers  = _cbTransfers;
-        const _cbMutationCandidates = _dropDryRunSealActive ? [] : _cbCandidates;
-        const _cbMutationTransfers = _dropDryRunSealActive ? [] : _cbTransfers;
+        const _cbMutationCandidates = (_dropDryRunSealActive || _throwDryRunSealActive) ? [] : _cbCandidates;
+        const _cbMutationTransfers = (_dropDryRunSealActive || _throwDryRunSealActive) ? [] : _cbTransfers;
         // v1.84.57: suppress CB transfers for objects AP already transferred this turn.
         // AP writes object IDs to gameState._apExecutedTransfers[] on success only — fail = no proof = CB fallback stays.
         // Temp-ref-only entries (no object_id) pass through unfiltered; destination idempotency in ObjectHelper catches any duplicates.
@@ -6914,7 +6948,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         _objectRealityDebug.initial_condition_updates = _icResults;
 
         // v1.84.64: Object condition updates — CB annotation of tracked object states per turn
-        const _cbConditionUpdates = _dropDryRunSealActive ? [] : (Array.isArray(_phaseBResult.object_condition_updates) ? _phaseBResult.object_condition_updates : []);
+        const _cbConditionUpdates = (_dropDryRunSealActive || _throwDryRunSealActive) ? [] : (Array.isArray(_phaseBResult.object_condition_updates) ? _phaseBResult.object_condition_updates : []);
         const _conditionUpdateResults = [];
         for (const cu of _cbConditionUpdates) {
           if (!cu || (!cu.object_id && !cu.name_match) || !cu.condition) {
@@ -6956,7 +6990,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
 
         // v1.84.65: Object retirements — CB signals original object ceased to exist as itself
         // v1.85.8: refactored to _retirementPairs to carry entry+result for fission second pass
-        const _cbRetirements = _dropDryRunSealActive ? [] : (Array.isArray(_phaseBResult.object_retirements) ? _phaseBResult.object_retirements : []);
+        const _cbRetirements = (_dropDryRunSealActive || _throwDryRunSealActive) ? [] : (Array.isArray(_phaseBResult.object_retirements) ? _phaseBResult.object_retirements : []);
         const _retirementPairs = []; // [{ entry, result }] — entry kept for successor extraction
         for (const ret of _cbRetirements) {
           if (!ret) {
@@ -7047,7 +7081,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
 
         // v1.90.02: TLS fission injection — retire objects TLS resolved that CB missed this turn.
         // Inserts into _retirementPairs so the existing fission second pass picks up successors automatically.
-        if (!_apRefusedTake && !_dropDryRunSealActive) {
+        if (!_apRefusedTake && !_dropDryRunSealActive && !_throwDryRunSealActive) {
           const _tslFissionOps = Array.isArray(_tslR?.tsl?.fission_operations) ? _tslR.tsl.fission_operations : [];
           let _tslFissionInjected    = 0;
           let _tslFissionUnresolvable = 0;
@@ -7076,7 +7110,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         // v1.91.03: TLS extraction injection — build partial_split quarantine from extraction_operations.
         // Non-degenerate ops: partial_split entries → ObjectHelper Pass 3.
         // degrades_to_fission ops: retire source → push to _retirementPairs (fission second pass promotes successor).
-        if (!_apRefusedTake && !_dropDryRunSealActive) {
+        if (!_apRefusedTake && !_dropDryRunSealActive && !_throwDryRunSealActive) {
           const _tslExtractionOps = Array.isArray(_tslR?.tsl?.extraction_operations) ? _tslR.tsl.extraction_operations : [];
           let _tslExtractionInjected     = 0;
           let _tslExtractionUnresolvable = 0;

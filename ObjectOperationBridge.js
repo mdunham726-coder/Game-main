@@ -11,7 +11,7 @@
 // Activated cases: partial-stack TAKE over-stack; single-action semantic TAKE
 // with no matching resolver candidate (Phase-A P4 envelope, no-mutation proven
 // via absent AP/TLS execution evidence); plus supported single-action semantic
-// DROP turns whose AP refusal and lack of live execution are confirmed.
+// DROP or THROW turns whose AP refusal and lack of live execution are confirmed.
 // All other fail-closed reasons pass through inactive.
 //
 // Read-only guarantee: NEVER mutates gameState, debug, passed objects,
@@ -31,7 +31,7 @@
  * @param {Object|null} params.liveExecutionResult     — current-turn live execution receipt, when produced
  * @param {Object|null} params.resolverEvidence        — current-turn resolver_evidence_v1, when produced (optional, no-candidates TAKE only)
  * @param {Array|null}  params.apExecutedTransfers     — gameState._apExecutedTransfers, when produced (optional, no-candidates TAKE only)
- * @returns {Object} receipt — { active, rc_skip_reason, narration_constraint, drop_dry_run_seal, diagnostics }
+ * @returns {Object} receipt — { active, rc_skip_reason, narration_constraint, drop_dry_run_seal|throw_dry_run_seal, diagnostics }
  */
 function evaluateOperation(params = {}) {
   const {
@@ -164,6 +164,127 @@ function evaluateOperation(params = {}) {
         ap_refusal_confirmed,
         live_drop_execution_absent,
         drop_dry_run_seal: false,
+        constraint_supplied: false
+      }
+    };
+  }
+
+  if (semanticOperationFamily === 'throw' && semanticPathSingleAction === true) {
+    const apKeys = apActuals && typeof apActuals === 'object' ? Object.keys(apActuals) : [];
+    const ap_refusal_confirmed = !!(
+      apKeys.length === 4 &&
+      apActuals.operation_family === 'throw' &&
+      apActuals.routing === 'quarantined' &&
+      apActuals.helper_method === null &&
+      apActuals.outcome === 'refused_ownership'
+    );
+    const dryRunPrediction = dryRunEnvelope?.predicted_call;
+    const dryRunPredictionParams = dryRunPrediction?.parameters;
+    const dryRunPredictedResult = dryRunEnvelope?.predicted_result;
+    const partialReceiptPrediction = tlsPartialStackResult?.predicted_call;
+    const partialReceiptParams = partialReceiptPrediction?.parameters;
+    const partialSplitResult = tlsPartialStackResult?.split_result;
+    const partialSourceId = partialSplitResult?.source_object_id;
+    const partialSuccessorId = partialSplitResult?.successor_object_id;
+    const partial_throw_execution_confirmed = !!(
+      instructionEnvelope?.operation_family === 'throw' &&
+      instructionEnvelope?.routing?.intended_mutation === 'partial_split' &&
+      instructionEnvelope?.executor?.expected_helper_method === 'splitObjectDirect' &&
+      dryRunEnvelope?.operation_family === 'throw' &&
+      dryRunEnvelope?.operation_allowed === true &&
+      dryRunEnvelope?.outcome === 'partial_split' &&
+      dryRunPrediction?.method === 'splitObjectDirect' &&
+      tlsPartialStackResult?.schema_version === 'tls_partial_stack_execution_v1' &&
+      tlsPartialStackResult?.executed === true &&
+      partialSplitResult?.ok === true &&
+      partialSplitResult?.reason === 'tls_partial_stack_throw' &&
+      typeof partialSourceId === 'string' && partialSourceId.trim().length > 0 &&
+      typeof partialSuccessorId === 'string' && partialSuccessorId.trim().length > 0 &&
+      partialSourceId !== partialSuccessorId &&
+      partialReceiptPrediction?.method === dryRunPrediction.method &&
+      partialReceiptParams?.source_object_id === dryRunPredictionParams?.source_object_id &&
+      partialReceiptParams?.extract_quantity === dryRunPredictionParams?.extract_quantity &&
+      partialReceiptParams?.destination_container_type === dryRunPredictionParams?.destination_container_type &&
+      partialReceiptParams?.destination_container_id === dryRunPredictionParams?.destination_container_id &&
+      partialSplitResult.source_object_id === dryRunPredictionParams?.source_object_id &&
+      partialSplitResult.requested_quantity === dryRunPredictionParams?.extract_quantity &&
+      partialSplitResult.applied_quantity === dryRunPredictionParams?.extract_quantity &&
+      partialSplitResult.dest_container_type === dryRunPredictionParams?.destination_container_type &&
+      partialSplitResult.dest_container_id === dryRunPredictionParams?.destination_container_id &&
+      partialSplitResult.source_quantity_before === dryRunPredictedResult?.source_quantity_before &&
+      partialSplitResult.source_quantity_after === dryRunPredictedResult?.source_quantity_after &&
+      Number.isInteger(partialSplitResult.source_quantity_before) &&
+      Number.isInteger(partialSplitResult.applied_quantity) &&
+      Number.isInteger(partialSplitResult.source_quantity_after) &&
+      partialSplitResult.source_quantity_before - partialSplitResult.applied_quantity === partialSplitResult.source_quantity_after &&
+      partialSplitResult.source_quantity_after > 0
+    );
+    const live_throw_execution_absent =
+      (liveExecutionResult === null || liveExecutionResult === undefined) &&
+      !partial_throw_execution_confirmed;
+
+    if (ap_refusal_confirmed && live_throw_execution_absent) {
+      const instruction_present = instructionEnvelope !== null && instructionEnvelope !== undefined;
+      const dry_run_present = dryRunEnvelope !== null && dryRunEnvelope !== undefined;
+      const dryRunOutcome = dryRunEnvelope?.outcome ?? null;
+      const failReason = dryRunEnvelope?.fail_closed_reason
+        ?? instructionEnvelope?.routing?.fail_closed_reason
+        ?? instructionEnvelope?.provenance?.fail_closed_reason
+        ?? null;
+      const validPrediction = dryRunEnvelope?.operation_allowed === true &&
+        (dryRunOutcome === 'partial_split' || dryRunOutcome === 'whole_transfer');
+      const requestedQuantity = instructionEnvelope?.quantity?.requested_quantity;
+      const availableQuantity = instructionEnvelope?.quantity?.observed_available_quantity;
+      const overStackQuantityExplanation = Number.isInteger(requestedQuantity) && Number.isInteger(availableQuantity)
+        ? `The player requested quantity ${requestedQuantity}, but only quantity ${availableQuantity} is currently available in their possession.`
+        : 'The player requested a greater quantity than they currently possess.';
+      const narration_constraint = validPrediction
+        ? 'The player attempted a THROW object operation. TLS evaluated an authoritative dry-run prediction, but THROW execution is disabled in this phase. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the attempt as not executed and do not describe success or partial success.'
+        : failReason === 'over_stack'
+          ? `${overStackQuantityExplanation} The requested quantity is unavailable, so the THROW operation failed completely. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the quantity shortfall clearly. Do not invent an environmental, spatial, physical, or motivational reason for the failure, and do not describe success or partial success.`
+        : failReason
+          ? `The player attempted a THROW object operation, but it failed closed (${failReason}). No object moved, split, transferred, appeared, disappeared, or changed. Narrate the failed attempt only and do not describe success or partial success.`
+          : 'The player attempted a THROW object operation, but no authoritative executable THROW result was produced and THROW execution is disabled in this phase. No object moved, split, transferred, appeared, disappeared, or changed. Narrate the attempt as not executed.';
+
+      return {
+        active: true,
+        rc_skip_reason: 'tls_throw_dry_run',
+        narration_constraint,
+        throw_dry_run_seal: true,
+        diagnostics: {
+          fail_closed_reason: failReason,
+          operation_family: 'throw',
+          p4_outcome: dryRunOutcome,
+          p4_operation_allowed: dryRunEnvelope?.operation_allowed ?? null,
+          ap_quarantine_confirmed: true,
+          p5a2_absent_confirmed: null,
+          instruction_present,
+          dry_run_present,
+          ap_refusal_confirmed,
+          live_throw_execution_absent,
+          throw_dry_run_seal: true,
+          constraint_supplied: true
+        }
+      };
+    }
+
+    return {
+      active: false,
+      rc_skip_reason: null,
+      narration_constraint: '',
+      throw_dry_run_seal: false,
+      diagnostics: {
+        fail_closed_reason: null,
+        operation_family: 'throw',
+        p4_outcome: dryRunEnvelope?.outcome ?? null,
+        p4_operation_allowed: dryRunEnvelope?.operation_allowed ?? null,
+        ap_quarantine_confirmed: ap_refusal_confirmed,
+        p5a2_absent_confirmed: null,
+        instruction_present: instructionEnvelope !== null && instructionEnvelope !== undefined,
+        dry_run_present: dryRunEnvelope !== null && dryRunEnvelope !== undefined,
+        ap_refusal_confirmed,
+        live_throw_execution_absent,
+        throw_dry_run_seal: false,
         constraint_supplied: false
       }
     };

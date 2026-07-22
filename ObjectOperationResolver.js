@@ -33,6 +33,7 @@ const DEEPSEEK_TIMEOUT_MS = 15000;
 const EVIDENCE_SCHEMA_VERSION = "resolver_evidence_v1";
 const TAKE_RESOLVER_KIND = "resolvePartialStackTake";
 const DROP_RESOLVER_KIND = "resolvePlayerHeldDrop";
+const THROW_RESOLVER_KIND = "resolvePlayerHeldThrow";
 
 // ── Layer 1: Candidate Enumeration ──────────────────────────────────────────────
 
@@ -205,6 +206,21 @@ function _dropPolicy(state) {
   return {
     operationFamily: "drop",
     resolverKind: DROP_RESOLVER_KIND,
+    enumerateCandidates: _enumerateDropCandidates,
+    destination: resolveCurrentGround(state),
+    strictDestinationValidation: true,
+    strictPlayerSourceValidation: true,
+    deterministicDuplicateAmbiguity: true
+  };
+}
+
+// THROW reuses DROP's exact candidate domain (active player-held player/player
+// records) and Ground destination policy — the source and destination contracts
+// are identical; only the resolver_kind/operation_family identity differs.
+function _throwPolicy(state) {
+  return {
+    operationFamily: "throw",
+    resolverKind: THROW_RESOLVER_KIND,
     enumerateCandidates: _enumerateDropCandidates,
     destination: resolveCurrentGround(state),
     strictDestinationValidation: true,
@@ -463,6 +479,40 @@ function _deriveDropEffectiveQuantity(actions, availableQuantity) {
   return { ok: false, quantity: null, basis: null, reason: "unsupported_quantity_mode" };
 }
 
+// Exact behavioral clone of _deriveDropEffectiveQuantity — same quantity contract
+// (frozen for THROW by user decision: default-one, explicit exact, truthful "all",
+// fail closed on "some"/contradictory/invalid). Cloned rather than shared so THROW
+// evidence reports throw-named basis strings instead of DROP's, and so this
+// function can never be a hidden second caller into validated DROP behavior.
+function _deriveThrowEffectiveQuantity(actions, availableQuantity) {
+  const requested = actions?.requested_quantity ?? null;
+  const quantityMode = actions?.quantity_mode ?? null;
+  const selectionMode = actions?.selection_mode ?? null;
+
+  if (quantityMode === "all") {
+    if (requested !== null || selectionMode !== "all_from_stack") {
+      return { ok: false, quantity: null, basis: null, reason: "contradictory_quantity_metadata" };
+    }
+    return { ok: true, quantity: availableQuantity, basis: "throw_all_available", reason: null };
+  }
+  if (quantityMode === "some") {
+    return { ok: false, quantity: null, basis: null, reason: "unsupported_quantity_mode" };
+  }
+  if (quantityMode === "unspecified" || quantityMode === "article") {
+    if (requested !== null) {
+      return { ok: false, quantity: null, basis: null, reason: "contradictory_quantity_metadata" };
+    }
+    return { ok: true, quantity: 1, basis: "throw_default_one", reason: null };
+  }
+  if (quantityMode === "exact") {
+    if (Number.isInteger(requested) && requested > 0) {
+      return { ok: true, quantity: requested, basis: "parser_explicit", reason: null };
+    }
+    return { ok: false, quantity: null, basis: null, reason: "invalid_quantity" };
+  }
+  return { ok: false, quantity: null, basis: null, reason: "unsupported_quantity_mode" };
+}
+
 /**
  * Validate model JSON response against ORS facts and schema.
  * Returns { valid, evidencePatch, warnings, validationErrors }
@@ -644,14 +694,18 @@ function _validateModelResponse(modelJson, candidates, state, actions, policy = 
   }
 
   // V8: quantity matches ORS (allow null→1 normalization for single objects)
-  const orsQuantity = policy.operationFamily === "drop"
+  // DROP and THROW share the same strict player-held-stack quantity contract
+  // (positive integer or fail closed); TAKE alone allows the null->1 default,
+  // since a TAKE source is not required to already be an authoritative stack.
+  const _strictStackQuantityFamily = policy.operationFamily === "drop" || policy.operationFamily === "throw";
+  const orsQuantity = _strictStackQuantityFamily
     ? (Number.isInteger(orsRecord.quantity) && orsRecord.quantity > 0 ? orsRecord.quantity : null)
     : (typeof orsRecord.quantity === "number" ? orsRecord.quantity : 1);
   const modelQuantity = typeof modelJson.source_quantity_before === "number"
     ? modelJson.source_quantity_before
     : null;
 
-  if (policy.operationFamily === "drop" && orsQuantity === null) {
+  if (_strictStackQuantityFamily && orsQuantity === null) {
     result.valid = false;
     result.evidencePatch.resolution_basis = "validation_failed";
     result.evidencePatch.source_object_id = null;
@@ -660,7 +714,7 @@ function _validateModelResponse(modelJson, candidates, state, actions, policy = 
       code: "invalid_source_quantity",
       severity: "blocking",
       field: "source_quantity_before",
-      message: `DROP source "${sourceId}" does not have a positive integer authoritative quantity.`,
+      message: `${policy.operationFamily.toUpperCase()} source "${sourceId}" does not have a positive integer authoritative quantity.`,
       candidate_ids: sourceId ? [sourceId] : null
     });
     return result;
@@ -786,6 +840,28 @@ function _validateModelResponse(modelJson, candidates, state, actions, policy = 
         severity: "blocking",
         field: "requested_quantity",
         message: "TAKE quantity metadata cannot be mapped to an approved effective quantity.",
+        candidate_ids: sourceId ? [sourceId] : null
+      });
+      return result;
+    }
+    result.evidencePatch.requested_vs_available = effectiveQuantity.quantity < orsQuantity
+      ? "partial"
+      : effectiveQuantity.quantity === orsQuantity ? "exact_stack" : "over_stack";
+    result.evidencePatch.is_stack = orsQuantity > 1;
+  } else if (policy.operationFamily === "throw") {
+    const effectiveQuantity = _deriveThrowEffectiveQuantity(actions, orsQuantity);
+    result.evidencePatch.intended_destination_type = policy.destination.container_type;
+    result.evidencePatch.intended_destination_id = policy.destination.container_id;
+    result.evidencePatch.effective_requested_quantity = effectiveQuantity.quantity;
+    result.evidencePatch.effective_quantity_basis = effectiveQuantity.basis;
+    if (!effectiveQuantity.ok) {
+      result.valid = false;
+      result.evidencePatch.fail_closed_reason = effectiveQuantity.reason;
+      result.warnings.push({
+        code: effectiveQuantity.reason,
+        severity: "blocking",
+        field: "requested_quantity",
+        message: "THROW quantity metadata cannot be mapped to an approved effective quantity.",
         candidate_ids: sourceId ? [sourceId] : null
       });
       return result;
@@ -1100,4 +1176,8 @@ async function resolvePlayerHeldDrop(state, actions) {
   return _resolveWithPolicy(state, actions, _dropPolicy(state));
 }
 
-module.exports = { resolvePartialStackTake, resolvePlayerHeldDrop, resolveCurrentGround };
+async function resolvePlayerHeldThrow(state, actions) {
+  return _resolveWithPolicy(state, actions, _throwPolicy(state));
+}
+
+module.exports = { resolvePartialStackTake, resolvePlayerHeldDrop, resolvePlayerHeldThrow, resolveCurrentGround };
