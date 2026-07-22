@@ -1123,6 +1123,9 @@ app.post('/narrate', async (req, res) => {
   let _cbTlsPartialStackTakeReceiptState = 'empty';
   let _cbTlsPartialStackDropReceipt = null;
   let _cbTlsPartialStackDropReceiptState = 'empty';
+  let _tlsPartialStackThrowDescriptionTarget = null;
+  let _cbTlsPartialStackThrowReceipt = null;
+  let _cbTlsPartialStackThrowReceiptState = 'empty';
 
   function _sanitizeCbTlsPartialStackDropReceipt(receipt) {
     const sourceObjectId = receipt?.source_object_id;
@@ -1174,6 +1177,77 @@ app.post('/narrate', async (req, res) => {
       authority: 'tls_object_helper',
       turn_number: receipt.turn_number,
       operation_type: 'tls_partial_stack_drop',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: sourceObjectId,
+      source_persists: true,
+      successor_object_id: successorObjectId,
+      successor_created_this_turn: true,
+      requested_quantity: receipt.requested_quantity,
+      extracted_quantity: receipt.extracted_quantity,
+      source_quantity_before: receipt.source_quantity_before,
+      source_quantity_after: receipt.source_quantity_after,
+      source_container_type: 'player',
+      source_container_id: 'player',
+      destination_container_type: receipt.destination_container_type,
+      destination_container_id: receipt.destination_container_id
+    };
+  }
+
+  // THROW→TLS migration Stage 11: exact clone of _sanitizeCbTlsPartialStackDropReceipt
+  // with throw-named schema_version / operation_type. Every structural, arithmetic, and
+  // live-state cross-check is identical — a partial THROW and a partial DROP share the
+  // same player-held-source → Ground-destination split shape; only the family label differs.
+  function _sanitizeCbTlsPartialStackThrowReceipt(receipt) {
+    const sourceObjectId = receipt?.source_object_id;
+    const successorObjectId = receipt?.successor_object_id;
+    const sourceRecord = gameState.objects?.[sourceObjectId];
+    const successorRecord = gameState.objects?.[successorObjectId];
+    const destinationTypes = new Set(['grid', 'localspace', 'site']);
+
+    if (
+      receipt?.schema_version !== 'cb_tls_partial_stack_throw_v1' ||
+      receipt.authority !== 'tls_object_helper' ||
+      receipt.operation_type !== 'tls_partial_stack_throw' ||
+      receipt.status !== 'executed' ||
+      receipt.actor_ref !== 'player' ||
+      receipt.source_persists !== true ||
+      receipt.successor_created_this_turn !== true ||
+      !Number.isInteger(receipt.turn_number) || receipt.turn_number < 1 ||
+      receipt.turn_number !== turnNumber ||
+      typeof sourceObjectId !== 'string' || sourceObjectId.trim().length === 0 ||
+      typeof successorObjectId !== 'string' || successorObjectId.trim().length === 0 ||
+      sourceObjectId === successorObjectId ||
+      !Number.isInteger(receipt.requested_quantity) || receipt.requested_quantity < 1 ||
+      !Number.isInteger(receipt.extracted_quantity) || receipt.extracted_quantity < 1 ||
+      receipt.requested_quantity !== receipt.extracted_quantity ||
+      !Number.isInteger(receipt.source_quantity_before) || receipt.source_quantity_before < 1 ||
+      !Number.isInteger(receipt.source_quantity_after) || receipt.source_quantity_after < 1 ||
+      receipt.source_quantity_before - receipt.extracted_quantity !== receipt.source_quantity_after ||
+      receipt.source_container_type !== 'player' ||
+      receipt.source_container_id !== 'player' ||
+      !destinationTypes.has(receipt.destination_container_type) ||
+      typeof receipt.destination_container_id !== 'string' || receipt.destination_container_id.trim().length === 0 ||
+      !sourceRecord || sourceRecord.status !== 'active' ||
+      sourceRecord.quantity !== receipt.source_quantity_after ||
+      sourceRecord.current_container_type !== receipt.source_container_type ||
+      sourceRecord.current_container_id !== receipt.source_container_id ||
+      !Array.isArray(gameState.player?.object_ids) || !gameState.player.object_ids.includes(sourceObjectId) ||
+      !successorRecord || successorRecord.status !== 'active' ||
+      successorRecord.parent_object_id !== sourceObjectId ||
+      successorRecord.created_turn !== receipt.turn_number ||
+      successorRecord.quantity !== receipt.extracted_quantity ||
+      successorRecord.current_container_type !== receipt.destination_container_type ||
+      successorRecord.current_container_id !== receipt.destination_container_id
+    ) {
+      return null;
+    }
+
+    return {
+      schema_version: 'cb_tls_partial_stack_throw_v1',
+      authority: 'tls_object_helper',
+      turn_number: receipt.turn_number,
+      operation_type: 'tls_partial_stack_throw',
       status: 'executed',
       actor_ref: 'player',
       source_object_id: sourceObjectId,
@@ -1396,6 +1470,64 @@ app.post('/narrate', async (req, res) => {
     _cbTlsPartialStackDropReceipt = sanitizedReceipt;
     _cbTlsPartialStackDropReceiptState = 'accepted';
     return _cbTlsPartialStackDropReceipt;
+  }
+
+  // THROW→TLS migration Stage 11: exact clone of _captureCbTlsPartialStackDropReceipt.
+  // Single-capture state machine + strict split/prediction cross-validation + sanitizer
+  // pass before acceptance, keyed to reason 'tls_partial_stack_throw'.
+  function _captureCbTlsPartialStackThrowReceipt(splitResult, predictedCall) {
+    if (_cbTlsPartialStackThrowReceiptState !== 'empty') {
+      _cbTlsPartialStackThrowReceiptState = 'rejected';
+      _cbTlsPartialStackThrowReceipt = null;
+      return null;
+    }
+
+    const _rejectReceipt = () => {
+      _cbTlsPartialStackThrowReceiptState = 'rejected';
+      _cbTlsPartialStackThrowReceipt = null;
+      return null;
+    };
+    const predictedParams = predictedCall?.parameters;
+
+    if (
+      splitResult?.ok !== true ||
+      splitResult.reason !== 'tls_partial_stack_throw' ||
+      predictedCall?.method !== 'splitObjectDirect' ||
+      !predictedParams ||
+      splitResult.source_object_id !== predictedParams.source_object_id ||
+      splitResult.requested_quantity !== predictedParams.extract_quantity ||
+      splitResult.applied_quantity !== predictedParams.extract_quantity ||
+      splitResult.dest_container_type !== predictedParams.destination_container_type ||
+      splitResult.dest_container_id !== predictedParams.destination_container_id
+    ) {
+      return _rejectReceipt();
+    }
+
+    const sanitizedReceipt = _sanitizeCbTlsPartialStackThrowReceipt({
+      schema_version: 'cb_tls_partial_stack_throw_v1',
+      authority: 'tls_object_helper',
+      turn_number: turnNumber,
+      operation_type: 'tls_partial_stack_throw',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: splitResult.source_object_id,
+      source_persists: true,
+      successor_object_id: splitResult.successor_object_id,
+      successor_created_this_turn: true,
+      requested_quantity: splitResult.requested_quantity,
+      extracted_quantity: splitResult.applied_quantity,
+      source_quantity_before: splitResult.source_quantity_before,
+      source_quantity_after: splitResult.source_quantity_after,
+      source_container_type: 'player',
+      source_container_id: 'player',
+      destination_container_type: splitResult.dest_container_type,
+      destination_container_id: splitResult.dest_container_id
+    });
+    if (!sanitizedReceipt) return _rejectReceipt();
+
+    _cbTlsPartialStackThrowReceipt = sanitizedReceipt;
+    _cbTlsPartialStackThrowReceiptState = 'accepted';
+    return _cbTlsPartialStackThrowReceipt;
   }
 
   function _captureCbTlsPartialStackTakeReceipt(splitResult) {
@@ -3043,6 +3175,73 @@ app.post('/narrate', async (req, res) => {
                 ObjectHelper.setObjectDescriptionDirect(
                   gameState,
                   _capturedPartialDropReceipt.successor_object_id,
+                  ''
+                );
+              }
+            }
+          } else if (
+            // THROW→TLS migration Stage 10: live TLS partial-stack THROW execution.
+            // Exact mirror of the DROP partial-split block above — consumes the P4
+            // dry-run prediction, calls splitObjectDirect once (reason
+            // 'tls_partial_stack_throw'), writes the shared partial-stack envelope,
+            // and on success captures the description target, applies the
+            // quantity-one successor rename (reused family-agnostic helper), and
+            // captures the THROW CB receipt for Bug-B replay suppression (Stage 11).
+            debug.tls_instruction_v1?.operation_family === 'throw' &&
+            debug.tls_executor_dry_run?.operation_family === 'throw' &&
+            validation.queue.length === 1 &&
+            debug.tls_executor_dry_run?.operation_allowed === true &&
+            debug.tls_executor_dry_run?.outcome === 'partial_split' &&
+            debug.tls_executor_dry_run?.predicted_call?.method === 'splitObjectDirect'
+          ) {
+            const _tlsPartialThrowParams = debug.tls_executor_dry_run.predicted_call.parameters;
+            const splitResult = ObjectHelper.splitObjectDirect(
+              gameState,
+              _tlsPartialThrowParams.source_object_id,
+              _tlsPartialThrowParams.extract_quantity,
+              _tlsPartialThrowParams.destination_container_type,
+              _tlsPartialThrowParams.destination_container_id,
+              turnNumber,
+              'tls_partial_stack_throw'
+            );
+            gameState._tlsPartialStackResult = {
+              schema_version: 'tls_partial_stack_execution_v1',
+              executed: splitResult.ok,
+              split_result: splitResult,
+              predicted_call: debug.tls_executor_dry_run.predicted_call,
+              ap_actuals: gameState._apActuals ?? null
+            };
+            _tlsPartialStackArchive = gameState._tlsPartialStackResult;
+            if (splitResult.ok) {
+              const _throwDescriptionSource = gameState.objects?.[splitResult.source_object_id];
+              if (_throwDescriptionSource) {
+                _tlsPartialStackThrowDescriptionTarget = {
+                  source_object_id: splitResult.source_object_id,
+                  original_description: _throwDescriptionSource.description || '',
+                  source_quantity_before: splitResult.source_quantity_before,
+                  source_quantity_after: splitResult.source_quantity_after,
+                  source_container_type: _throwDescriptionSource.current_container_type,
+                  source_container_id: _throwDescriptionSource.current_container_id,
+                  source_name: _throwDescriptionSource.name,
+                  source_unit: _throwDescriptionSource.unit
+                };
+              }
+              if (splitResult.applied_quantity === 1) {
+                const _throwSuccessorRecord = gameState.objects?.[splitResult.successor_object_id];
+                if (_throwSuccessorRecord) {
+                  const _throwTargetText = mapped.player_intent?.normalized_target || mapped.player_intent?.target || null;
+                  const _throwSuccessorRename = _singularizeDropSuccessorName(_throwSuccessorRecord.name, _throwTargetText);
+                  if (_throwSuccessorRename.changed) _throwSuccessorRecord.name = _throwSuccessorRename.name;
+                }
+              }
+              const _capturedPartialThrowReceipt = _captureCbTlsPartialStackThrowReceipt(
+                splitResult,
+                debug.tls_executor_dry_run.predicted_call
+              );
+              if (_capturedPartialThrowReceipt) {
+                ObjectHelper.setObjectDescriptionDirect(
+                  gameState,
+                  _capturedPartialThrowReceipt.successor_object_id,
                   ''
                 );
               }
@@ -5863,7 +6062,9 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         tlsPartialStackTakeReceipt: _cbTlsPartialStackTakeReceiptState === 'accepted'
           ? _cbTlsPartialStackTakeReceipt : null,
         tlsPartialStackDropReceipt: _cbTlsPartialStackDropReceiptState === 'accepted'
-          ? _cbTlsPartialStackDropReceipt : null
+          ? _cbTlsPartialStackDropReceipt : null,
+        tlsPartialStackThrowReceipt: _cbTlsPartialStackThrowReceiptState === 'accepted'
+          ? _cbTlsPartialStackThrowReceipt : null
       });
       _continuityExtractionSuccess = _phaseBResult !== null;
       if (_phaseBResult) {
@@ -5894,6 +6095,38 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
         delete _phaseBResult.partial_drop_successor_description;
       }
+      // THROW→TLS migration Stage 11: exact mirror of the partial-DROP successor-
+      // description consumption above. Only the receipt-validated successor may
+      // receive CB's descriptive text, and only when it differs from the surviving
+      // source's description.
+      if (_phaseBResult) {
+        const _partialThrowDescription = _phaseBResult.partial_throw_successor_description;
+        const _validatedPartialThrowDescriptionReceipt = _sanitizeCbTlsPartialStackThrowReceipt(
+          _cbTlsPartialStackThrowReceiptState === 'accepted'
+            ? _cbTlsPartialStackThrowReceipt : null
+        );
+        if (
+          _validatedPartialThrowDescriptionReceipt &&
+          _partialThrowDescription &&
+          typeof _partialThrowDescription.description === 'string' &&
+          _partialThrowDescription.description.length > 0
+        ) {
+          const _sourceDescription = gameState.objects?.[
+            _validatedPartialThrowDescriptionReceipt.source_object_id
+          ]?.description;
+          if (
+            _partialThrowDescription.description.trim().toLowerCase() !==
+            String(_sourceDescription || '').trim().toLowerCase()
+          ) {
+            ObjectHelper.setObjectDescriptionDirect(
+              gameState,
+              _validatedPartialThrowDescriptionReceipt.successor_object_id,
+              _partialThrowDescription.description.trim()
+            );
+          }
+        }
+        delete _phaseBResult.partial_throw_successor_description;
+      }
       if (_phaseBResult && _tlsPartialDescriptionTarget) {
         const _extractionEvents = Array.isArray(_phaseBResult.extraction_events)
           ? _phaseBResult.extraction_events : [];
@@ -5923,6 +6156,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       // line ~5713 above.
       _normalizePartialSplitSourceDescription(gameState, _tlsPartialDescriptionTarget);
       _normalizePartialSplitSourceDescription(gameState, _tlsPartialStackDropDescriptionTarget);
+      _normalizePartialSplitSourceDescription(gameState, _tlsPartialStackThrowDescriptionTarget);
       // v1.84.38: mark Turn 1 degraded state when CB extraction fails — diagnostic/internal only
       if (!_continuityExtractionSuccess && turnNumber === 1 && gameState.player?.birth_record) {
         gameState.player.birth_record._extraction_failed = true;
@@ -6836,6 +7070,48 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               receipt_schema_version: _validatedPartialDropReceipt.schema_version,
               object_id: _validatedPartialDropReceipt.source_object_id,
               successor_object_id: _validatedPartialDropReceipt.successor_object_id,
+              from_container_type: _qe.from_container_type,
+              from_container_id: _qe.from_container_id,
+              to_container_type: _qe.to_container_type,
+              to_container_id: _qe.to_container_id,
+              turn: turnNumber
+            });
+            _quarantine.splice(_i, 1);
+          }
+        }
+        // THROW→TLS migration Stage 11: Bug-B replay suppression for partial THROW,
+        // exact mirror of the partial-DROP suppression above. Deterministically drops
+        // any CB transfer entry that would replay the surviving source stack player→
+        // Ground, keyed to the receipt's source ID + exact source/destination
+        // containers. Transfer entries only — the successor is never matched and the
+        // promote path is untouched (Bug A remains out of scope, tracked as issue #42).
+        const _validatedPartialThrowReceipt = _sanitizeCbTlsPartialStackThrowReceipt(
+          _cbTlsPartialStackThrowReceiptState === 'accepted'
+            ? _cbTlsPartialStackThrowReceipt : null
+        );
+        if (_validatedPartialThrowReceipt) {
+          for (let _i = _quarantine.length - 1; _i >= 0; _i--) {
+            const _qe = _quarantine[_i];
+            if (
+              _qe.action !== 'transfer' ||
+              _qe.temp_ref ||
+              _qe.object_id !== _validatedPartialThrowReceipt.source_object_id ||
+              _qe.from_container_type !== _validatedPartialThrowReceipt.source_container_type ||
+              _qe.from_container_id !== _validatedPartialThrowReceipt.source_container_id ||
+              _qe.to_container_type !== _validatedPartialThrowReceipt.destination_container_type ||
+              _qe.to_container_id !== _validatedPartialThrowReceipt.destination_container_id
+            ) {
+              continue;
+            }
+
+            if (!Array.isArray(_objectRealityDebug.suppressed_replays)) {
+              _objectRealityDebug.suppressed_replays = [];
+            }
+            _objectRealityDebug.suppressed_replays.push({
+              reason: 'cb_partial_throw_source_replay_suppressed',
+              receipt_schema_version: _validatedPartialThrowReceipt.schema_version,
+              object_id: _validatedPartialThrowReceipt.source_object_id,
+              successor_object_id: _validatedPartialThrowReceipt.successor_object_id,
               from_container_type: _qe.from_container_type,
               from_container_id: _qe.from_container_id,
               to_container_type: _qe.to_container_type,
