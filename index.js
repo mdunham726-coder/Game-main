@@ -4746,16 +4746,114 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
 
     // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment helper (Goal 3 diagnostic).
     // Pure function — no state access, no ObjectHelper calls, no mutation.
-    // Compares TLS prediction against same-turn AP/ORS evidence.
-    function _assembleTlsOrsAlignment(w, instruction, instructionV1 = null) {
-      const opType = instruction?.operation_type ?? null;
-      const opFamily = instruction?.operation_family ?? null;
+    // Compares TLS prediction against same-turn execution/ORS evidence.
+    function _assembleTlsOrsAlignment(
+      w,
+      instruction,
+      instructionV1 = null,
+      liveExecutionResult = null,
+      postExecutionObject = null
+    ) {
+      const receiptBackedWholeTransfer = (
+        instructionV1?.operation_type === 'whole_object_transfer' &&
+        liveExecutionResult?.mode === 'live_execution' &&
+        liveExecutionResult?.executed_by === 'tls' &&
+        liveExecutionResult?.transfer?.result === 'success'
+      );
+      const alignmentInstruction = receiptBackedWholeTransfer ? instructionV1 : instruction;
+      const opType = alignmentInstruction?.operation_type ?? null;
+      const opFamily = alignmentInstruction?.operation_family ?? null;
+      const _missingAlignmentField = value => value == null || value === '';
 
       // ── Status decision tree ────────────────────────────────────────────
       let status, reason;
 
+      // Successful live TLS whole transfer: compare v1 prediction against
+      // the execution receipt and the final ORS record. Missing evidence is
+      // evaluated before mismatches, in the frozen diagnostic-contract order.
+      if (receiptBackedWholeTransfer) {
+        const predId = instructionV1?.object?.id ?? null;
+        const receiptId = liveExecutionResult?.object?.id ?? null;
+        const postId = postExecutionObject?.id ?? null;
+        const predSrcType = instructionV1?.source?.container_type ?? null;
+        const receiptSrcType = liveExecutionResult?.source?.container_type ?? null;
+        const predSrcId = instructionV1?.source?.container_id ?? null;
+        const receiptSrcId = liveExecutionResult?.source?.container_id ?? null;
+        const predDstType = instructionV1?.destination?.container_type ?? null;
+        const receiptDstType = liveExecutionResult?.destination?.container_type ?? null;
+        const postDstType = postExecutionObject?.current_container_type ?? null;
+        const predDstId = instructionV1?.destination?.container_id ?? null;
+        const receiptDstId = liveExecutionResult?.destination?.container_id ?? null;
+        const postDstId = postExecutionObject?.current_container_id ?? null;
+        const postStatus = postExecutionObject?.status ?? null;
+
+        if (_missingAlignmentField(predId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_predicted_object_id';
+        } else if (_missingAlignmentField(receiptId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_receipt_object_id';
+        } else if (!postExecutionObject) {
+          status = 'insufficient_evidence';
+          reason = 'missing_post_execution_object';
+        } else if (_missingAlignmentField(postId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_post_object_id';
+        } else if (_missingAlignmentField(predSrcType)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_predicted_source_container_type';
+        } else if (_missingAlignmentField(receiptSrcType)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_receipt_source_container_type';
+        } else if (_missingAlignmentField(predSrcId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_predicted_source_container_id';
+        } else if (_missingAlignmentField(receiptSrcId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_receipt_source_container_id';
+        } else if (_missingAlignmentField(predDstType)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_predicted_destination_container_type';
+        } else if (_missingAlignmentField(receiptDstType)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_receipt_destination_container_type';
+        } else if (_missingAlignmentField(postDstType)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_post_container_type';
+        } else if (_missingAlignmentField(predDstId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_predicted_destination_container_id';
+        } else if (_missingAlignmentField(receiptDstId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_receipt_destination_container_id';
+        } else if (_missingAlignmentField(postDstId)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_post_container_id';
+        } else if (_missingAlignmentField(postStatus)) {
+          status = 'insufficient_evidence';
+          reason = 'missing_post_object_status';
+        } else {
+          const sameObj = predId === receiptId && receiptId === postId;
+          const srcTypeMatch = predSrcType === receiptSrcType;
+          const srcIdMatch = predSrcId === receiptSrcId;
+          const dstTypeMatch = predDstType === receiptDstType && receiptDstType === postDstType;
+          const dstIdMatch = predDstId === receiptDstId && receiptDstId === postDstId;
+          const postObjectActive = postStatus === 'active';
+
+          const allPassed = sameObj && srcTypeMatch && srcIdMatch && dstTypeMatch && dstIdMatch && postObjectActive;
+          status = allPassed ? 'matched' : 'mismatched';
+          reason = allPassed ? null : (
+            !sameObj ? 'object_id_mismatch' :
+            !srcTypeMatch ? 'source_container_type_mismatch' :
+            !srcIdMatch ? 'source_container_id_mismatch' :
+            !dstTypeMatch ? 'destination_container_type_mismatch' :
+            !dstIdMatch ? 'destination_container_id_mismatch' :
+            !postObjectActive ? 'post_execution_object_not_active' : null
+          );
+        }
+      }
       // Synthetic env gather: must check BEFORE generic null/no-transfer
-      if (w.ap_env_gather_synthetic === true && (w.ap_executed_transfer_count ?? 0) === 0) {
+      else if (w.ap_env_gather_synthetic === true && (w.ap_executed_transfer_count ?? 0) === 0) {
         status = 'skipped_non_transfer';
         reason = 'synthetic_environmental_gather_no_transfer';
       }
@@ -4836,52 +4934,119 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       const predicted = {
         operation_type:       opType,
         operation_family:     opFamily,
-        object_id:            instruction?.object?.id ?? null,
-        source_container_type: instruction?.source?.container_type ?? null,
-        source_container_id:   instruction?.source?.container_id ?? null,
-        dest_container_type:   instruction?.destination?.container_type ?? null,
-        dest_owner_type:       instruction?.destination?.owner_type ?? null,
-        quantity_mode:         instruction?.quantity?.mode ?? null
+        object_id:            alignmentInstruction?.object?.id ?? null,
+        source_container_type: alignmentInstruction?.source?.container_type ?? null,
+        source_container_id:   alignmentInstruction?.source?.container_id ?? null,
+        dest_container_type:   alignmentInstruction?.destination?.container_type ?? null,
+        dest_container_id:     alignmentInstruction?.destination?.container_id ?? null,
+        dest_owner_type:       alignmentInstruction?.destination?.owner_type ?? null,
+        quantity_mode:         receiptBackedWholeTransfer
+                                 ? instructionV1?.quantity?.quantity_mode ?? null
+                                 : instruction?.quantity?.mode ?? null
       };
 
+      const rawApTransferIds = w.ap_executed_transfer_ids ?? [];
+      const rawApTransferCount = w.ap_executed_transfer_count ?? 0;
       const observed = {
-        object_id:             w.target_object_id ?? null,
-        object_name:           w.target_object_name ?? null,
-        transfer_count:        w.ap_executed_transfer_count ?? 0,
-        transfer_ids:          w.ap_executed_transfer_ids ?? [],
-        prior_container_type:  w.target_object_prior_container_type ?? null,
-        prior_container_id:    w.target_object_prior_container_id ?? null,
-        post_container_type:   w.target_object_container_type ?? null,
-        post_container_id:     w.target_object_container_id ?? null,
-        env_gather_synthetic:  w.ap_env_gather_synthetic ?? null
+        object_id:             receiptBackedWholeTransfer
+                                 ? liveExecutionResult?.object?.id ?? null
+                                 : w.target_object_id ?? null,
+        object_name:           receiptBackedWholeTransfer
+                                 ? liveExecutionResult?.object?.name ?? null
+                                 : w.target_object_name ?? null,
+        transfer_count:        receiptBackedWholeTransfer ? 1 : rawApTransferCount,
+        transfer_ids:          receiptBackedWholeTransfer
+                                 ? (liveExecutionResult?.object?.id ? [liveExecutionResult.object.id] : [])
+                                 : rawApTransferIds,
+        prior_container_type:  receiptBackedWholeTransfer
+                                 ? liveExecutionResult?.source?.container_type ?? null
+                                 : w.target_object_prior_container_type ?? null,
+        prior_container_id:    receiptBackedWholeTransfer
+                                 ? liveExecutionResult?.source?.container_id ?? null
+                                 : w.target_object_prior_container_id ?? null,
+        post_container_type:   receiptBackedWholeTransfer
+                                 ? postExecutionObject?.current_container_type ?? null
+                                 : w.target_object_container_type ?? null,
+        post_container_id:     receiptBackedWholeTransfer
+                                 ? postExecutionObject?.current_container_id ?? null
+                                 : w.target_object_container_id ?? null,
+        env_gather_synthetic:  w.ap_env_gather_synthetic ?? null,
+        execution_evidence_source: receiptBackedWholeTransfer
+                                     ? 'tls_execution_result'
+                                     : rawApTransferCount > 0 ? 'ap_executed_transfers' : null,
+        ap_transfer_count:     rawApTransferCount,
+        ap_transfer_ids:       rawApTransferIds,
+        post_object_status:    receiptBackedWholeTransfer
+                                 ? postExecutionObject?.status ?? null
+                                 : w.target_object_status ?? null
       };
 
       const checks = {
-        same_object_id:               predicted.object_id && observed.object_id
-                                        ? predicted.object_id === observed.object_id : null,
-        source_container_type_matches: predicted.source_container_type && observed.prior_container_type
-                                        ? predicted.source_container_type === observed.prior_container_type : null,
-        source_container_id_matches:   predicted.source_container_id && observed.prior_container_id
-                                        ? predicted.source_container_id === observed.prior_container_id : null,
-        dest_container_type_matches:   predicted.dest_container_type && observed.post_container_type
-                                        ? predicted.dest_container_type === observed.post_container_type : null,
-        transfer_count_matches:        opType === 'whole_object_transfer'
-                                        ? observed.transfer_count === 1 : null,
-        no_duplicate_evidence:         null  // v0: no reliable same-turn duplicate check exists
+        same_object_id: receiptBackedWholeTransfer
+          ? (!_missingAlignmentField(predicted.object_id) &&
+             !_missingAlignmentField(observed.object_id) &&
+             !_missingAlignmentField(postExecutionObject?.id)
+              ? predicted.object_id === observed.object_id && observed.object_id === postExecutionObject.id
+              : null)
+          : (predicted.object_id && observed.object_id
+              ? predicted.object_id === observed.object_id : null),
+        source_container_type_matches: receiptBackedWholeTransfer
+          ? (!_missingAlignmentField(predicted.source_container_type) &&
+             !_missingAlignmentField(observed.prior_container_type)
+              ? predicted.source_container_type === observed.prior_container_type
+              : null)
+          : (predicted.source_container_type && observed.prior_container_type
+              ? predicted.source_container_type === observed.prior_container_type : null),
+        source_container_id_matches: receiptBackedWholeTransfer
+          ? (!_missingAlignmentField(predicted.source_container_id) &&
+             !_missingAlignmentField(observed.prior_container_id)
+              ? predicted.source_container_id === observed.prior_container_id
+              : null)
+          : (predicted.source_container_id && observed.prior_container_id
+              ? predicted.source_container_id === observed.prior_container_id : null),
+        dest_container_type_matches: receiptBackedWholeTransfer
+          ? (!_missingAlignmentField(predicted.dest_container_type) &&
+             !_missingAlignmentField(liveExecutionResult?.destination?.container_type) &&
+             !_missingAlignmentField(observed.post_container_type)
+              ? predicted.dest_container_type === liveExecutionResult.destination.container_type &&
+                liveExecutionResult.destination.container_type === observed.post_container_type
+              : null)
+          : (predicted.dest_container_type && observed.post_container_type
+              ? predicted.dest_container_type === observed.post_container_type : null),
+        dest_container_id_matches: receiptBackedWholeTransfer
+          ? (!_missingAlignmentField(predicted.dest_container_id) &&
+             !_missingAlignmentField(liveExecutionResult?.destination?.container_id) &&
+             !_missingAlignmentField(observed.post_container_id)
+              ? predicted.dest_container_id === liveExecutionResult.destination.container_id &&
+                liveExecutionResult.destination.container_id === observed.post_container_id
+              : null)
+          : null,
+        transfer_count_matches: receiptBackedWholeTransfer
+          ? true
+          : (opType === 'whole_object_transfer' ? observed.transfer_count === 1 : null),
+        post_object_active: receiptBackedWholeTransfer
+          ? (_missingAlignmentField(observed.post_object_status)
+              ? null : observed.post_object_status === 'active')
+          : null,
+        no_duplicate_evidence: null  // v0: no reliable same-turn duplicate check exists
       };
 
-      const warnings = [];
-      if (opType === 'whole_object_transfer') {
-        if (!observed.prior_container_type) warnings.push('missing_prior_container_type');
-        if (!observed.prior_container_id)   warnings.push('missing_prior_container_id');
-        if (!observed.post_container_type)  warnings.push('missing_post_container_type');
-        if (!observed.object_id)            warnings.push('missing_object_id');
-        if (observed.transfer_count !== 1)  warnings.push('unexpected_transfer_count');
+      const warnings = receiptBackedWholeTransfer
+        ? (status === 'matched' ? [] : [reason])
+        : [];
+      if (!receiptBackedWholeTransfer) {
+        if (opType === 'whole_object_transfer') {
+          if (!observed.prior_container_type) warnings.push('missing_prior_container_type');
+          if (!observed.prior_container_id)   warnings.push('missing_prior_container_id');
+          if (!observed.post_container_type)  warnings.push('missing_post_container_type');
+          if (!observed.object_id)            warnings.push('missing_object_id');
+          if (observed.transfer_count !== 1)  warnings.push('unexpected_transfer_count');
+        }
+        if (w.ap_env_gather_synthetic)        warnings.push('synthetic_env_gather_detected');
+        if (opType === 'partial_object_transfer') warnings.push('partial_stack_alignment_deferred');
+        else if (opType && opType !== 'whole_object_transfer')
+          warnings.push(`unsupported_operation_type_${opType}`);
       }
-      if (w.ap_env_gather_synthetic)        warnings.push('synthetic_env_gather_detected');
-      if (opType === 'partial_object_transfer') warnings.push('partial_stack_alignment_deferred');
-      else if (opType && opType !== 'whole_object_transfer')
-        warnings.push(`unsupported_operation_type_${opType}`);
 
       return {
         schema_version:     'tls_ors_alignment_v0',
@@ -4895,7 +5060,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
         checks,
         warnings,
         evidence_basis:     (status === 'insufficient_evidence') ? 'insufficient' : 'same_turn',
-        scope:              instructionV1?.operation_family === 'drop' ? 'drop_tls_dry_run'
+        scope:              receiptBackedWholeTransfer ? `${opFamily}_tls_live_execution`
+                              : instructionV1?.operation_family === 'drop' ? 'drop_tls_dry_run'
                               : instructionV1?.operation_family === 'throw' ? 'throw_tls_dry_run'
                               : 'whole_object_take_known_ors_only'
       };
@@ -5037,7 +5203,18 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
 
     // v1.91.XX: Phase 5 Phase C — TLS/ORS alignment diagnostic (Goal 3).
     // Diagnostics only. No mutation. No ORS calls. No gameplay impact.
-    debug.tls_ors_alignment = _assembleTlsOrsAlignment(debug.itemOperationWitness, debug.tls_instruction, debug.tls_instruction_v1);
+    const _alignmentExecutionResult = gameState._tlsExecutionResult ?? null;
+    const _alignmentPostExecutionObjectId = _alignmentExecutionResult?.object?.id ?? null;
+    const _alignmentPostExecutionObject = _alignmentPostExecutionObjectId
+      ? gameState.objects?.[_alignmentPostExecutionObjectId] ?? null
+      : null;
+    debug.tls_ors_alignment = _assembleTlsOrsAlignment(
+      debug.itemOperationWitness,
+      debug.tls_instruction,
+      debug.tls_instruction_v1,
+      _alignmentExecutionResult,
+      _alignmentPostExecutionObject
+    );
 
     // v1.91.XX: Phase D — TLS execution result (live mutation diagnostic).
     // Authoritative for execution trace only — ORS/ObjectHelper owns object state.
