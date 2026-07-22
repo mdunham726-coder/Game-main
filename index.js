@@ -2935,6 +2935,53 @@ app.post('/narrate', async (req, res) => {
               };
             }
           } else if (
+            debug.tls_instruction_v1?.operation_family === 'throw' &&
+            debug.tls_executor_dry_run?.operation_family === 'throw' &&
+            debug.tls_executor_dry_run?.operation_allowed === true &&
+            debug.tls_executor_dry_run?.outcome === 'whole_transfer' &&
+            debug.tls_executor_dry_run?.predicted_call?.method === 'transferObjectDirect'
+          ) {
+            const _tlsWholeThrowParams = debug.tls_executor_dry_run.predicted_call.parameters;
+            const _tlsWholeThrowResult = ObjectHelper.transferObjectDirect(
+              gameState,
+              _tlsWholeThrowParams.object_id,
+              _tlsWholeThrowParams.destination_container_type,
+              _tlsWholeThrowParams.destination_container_id,
+              turnNumber,
+              'tls_whole_object_throw'
+            );
+            if (_tlsWholeThrowResult.success) {
+              _authorityGateWholeDropObjectId = _tlsWholeThrowParams.object_id;
+              gameState._tlsExecutionResult = {
+                schema_version: 'tls_execution_result_v0',
+                operation_id: `tls_op_${turnNumber}`,
+                mode: 'live_execution',
+                authority: {
+                  executor: 'tls',
+                  mutation_engine: 'ObjectHelper',
+                  object_state_authority: 'ORS'
+                },
+                attempted: true,
+                executed_by: 'tls',
+                eligibility: { status: 'eligible', reason: null },
+                object: {
+                  id: _tlsWholeThrowParams.object_id,
+                  name: debug.tls_instruction_v1.object.name
+                },
+                source: {
+                  container_type: debug.tls_instruction_v1.source.container_type,
+                  container_id: debug.tls_instruction_v1.source.container_id
+                },
+                destination: {
+                  container_type: _tlsWholeThrowParams.destination_container_type,
+                  container_id: _tlsWholeThrowParams.destination_container_id
+                },
+                transfer: { result: 'success', error: null },
+                fail_closed: false,
+                warnings: []
+              };
+            }
+          } else if (
             debug.tls_instruction_v1?.operation_family === 'drop' &&
             debug.tls_executor_dry_run?.operation_family === 'drop' &&
             validation.queue.length === 1 &&
