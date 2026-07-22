@@ -1337,6 +1337,24 @@ function registerRoutes(app, opts = {}) {
       };
     }
 
+    // ── Operation-family guard (issue #37 / Slice D1) ────────────────────
+    // This comparison's contract is TAKE-only. v1 and apActuals both existing
+    // does not mean this was a partial-stack TAKE — DROP and THROW go through
+    // the same P2/P4/AP-quarantine pipeline and produce their own differently-
+    // shaped apActuals (the 4-field quarantine refusal receipt: operation_family,
+    // routing, helper_method, outcome). Without this guard, execution falls
+    // through into the TAKE-shaped field extraction below and manufactures a
+    // misleading mismatch verdict comparing fields that don't mean the same
+    // thing for a different family. Fail closed before any TAKE-shaped
+    // comparison logic runs.
+    if (v1?.operation_family !== 'take') {
+      return {
+        verdict: 'skipped_not_applicable',
+        reason: 'operation_family_' + (v1?.operation_family || 'unknown') + '_not_supported',
+        note: 'This comparison is scoped to partial-stack TAKE only. Turn ' + (turnObj?.turn_number ?? '?') + ' was operation_family=' + (v1?.operation_family ?? 'unknown') + '.'
+      };
+    }
+
     // ── Helper: compare two values ─────────────────────────────────────
     const _eq = (a, b) => {
       if (a === null && b === null) return true;
