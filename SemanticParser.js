@@ -189,7 +189,7 @@ function safeParseJSON(text) {
 // v1.91.23: deterministic parser enrichment — adds structured metadata to primaryAction
 // before return. Pure function: returns enriched copy, never mutates input. All fields
 // are hints only — no mechanical interpretation, no object-operation authority.
-// Quantity extraction is target-scoped. rawInput used only for source_container_hint.
+// rawInput preserves player wording for quantity/selection recovery and source_container_hint.
 function _enrichPrimaryAction(primaryAction, rawInput) {
   if (!primaryAction || typeof primaryAction !== 'object') return primaryAction;
 
@@ -201,11 +201,13 @@ function _enrichPrimaryAction(primaryAction, rawInput) {
   // rawInput is authoritative for player wording — target is canonicalized by
   // the LLM and fast paths, which strip articles/quantity words before enrichment
   // ever sees them. Extracting from rawInput recovers what canonicalization lost.
-  // v1.91.32: strip known multi-word verbs first, then fall back to single-token.
-  const _multiWordMatch = raw.match(/^(pick up|put down|set down)\s+/i);
+  // Strip an optional standalone first-person prefix, then known multi-word verbs;
+  // otherwise fall back to the existing single-token verb strip.
+  const _quantityRaw = raw.replace(/^I\s+/i, '');
+  const _multiWordMatch = _quantityRaw.match(/^(pick up|put down|set down)\s+/i);
   const _body = _multiWordMatch
-    ? raw.replace(_multiWordMatch[0], '').trim()
-    : raw.replace(/^\S+\s+/, '').trim();
+    ? _quantityRaw.replace(_multiWordMatch[0], '').trim()
+    : _quantityRaw.replace(/^\S+\s+/, '').trim();
 
   // ── requested_quantity: integer from leading digits in object phrase ──────
   const _qtyMatch = _body.match(/^(\d+)\s+/);
