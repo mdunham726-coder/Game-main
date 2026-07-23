@@ -44,7 +44,7 @@ Should the prompt describe receipt-governed turns as fully sealed, or should the
 
 Should CB receive the engine's full container taxonomy, including `site` and `npc_worn`, or retain a simplified model backed by deterministic rewrite logic?
 
-**Status:** Open.
+**Status:** Researched; decision pending.
 
 ### D6 — Verb and example density
 
@@ -123,3 +123,149 @@ The later prompt-edit pass still needs to choose the cleanest terminology for TA
 - **Prompt labeling/explanation:** Revise for semantic honesty.
 - **Dependency on D1:** Limited. D3 can be resolved without deciding the canonical channel for unreceipted partial movement.
 - **Dependency on D4:** None for the basic D3 decision; D4 still governs whether unrelated facts may survive the receipt seal.
+
+---
+
+# D5 research entry — container taxonomy and depth alignment
+
+## Target
+
+Explain in plain terms what container model Continuity Brain is currently taught, what container model the engine actually uses, what the rewrite layer is compensating for, and what an alignment update would mean before selecting a design.
+
+## The engine's actual spatial model
+
+The engine has three mutually exclusive world-floor container types, selected by the player's current depth:
+
+1. **Overworld/grid floor (L0):** `container_type: "grid"`; ID shape `LOC:{mx},{my}:{lx},{ly}`.
+2. **Site floor (L1):** `container_type: "site"`; ID shape `{site_id}:{x},{y}`.
+3. **Localspace floor (L2):** `container_type: "localspace"`; ID is the active `local_space_id`.
+
+The current-ground resolver uses exactly that priority: active localspace first, otherwise active site tile, otherwise current overworld grid cell. These are not three names for the same container. They identify three distinct storage layers.
+
+The user's remembered nesting is substantially correct, with one nuance: the full location context is cumulative in engine state, but the object container IDs themselves are not one progressively longer universal address.
+
+- At L0, the player has the base world position (`mx`, `my`, `lx`, `ly`).
+- At L1, the base world position remains, `active_site` identifies which site is open, and `player.position.x/y` identifies the tile inside that site.
+- At L2, the base world position and active site remain, `active_local_space` identifies the room/interior, and `player.position.x/y` identifies the tile inside that localspace grid.
+
+In layman's terms: **world cell → site inside that cell → room/localspace inside that site.** Each deeper level retains the parent context, even though ORS stores the current floor using the canonical ID shape for that specific level.
+
+## The engine's actual actor-container model
+
+ObjectHelper resolves distinct actor containers for:
+
+- `player` — carried player inventory
+- `player_worn` — player-worn equipment
+- `npc` — NPC-carried inventory
+- `npc_worn` — NPC-worn equipment
+
+Together with `grid`, `site`, and `localspace`, ObjectHelper therefore understands seven concrete container types. This does not automatically mean all seven must be direct CB `object_candidates` values; it proves only that the authoritative object system distinguishes them.
+
+## What Continuity Brain is currently taught
+
+The object-candidate and object-transfer schemas expose only:
+
+- `grid`
+- `npc`
+- `player`
+- `localspace`
+
+They omit `site`, `player_worn`, and `npc_worn`.
+
+The prompt-facing valid-container list is also depth-incomplete:
+
+- It always exposes player inventory.
+- At L0 it exposes the correct `LOC:...` grid cell.
+- At L2 it suppresses the parent grid cell and exposes the active localspace correctly.
+- At L1 it does **not** expose the actual site-floor container. Because an active site does not have `local_space_id`, the old condition still exposes the parent `LOC:...` grid cell instead.
+- It exposes visible NPC IDs, but does not distinguish NPC carried inventory from NPC worn inventory in the candidate/transfer container taxonomy.
+
+The prompt then reinforces the simplified story by telling CB that grid IDs must be `LOC:...`, and several placement rules speak only of `grid` or `localspace` for environmental objects.
+
+## Internal inconsistency inside Continuity Brain
+
+`ContinuityBrain._describeTrackedObjects()` already understands the real mutually exclusive depth model. It builds its visible-container scope as:
+
+- grid only at L0,
+- site floor only at L1,
+- localspace only at L2.
+
+It can therefore show CB objects that are authoritatively stored on a site floor, even though the output schema gives CB no `site` value with which to report a new site-floor placement or transfer. For non-player/non-NPC objects, the tracked-object text prints the container ID without explicitly naming its type, so a site key can appear as an opaque string beside a schema that does not permit `site`.
+
+This is not a wholly simplified subsystem. It is a mixed model: one helper uses current engine truth, while the prompt contract and valid-placement list preserve an older abstraction.
+
+## What the rewrite layer currently does
+
+After CB output is converted into quarantine entries, `index.js` repairs the mismatch before ObjectHelper writes state:
+
+- A `grid` promote emitted while inside a localspace is rewritten to `localspace` plus the active `local_space_id`.
+- A `grid` promote emitted while inside a site is rewritten to `site` plus the current `{site_id}:{x},{y}` key.
+- A `site` promote with the wrong site-floor ID is rewritten to the authoritative current site key when enough state exists.
+- Transfer endpoints typed as `grid` are similarly rewritten to `localspace` or `site` according to active depth.
+- If authoritative rewrite data is unavailable, invalid entries are rejected rather than guessed.
+
+So at L1 the current contract effectively says: **CB calls it grid; the engine knows it is site; the engine silently corrects the answer.** At L2, CB can already say localspace directly, but the rewrite remains as protection when it emits grid anyway.
+
+The normalized candidate snapshot used by later condition reconciliation repeats this same depth correction, showing that the compensation is not confined to one isolated validation check.
+
+## How worn NPC objects work today
+
+The prompt asks for an entity's `held_objects` and `worn_objects` separately. It does not ask CB to emit `npc_worn` as an object-candidate container type.
+
+Later, the NPC-introduction capture path converts:
+
+- `held_objects` into synthetic `object_candidates` with `container_type: "npc"`, and
+- `worn_objects` into synthetic `object_candidates` with `container_type: "npc_worn"`.
+
+That means `npc_worn` is currently an engine-side translation from a separate CB entity field, not a direct value in CB's ordinary object schema. The distinction matters because merely adding `npc_worn` to the candidate enum without deciding channel precedence could let the same worn item appear once through `entity_candidates[].worn_objects` and again through `object_candidates`.
+
+The same broader taxonomy includes `player_worn`, although the original D5 wording named only `site` and `npc_worn`. A claim that CB has been updated to the engine's **full** container taxonomy would need either to account for `player_worn` too or explicitly explain why worn-player items remain outside the direct CB object-placement contract.
+
+## Layman's current-versus-aligned comparison
+
+### Current arrangement
+
+CB is given a simplified map legend. It knows the outdoor ground, player inventory, NPC inventory, and localspace floor. When the player is inside a site, CB is still told to label that floor as outdoor `grid`. The engine receives the answer, looks at the player's real depth, and changes `grid` into `site` before storing the object.
+
+For NPC equipment, CB says, in effect, “the NPC is wearing a hat” in a separate entity list. The engine later turns that statement into an object stored in `npc_worn`. CB never directly names that container.
+
+### A spatially aligned arrangement
+
+CB would be shown exactly one canonical current Ground container for the active depth:
+
+- outdoors: `grid` + exact `LOC:...` key,
+- inside a site: `site` + exact `{site_id}:{x},{y}` key,
+- inside a localspace: `localspace` + exact `local_space_id`.
+
+The object-candidate and transfer schemas, tracked-object display, and environmental placement rules would use the same names. The rewrite layer could remain as defensive compatibility, but it would no longer be the expected normal path for ordinary L1 output.
+
+### A fully actor-container-aligned arrangement
+
+CB would also be taught the distinction between carried and worn storage (`player` versus `player_worn`, `npc` versus `npc_worn`). That is a larger contract change than adding `site`, because the prompt already has separate `held_objects` and `worn_objects` channels. A full alignment design would need to state which channel is canonical and how duplicates are prevented.
+
+## Decision decomposition
+
+D5 is easier to reason about as two linked but separable decisions:
+
+### D5a — Spatial depth taxonomy
+
+Should CB directly use the engine's true `grid` / `site` / `localspace` current-floor model instead of relying on `grid` rewrites at deeper levels?
+
+### D5b — Worn actor containers
+
+Should CB directly emit `player_worn` / `npc_worn`, or should worn equipment remain represented through entity `worn_objects` and translated by code?
+
+A decision to align D5a does not require immediately redesigning D5b.
+
+## Current evidence-weighted reading, not yet a decision
+
+- The spatial mismatch is proven and concrete. The prompt-facing list is stale at L1, while the resolver, tracked-object helper, ObjectHelper, and rewrite layer all already recognize `site` as authoritative reality.
+- Updating the spatial language would describe what the engine already does rather than invent a new mechanic.
+- The worn-container question is structurally different. It involves overlapping CB channels and therefore carries duplicate-emission risk if treated as a simple enum expansion.
+
+## D5 disposition
+
+- **Research:** Complete enough for a design decision.
+- **Decision:** Pending.
+- **Safe conceptual split:** D5a spatial alignment versus D5b worn-container/channel ownership.
+- **No engine or prompt changes made.**
