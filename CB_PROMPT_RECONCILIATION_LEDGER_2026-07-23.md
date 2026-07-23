@@ -42,12 +42,12 @@ Should the prompt describe receipt-governed turns as fully sealed, or should the
 
 ### D5 — Real versus simplified container model
 
-This question has been split into two distinct decisions:
+This question was split into two distinct decisions:
 
 - **D5a — Spatial depth taxonomy:** Should CB directly use the engine's real `grid` / `site` / `localspace` floor model?
-- **D5b — Worn actor containers:** Should CB directly emit `player_worn` / `npc_worn`, or should worn equipment remain represented through entity `worn_objects` and translated downstream?
+- **D5b — Worn actor containers:** Should CB directly emit `player_worn` / `npc_worn`, or should introduced equipment remain represented through entity `worn_objects` and translated downstream?
 
-**Status:** D5a decided; D5b pending.
+**Status:** D5a decided; D5b resolved for prompt reconciliation. A separate later-equipment lifecycle gap is recorded below.
 
 ### D6 — Verb and example density
 
@@ -172,50 +172,86 @@ The prompt-facing valid-container list, object-candidate schema, object-transfer
 
 This is alignment with an existing authoritative mechanic, not a new mechanic.
 
-## D5b research — worn actor containers
+## D5b — introduced worn objects
 
-ObjectHelper distinguishes:
+### Proven intended architecture
 
-- `player` — player-carried inventory,
-- `player_worn` — player-worn equipment,
-- `npc` — NPC-carried inventory,
-- `npc_worn` — NPC-worn equipment.
+Repository history removes the earlier uncertainty. Commit `d6f768b` (`v1.88.12 Patch 1G`) explicitly describes separate routing:
 
-However, CB currently reports NPC outfit details through a separate entity channel:
+- `held_objects` → `container_type: "npc"`
+- `worn_objects` → `container_type: "npc_worn"`
 
-- `entity_candidates[].held_objects`
-- `entity_candidates[].worn_objects`
+That commit states that the intro-capture loop already expected those two CB fields and that CB's older combined field was the defect. This is direct historical evidence that the entity-observation channel followed by engine translation was intentional.
 
-The intended first-introduction pipeline is:
+The live first-introduction pipeline is:
 
-1. The narrator is allowed to establish an NPC's initial carried items and outfit.
-2. Continuity Brain observes those details and records them under the NPC's `held_objects` and `worn_objects` fields.
-3. The NPC-introduction capture path converts held entries into synthetic `object_candidates` with `container_type: "npc"`.
-4. It converts worn entries into synthetic `object_candidates` with `container_type: "npc_worn"`.
-5. ObjectHelper/ORS then materializes those as real objects in the correct authoritative containers.
+1. The narrator establishes an NPC's initial carried items and outfit.
+2. CB reports them under `entity_candidates[].held_objects` and `entity_candidates[].worn_objects`.
+3. `index.js` considers only visible NPCs whose `object_capture_turn` is still null.
+4. Held entries become synthetic candidates targeting `npc`; worn entries become synthetic candidates targeting `npc_worn`.
+5. Those candidates enter the ordinary quarantine/ObjectHelper promotion path.
+6. ObjectHelper creates active records in `gameState.objects`, pushes each ID into `npc.object_ids` or `npc.worn_object_ids`, stamps provenance `source: "npc_introduction"`, and enforces one-container ownership.
+7. `object_capture_turn` is stamped once at least one introduced item is captured or an already-materialized exact duplicate is confirmed.
 
-### Proven
+### Clarification: these are already real objects
 
-- `npc_worn` exists in the authoritative object system.
-- It is not currently a legal direct value in CB's ordinary object-candidate/transfer schemas.
-- The downstream introduction-capture code deliberately translates `worn_objects` into `npc_worn` candidates.
+The introduction path does **not** stop at an NPC attribute or descriptive state record. It creates the same authoritative ORS `ObjectRecord` shape used for other promoted objects. In this engine, the durable record in `gameState.objects` plus membership in the owning container's object-ID array is the real object.
 
-### Interpretation
+CB also writes `object:` attribute facts onto the NPC for narrator-facing context. Those attribute entries are complementary descriptive memory; they do not replace the ORS objects created by intro capture.
 
-The exclusion of `npc_worn` from the ordinary CB object schema is plausibly intentional rather than simply missing. It preserves a channel boundary: CB reports an NPC's introduced outfit as an entity observation, and code translates that observation into the authoritative worn-object container.
+A historical exception exists for saves predating the intro-capture implementation: an old NPC may have `object:` attributes but no ORS records. Repository documentation calls those legacy ghost objects. That is a save-era compatibility condition, not the behavior of the current introduction pipeline.
 
-This intention is not explicitly documented as a design law, so it should not yet be called proven. But the existing pipeline is coherent and directly supports the intended simulation behavior.
+## D5b decision for prompt reconciliation
 
-Simply adding `npc_worn` to ordinary `object_candidates` could cause duplicate materialization if CB reports the same garment both through `entity_candidates[].worn_objects` and as a direct `npc_worn` candidate. `player_worn` raises a related but separate question.
+**Keep `entity_candidates[].worn_objects` as the canonical CB channel for an NPC's first-introduction outfit, and keep the downstream translation to authoritative `npc_worn` ObjectRecords. Do not add `npc_worn` to ordinary CB object candidates merely for enum symmetry.**
 
-## D5b current disposition
+Reasons:
 
-**Pending.** Do not treat `npc_worn` as an obvious omission or add it to the direct CB enum merely for taxonomy symmetry.
+- The route is historically documented as intentional.
+- It already creates real ORS objects.
+- Adding a second direct `npc_worn` candidate route would overlap with `worn_objects` and create duplicate-emission risk.
+- `npc_worn` is an authoritative engine container, but not every authoritative container must be a direct value in every CB schema.
 
-Before changing D5b, determine whether the current entity-observation-to-ORS translation is the intended canonical path for introduced outfits and whether any later-turn worn-item operations require a separate direct container contract.
+This closes D5b for the current prompt reconciliation.
+
+## Separate engine gap — later equipment lifecycle
+
+The repository does not provide a complete general equipment lifecycle after first introduction:
+
+- The intro-capture loop permanently skips an NPC after `object_capture_turn` is stamped.
+- CB may continue recording later `held_objects` / `worn_objects` phrases as persistent NPC `object:` attributes, but that attribute promotion does not create or move ORS objects after the one-time intro gate has closed.
+- The ordinary CB transfer schema cannot name `npc_worn` or `player_worn`, so it cannot directly report a tracked object moving into or out of a worn container.
+- The semantic parser recognizes `remove` for the player, and ActionProcessor can transfer an existing ORS object from `player_worn` to player inventory.
+- There is no corresponding recognized `wear` / `equip` action in the parser's valid action set, and no general NPC equip/unequip authority path was found.
+
+Therefore later changes such as an NPC putting on a newly acquired coat, taking off a tracked hat, or the player equipping an inventory object are not fully represented by the current authoritative object-operation system.
+
+This is not evidence that D5b's introduction channel is wrong. It is a separate missing mechanic: **equipment lifecycle after materialization.**
+
+### What currently blocks later real-object updates
+
+The blocker is not ObjectHelper capability. ObjectHelper already understands `player_worn` and `npc_worn` and can resolve those ownership arrays. The missing piece is an authoritative operation contract that determines, without narrator invention or duplicate creation:
+
+- which existing object changed equipment state,
+- its exact source and destination containers,
+- whether the event is a transfer of an existing object or introduction of a genuinely new object,
+- who is authorized to cause the change,
+- and how CB observation is suppressed or reconciled after execution.
+
+Without that contract, simply reopening intro capture or adding worn container values to the prompt would risk conjuring duplicate garments or converting repeated descriptions into new objects.
+
+## Sequencing implication
+
+The spatial D5a prompt work can proceed independently.
+
+D5b's first-introduction wording can also be reconciled now because its current contract is known and working. It should describe the observation-to-materialization route honestly.
+
+If the intended prompt revision is also expected to support later equipment changes, the engine-side equipment lifecycle should be researched and designed before adding such promises to CB. Otherwise the prompt would advertise mutations the engine does not currently authorize or execute.
 
 ## D5 disposition
 
 - **D5a spatial alignment:** Decided — align CB with `grid` / `site` / `localspace` engine truth.
-- **D5b worn-container ownership:** Open — current separation may be intentional and protects the narrator → CB observation → ORS materialization pipeline.
+- **D5b first-introduction worn objects:** Decided — retain `worn_objects` → downstream `npc_worn` ORS materialization.
+- **Direct `npc_worn` addition to ordinary CB candidates:** Reject for current prompt reconciliation.
+- **Later equipment lifecycle:** Separate unresolved engine feature/gap, not a remaining D5 prompt-taxonomy ambiguity.
 - **No engine or prompt implementation changes made by this research entry.**
