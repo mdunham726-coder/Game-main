@@ -3,6 +3,7 @@
 **Created:** 2026-07-23  
 **Repository:** `mdunham726-coder/Game-main`  
 **Initial source anchor:** `078af6869aa43cbfcb21b4072d0cc2bb7a17203b` (`v1.92.16`)  
+**Latest research anchor before D4 integration:** `b5ebb84ef9e59a17496c4775c7bb39f011330335`  
 **Purpose:** Rolling evidence and decision ledger for reconciling the Continuity Brain extraction prompt with current engine truth. This file is deliberately not named `research-notes.md` so it remains distinct from prior research artifacts.
 
 ## Evidence discipline
@@ -34,11 +35,11 @@ Should receipt-covered partial TAKE be made mechanically symmetric with DROP/THR
 
 **Status:** Researched; project direction recorded.
 
-### D4 — Independent-facts promise versus the actual receipt seal
+### D4 — Independent facts, successful execution receipts, and fail-closed dry-run seals
 
-Should the prompt describe receipt-governed turns as fully sealed, or should the engine be changed so genuinely independent CB facts can flow as currently promised?
+The original question treated successful operation receipts and fail-closed bridge receipts as though they governed the same turns. Current-source research shows that they do not. The remaining decision is narrower: should a failed or deliberately non-executing DROP/THROW turn continue to freeze every object mutation from that narration, or should the engine attempt to admit independently proven object facts while still suppressing consequences of the failed operation?
 
-**Status:** Open.
+**Status:** Researched; original premise corrected; fail-closed object-freeze policy remains open.
 
 ### D5 — Real versus simplified container model
 
@@ -96,6 +97,343 @@ Issue #42 supports strong separation between receipt-bound description recovery 
 - The prompt should describe that specific entry honestly as receipt-bound, post-execution description reconciliation for an already-created successor—not as authorization or independent execution.
 - DROP and THROW keep their dedicated non-executable `partial_*_successor_description` fields.
 - D3 can be resolved without first deciding D1.
+
+---
+
+# D4 research entry — independent facts versus receipt and seal scope
+
+## Target
+
+Answer four concrete questions before deciding D4:
+
+1. What facts does the prompt mean when it says that independent facts may still use their normal channels?
+2. Which channels are those facts supposed to enter, and what do downstream consumers do with them?
+3. Do those facts currently reach their intended consumers, or are they stopped? If stopped, where?
+4. What behavior is currently missing that would occur if the blocked facts were allowed through?
+
+The original D4 formulation assumed one direct contradiction: the prompt promises that unrelated facts can flow on a receipt-governed turn, while the engine's receipt seal supposedly zeros every CB object channel on that same turn. Current source does not support that exact premise.
+
+## Critical correction: two different kinds of receipt were conflated
+
+The repository uses receipt-like evidence in two materially different situations.
+
+### A. Successful execution receipts
+
+These are the validated authoritative receipts supplied to CB after TLS/ObjectHelper has already executed a supported partial operation:
+
+- `cb_tls_partial_stack_take_v1`
+- `cb_tls_partial_stack_drop_v1`
+- `cb_tls_partial_stack_throw_v1`
+
+Their prompt rules are operation-scoped:
+
+- Partial TAKE requires one receipt-governed `extraction_events` echo and suppresses candidate/transfer representations of the identified source and successor.
+- Partial DROP and partial THROW suppress ordinary mutation-channel representations of the identified operation and permit only their dedicated successor-description fields.
+- All three rules state that independent facts unrelated to the identified operation may still use normal channels.
+
+These receipts prove successful execution. They exist to classify and contain CB's description of an operation that has already happened authoritatively.
+
+### B. Fail-closed Object Operation Bridge receipts
+
+The full-turn DROP/THROW dry-run seal is activated from `ObjectOperationBridge.evaluateOperation()` only when a supported semantic single-action object operation did **not** execute.
+
+For DROP or THROW, the bridge requires evidence such as:
+
+- AP recognized the family but refused ownership;
+- no live whole-object execution result exists;
+- no validated live partial split is confirmed;
+- the turn is the supported semantic single-action path.
+
+The bridge then produces `drop_dry_run_seal: true` or `throw_dry_run_seal: true` and a narration constraint stating that no object moved, split, appeared, disappeared, or changed.
+
+These bridge receipts prove non-execution or fail-closed containment. They are not the successful operation receipts described above.
+
+## Proven mutual exclusivity for partial DROP and THROW
+
+The bridge explicitly checks whether partial execution succeeded before activating the seal.
+
+For DROP:
+
+- `partial_drop_execution_confirmed` becomes true only when the instruction, dry run, live `tls_partial_stack_result`, ObjectHelper result, quantities, source/successor IDs, and destination all align.
+- `live_drop_execution_absent` requires both no whole-object live result and no confirmed partial execution.
+- The dry-run seal activates only when AP refusal is confirmed **and** `live_drop_execution_absent` is true.
+
+Therefore a successfully executed partial DROP cannot simultaneously activate the fail-closed DROP seal.
+
+THROW mirrors the same logic through `partial_throw_execution_confirmed` and `live_throw_execution_absent`. A successfully executed partial THROW cannot simultaneously activate the fail-closed THROW seal.
+
+TAKE does not use the DROP/THROW full-turn seal flags. Its successful partial receipt has separate replay-containment machinery.
+
+### Corrected conclusion
+
+A successful partial TAKE/DROP/THROW execution receipt and an active DROP/THROW fail-closed dry-run seal do not describe the same engine state. The original D4 framing treated them as though they collided on one turn; current source shows that they are different lanes.
+
+## What “independent facts” means in practice
+
+The prompt does not provide a formal definition. The operation-scoped receipt language supports the following interpretation:
+
+> An independent fact is a concrete fact from the same narration that is not another representation, replay, consequence, repair, or reinterpretation of the receipt-identified operation.
+
+Example: the player partially drops three arrows from a tracked stack, while the narration also establishes that a separate lantern is on a table, an NPC picks up an existing book, and rain has soaked the courtyard.
+
+The arrow source, three-arrow successor, quantity change, and placement are receipt-governed. The lantern, the book movement, and the rain are separate facts.
+
+Potential independent facts include:
+
+- a new portable object unrelated to the operation;
+- movement of another already-tracked object;
+- a physical condition change to another tracked object;
+- destruction or fission of another tracked object;
+- an unrelated persistent-source extraction;
+- an introduced NPC's initial carried or worn objects;
+- an NPC's physical features or visible state;
+- a location feature or material condition;
+- a new player bodily condition or interaction with an existing condition;
+- scene mood or conversational trajectory;
+- spatial or rejected-interpretation observations that are diagnostic rather than authoritative mutations.
+
+## Where independent object facts are supposed to go
+
+### `object_candidates`
+
+Purpose: introduce a genuinely new concrete portable object.
+
+Expected path:
+
+1. CB emits a candidate.
+2. `index.js` applies origin gates, replay suppression, container normalization, and quarantine validation.
+3. The surviving candidate becomes a `promote` entry.
+4. `ObjectHelper.run()` creates or reconciles the authoritative ORS `ObjectRecord`.
+
+If the candidate has an initial condition, a later initial-condition pass can attach it to the newly promoted object.
+
+### `object_transfers`
+
+Purpose: move an already-tracked object between authoritative containers.
+
+Expected path:
+
+1. CB identifies the exact tracked object ID or a valid same-turn temp reference.
+2. `index.js` applies AP/TLS replay suppression and normalizes spatial container types.
+3. The surviving transfer enters quarantine.
+4. `ObjectHelper.run()` moves the existing object and maintains one-container ownership.
+
+### `object_condition_updates`
+
+Purpose: record a concrete physical change to a tracked object that continues to exist.
+
+Expected path:
+
+- Exact-ID updates call `ObjectHelper.applyConditionUpdate()` directly.
+- Name-match fallback can broadcast to all same-name active objects in scene scope when CB cannot disambiguate.
+
+### `object_retirements`
+
+Purpose: mark a tracked object as no longer existing as itself because it was consumed, destroyed, or transformed.
+
+Expected path:
+
+1. The retirement is ID-bound or conservatively resolved.
+2. Binding guards attempt to prevent retiring the wrong object.
+3. `ObjectHelper.retireObject()` retires the parent.
+4. If the retirement includes successors and the parent retirement succeeded, a second pass promotes successor objects atomically.
+
+### `fission_events`
+
+Purpose: provide a prose witness for splitting or division.
+
+Expected path:
+
+1. `SemanticNormalizer.analyze()` converts eligible witness evidence into `fission_operations`.
+2. If CB retirement did not already handle the parent, TSL fission injection may retire the resolved source.
+3. Successors then enter the existing fission second pass.
+
+### `extraction_events`
+
+Purpose outside the receipt-covered TAKE description echo: witness a portion removed while the tracked source survives.
+
+Expected path:
+
+1. `SemanticNormalizer.analyze()` converts eligible evidence into `extraction_operations`.
+2. Resolved non-degenerate extraction operations become `partial_split` quarantine entries.
+3. `ObjectHelper.run()` reduces the source and creates the successor.
+4. Degenerate full-consumption cases can route through retirement/fission handling.
+
+### NPC introduction `held_objects` / `worn_objects`
+
+Purpose: observe the first narrated inventory and outfit of a newly introduced NPC.
+
+Expected path:
+
+1. CB places the observations under the entity candidate.
+2. `index.js` converts them into synthetic candidates targeting `npc` and `npc_worn`.
+3. The candidates enter ordinary ObjectHelper promotion.
+4. Real ORS objects are created and linked through `object_ids` / `worn_object_ids`.
+
+## Where independent non-object facts are supposed to go
+
+These channels are important because they do not wait for the later ORS quarantine path. `ContinuityBrain.runPhaseB()` applies them synchronously before `index.js` reaches the DROP/THROW object seal.
+
+### `entity_candidates`
+
+- Player physical attributes and observable states are promoted into player attributes.
+- Resolved NPC physical attributes, visible states, and object-description facts are promoted into NPC attributes.
+- Unresolved NPC references produce warnings and are skipped rather than guessed.
+
+### `environmental_features`
+
+Concrete location facts are promoted into the active localspace, active site, or L0 cell attribute record. Accepted L0 features may also be captured for subsequent context assembly.
+
+### `condition_events`
+
+- `new_condition` can create a durable player condition after dedup checks.
+- `interaction` can append treatment, aggravation, or usage evidence to an existing exact condition ID.
+
+### `mood_snapshot`
+
+The snapshot is appended to location-keyed mood history, capped and later rendered into the continuity mood block.
+
+### `spatial_relations` and rejected interpretations
+
+These survive in the extracted packet and diagnostics. No gameplay-state consumer was found that makes them authoritative spatial state or another durable mechanic. They primarily provide observation/debug visibility.
+
+## What happens on a successful execution-receipt turn
+
+No global DROP/THROW dry-run seal activates when the partial operation executed successfully.
+
+The receipt-specific precedence applies only to the identified operation:
+
+- do not recreate the already-existing successor;
+- do not move the surviving source as though the whole stack transferred;
+- do not route the completed operation through competing mutation channels;
+- recover the successor description through the appropriate TAKE or DROP/THROW mechanism.
+
+Unrelated facts remain eligible for their ordinary downstream paths. Research found no blanket successful-receipt gate that zeroes every CB object channel merely because the receipt exists.
+
+Ordinary channel-specific gates can still reject a particular fact for separate reasons, such as unsupported origin, invalid container, ambiguous identity, or replay evidence. That is different from a receipt-wide seal.
+
+## Narrow TAKE caveat
+
+TAKE has broad replay-suppression rules that are not the DROP/THROW dry-run seal:
+
+- environment-to-player candidates can be suppressed when AP reports quarantined/refused ownership;
+- world-to-player transfers can be suppressed on TAKE turns when environmental gather is inactive;
+- AP/TLS-completed object IDs and matching same-turn temp references are deduplicated.
+
+These rules may deserve a separate targeted audit if the project needs proof that every conceivable unrelated world-to-player fact survives on a TAKE turn. They do not establish the original D4 claim that a successful receipt and a DROP/THROW dry-run seal collide.
+
+## What happens on an actual fail-closed dry-run-sealed turn
+
+CB still runs and can still emit raw evidence. The engine records counts and references for the suppressed object channels and marks that raw evidence was preserved.
+
+The facts then split into two outcomes.
+
+### Object mutations are stopped
+
+The seal turns the following live mutation inputs into empty or inactive paths:
+
+- CB candidates are preserved diagnostically but excluded from the mutation candidate array.
+- CB transfers are preserved diagnostically but excluded from the mutation transfer array.
+- Object condition updates are replaced with an empty live-processing list.
+- Object retirements are replaced with an empty live-processing list.
+- TSL fission injection is skipped.
+- TSL extraction injection is skipped.
+- NPC introduction held/worn materialization is skipped.
+- Other object-mutating consumers guarded by the same full-turn seal, including live emote-removal transfer, are prevented from executing.
+
+Repository history for THROW's observe-only migration states that the full-turn seal had seventeen real consumer sites in `index.js`, including a live ObjectHelper mutation and both TSL injection paths. This supports describing it as a deliberate full-turn object-mutation seal rather than a narrow filter around the attempted DROP/THROW object alone.
+
+### Non-object facts still survive
+
+Because entity, environment, player-condition, and mood promotion already occurred inside `runPhaseB()`, those facts are not undone by the later seal.
+
+A sealed turn can therefore still retain:
+
+- an NPC's scar, posture, or observable state;
+- a player physical or observable attribute;
+- a concrete environmental condition;
+- a player bodily condition or condition interaction;
+- the scene's mood trajectory.
+
+This proves the seal is not literally a complete Continuity Brain seal. It is a full-turn **object-mutation** seal.
+
+## Concrete behavior lost on a sealed turn
+
+If the narration accompanying a failed DROP or THROW independently establishes these facts, they can be observed in raw CB output but will not become authoritative object truth:
+
+- a newly noticed lantern will not be promoted into ORS;
+- an NPC picking up a separate tracked book will not transfer that book;
+- a separate glass cracking will not receive an object condition update;
+- an unrelated rope being destroyed will not be retired;
+- an unrelated object being split will not produce authoritative successors;
+- an unrelated persistent-source extraction will not reduce its source and create a successor;
+- a newly introduced NPC's narrated held or worn objects will not materialize as ORS objects.
+
+### Important NPC-introduction divergence risk
+
+Entity promotion happens before the object seal. Therefore a newly introduced NPC may still receive persistent `object:` attribute facts describing a hat or coat while the later intro-capture materialization is skipped.
+
+On that sealed turn, descriptive memory can say the NPC has or wears the item while no corresponding `npc` / `npc_worn` ORS object is created. This is a concrete example of what would work differently if independently proven object facts were allowed through the seal.
+
+## What is and is not currently broken
+
+### Not proven broken
+
+The successful partial TAKE/DROP/THROW receipt contract's promise that unrelated facts may use normal channels is not shown to be revoked by the DROP/THROW dry-run seal. The successful receipt and active fail-closed seal are different cases.
+
+### Proven current policy
+
+A failed or deliberately non-executing semantic single-action DROP/THROW turn freezes all object mutations from the narration, even mutations that appear unrelated to the attempted operation. Raw evidence remains available for diagnostics, but ORS is not changed through those channels.
+
+This behavior is deliberate containment. It prevents the narrator from laundering a failed object operation into another object-state change, but it also sacrifices unrelated object developments on that turn.
+
+## Corrected D4 decision point
+
+The original binary question should not be carried forward unchanged.
+
+It is **not**:
+
+> Should successful receipt turns permit independent facts, or should the receipt seal block them?
+
+The corrected question is:
+
+> When a DROP or THROW fails closed and receives an Object Operation Bridge dry-run receipt, should the engine continue freezing every object mutation derived from that narration, or should it attempt to distinguish and admit unrelated object facts while still suppressing every consequence, replay, substitute, or reinterpretation of the failed operation?
+
+### Option represented by current behavior
+
+Keep the full-turn object freeze.
+
+- Strongest containment.
+- No need to trust CB to determine causal independence from a failed operation.
+- Prevents consolation objects, substituted mutations, and narrated false consequences.
+- Loses genuine unrelated object facts and can create descriptive-memory/ORS gaps such as the NPC outfit example.
+
+### Alternative policy requiring new design
+
+Permit independent object facts.
+
+This would require a trustworthy scope/causality rule or deterministic evidence proving that each admitted mutation is unrelated to the failed operation. Merely retaining the prompt sentence is insufficient; the current seal intentionally prevents all such mutation consumers.
+
+Any future design would need to answer at least:
+
+- how independence is proven rather than asserted by CB;
+- whether identity, actor, source, destination, and narration evidence are enough;
+- how new-object candidates are distinguished from consolation or substitute objects;
+- how compound or multi-event narration is handled;
+- whether NPC introduction capture receives a special exception;
+- how diagnostics expose admitted versus suppressed independent facts;
+- how replay and duplicate containment remain fail-closed.
+
+## D4 disposition after research
+
+- **Successful operation receipts:** Operation-scoped; no proven global contradiction with the independent-facts promise.
+- **DROP/THROW bridge dry-run seals:** Full-turn object-mutation seals on failed/non-executed supported turns.
+- **Non-object CB facts:** Continue to be promoted before the seal.
+- **Object facts unrelated to the failed operation:** Observed and preserved diagnostically, but blocked from authoritative mutation.
+- **Original wording:** Misframed because it conflated two receipt classes.
+- **Prompt reconciliation need:** Use distinct terms for successful execution receipts and fail-closed bridge receipts. Do not describe all “receipt-governed turns” as one category.
+- **Remaining design decision:** Keep the full-turn fail-closed object freeze or design a proven-independent exception.
+- **Decision status:** Open. No engine or prompt change is prescribed by this research entry.
 
 ---
 
