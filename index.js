@@ -1127,6 +1127,58 @@ app.post('/narrate', async (req, res) => {
   let _cbTlsPartialStackThrowReceipt = null;
   let _cbTlsPartialStackThrowReceiptState = 'empty';
 
+  function _sanitizeCbTlsPartialStackTakeReceipt(receipt) {
+    const sourceObjectId = receipt?.source_object_id;
+    const successorObjectId = receipt?.successor_object_id;
+    const sourceRecord = gameState.objects?.[sourceObjectId];
+    const successorRecord = gameState.objects?.[successorObjectId];
+
+    if (
+      receipt?.schema_version !== 'cb_tls_partial_stack_take_v1' ||
+      receipt.authority !== 'tls_object_helper' ||
+      receipt.operation_type !== 'tls_partial_stack_take' ||
+      receipt.status !== 'executed' ||
+      receipt.actor_ref !== 'player' ||
+      receipt.source_persists !== true ||
+      receipt.successor_created_this_turn !== true ||
+      !Number.isInteger(receipt.turn_number) || receipt.turn_number < 1 ||
+      receipt.turn_number !== turnNumber ||
+      typeof sourceObjectId !== 'string' || sourceObjectId.trim().length === 0 ||
+      typeof successorObjectId !== 'string' || successorObjectId.trim().length === 0 ||
+      sourceObjectId === successorObjectId ||
+      !Number.isInteger(receipt.extracted_quantity) || receipt.extracted_quantity < 1 ||
+      receipt.destination_container_type !== 'player' ||
+      receipt.destination_container_id !== 'player' ||
+      !sourceRecord || sourceRecord.status !== 'active' ||
+      !Number.isInteger(sourceRecord.quantity) || sourceRecord.quantity < 1 ||
+      !successorRecord || successorRecord.status !== 'active' ||
+      successorRecord.parent_object_id !== sourceObjectId ||
+      successorRecord.created_turn !== receipt.turn_number ||
+      successorRecord.quantity !== receipt.extracted_quantity ||
+      successorRecord.current_container_type !== receipt.destination_container_type ||
+      successorRecord.current_container_id !== receipt.destination_container_id ||
+      !Array.isArray(gameState.player?.object_ids) || !gameState.player.object_ids.includes(successorObjectId)
+    ) {
+      return null;
+    }
+
+    return {
+      schema_version: 'cb_tls_partial_stack_take_v1',
+      authority: 'tls_object_helper',
+      turn_number: receipt.turn_number,
+      operation_type: 'tls_partial_stack_take',
+      status: 'executed',
+      actor_ref: 'player',
+      source_object_id: sourceObjectId,
+      source_persists: true,
+      successor_object_id: successorObjectId,
+      successor_created_this_turn: true,
+      extracted_quantity: receipt.extracted_quantity,
+      destination_container_type: 'player',
+      destination_container_id: 'player'
+    };
+  }
+
   function _sanitizeCbTlsPartialStackDropReceipt(receipt) {
     const sourceObjectId = receipt?.source_object_id;
     const successorObjectId = receipt?.successor_object_id;
@@ -6304,27 +6356,34 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         }
         delete _phaseBResult.partial_throw_successor_description;
       }
-      if (_phaseBResult && _tlsPartialDescriptionTarget) {
-        const _extractionEvents = Array.isArray(_phaseBResult.extraction_events)
-          ? _phaseBResult.extraction_events : [];
-        if (_extractionEvents.length === 1) {
-          const _extractionEvent = _extractionEvents[0];
-          const _childDescription = _extractionEvent?.description;
+      // Receipt-bound partial-TAKE successor-description consumption.
+      if (_phaseBResult) {
+        const _partialTakeDescription = _phaseBResult.partial_take_successor_description;
+        const _validatedPartialTakeDescriptionReceipt = _sanitizeCbTlsPartialStackTakeReceipt(
+          _cbTlsPartialStackTakeReceiptState === 'accepted'
+            ? _cbTlsPartialStackTakeReceipt : null
+        );
+        if (
+          _validatedPartialTakeDescriptionReceipt &&
+          _partialTakeDescription &&
+          typeof _partialTakeDescription.description === 'string' &&
+          _partialTakeDescription.description.length > 0
+        ) {
+          const _sourceDescription = gameState.objects?.[
+            _validatedPartialTakeDescriptionReceipt.source_object_id
+          ]?.description;
           if (
-            _extractionEvent?.extracted_quantity === _tlsPartialDescriptionTarget.extracted_quantity &&
-            _extractionEvent?.destination_hint === 'player_hands' &&
-            _extractionEvent?.actor_ref === 'player' &&
-            typeof _childDescription === 'string' &&
-            _childDescription.length > 0 &&
-            _childDescription !== _tlsPartialDescriptionTarget.parent_description
+            _partialTakeDescription.description.trim().toLowerCase() !==
+            String(_sourceDescription || '').trim().toLowerCase()
           ) {
             ObjectHelper.setObjectDescriptionDirect(
               gameState,
-              _tlsPartialDescriptionTarget.successor_object_id,
-              _childDescription
+              _validatedPartialTakeDescriptionReceipt.successor_object_id,
+              _partialTakeDescription.description.trim()
             );
           }
         }
+        delete _phaseBResult.partial_take_successor_description;
       }
       // #17 — surviving-source description normalization. Runs only now, after every
       // successor clear/fill and copied-parent-rejection step above has already used
@@ -6935,53 +6994,67 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             return true;
           });
         }
-        // v1.91.04: extraction gate — suppress CB object_candidates covered by a successfully resolved
-        // TLS extraction_operation. TLS owns the successor via partial_split; CB's parallel candidate
-        // is redundant and produces a duplicate object without parent lineage.
-        // v1.91.05: added second match path — unit+container scope. CB may emit individual unit objects
-        // (e.g. "arrow" ×3) while TLS emits an aggregate successor ("three arrows", unit:"arrow").
-        // Unit match: c.name === product.unit AND c.container_type/id === product destination.
-        // Container scope prevents false positives (e.g. floor arrow ≠ player container).
-        // FALLBACK: ops with unresolved:true excluded from both match structures — CB candidate
-        // survives as resilience fallback when TLS normalization fails for that product.
+        // Extraction candidate denial guard: correlation is not source identity, divisibility,
+        // or execution authority. It only prevents a witness-correlated fallback candidate.
+        function _isExtractionWitnessCorrelatedCandidate(candidate, operation) {
+          const _candidateName = String(candidate?.name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+          const _productName = String(operation?.product?.name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+          const _productUnit = String(operation?.product?.unit || '').toLowerCase().trim().replace(/\s+/g, ' ');
+          const _candidateEvidence = String(candidate?.reason || '').toLowerCase().trim().replace(/\s+/g, ' ');
+          const _operationEvidence = String(operation?.evidence || '').toLowerCase().trim().replace(/\s+/g, ' ');
+          const _identityMatches = Boolean(_candidateName)
+            && (_candidateName === _productName || _candidateName === _productUnit);
+          const _containerMatches = candidate?.container_type === operation?.product?.container_type
+            && candidate?.container_id === operation?.product?.container_id;
+          const _evidenceMatches = Boolean(_candidateEvidence && _operationEvidence)
+            && (
+              _candidateEvidence === _operationEvidence
+              || _candidateEvidence.includes(_operationEvidence)
+              || _operationEvidence.includes(_candidateEvidence)
+            );
+          return _identityMatches && _containerMatches && _evidenceMatches;
+        }
         if (!_dropDryRunSealActive && !_throwDryRunSealActive && Array.isArray(_tslR?.tsl?.extraction_operations) && _tslR.tsl.extraction_operations.length > 0 && Array.isArray(_phaseBResult.object_candidates)) {
-          const _resolvedExtractionOps = _tslR.tsl.extraction_operations
-            .filter(op => !op.unresolved && !op.quantity_unresolved);
-          // Match 1: aggregate product name (exact normalized)
-          const _extractionProductNames = new Set(
-            _resolvedExtractionOps
-              .map(op => (op.product?.name || '').toLowerCase().trim())
-              .filter(Boolean)
-          );
-          // Match 2: unit name scoped to same destination container
-          const _extractionUnitEntries = _resolvedExtractionOps
-            .filter(op => op.product?.unit)
-            .map(op => ({
-              unitNorm:      (op.product.unit || '').toLowerCase().trim(),
-              containerType: op.product.container_type || null,
-              containerId:   op.product.container_id   || null
-            }))
-            .filter(e => e.unitNorm);
-          if (_extractionProductNames.size > 0 || _extractionUnitEntries.length > 0) {
-            let _cbExtSuppressed = 0;
-            _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(c => {
-              const _cNameNorm = (c.name || '').toLowerCase().trim();
-              if (_extractionProductNames.has(_cNameNorm)) {
-                _turnLog(_objectRealityDebug, 'info', 'EXTRACTION-GATE', `CB candidate suppressed — name match: "${c.name}"`, {name: c.name, match: 'name'});
-                _cbExtSuppressed++;
-                return false;
-              }
-              for (const _e of _extractionUnitEntries) {
-                if (_cNameNorm === _e.unitNorm && c.container_type === _e.containerType && c.container_id === _e.containerId) {
-                  _turnLog(_objectRealityDebug, 'info', 'EXTRACTION-GATE', `CB candidate suppressed — unit+container match: "${c.name}"`, {name: c.name, match: 'unit', containerType: c.container_type});
-                  _cbExtSuppressed++;
-                  return false;
-                }
-              }
-              return true;
-            });
-            if (_cbExtSuppressed > 0) _objectRealityDebug.cb_extraction_suppressed = _cbExtSuppressed;
+          const _extractionOps = _tslR.tsl.extraction_operations;
+          const _ambiguousExtractionOp = _extractionOps.find(operation => (
+            _phaseBResult.object_candidates.filter(candidate => (
+              _isExtractionWitnessCorrelatedCandidate(candidate, operation)
+            )).length > 1
+          ));
+          if (_ambiguousExtractionOp) {
+            _turnLog(
+              _objectRealityDebug,
+              'error',
+              'EXTRACTION-GATE',
+              'Candidate correlation unresolved — multiple candidates share identity, container, and evidence.',
+              { operation: _ambiguousExtractionOp }
+            );
+            const _correlationError = new Error('Ambiguous extraction candidate correlation requires review.');
+            _correlationError.code = 'EXTRACTION_CORRELATION_AMBIGUOUS';
+            throw _correlationError;
           }
+          let _cbExtSuppressed = 0;
+          _phaseBResult.object_candidates = _phaseBResult.object_candidates.filter(candidate => {
+            const _correlatedOperation = _extractionOps.find(operation => (
+              _isExtractionWitnessCorrelatedCandidate(candidate, operation)
+            ));
+            if (!_correlatedOperation) return true;
+            _turnLog(
+              _objectRealityDebug,
+              'info',
+              'EXTRACTION-GATE',
+              `CB candidate suppressed — correlated extraction witness: "${candidate.name}"`,
+              {
+                name: candidate.name,
+                match: 'identity+container+evidence',
+                containerType: candidate.container_type,
+                containerId: candidate.container_id
+              }
+            );
+            _cbExtSuppressed++;
+            return false;
+          });
+          if (_cbExtSuppressed > 0) _objectRealityDebug.cb_extraction_suppressed = _cbExtSuppressed;
         }
         // v1.91.70: P5-A1 CB candidate promotion guard — suppress environment→player
         // candidates after AP already refused a partial-stack TAKE this turn.
@@ -7607,82 +7680,19 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           _objectRealityDebug.tsl_fission_unresolvable = _tslFissionUnresolvable;
         }
 
-        // v1.91.03: TLS extraction injection — build partial_split quarantine from extraction_operations.
-        // Non-degenerate ops: partial_split entries → ObjectHelper Pass 3.
-        // degrades_to_fission ops: retire source → push to _retirementPairs (fission second pass promotes successor).
+        // v1.91.03: TLS extraction observation accounting.
+        // Generic extraction operations remain diagnostic witnesses and never authorize ORS mutation.
         if (!_apRefusedTake && !_dropDryRunSealActive && !_throwDryRunSealActive) {
           const _tslExtractionOps = Array.isArray(_tslR?.tsl?.extraction_operations) ? _tslR.tsl.extraction_operations : [];
-          let _tslExtractionInjected     = 0;
           let _tslExtractionUnresolvable = 0;
-          const _extractionQuarantine = [];
-          if (_tslExtractionOps.length > 0) {
-            for (const _eop of _tslExtractionOps) {
-              if (!_eop.source_object_id || _eop.unresolved || _eop.quantity_unresolved) {
-                _tslExtractionUnresolvable++;
-                continue;
-              }
-              if (_eop.degrades_to_fission) {
-                // Source fully consumed by extraction — retire and route successor through fission second pass
-                const _tslRetResult = ObjectHelper.retireObject(gameState, _eop.source_object_id, `tsl_extraction_degrade: ${_eop.verb || 'extract'}`, turnNumber);
-                if (_tslRetResult.retired) {
-                  _retirementPairs.push({
-                    entry: {
-                      object_id:  _eop.source_object_id,
-                      reason:     `tsl_extraction_degrade: ${_eop.verb || 'extract'}`,
-                      successors: _eop.product ? [{
-                        name:           _eop.product.name,
-                        quantity:       _eop.product.quantity,
-                        unit:           _eop.product.unit,
-                        container_type: _eop.product.container_type,
-                        container_id:   _eop.product.container_id,
-                        temp_ref:       _eop.product.temp_ref || 'ext_frag'
-                      }] : []
-                    },
-                    result:     _tslRetResult,
-                    resolvedId: _eop.source_object_id
-                  });
-                  _tslExtractionInjected++;
-                }
-              } else {
-                // Normal extraction — partial_split (source survives with reduced quantity)
-                _extractionQuarantine.push({
-                  action:             'partial_split',
-                  source_object_id:   _eop.source_object_id,
-                  new_source_quantity: _eop.new_source_quantity,
-                  name:               _eop.product?.name           || null,
-                  quantity:           _eop.product?.quantity       ?? _eop.extracted_quantity ?? 1,
-                  unit:               _eop.product?.unit           || null,
-                  container_type:     _eop.product?.container_type || 'player',
-                  container_id:       _eop.product?.container_id   || 'player',
-                  temp_ref:           _eop.product?.temp_ref       || `ext_${_eop.source_object_id}`,
-                  parent_object_id:   _eop.source_object_id,
-                  reason:             `tsl_extraction: ${_eop.verb || 'extract'}`
-                });
-                _tslExtractionInjected++;
-              }
+          for (const _eop of _tslExtractionOps) {
+            if (!_eop.source_object_id || _eop.unresolved || _eop.quantity_unresolved) {
+              _tslExtractionUnresolvable++;
             }
           }
-          if (_extractionQuarantine.length > 0) {
-            const _extractionResult = await ObjectHelper.run(gameState, _extractionQuarantine, turnNumber, null);
-            console.log(`[NARRATE] ExtractionPass: partial_splits=${_extractionResult.partial_splits} promoted=${_extractionResult.promoted} errors=${_extractionResult.errors}`);
-            _objectRealityDebug.promoted    += _extractionResult.promoted;
-            _objectRealityDebug.transferred += _extractionResult.transferred;
-            _objectRealityDebug.errors      += _extractionResult.errors;
-            _objectRealityDebug.audit        = (_objectRealityDebug.audit || []).concat(_extractionResult.audit || []);
-            // v1.91.09: extraction pass ran and produced meaningful results — override the
-            // main-ORS skip_reason/ran=false that was set when the main quarantine was empty.
-            // "Meaningful" = any promoted, transferred, errors, or audit entries. Covers
-            // partial_split success, fission-via-extraction retirement, and error-only turns.
-            const _extractionDidWork = _extractionResult.promoted > 0 || _extractionResult.transferred > 0
-                                    || _extractionResult.errors > 0
-                                    || (_extractionResult.audit && _extractionResult.audit.length > 0);
-            if (_extractionDidWork) {
-              _objectRealityDebug.ran         = true;
-              _objectRealityDebug.skip_reason = null;
-            }
-          }
-          _objectRealityDebug.tsl_extraction_injected     = _tslExtractionInjected;
+          _objectRealityDebug.tsl_extraction_observed     = _tslExtractionOps.length;
           _objectRealityDebug.tsl_extraction_unresolvable = _tslExtractionUnresolvable;
+          _objectRealityDebug.tsl_extraction_injected     = 0;
         }
 
         // v1.85.8: Fission second pass — promote successor objects from successfully-retired parents.

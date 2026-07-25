@@ -96,7 +96,7 @@ extracted_quantity: ${tlsPartialStackTakeReceipt.extracted_quantity}
 destination_container_type: "player"
 destination_container_id: "player"
 
-This validated receipt is authoritative execution evidence for Continuity Brain reporting only. It proves that TLS/ObjectHelper already completed the identified operation during the current request. It does not authorize Continuity Brain to create, move, transfer, decrement, replay, repair, or otherwise mutate either object or any other authoritative state. Use the receipt IDs only as prompt-side classification anchors for the source and successor governed by AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE. Never copy either receipt ID into extraction_events[].source_ref; source_ref remains the prose source name required by the extraction-event schema. For this receipt's player/player destination, use destination_hint: "player_hands". If this validated block is absent, do not reconstruct or infer it from narration, object names, containers, verbs, ordering, pluralization, diagnostics, witnesses, AP evidence, persistent state, or fuzzy matching.
+This validated receipt is authoritative execution evidence for Continuity Brain reporting only. It proves that TLS/ObjectHelper already completed the identified operation during the current request. It does not authorize Continuity Brain to create, move, transfer, decrement, replay, repair, or otherwise mutate either object or any other authoritative state. Use the receipt IDs only as prompt-side classification anchors for the source and successor governed by PARTIAL TAKE RECEIPT PRECEDENCE. The only permitted receipt-governed output is partial_take_successor_description. Do not report, replay, restate, or repair that operation through object_candidates, object_transfers, extraction_events, fission_events, or object_retirements. If this validated block is absent, do not reconstruct or infer it from narration, object names, containers, verbs, ordering, pluralization, diagnostics, witnesses, AP evidence, persistent state, or fuzzy matching.
 === END VALIDATED AUTHORITATIVE OPERATION RECEIPT ===
 ` : '';
   const _authoritativePartialDropReceiptContext = tlsPartialStackDropReceipt ? `
@@ -195,7 +195,11 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "object_condition_updates": [],
   "object_retirements": [],
   "fission_events": [],
-  "extraction_events": []${tlsPartialStackDropReceipt ? `,
+  "extraction_events": []${tlsPartialStackTakeReceipt ? `,
+  "partial_take_successor_description": {
+    "description": "<brief child-specific physical description grounded in the narration>",
+    "evidence": "<one contiguous verbatim supporting substring from the narration>"
+  }` : ''}${tlsPartialStackDropReceipt ? `,
   "partial_drop_successor_description": {
     "description": "<brief child-specific physical description grounded in the narration>",
     "evidence": "<one contiguous verbatim supporting substring from the narration>"
@@ -418,8 +422,17 @@ existence. If no concrete portable noun is named — only a metaphor, impression
 quality — do not invent an object.
 Do NOT emit a promote candidate for an object that already appears in TRACKED OBJECTS above.
 Objects annotated with "nearby (1 tile)" in TRACKED OBJECTS are placed objects at a fixed floor location adjacent to the player — treat them as tracked and do not emit promote candidates for them.
-Exception: a named portion or sub-unit physically separated from a tracked divisible object this turn — a slice cut from a loaf, a piece broken from a cake, a wedge taken from a wheel of cheese — is a new discrete object, not the same object as the tracked parent. Do not suppress it via the tracked-objects rule. Emit it as a candidate.
-The separated-subunit candidate exception does not apply to the exact successor identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT as the direct child of the already-completed authoritative partial extraction. That child is governed exclusively by AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE.
+SOURCE-SURVIVING SEPARATION EXCLUSION:
+When a product's asserted existence depends on removal from a tracked source that persists
+after the operation, do not emit that product in object_candidates. Report the depicted removal
+only through \`extraction_events\` as a nonauthoritative witness. This witness does not authorize
+state mutation or product creation.
+A validated authoritative partial-operation receipt overrides this generic witness route:
+follow the receipt-specific precedence and emit only its permitted dedicated metadata, not a
+generic extraction witness.
+This exclusion does not change ordinary independent object candidates, authorized founding
+objects, NPC-introduced objects, fission handling for a source that does not persist, or transfers
+of existing tracked objects.
 If a tracked object moved to a new container this turn, capture that movement in object_transfers
 using the exact object_id from TRACKED OBJECTS — not a promote candidate. Emitting a promote for
 an already-tracked object creates a phantom duplicate with a new ID.
@@ -445,31 +458,6 @@ Do NOT apply container-change transfer when:
 
 If the referent is ambiguous, leave the action unresolved — do not promote a duplicate, do not
 guess. Ambiguity is not an error; silence is the correct output.
-
-GROUP EXTRACTION RULE:
-Apply this promotion rule only when the VALIDATED AUTHORITATIVE OPERATION RECEIPT does not identify the object as the direct child of the already-completed authoritative persistent-source extraction. AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE overrides this rule for that receipt-identified operation.
-When a tracked object is plural, mass, or group-like in name (examples: "tacos", "napkins and
-straws", "large cups of soda", "chips", "coins"), and the narration shows an actor selecting or
-extracting a single item or small subset from it:
-  - PROMOTE the extracted individual item as a new object (new temp_ref, destination container
-    = where the actor takes it: player, npc, etc.)
-  - Use the narration's specific name for the extracted item if the narration provides one;
-    otherwise derive a conservative singular: "tacos" → "taco", "napkins and straws" →
-    "napkins", "large cups of soda" → "cup of soda".
-  - Do NOT emit a transfer of the group object itself.
-  - Do NOT emit a condition update on the group unless the narration explicitly describes
-    visible depletion or change to the remaining group.
-
-Guard: apply this rule ONLY when the tracked source is clearly plural/mass/group-like AND the
-narration explicitly selects a single item or subset from it. Do NOT apply to singular tracked
-objects — those follow the container-change rule above.
-Transfer origin for the group-extracted individual: if any acquisition verb in the player's
-input (grab, take, pick up, pull, tear, unwrap, scoop, lift from, etc.) is directly paired with
-this group object as the source, assign transfer_origin: "environment_interaction" to the
-promoted individual. Do not fall through to the general TRANSFER ORIGIN RULES to determine
-transfer_origin when the player's acquisition verb is the clear trigger — the verb is the
-determining signal. Use narrator_independent only if the narrator describes the extraction
-with no acquisition verb in the player's input at all.
 
 For each object, emit one entry in the "object_candidates" array:
 {
@@ -619,7 +607,7 @@ OBJECT TRANSFERS (optional)
 Identify objects that clearly changed hands or location in this narration.
 Only emit when the narration explicitly describes the movement (e.g. handed over, dropped, taken).
 
-Do not classify the operation identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT as whole-object movement. The identified surviving source did not transfer, and the identified same-turn child was created in its destination rather than moved from a prior container. Report the operation through \`extraction_events\` only.
+PARTIAL TAKE RECEIPT EXCEPTION: Do not emit either object identified by the VALIDATED AUTHORITATIVE OPERATION RECEIPT in \`object_transfers\` for that receipt-governed operation. The source persisted in its retained container, and the successor was created directly in the destination; neither object transferred. The operation permits only \`partial_take_successor_description\` metadata. Independent transfers unrelated to that operation still use this channel normally.
 
 PARTIAL DROP RECEIPT EXCEPTION: Do not emit either object identified by the VALIDATED AUTHORITATIVE PARTIAL DROP RECEIPT in \`object_transfers\` for that receipt-governed operation. The source persisted in its retained container, and the successor was created directly at the destination; neither object transferred.
 
@@ -768,7 +756,9 @@ PARTIAL THROW RECEIPT PRECEDENCE: Apply this rule only when the current prompt c
 
 PARTIAL THROW SUCCESSOR DESCRIPTION: Apply this rule only when the VALIDATED AUTHORITATIVE PARTIAL THROW RECEIPT is present. Write \`partial_throw_successor_description.description\` in the same compact style as \`object_candidates[].description\`: a brief physical noun phrase describing only the receipt-identified successor, not a sentence or summary of the narration. Include only appearance, material, or physical condition specifically supported by the frozen narration. Keep the description distinct from the evidence and do not copy the evidence wholesale. Set \`partial_throw_successor_description.evidence\` to exactly one contiguous verbatim substring from the frozen narration; never combine separate excerpts, insert an ellipsis, or paraphrase the evidence. Do not include movement, sound, location, spatial relations, action history, the surviving source, a copied parent description, invented details, object IDs, the THROW action, quantity change, containment, transfer, split, or any other operation. If the narration provides no usable child-specific physical description, emit \`partial_throw_successor_description\`: null.
 
-AUTHORITATIVE PARTIAL EXTRACTION PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE OPERATION RECEIPT block for \`schema_version: "cb_tls_partial_stack_take_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_take\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. That validated receipt context proves that the identified source is the persistent parent and the identified successor is the same-turn child. Emit exactly one \`extraction_events\` entry for that operation, using the receipt's \`extracted_quantity\` and \`actor_ref\`, keeping \`source_ref\` as a prose source name, and mapping receipt destination \`player\`/\`player\` to \`destination_hint: "player_hands"\`. Do not emit the identified successor in \`object_candidates\`. Do not emit either identified object in \`object_transfers\`. The source was not moved as a whole, and the child was created directly in its authoritative destination rather than transferred from a prior container. This rule overrides separated-subunit promotion, Group Extraction promotion, candidate acquisition/handling classification, and broad moved/taken transfer classification for this operation only. Independent facts unrelated to this extraction may still use their normal channels. The receipt IDs are prompt-side classification anchors only: never copy either ID into \`extraction_events[].source_ref\`, and do not treat them as downstream enforcement keys. If the VALIDATED AUTHORITATIVE OPERATION RECEIPT block is absent, do not assume or infer that this TLS-specific precedence applies.
+PARTIAL TAKE RECEIPT PRECEDENCE: Apply this rule only when the current prompt contains the VALIDATED AUTHORITATIVE OPERATION RECEIPT block for \`schema_version: "cb_tls_partial_stack_take_v1"\`, whose \`turn_number\` matches the current CB turn, whose \`authority\` is \`tls_object_helper\`, whose \`operation_type\` is \`tls_partial_stack_take\`, whose \`status\` is \`executed\`, and which supplies exact \`source_object_id\` and \`successor_object_id\` classification anchors from that same successful split. TLS/ObjectHelper already executed the receipt-governed operation: the source persisted at reduced quantity in its retained container, and the distinct successor was created directly at the destination. Emit no \`object_candidates\`, \`object_transfers\`, \`extraction_events\`, \`fission_events\`, or \`object_retirements\` for that operation. The only permitted receipt-governed output is \`partial_take_successor_description\`, which is non-executable descriptive metadata and does not report, redirect, restate, or repair the completed operation. This rule overrides separated-subunit promotion, Group Extraction promotion, candidate acquisition/handling classification, and broad moved/taken transfer classification for this operation only. Independent facts unrelated to that operation may still use their normal channels. The receipt IDs are classification anchors only and must not be copied into witness fields as mutation authority. If the VALIDATED AUTHORITATIVE OPERATION RECEIPT block is absent, do not assume or infer that this precedence applies.
+
+PARTIAL TAKE SUCCESSOR DESCRIPTION: Apply this rule only when the VALIDATED AUTHORITATIVE OPERATION RECEIPT is present. Write \`partial_take_successor_description.description\` in the same compact style as \`object_candidates[].description\`: a brief physical noun phrase describing only the receipt-identified successor, not a sentence or summary of the narration. Include only appearance, material, or physical condition specifically supported by the frozen narration. Keep the description distinct from the evidence and do not copy the evidence wholesale. Set \`partial_take_successor_description.evidence\` to exactly one contiguous verbatim substring from the frozen narration; never combine separate excerpts, insert an ellipsis, or paraphrase the evidence. Do not include movement, sound, location, spatial relations, action history, the surviving source, a copied parent description, invented details, object IDs, the TAKE action, quantity change, containment, transfer, split, or any other operation. If the narration provides no usable child-specific physical description, emit \`partial_take_successor_description\`: null.
 
 When a portion of a tracked object is removed while the SOURCE PERSISTS with altered quantity or state, emit an entry in extraction_events. This is a witness report only — do not attempt to resolve object IDs.
 
@@ -1421,6 +1411,35 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
   }
 
   // Receipt-bound descriptive metadata only; remove it from the general extracted packet.
+  let partial_take_successor_description = null;
+  const _rawPartialTakeSuccessorDescription = extracted.partial_take_successor_description;
+  if (
+    _sanitizedTlsPartialStackTakeReceipt &&
+    _rawPartialTakeSuccessorDescription &&
+    typeof _rawPartialTakeSuccessorDescription === 'object' &&
+    !Array.isArray(_rawPartialTakeSuccessorDescription)
+  ) {
+    const _description = typeof _rawPartialTakeSuccessorDescription.description === 'string'
+      ? _rawPartialTakeSuccessorDescription.description.trim() : '';
+    const _evidence = typeof _rawPartialTakeSuccessorDescription.evidence === 'string'
+      ? _rawPartialTakeSuccessorDescription.evidence.trim() : '';
+    const _parentDescription = typeof _receiptSource?.description === 'string'
+      ? _receiptSource.description.trim() : '';
+    if (
+      _description.length > 0 &&
+      _evidence.length > 0 &&
+      frozenNarration.includes(_evidence) &&
+      _description.toLowerCase() !== _parentDescription.toLowerCase()
+    ) {
+      partial_take_successor_description = {
+        description: _description,
+        evidence: _evidence
+      };
+    }
+  }
+  delete extracted.partial_take_successor_description;
+
+  // Receipt-bound descriptive metadata only; remove it from the general extracted packet.
   let partial_drop_successor_description = null;
   const _rawPartialDropSuccessorDescription = extracted.partial_drop_successor_description;
   if (
@@ -1641,6 +1660,7 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
     object_retirements:       Array.isArray(extracted.object_retirements)       ? extracted.object_retirements       : [],
     fission_events:           Array.isArray(extracted.fission_events)           ? extracted.fission_events           : [],
     extraction_events:        Array.isArray(extracted.extraction_events)        ? extracted.extraction_events        : [],
+    partial_take_successor_description,
     partial_drop_successor_description,
     partial_throw_successor_description,
   };

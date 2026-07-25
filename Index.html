@@ -2595,17 +2595,21 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       }
 
       // ── 2. TLS section ──────────────────────────────────────────────────────
-      const _tslExtrInj = or.tsl_extraction_injected     || 0;
+      const _hasTslExtrObserved = Object.hasOwn(or, 'tsl_extraction_observed');
+      const _tslExtrObserved = _hasTslExtrObserved ? (or.tsl_extraction_observed || 0) : 0;
+      const _tslExtrLegacyInjected = _hasTslExtrObserved ? 0 : (or.tsl_extraction_injected || 0);
       const _tslExtrUnr = or.tsl_extraction_unresolvable || 0;
       const _tslFissInj = or.tsl_fission_injected        || 0;
       const _tslFissUnr = or.tsl_fission_unresolvable    || 0;
-      if (_tslExtrInj > 0 || _tslFissInj > 0 || _tslExtrUnr > 0 || _tslFissUnr > 0) {
-        const _extrStr = `extraction:${_tslExtrInj}${_tslExtrUnr > 0 ? ` unresolvable:${_tslExtrUnr}` : ''}`;
+      if (_tslExtrObserved > 0 || _tslExtrLegacyInjected > 0 || _tslFissInj > 0 || _tslExtrUnr > 0 || _tslFissUnr > 0) {
+        const _extrStr = _hasTslExtrObserved
+          ? `extraction-witnesses:${_tslExtrObserved}${_tslExtrUnr > 0 ? ` unresolvable:${_tslExtrUnr}` : ''}`
+          : `extraction-legacy-injected:${_tslExtrLegacyInjected}${_tslExtrUnr > 0 ? ` unresolvable:${_tslExtrUnr}` : ''}`;
         const _fissStr = `fission:${_tslFissInj}${_tslFissUnr > 0 ? ` unresolvable:${_tslFissUnr}` : ''}`;
         lines.push(`  TLS: ${_extrStr} | ${_fissStr}`);
         const _extrOps = Array.isArray(or.tsl?.extraction_operations) ? or.tsl.extraction_operations : [];
         for (const op of _extrOps) {
-          const _opLabel  = op.degrades_to_fission ? '[fission]' : '[partial_split]';
+          const _opLabel  = _hasTslExtrObserved ? '[witness/analysis]' : '[legacy extraction]';
           const _prodName = op.product?.name || op.source_ref || '?';
           const _qtyStr   = op.extracted_quantity != null ? `${op.extracted_quantity}` : '?';
           const _unitStr  = op.extracted_unit ? ` ${op.extracted_unit}` : '';
@@ -2613,8 +2617,8 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
           const _srcQty   = (op.current_quantity != null && op.new_source_quantity != null)
                           ? `qty:${op.current_quantity}→${op.new_source_quantity}` : '';
           const _dest     = op.product ? `${op.product.container_type||'?'}:${op.product.container_id||'?'}` : '?';
-          const _unres    = op.quantity_unresolved ? ' [qty-unresolved]' : '';
-          lines.push(`    ${_opLabel} "${_prodName}" (${_qtyStr}${_unitStr}) <- "${_srcName}" (${_srcQty}) -> ${_dest}${_unres}`);
+          const _flags    = `${op.unresolved ? ' [unresolved]' : ''}${op.ambiguous ? ' [ambiguous]' : ''}${op.quantity_unresolved ? ' [qty-unresolved]' : ''}`;
+          lines.push(`    ${_opLabel} "${_prodName}" (${_qtyStr}${_unitStr}) <- "${_srcName}" (${_srcQty}) -> ${_dest}${_flags}`);
         }
       }
 
