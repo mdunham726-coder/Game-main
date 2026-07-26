@@ -1410,6 +1410,35 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
     return null;
   }
 
+  // Canonicalize held/worn item names before any continuity consumer sees them.
+  // The raw model response remains separately preserved in `raw`.
+  let _heldWornRejectedCount = 0;
+  for (const _candidate of (Array.isArray(extracted.entity_candidates) ? extracted.entity_candidates : [])) {
+    if (!_candidate || typeof _candidate !== 'object' || Array.isArray(_candidate)) continue;
+    for (const _field of ['held_objects', 'worn_objects']) {
+      if (!Array.isArray(_candidate[_field])) continue;
+      _candidate[_field] = _candidate[_field].flatMap(_item => {
+        if (typeof _item === 'string') {
+          const _name = _item.trim();
+          if (_name.length > 0) return [_name];
+        } else if (
+          _item &&
+          typeof _item === 'object' &&
+          !Array.isArray(_item) &&
+          typeof _item.name === 'string'
+        ) {
+          const _name = _item.name.trim();
+          if (_name.length > 0) return [_name];
+        }
+        _heldWornRejectedCount++;
+        return [];
+      });
+    }
+  }
+  if (_heldWornRejectedCount > 0) {
+    console.warn(`[CB] Rejected ${_heldWornRejectedCount} malformed held/worn item entr${_heldWornRejectedCount === 1 ? 'y' : 'ies'}`);
+  }
+
   // Receipt-bound descriptive metadata only; remove it from the general extracted packet.
   let partial_take_successor_description = null;
   const _rawPartialTakeSuccessorDescription = extracted.partial_take_successor_description;
@@ -1642,6 +1671,7 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
     top_level_rejections_count:(extracted.rejected_interpretations || []).length,
     per_entity_rejections_count:(extracted.entity_candidates || []).reduce((s, c) => s + (c.rejected_interpretations || []).length, 0),
     condition_events_count:      (extracted.condition_events || []).length,
+    held_worn_rejected_count:    _heldWornRejectedCount,
     warnings,
     mood_captured: !!moodSnapshot,
   };
