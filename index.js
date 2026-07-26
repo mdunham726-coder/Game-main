@@ -6400,18 +6400,23 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
       }
       _dmNoteStatus = _phaseBResult ? 'updated' : 'new_game';
       _extractionPacket = _phaseBResult ? _phaseBResult.extracted : null;
+      const _phaseBEntityCandidates = _extractionPacket?.entity_candidates;
       _dmNoteArchived = null; // dm_note retired in v1.70.0
       // v1.88.40: CB schema drift detection — forward (missing expected fields) and backward (legacy fields)
       _cbSchemaDrift = [];
       if (_phaseBResult) {
-        for (const _driftField of ['object_candidates','visible_objects','environmental_features','entity_candidates']) {
+        for (const _driftField of ['object_candidates','visible_objects','environmental_features']) {
           if (!(_driftField in _phaseBResult)) {
             _cbSchemaDrift.push(`missing_field:${_driftField}`);
             console.warn(`[CB-SCHEMA-DRIFT] missing_field:${_driftField} turn=${turnNumber}`);
           }
         }
-        if (Array.isArray(_phaseBResult.entity_candidates)) {
-          for (const _ec of _phaseBResult.entity_candidates) {
+        if (!('entity_candidates' in (_extractionPacket || {}))) {
+          _cbSchemaDrift.push('missing_field:entity_candidates');
+          console.warn(`[CB-SCHEMA-DRIFT] missing_field:entity_candidates turn=${turnNumber}`);
+        }
+        if (Array.isArray(_phaseBEntityCandidates)) {
+          for (const _ec of _phaseBEntityCandidates) {
             if (!('held_objects' in _ec)) {
               _cbSchemaDrift.push('missing_field:held_objects');
               console.warn(`[CB-SCHEMA-DRIFT] missing_field:held_objects entity=${_ec.entity_id||'?'} turn=${turnNumber}`);
@@ -6721,10 +6726,10 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         ].filter((n, i, a) => a.findIndex(x => x.id === n.id) === i);
         let _npcIntroCaptureCount = 0;
         const _t1Registry = gameState.world?._turn1_founded_entities || [];  // v1.88.9: Turn 1 Founding Registry
-        if (!_dropDryRunSealActive && !_throwDryRunSealActive && Array.isArray(_phaseBResult.entity_candidates)) {
+        if (!_dropDryRunSealActive && !_throwDryRunSealActive && Array.isArray(_phaseBEntityCandidates)) {
           for (const _intrNpc of _visibleNpcsForCapture) {
             if (_intrNpc.object_capture_turn !== null && _intrNpc.object_capture_turn !== undefined) continue;
-            let _intrCand = _phaseBResult.entity_candidates.find(ec => {
+            let _intrCand = _phaseBEntityCandidates.find(ec => {
               if (ec.entity_ref === _intrNpc.id) return true;
               // v1.88.9 Patch 1C: Turn 1 only — resolve prose founding labels via registry
               if (turnNumber === 1 && _t1Registry.length) {
@@ -6745,7 +6750,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
               if (_t4JobCat) {
                 const _t4ShareCount = _visibleNpcsForCapture.filter(n => n.job_category?.toLowerCase?.()?.trim() === _t4JobCat).length;
                 if (_t4ShareCount === 1) {
-                  const _t4Cand = _phaseBResult.entity_candidates.find(ec => String(ec.entity_ref || '').toLowerCase().trim() === _t4JobCat);
+                  const _t4Cand = _phaseBEntityCandidates.find(ec => String(ec.entity_ref || '').toLowerCase().trim() === _t4JobCat);
                   if (_t4Cand) _intrCand = _t4Cand;
                 }
               }
