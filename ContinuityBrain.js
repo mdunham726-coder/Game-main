@@ -238,8 +238,8 @@ For each named or identifiable entity in the narration, produce one entry:
   "entity_ref": "<npc_id from engine state, or descriptive label ONLY if no match>",
   "physical_attributes": [],
   "observable_states": [],
-  "held_objects": [],
-  "worn_objects": [],
+  "held_objects": ["<item name string>"],
+  "worn_objects": ["<item name string>"],
   "rejected_interpretations": []
 }
 
@@ -254,6 +254,7 @@ observable_states
   Include only states that are directly visible — posture, position, and physical indicators confirmable on sight without knowing the reason. Exclude intent, emotion, and states that require inference to identify. When an observable state is a visible sign of bodily harm to the player, the underlying injury must also be emitted as a condition_event. An observable state does not absorb a condition.
 
 held_objects
+  Output a JSON array of non-empty item-name strings only. Never emit objects or nested arrays; do not include descriptions, quantities, units, IDs, or container metadata in this field.
   Items carried, held, slung, packed, or hanging at the hip of THIS entity.
   Route here: rifle slung over shoulder, pack on back, satchel at hip, item in hand, anything loaded or stowed as cargo.
   Test: "Is this something they are carrying or transporting — not wearing as attire?"
@@ -264,6 +265,7 @@ FISSION EXCEPTION: An observable state does not replace a fission retirement. Wh
 FISSION EXCEPTION: Do not route the resulting pieces of a fission event into held_objects. When a tracked object is split, torn, halved, divided, sliced, cut, chopped, broken, or snapped, the original object must be retired with successors[] in object_retirements — regardless of whether narration describes the player immediately picking up or holding the resulting pieces. The player's possession of the pieces is captured by the retirement's successors[], not by held_objects. Routing the pieces into held_objects without also emitting the retirement is always wrong when the source was a tracked object.
 
 worn_objects
+  Output a JSON array of non-empty item-name strings only. Never emit objects or nested arrays; do not include descriptions, quantities, units, IDs, or container metadata in this field.
   Items worn, equipped, or fitted to the body of THIS entity as clothing or gear.
   Route here: boots, belt, hat, jacket, armor, cloak, gloves, scabbard, holster, any clothing or body-fitted equipment.
   Test: "Is this on their body as attire or fitted gear — not cargo?"
