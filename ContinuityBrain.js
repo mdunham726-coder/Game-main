@@ -375,7 +375,8 @@ SOURCE PRECEDENCE RULES — read carefully:
 Fields:
   form             — character type or role as stated in primary source (e.g. "merchant", "soldier", "wanderer"). null if not stated.
   location_premise — starting location as stated in primary source (e.g. "city gates", "the Thornwood road"). null if not stated.
-  possessions      — items explicitly named in primary source as owned or carried. Empty array if none stated.
+  possessions      — items explicitly named in primary source as owned or carried. Do NOT include abilities, powers, or things the player can do — those belong in capabilities. Empty array if none stated.
+  capabilities     — abilities, powers, or things the player can do, as explicitly stated in primary source. Do NOT include physical items — those belong in possessions. Empty array if none stated.
   status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
   scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
   starting_npc     — a single NPC declared by the player in the founding input. null if no NPC is declared.
@@ -1540,6 +1541,7 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
     gameState.player.birth_record.form             = fp.form             || null;
     gameState.player.birth_record.location_premise = fp.location_premise || null;
     gameState.player.birth_record.possessions      = Array.isArray(fp.possessions)   ? fp.possessions   : [];
+    gameState.player.birth_record.capabilities     = Array.isArray(fp.capabilities)  ? fp.capabilities  : [];
     gameState.player.birth_record.status_claims    = Array.isArray(fp.status_claims) ? fp.status_claims : [];
     gameState.player.birth_record.scenario_notes   = Array.isArray(fp.scenario_notes)? fp.scenario_notes: [];
     gameState.player.birth_record.starting_npc     = (fp.starting_npc && typeof fp.starting_npc === 'object' && !Array.isArray(fp.starting_npc)) ? fp.starting_npc : (Array.isArray(fp.starting_npc) && fp.starting_npc.length > 0 ? fp.starting_npc[0] : null);
@@ -1574,6 +1576,22 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
     }
     if (_possessionsPromoted > 0) {
       console.log(`[CB] birth_record promoted ${_possessionsPromoted} possession(s) to player.attributes`);
+    }
+
+    // Promote capabilities → player.attributes[declared:] — idempotent, Turn 1 only
+    // Capabilities are things the player can DO, distinct from physical items they carry.
+    // CB classifies them into capabilities[] at extraction time; promote as declared: so they
+    // appear in the narrator TRUTH block and trigger DECLARED ABILITIES RULE correctly.
+    let _capabilitiesPromoted = 0;
+    for (const _cap of (gameState.player.birth_record.capabilities || [])) {
+      const _cKey = `declared:${_cap}`;
+      if (!gameState.player.attributes[_cKey]) {
+        gameState.player.attributes[_cKey] = { value: _cap, bucket: 'declared', turn_set: 1, confidence: 'initial' };
+        _capabilitiesPromoted++;
+      }
+    }
+    if (_capabilitiesPromoted > 0) {
+      console.log(`[CB] birth_record promoted ${_capabilitiesPromoted} capabilit${_capabilitiesPromoted === 1 ? 'y' : 'ies'} to player.attributes[declared:]`);
     }
   }
 
