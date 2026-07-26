@@ -391,6 +391,12 @@ Fields:
       worn_items      — array of objects for items the NPC is explicitly described as wearing. Same object shape as inventory_items: { "name": "<item name, lowercase specific>", "description": "<brief physical description of the item — no lore, no ownership claims, no history, no implied additional objects>" }. Empty array if none stated. Never add items not stated. Description is inferred from the item and world tone, but only for items already stated.
     If multiple NPCs are declared, instantiate only the first. Record additional NPCs in scenario_notes as "DEFERRED_NPC: <description>". Deferred NPCs are not scene truth and must not appear as present entities.
 
+TURN 1 NPC EQUIPMENT CHANNEL OWNERSHIP — MANDATORY:
+- founding_premise.starting_npc.inventory_items and worn_items contain only equipment explicitly stated in PRIMARY SOURCE; those fields authorize founding birth records.
+- Separately, entity_candidates[].held_objects and worn_objects describe concrete equipment explicitly shown on matched NPCs in CONTEXT narration. Include such narrated equipment even when PRIMARY SOURCE did not name it. Do not add narration-only equipment to founding_premise.starting_npc.
+- If an item is currently narrated as held or worn by an NPC and is emitted in those entity fields, do not also emit it in object_candidates on Turn 1. The entity fields are the exclusive NPC-equipment observation channel for this turn.
+- This rule overrides the complete scene inventory mandate below for this object class.
+
 ` : ''}
 
 ---

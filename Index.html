@@ -2740,6 +2740,20 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
         }
       }
 
+      const _npcIntroReceipts = Array.isArray(or.console_log)
+        ? or.console_log.filter(e => e?.tag === 'NPC-INTRO-CAPTURE')
+        : [];
+      if (_npcIntroReceipts.length > 0) {
+        lines.push(`  NPC Intro Capture: ${_npcIntroReceipts.length} receipt(s)`);
+        for (const receipt of _npcIntroReceipts) {
+          const _rData = receipt.data || {};
+          const _rStatus = _rData.status === 'already_materialized' ? 'already materialized'
+                         : _rData.status === 'absence_phrase'       ? 'skipped absence phrase'
+                         : _rData.status || '?';
+          lines.push(`    [${_rData.container||'?'}] "${_rData.item||'?'}" — ${_rStatus}`);
+        }
+      }
+
       // ── 4. Retirement section ────────────────────────────────────────────────
       const _retUpdates = Array.isArray(or.retirement_updates) ? or.retirement_updates : [];
       for (const r of _retUpdates) {
@@ -2774,7 +2788,7 @@ ${buildTurnBlock(lastTurn, 'snapshot')}
       if (_condUpdates.length > 0) {
         lines.push(`  Conditions: ${_condUpdates.length} update(s)`);
         for (const cu of _condUpdates) {
-          if (cu.applied) lines.push(`    [condition] ${cu.objectId||'?'}  + "${cu.condition||'?'}"`);
+          if (cu.applied) lines.push(`    [condition] ${cu.objectId||'?'}  + "${cu.condition||'?'}"  (${cu.reason||'applied'})`);
         }
       }
 

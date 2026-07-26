@@ -7529,7 +7529,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
           if (cu.object_id) {
             // Preferred path — exact object_id from tracked list
             const _cuResult = ObjectHelper.applyConditionUpdate(gameState, cu.object_id, cu.condition, cu.evidence || '', turnNumber);
-            _conditionUpdateResults.push(_cuResult);
+            _conditionUpdateResults.push(Object.assign({}, _cuResult, { condition: cu.condition }));
           } else if (cu.name_match) {
             // Broadcast path — same-name ambiguity could not be resolved; apply to all matching objects in scene scope
             const _bcWorld = gameState.world || {};
@@ -7548,7 +7548,7 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
             let _bcApplied = 0;
             for (const _bm of _bcMatches) {
               const _br = ObjectHelper.applyConditionUpdate(gameState, _bm.id, cu.condition, cu.evidence || '', turnNumber);
-              _conditionUpdateResults.push(_br);
+              _conditionUpdateResults.push(Object.assign({}, _br, { condition: cu.condition }));
               if (_br.applied) _bcApplied++;
             }
             console.log(`[NARRATE] ObjectConditions broadcast "${cu.name_match}" → applied ${_bcApplied}/${_bcMatches.length}`);
