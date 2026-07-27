@@ -212,8 +212,11 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
     "form": null,
     "location_premise": null,
     "possessions": [],
+    "capabilities": [],
     "status_claims": [],
     "scenario_notes": [],
+    "canonical_name": null,
+    "title_or_role": null,
     "starting_npc": null
   }` : ''}
 }
@@ -373,12 +376,14 @@ SOURCE PRECEDENCE RULES — read carefully:
 4. If a field cannot be determined from the primary source AND the narration provides no factual grounding, leave it null or empty.
 
 Fields:
-  form             — character type or role as stated in primary source (e.g. "merchant", "soldier", "wanderer"). null if not stated.
+  form             — the player's currently embodied physical form: what kind of body or being they are, as explicitly stated in primary source. Do NOT include personal names, titles, ranks, occupations, social roles, affiliations, or other identity/authority/history assertions — form is a physical fact about the body, not a social fact about the person. Do NOT include clothing, equipment, posture, or a physical condition that does not itself change what kind of body or being the player currently is — a transformation into a different body or kind is still a form, even if temporary or reversible. null if not stated.
   location_premise — starting location as stated in primary source (e.g. "city gates", "the Thornwood road"). null if not stated.
   possessions      — items explicitly named in primary source as owned or carried. Do NOT include abilities, powers, or things the player can do — those belong in capabilities. Empty array if none stated.
   capabilities     — abilities, powers, or things the player can do, as explicitly stated in primary source. Do NOT include physical items — those belong in possessions. Empty array if none stated.
-  status_claims    — identity, authority, or history assertions from primary source (e.g. "I used to work for the guild", "I am a member of the order"). Empty array if none.
+  status_claims    — identity, authority, or history assertions from primary source. Empty array if none.
   scenario_notes   — freeform notes ONLY when primary source is ambiguous AND narration adds clear factual grounding (not embellishment). Empty array if no grounding exists.
+  canonical_name   — the player's personal name if explicitly stated. A word or phrase the player uses to refer to themselves as a specific individual, distinct from a title, role, or job descriptor. Only extract what is explicitly stated — do not infer. null if not stated.
+  title_or_role    — a formal title, rank, or positional designation if explicitly claimed. A social or authoritative label, not a personal name. Only extract what is explicitly stated — do not infer. null if not stated.
   starting_npc     — a single NPC declared by the player in the founding input. null if no NPC is declared.
     When present, extract as a single object (never an array) with these fields:
       name            — the name the player explicitly gave this NPC. null if no name was stated. Never infer a name into this field.
@@ -1547,6 +1552,20 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
     gameState.player.birth_record.starting_npc     = (fp.starting_npc && typeof fp.starting_npc === 'object' && !Array.isArray(fp.starting_npc)) ? fp.starting_npc : (Array.isArray(fp.starting_npc) && fp.starting_npc.length > 0 ? fp.starting_npc[0] : null);
     console.log('[CB] birth_record populated on Turn 1:', JSON.stringify(gameState.player.birth_record).slice(0, 200));
 
+    // v1.85.19: Populate player.identity from founding premise
+    if (!gameState.player.identity) {
+      gameState.player.identity = { canonical_name: null, title_or_role: null, current_form: null, last_known_form: null, aliases: [], public_identity_known: false };
+    }
+    gameState.player.identity.canonical_name       = fp.canonical_name || null;
+    gameState.player.identity.title_or_role        = fp.title_or_role  || null;
+    gameState.player.identity.current_form         = fp.form           || null;
+    gameState.player.identity.last_known_form      = fp.form           || null; // v1.86.0: mirror current_form at founding
+    gameState.player.identity.public_identity_known = !!(fp.canonical_name || fp.title_or_role);
+    // Also store in birth_record for audit
+    gameState.player.birth_record.canonical_name   = fp.canonical_name || null;
+    gameState.player.birth_record.title_or_role    = fp.title_or_role  || null;
+    console.log('[CB] player.identity populated on Turn 1:', JSON.stringify(gameState.player.identity));
+
     // v1.84.68: Promote status_claims → player.attributes[declared:] — idempotent, Turn 1 only
     // Bridges the gap between birth_record ingestion and narrator TRUTH block.
     // declared: bucket is permanent (not subject to STATE_ATTR_WINDOW aging).
@@ -1758,6 +1777,20 @@ function assembleContinuityPacket(gameState, turnContext) {
       lines.push(`You: ${pStr}`);
       truthLines++;
     }
+  }
+
+  // v1.85.19: Player identity line
+  gameState._lastIdentityTruthLine = null; // v1.85.21: reset each assembly — null when no identity fields present
+  const _pid = gameState.player?.identity;
+  if (_pid && (_pid.canonical_name || _pid.title_or_role || _pid.current_form || _pid.last_known_form)) {
+    const _pidParts = [];
+    if (_pid.canonical_name) _pidParts.push(`canonical name: ${_pid.canonical_name}`);
+    if (_pid.title_or_role)  _pidParts.push(`title: ${_pid.title_or_role}`);
+    const _activeForm = _pid.current_form || _pid.last_known_form; // v1.86.0: fall back to last_known_form when current_form absent
+    if (_activeForm)         _pidParts.push(`current form: ${_activeForm}`);
+    lines.push(`Player: ${_pidParts.join(' | ')}`);
+    gameState._lastIdentityTruthLine = lines[lines.length - 1]; // v1.85.21: verbatim — exactly what narrator received
+    truthLines++;
   }
 
   // Entity attributes
