@@ -218,7 +218,7 @@ function parseIntent(text) {
   const t = String(text || '').trim().toLowerCase();
   if (/^(look|look around|observe|scan)$/.test(t)) return { action:'look' };
   let m;
-  m = t.match(/^\b(grab|take|pick up)\b\s+(.*)$/); if (m){
+  m = t.match(/^\b(grab|snatch|take|pick up)\b\s+(.*)$/); if (m){
     let target = (m[2]||'').trim().replace(/^(the|a|an)\s+/, '');
     if (!target) return { action:'noop' };
     return { action:'take', target };
