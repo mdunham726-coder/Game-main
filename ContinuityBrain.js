@@ -1050,6 +1050,11 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   const _dupCounts = {};
   const promote = (bucket, items) => {
     for (const item of (items || [])) {
+      if (typeof item !== 'string') {
+        let _safeVal; try { _safeVal = JSON.stringify(item); } catch { _safeVal = String(item); }
+        logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: _safeVal, turn, reason: 'type_error:expected_string' });
+        continue;
+      }
       const _check = _isConcreteDetail(item);
       if (!_check.ok) {
         logEntries.push({ action: 'rejected_filter', entity_id: npc.id, bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
@@ -1080,6 +1085,11 @@ function _promoteLocationAttributes(locationRecord, locationRef, features, turn,
   if (!locationRecord.attributes) locationRecord.attributes = {}; // backward-compat: old saves lack attributes field
   let _dupCount = 0;
   for (const feat of (features || [])) {
+    if (typeof feat !== 'string') {
+      let _safeVal; try { _safeVal = JSON.stringify(feat); } catch { _safeVal = String(feat); }
+      logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: _safeVal, turn, reason: 'type_error:expected_string' });
+      continue;
+    }
     const _check = _isConcreteDetail(feat);
     if (!_check.ok) {
       logEntries.push({ action: 'rejected_filter', entity_id: locationRef, bucket: 'environment', value: feat, turn, reason: 'banned_pattern:' + _check.pattern });
@@ -1106,6 +1116,11 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries, options =
   const _dupCounts = {};
   const promote = (bucket, items) => {
     for (const item of (items || [])) {
+      if (typeof item !== 'string') {
+        let _safeVal; try { _safeVal = JSON.stringify(item); } catch { _safeVal = String(item); }
+        logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: _safeVal, turn, reason: 'type_error:expected_string' });
+        continue;
+      }
       const _check = _isConcreteDetail(item);
       if (!_check.ok) {
         logEntries.push({ action: 'rejected_filter', entity_id: player.id || 'player', bucket, value: item, turn, reason: 'banned_pattern:' + _check.pattern });
