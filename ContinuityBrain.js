@@ -1908,7 +1908,12 @@ function assembleContinuityPacket(gameState, turnContext) {
       .slice(0, ENV_ATTR_WINDOW)
       .map(a => a.value)
       .join(' | ');
-    lines.push(`${label}: ${attrs}`);
+    // v1.85.19: append recognition suffix if NPC has recognized the player
+    const _npcRec = npc.player_recognition;
+    const _recSuffix = (_npcRec?.recognizes_player && _npcRec.known_identity)
+      ? ` | recognizes-player: ${_npcRec.known_identity} (since T-${_npcRec.learned_turn})`
+      : '';
+    lines.push(`${label}: ${attrs}${_recSuffix}`);
     truthLines++;
   }
   if (visible.length === 0) {
