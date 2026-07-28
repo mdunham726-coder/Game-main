@@ -669,6 +669,7 @@ Rules:
 - If PLAYER ACTIONS THIS TURN names the affected object, use that object_id.
 - If two tracked objects share a name and the narration does not clearly distinguish them, and no player action context resolves it, emit a name_match entry instead — never omit a real condition.
 - One entry per affected object only.
+- When narration explicitly describes residue, debris, or material adhering to a tracked object that was used as an instrument, emit a condition update for that instrument. Implied contact alone does not qualify — the adhering material must be concretely described on the instrument in the narration.
 
 Preferred form (use when object_id is unambiguous):
 {
