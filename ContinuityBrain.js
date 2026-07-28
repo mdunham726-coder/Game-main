@@ -191,6 +191,7 @@ Produce a JSON object with EXACTLY these top-level keys. Do not add, remove, or 
   "mood_snapshot": { ... },
   "condition_events": [...],
   "object_candidates": [],
+  "visible_objects": [],
   "object_transfers": [],
   "object_condition_updates": [],
   "object_retirements": [],
@@ -288,6 +289,7 @@ Test: "Would this be here if there were no people in the room?"
 Format: { "location_ref": "<location name>", "features": [...] }
 
 Include only concrete, named physical objects or material conditions of the space itself. Exclude mood, atmosphere, interpretation, and ambiguous sensory descriptions unless a specific physical state is explicitly named.
+Note: named, specific objects visible through a window, display case, or barrier but not directly reachable are NOT environmental features. Place them in visible_objects[] instead.
 
 ---
 
@@ -429,6 +431,7 @@ narration and later picked up or manipulated by the player or NPC in the same na
 manipulation state is authoritative for container assignment — override the earlier placement.
 Do NOT include furniture, architecture, or fixed features.
 Do NOT include objects that are ambiguous or only implied.
+Do NOT emit an object_candidate for an object that is visible but spatially separated from the player by a barrier (display window, glass pane, counter, locked case, enclosed shelf, or any other physical boundary). Even if concrete and named, if the player cannot directly touch or take it without crossing a barrier or triggering an additional action, place it in visible_objects[] instead.
 Figurative or embellished prose does not disqualify extraction. Apply this test: is there a
 concrete, portable physical object named in the phrase? If yes, extract it — evocative adjectives,
 dramatized verbs, and metaphorical modifiers around a named object do not nullify the object's
@@ -613,6 +616,34 @@ PARTIAL DROP RECEIPT EXCEPTION: When the VALIDATED AUTHORITATIVE PARTIAL DROP RE
 
   Omit the field entirely when no actor is actively or possessively associated with this object.
   One actor_npc_ref per object candidate — the most directly involved actor only.
+
+---
+
+VISIBLE OBJECTS (optional)
+
+Identify concrete, specific, named objects explicitly described in the narration that are NOT directly accessible from the player's current position due to a spatial boundary.
+
+Use this category when ALL THREE conditions are true:
+  (1) The object is concretely named or specifically described — not a generic reference.
+  (2) The object is not in the player's inventory or worn items.
+  (3) The object is separated from the player by a physical boundary of any kind.
+
+Boundary test: "Can the player physically touch or take this object right now, without crossing a barrier, without asking an NPC, and without triggering a new action?"
+  YES → use object_candidates[] instead.
+  NO  → use visible_objects[] here.
+
+Use object_candidates[] instead when the object is on open floor, directly within reach, or has been handed to the player.
+Use environmental_features[] instead when the reference is generic or collective rather than a specific named object.
+
+For each qualifying object, emit one entry:
+{
+  "name": "<object name, lowercase, specific>",
+  "description": "<brief physical description>",
+  "reason": "<exact phrase from narration supporting this placement>",
+  "spatial_context": "<freeform short phrase describing the barrier or spatial separation — describe plainly what separates the player from the object>"
+}
+
+If no qualifying objects are present, emit: "visible_objects": []
 
 ---
 
@@ -1803,6 +1834,7 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
     raw,                    // v1.84.21: raw LLM response string (for payload archive)
     prompt,                 // v1.84.21: extraction prompt string (for payload archive)
     object_candidates:        Array.isArray(extracted.object_candidates)        ? extracted.object_candidates        : [],
+    visible_objects:          Array.isArray(extracted.visible_objects)          ? extracted.visible_objects          : [],
     object_transfers:         Array.isArray(extracted.object_transfers)         ? extracted.object_transfers         : [],
     object_condition_updates: Array.isArray(extracted.object_condition_updates) ? extracted.object_condition_updates : [],
     object_retirements:       Array.isArray(extracted.object_retirements)       ? extracted.object_retirements       : [],
