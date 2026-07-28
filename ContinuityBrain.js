@@ -257,6 +257,12 @@ observable_states
   Test: "Can I confirm this by looking, without guessing why?"
   Include only states that are directly visible — posture, position, and physical indicators confirmable on sight without knowing the reason. Exclude intent, emotion, and states that require inference to identify. When an observable state is a visible sign of bodily harm to the player, the underlying injury must also be emitted as a condition_event. An observable state does not absorb a condition.
 
+  CONTESTED EMOTE RULE: If the raw player input contains an asterisk-wrapped emote
+  implying a physical object interaction, and the narration described that interaction
+  as incomplete, failed, or contested, do not extract NPC state changes predicated on
+  that interaction having succeeded. Extract only what the narration actually describes
+  as the outcome.
+
 held_objects
   Output a JSON array of non-empty item-name strings only. Never emit objects or nested arrays; do not include descriptions, quantities, units, IDs, or container metadata in this field.
   Items carried, held, slung, packed, or hanging at the hip of THIS entity.
