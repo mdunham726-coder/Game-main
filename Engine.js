@@ -509,7 +509,8 @@ function resolveEntryPhase1(candidates, targetName) {
   return { result: 'no_match', site_id: null, ambiguous_ids: [], pass: null };
 }
 
-function buildOutput(prevState, inputObj, logger) {
+function buildOutput(prevState, inputObj, logger, options = {}) {
+  const isFinalActionInRequest = options.isFinalActionInRequest !== false;
   const nowUTC = toISO8601(inputObj && inputObj["timestamp_utc"]);
   const turnId = genTurnId(inputObj && inputObj["turn_id"]);
   let state = prevState ? deepClone(prevState) : initState(nowUTC);
@@ -728,9 +729,12 @@ function buildOutput(prevState, inputObj, logger) {
   const invHex = Actions.computeInventoryDigestHex(state);
   state.digests.inventory_digest = invHex;
 
-  // Turn counter + periodic regen
-  state.turn_counter = (state.turn_counter|0) + 1;
-  if (state.turn_counter % 10 === 0) Actions.merchantRegenOnTurn(state, nowUTC, changes1, phaseFlags);
+  // Turn counter + periodic regen — advances once per submitted player request,
+  // not once per internal action in a compound queue (see issue #49).
+  if (isFinalActionInRequest) {
+    state.turn_counter = (state.turn_counter|0) + 1;
+    if (state.turn_counter % 10 === 0) Actions.merchantRegenOnTurn(state, nowUTC, changes1, phaseFlags);
+  }
 
   // Counters
   if (phaseFlags.inventory_rev) { state.counters.inventory_rev = (state.counters.inventory_rev|0) + 1; changes1.push({ op:'inc', path:'/counters/inventory_rev', value:1 }); }

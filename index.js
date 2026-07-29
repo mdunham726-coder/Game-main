@@ -2777,7 +2777,8 @@ app.post('/narrate', async (req, res) => {
         }
         if (!_degradedToFreeform) {
         const allResponses = [];
-        for (const queuedAction of validation.queue) {
+        for (const [_qaIdx, queuedAction] of validation.queue.entries()) {
+          const _isFinalQueuedAction = _qaIdx === validation.queue.length - 1;
           objectOperationResolverEvidence = null;
           objectOperationResolverError = null;
           debug.tls_executor_dry_run = null;
@@ -2833,16 +2834,6 @@ app.post('/narrate', async (req, res) => {
           // ── CHANNEL STAMP ─────────────────────────────────────────────────────────
           mapped.player_intent.channel = resolvedChannel;
           if (!mapped.player_intent.target && _rawNpcTarget) mapped.player_intent.target = _rawNpcTarget;
-
-          // ── TALK INTERCEPTION (Do bar only, pre-engine guard) ─────────────────────
-          if (resolvedChannel === 'do' && queuedAction.action === 'talk') {
-            _abortTurn('NEEDS_SAY_INPUT');
-            return res.json({
-              needs_say_input: true,
-              npc_target: queuedAction.target || null,
-              sessionId: resolvedSessionId
-            });
-          }
 
           // ── HYBRID ENTRY RESOLVER ─────────────────────────────────────────────────
           // Runs BEFORE buildOutput so Engine receives annotated player_intent.
@@ -3058,7 +3049,7 @@ app.post('/narrate', async (req, res) => {
             );
           }
 
-          const result = await Engine.buildOutput(gameState, mapped, logger);
+          const result = await Engine.buildOutput(gameState, mapped, logger, { isFinalActionInRequest: _isFinalQueuedAction });
           inputObj = mapped; // Expose to narration scope for FREEFORM detection
           allResponses.push(result);
           if (result && result.state) {
