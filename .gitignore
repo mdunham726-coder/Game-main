@@ -16,7 +16,10 @@ node_modules/
 
 # Agent working artifacts
 /plan.md
+/plan-*.md
 /research-notes.md
+/research-notes-*.md
+/historical-reference/
 /.codewhale/
 /.deepseek/
 /.codex-remote-attachments/
