@@ -167,7 +167,19 @@ Valid containers for object placement this turn:
 ${_validContainersList}
 Grid container_id MUST be an exact LOC:... value from this list. NPC container_id MUST be copied exactly from the ID shown in this list — do not construct or derive it from the NPC's name or any other string. Never use prose labels (overworld, ground, current cell, nearby, area, field) — they are not valid container IDs and will be rejected. If narration implies an object in a container not on this list, omit that object.
 Current player input (this turn): "${rawInput || ''}"
-CURRENT AUTHORITATIVE PLAYER INVENTORY (AFTER ENGINE/TLS PROCESSING): ${(() => { const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : []; const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {}; const _cbNames = _cbIds.map(id => _cbObjs[id]?.status === 'active' ? _cbObjs[id].name : null).filter(Boolean); return _cbNames.length ? _cbNames.join(', ') : '(empty)'; })()}
+CURRENT AUTHORITATIVE PLAYER INVENTORY (AFTER ENGINE/TLS PROCESSING): ${(() => {
+  const _cbIds = Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : [];
+  const _cbObjs = (gameState.objects && typeof gameState.objects === 'object') ? gameState.objects : {};
+  const _cbNames = _cbIds.map(id => {
+    const _cbObj = _cbObjs[id];
+    return (
+      _cbObj?.status === 'active' &&
+      _cbObj.current_container_type === 'player' &&
+      _cbObj.current_container_id === 'player'
+    ) ? _cbObj.name : null;
+  }).filter(Boolean);
+  return _cbNames.length ? _cbNames.join(', ') : '(empty)';
+})()}
 Visible entities: ${entities}
 Player character: always present — entity_ref "player" | known attributes: ${knownPlayerAttrs}
 Active player conditions: ${activeConditions}
@@ -866,7 +878,9 @@ function _describeVisibleEntities(gameState) {
 function _describePlayerAttributes(gameState) {
   const attrs = gameState.player?.attributes;
   if (!attrs || !Object.keys(attrs).length) return '(none yet)';
-  return Object.values(attrs).map(a => `${a.bucket}:${a.value}`).join(' | ');
+  const nonObjectAttrs = Object.values(attrs).filter(a => a.bucket !== 'object');
+  if (!nonObjectAttrs.length) return '(none yet)';
+  return nonObjectAttrs.map(a => `${a.bucket}:${a.value}`).join(' | ');
 }
 
 function _describeActiveConditions(gameState) {
@@ -885,21 +899,62 @@ function _describeTrackedObjects(gameState) {
   // _groundDepth pattern — grid only at L0, site floor only at L1, localspace only at L2.
   const depth   = w.active_local_space ? 3 : w.active_site ? 2 : 1;
 
-  const validContainers = new Set(['player']);
-  if (depth === 1 && pos) validContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
-  if (depth === 3 && loc?.local_space_id) validContainers.add(loc.local_space_id);
+  const spatialContainers = new Set();
+  if (depth === 1 && pos) spatialContainers.add(`LOC:${pos.mx},${pos.my}:${pos.lx},${pos.ly}`);
+  if (depth === 3 && loc?.local_space_id) spatialContainers.add(loc.local_space_id);
   if (depth === 2) {
     const siteId = w.active_site?.site_id || (w.active_site?.id ? w.active_site.id.replace(/\/l2$/, '') : null);
     if (siteId != null && typeof pos?.x === 'number' && typeof pos?.y === 'number') {
-      validContainers.add(`${siteId}:${pos.x},${pos.y}`);
+      spatialContainers.add(`${siteId}:${pos.x},${pos.y}`);
     }
   }
-  // v1.88.8: L0 fallback — include world._visible_npcs NPC IDs as valid containers
   const visible = loc ? (loc._visible_npcs || []) : (w._visible_npcs || []);
-  for (const npc of visible) { if (npc.id) validContainers.add(npc.id); }
+  const player = gameState.player || {};
+  const playerHeldIds = new Set(Array.isArray(player.object_ids) ? player.object_ids : []);
+  const playerWornIds = new Set(Array.isArray(player.worn_object_ids) ? player.worn_object_ids : []);
+  const visibleNpcById = new Map(visible.filter(npc => npc.id).map(npc => [npc.id, npc]));
+  const trackedActors = [];
+  const trackedActorIds = new Set();
+  const actorContainerLabels = new Map();
 
-  const tracked = Object.values(objects).filter(r =>
-    r.status === 'active' && validContainers.has(r.current_container_id)
+  for (const r of Object.values(objects)) {
+    if (r.status !== 'active' || trackedActorIds.has(r.id)) continue;
+    let containerLabel = null;
+    if (
+      playerHeldIds.has(r.id) &&
+      r.current_container_type === 'player' &&
+      r.current_container_id === 'player'
+    ) {
+      containerLabel = 'player-held';
+    } else if (
+      playerWornIds.has(r.id) &&
+      r.current_container_type === 'player_worn' &&
+      r.current_container_id === 'player_worn'
+    ) {
+      containerLabel = 'player-worn';
+    } else if (r.current_container_type === 'npc') {
+      const npc = visibleNpcById.get(r.current_container_id);
+      if (npc && Array.isArray(npc.object_ids) && npc.object_ids.includes(r.id)) {
+        containerLabel = `npc-held:${npc.id}`;
+      }
+    } else if (r.current_container_type === 'npc_worn') {
+      const npc = visibleNpcById.get(r.current_container_id);
+      if (npc && Array.isArray(npc.worn_object_ids) && npc.worn_object_ids.includes(r.id)) {
+        containerLabel = `npc-worn:${npc.id}`;
+      }
+    }
+    if (!containerLabel) continue;
+    trackedActorIds.add(r.id);
+    actorContainerLabels.set(r.id, containerLabel);
+    trackedActors.push(r);
+  }
+
+  const actorContainerTypes = new Set(['player', 'player_worn', 'npc', 'npc_worn']);
+  const trackedSpatial = Object.values(objects).filter(r =>
+    r.status === 'active' &&
+    !trackedActorIds.has(r.id) &&
+    !actorContainerTypes.has(r.current_container_type) &&
+    spatialContainers.has(r.current_container_id)
   );
 
   // v1.88.43: include site-floor objects at Manhattan distance === 1 from the player's
@@ -913,7 +968,7 @@ function _describeTrackedObjects(gameState) {
     for (const r of Object.values(objects)) {
       if (r.status !== 'active') continue;
       if (r.current_container_type !== 'site') continue;
-      if (validContainers.has(r.current_container_id)) continue;
+      if (spatialContainers.has(r.current_container_id)) continue;
       const cid = r.current_container_id || '';
       const lastColon = cid.lastIndexOf(':');
       if (lastColon < 0) continue;
@@ -929,15 +984,17 @@ function _describeTrackedObjects(gameState) {
     nearby.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
-  if (!tracked.length && !nearby.length) return '(none)';
+  if (!trackedActors.length && !trackedSpatial.length && !nearby.length) return '(none)';
 
-  const lines = tracked.map(r => {
-    const containerLabel = r.current_container_type === 'player' ? 'player'
-      : r.current_container_type === 'npc' ? `npc:${r.current_container_id}`
-      : `${r.current_container_id}`;
+  const lines = trackedActors.map(r => {
+    const containerLabel = actorContainerLabels.get(r.id);
     const actorLabel = r.associated_actor_id ? ` | actor: ${r.associated_actor_id}` : '';
     return `- ${r.id} | ${r.name} | container: ${containerLabel}${actorLabel}`;
   });
+  for (const r of trackedSpatial) {
+    const actorLabel = r.associated_actor_id ? ` | actor: ${r.associated_actor_id}` : '';
+    lines.push(`- ${r.id} | ${r.name} | container: ${r.current_container_id}${actorLabel}`);
+  }
   for (const r of nearby) {
     const actorLabel = r.associated_actor_id ? ` | actor: ${r.associated_actor_id}` : '';
     lines.push(`- ${r.id} | ${r.name} | container: ${r.current_container_id} | nearby (1 tile)${actorLabel}`);
@@ -1080,7 +1137,6 @@ function _promoteEntityAttributes(npc, candidate, turn, logEntries) {
   };
   promote('physical', candidate.physical_attributes);
   promote('state',    candidate.observable_states);
-  promote('object',   [...(candidate.held_objects || []), ...(candidate.worn_objects || [])]);  // v1.88.12: split fields
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
     logEntries.push({ action: 'duplicate_silenced_summary', entity_type: 'npc', entity_id: npc.id, entity_name: npc.npc_name || npc.id, count_by_bucket: _dupCounts, total: _dupTotal, turn });
@@ -1142,11 +1198,10 @@ function _promotePlayerAttributes(player, candidate, turn, logEntries, options =
     }
   };
   if (_suppress) {
-    console.warn('[CB] suppressUnsupportedPlayerStatePromotion: physical/state/object buckets skipped (soliloquy turn)');
+    console.warn('[CB] suppressUnsupportedPlayerStatePromotion: physical/state buckets skipped (soliloquy turn)');
   } else {
     promote('physical', candidate.physical_attributes);
     promote('state',    candidate.observable_states);
-    promote('object',   [...(candidate.held_objects || []), ...(candidate.worn_objects || [])]);  // v1.88.12: split fields
   }
   const _dupTotal = Object.values(_dupCounts).reduce((s, c) => s + c, 0);
   if (_dupTotal > 0) {
@@ -1707,21 +1762,6 @@ async function runPhaseB(frozenNarration, gameState, rawInput, options = {}) {
       console.log(`[CB] birth_record promoted ${_declaredPromoted} declared attribute(s) to player.attributes`);
     }
 
-    // v1.84.69: Promote possessions → player.attributes[object:] — idempotent, Turn 1 only
-    // Normalised as "carrying ${item}" to match CB-extracted object: bucket style.
-    let _possessionsPromoted = 0;
-    for (const _poss of (gameState.player.birth_record.possessions || [])) {
-      const _pVal = `carrying ${_poss}`;
-      const _pKey = `object:${_pVal}`;
-      if (!gameState.player.attributes[_pKey]) {
-        gameState.player.attributes[_pKey] = { value: _pVal, bucket: 'object', turn_set: 1, confidence: 'initial' };
-        _possessionsPromoted++;
-      }
-    }
-    if (_possessionsPromoted > 0) {
-      console.log(`[CB] birth_record promoted ${_possessionsPromoted} possession(s) to player.attributes`);
-    }
-
     // Promote capabilities → player.attributes[declared:] — idempotent, Turn 1 only
     // Capabilities are things the player can DO, distinct from physical items they carry.
     // CB classifies them into capabilities[] at extraction time; promote as declared: so they
@@ -1886,10 +1926,13 @@ function assembleContinuityPacket(gameState, turnContext) {
   const visible = (loc && loc._visible_npcs) || w._visible_npcs || []; // v1.88.5: L0 fallback — BORN-NPC visible to TRUTH block
   let truthLines = 0;
 
-  // Player attributes — always first in TRUTH block (layer-agnostic)
-  // state: facts older than STATE_ATTR_WINDOW turns are suppressed (decay) — physical: and object: are permanent
+  // Player attributes — always first in TRUTH block (layer-agnostic).
+  // object: facts are excluded; state: facts older than STATE_ATTR_WINDOW turns are suppressed (decay).
   const player      = gameState.player;
-  const playerAttrs = player?.attributes ? Object.values(player.attributes) : [];
+  const playerAttrs = player?.attributes
+    ? Object.values(player.attributes).filter(a => a.bucket !== 'object')
+    : [];
+  if (turnContext) turnContext.stateAttrsSuppressed = 0;
   if (playerAttrs.length > 0) {
     const _curTurn = (gameState.turn_history?.length || 0) + 1;
     const _stateThreshold = _curTurn - STATE_ATTR_WINDOW;
@@ -1921,10 +1964,10 @@ function assembleContinuityPacket(gameState, turnContext) {
 
   // Entity attributes
   for (const npc of visible) {
-    if (!npc.attributes || !Object.keys(npc.attributes).length) continue;
     // v1.84.82: respect is_learned — do not expose npc_name in TRUTH block until the player has learned it
     const label = (npc.is_learned && npc.npc_name) ? `${npc.npc_name} (${npc.id})` : `${npc.job_category || 'person'} (${npc.id})`;
-    const attrs = Object.values(npc.attributes)
+    const attrs = Object.values(npc.attributes || {})
+      .filter(a => a.bucket !== 'object')
       .sort((x, y) => (y.turn_set || 0) - (x.turn_set || 0))
       .slice(0, ENV_ATTR_WINDOW)
       .map(a => a.value)
@@ -1934,7 +1977,9 @@ function assembleContinuityPacket(gameState, turnContext) {
     const _recSuffix = (_npcRec?.recognizes_player && _npcRec.known_identity)
       ? ` | recognizes-player: ${_npcRec.known_identity} (since T-${_npcRec.learned_turn})`
       : '';
-    lines.push(`${label}: ${attrs}${_recSuffix}`);
+    if (!attrs && !_recSuffix) continue;
+    const _npcTruth = attrs ? `${attrs}${_recSuffix}` : _recSuffix.slice(3);
+    lines.push(`${label}: ${_npcTruth}`);
     truthLines++;
   }
   if (visible.length === 0) {

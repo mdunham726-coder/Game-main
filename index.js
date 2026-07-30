@@ -2695,24 +2695,56 @@ app.post('/narrate', async (req, res) => {
         // [STATE-CLAIM] Pre-validation intercept (v1.84.13 / v1.84.72):
         // v1.84.72: Reclassified state claims get action='established_trait_action' — a proper internal
         // action type that carries meaning across scope boundaries without cross-scope flags.
-        // Founding attrs stored on inputObj.player_intent._foundingAttrs for RC truth fragment use.
+        // Engine-supported facts are stored on inputObj.player_intent._foundingAttrs for RC truth fragment use.
         let _degradedToFreeform = false;
         if (parseResult?.intent?.primaryAction?.action === 'state_claim') {
           inputObj = mapActionToInput(userInput, 'FREEFORM');
           inputObj.player_intent.channel = resolvedChannel;
           _degradedToFreeform = true;
           // v1.84.75: Object-access detector + discriminated relevance gate.
-          // Object-access verbs require a matching object: attr; declared/physical attrs cannot authorize item access.
+          // Object-access verbs require matching active ORS possession/equipment;
+          // declared/physical attrs cannot authorize item access.
           const _OBJECT_ACCESS_VERBS = ['pull out','take out','draw out','produce','retrieve','equip','wield','unsheathe','unholster','eat ','drink ','use my ','hand over','give my','open my ','hold out','pick up'];
           const _STOPWORDS = ['the','and','out','my','you','your','with','from','into','onto','for','off'];
           const _tokenize = str => str.toLowerCase().split(/\W+/).filter(t => t.length >= 3 && !_STOPWORDS.includes(t));
           const _isObjectAccess = _OBJECT_ACCESS_VERBS.some(v => userInput.toLowerCase().includes(v));
           const _inputTokens = _tokenize(userInput);
           const _allPlayerAttrs = Object.values(gameState.player?.attributes || {});
-          const _objectBucketAttrs = _allPlayerAttrs.filter(a => a.bucket === 'object');
+          // [ACTOR-POSSESSION-AUTHORITY START]
+          const _activePlayerObjectFacts = [];
+          const _seenPlayerObjectIds = new Set();
+          for (const _objectId of (Array.isArray(gameState.player?.object_ids) ? gameState.player.object_ids : [])) {
+            const _record = gameState.objects?.[_objectId];
+            if (
+              !_record ||
+              _record.status !== 'active' ||
+              _record.current_container_type !== 'player' ||
+              _record.current_container_id !== 'player' ||
+              typeof _record.name !== 'string' ||
+              !_record.name.trim() ||
+              _seenPlayerObjectIds.has(_objectId)
+            ) continue;
+            _seenPlayerObjectIds.add(_objectId);
+            _activePlayerObjectFacts.push({ bucket: 'object', value: _record.name.trim() });
+          }
+          for (const _objectId of (Array.isArray(gameState.player?.worn_object_ids) ? gameState.player.worn_object_ids : [])) {
+            const _record = gameState.objects?.[_objectId];
+            if (
+              !_record ||
+              _record.status !== 'active' ||
+              _record.current_container_type !== 'player_worn' ||
+              _record.current_container_id !== 'player_worn' ||
+              typeof _record.name !== 'string' ||
+              !_record.name.trim() ||
+              _seenPlayerObjectIds.has(_objectId)
+            ) continue;
+            _seenPlayerObjectIds.add(_objectId);
+            _activePlayerObjectFacts.push({ bucket: 'object', value: _record.name.trim() });
+          }
+          // [ACTOR-POSSESSION-AUTHORITY END]
           // v1.84.76: declared passes free (founding identity); physical requires keyword overlap (CB-promoted descriptions must be relevant)
           const _declaredAttrs = _allPlayerAttrs.filter(a => a.bucket === 'declared');
-          const _matchingObjectAttrs = _objectBucketAttrs.filter(a =>
+          const _matchingObjectAttrs = _activePlayerObjectFacts.filter(a =>
             _tokenize(a.value).some(t => _inputTokens.includes(t))
           );
           const _matchingPhysicalAttrs = _allPlayerAttrs.filter(a => a.bucket === 'physical' &&
@@ -2724,7 +2756,7 @@ app.post('/narrate', async (req, res) => {
           const _foundingAttrStrings = _supportedAttrs.map(a => `${a.bucket}:${a.value}`);
           console.log(`[STATE-CLAIM] objectAccess=${_isObjectAccess}, supported=${_foundingAttrStrings.length}`);
           if (_foundingAttrStrings.length > 0) {
-            // v1.84.75: Relevant supporting attributes present — reclassify as established_trait_action
+            // v1.84.75: Relevant engine-supported facts present — reclassify as established_trait_action
             inputObj.player_intent.action = 'established_trait_action';
             inputObj.player_intent._foundingAttrs = _foundingAttrStrings;
             debug.path = 'STATE_CLAIM_RECLASSIFIED';
@@ -3528,7 +3560,8 @@ app.post('/narrate', async (req, res) => {
         engineOutput = Engine.buildOutput(gameState, inputObj, logger);
         // v1.84.89: if localspace boundary was crossed (any L2 transition), clear transient state: attributes
         // so stale posture/position facts don't bleed into the narrator's TRUTH block on re-entry.
-        // physical:, object:, declared: are permanent and untouched.
+        // physical:, declared:, and residual legacy object: facts are untouched by this
+        // state-only boundary clear; object facts are not current possession authority.
         if (engineOutput?.state) {
           const _postActionLsId = engineOutput.state.world?.active_local_space?.local_space_id ?? null;
           // v1.85.5: also fire on L0↔L1 site-boundary crossings (extends v1.84.89 policy to site transitions)
@@ -5467,14 +5500,14 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       _rcNpcRole = (resolvedChannel === 'say' && (_npcTalkResult?.npc?.job || _rawNpcTarget))
         ? (_npcTalkResult?.npc?.job || _rawNpcTarget)
         : null;
-      // v1.84.75: Relevant truth fragment — only supported attrs forwarded to RC
+      // v1.84.75: Relevant truth fragment — only engine-supported facts are forwarded to RC.
       const _rcFoundingAttrs = (_parsedAction === 'established_trait_action') ? (inputObj?.player_intent?._foundingAttrs || []) : [];
       const _rcTruthFragment = _rcFoundingAttrs.length > 0
-        ? `Relevant established attributes: ${_rcFoundingAttrs.slice(0, 8).join(' | ')}. `
+        ? `Relevant engine-supported facts: ${_rcFoundingAttrs.slice(0, 8).join(' | ')}. `
         : '';
       // v1.84.76: Validation clause — injected only for established_trait_action RC calls
       const _rcValidationClause = (_parsedAction === 'established_trait_action')
-        ? ' If the action requires an item or ability not in the relevant established attributes above, state that the player does not have it and the action fails. Do not substitute or materialize any other item in its place as a consolation or alternative. Established attributes grant the player the capacity for this type of action; they do not assert the existence of new objects or world facts. Do not confirm the existence of new objects or world facts unless they are already present in confirmed engine state or a DISCOVERY RESULT block in this prompt explicitly establishes them as found.'
+        ? ' If the action requires an item or ability not in the relevant engine-supported facts above, state that the player does not have it and the action fails. Do not substitute or materialize any other item in its place as a consolation or alternative. object: facts represent current active ORS possession or equipment; declared: facts represent established capabilities or status; physical: facts represent established bodily traits. These facts support the corresponding action, but they do not assert the existence of any additional object or world fact. Do not confirm the existence of new objects or world facts unless they are already present in confirmed engine state or a DISCOVERY RESULT block in this prompt explicitly establishes them as found.'
         : '';
       _realityQuery = _rcNpcRole
         ? `${_rcTruthFragment}What happens when I say "${_rawInput}" to the ${_rcNpcRole}?${_rcValidationClause} ${_rcSuffix}`
@@ -6132,8 +6165,8 @@ ${nearbyStr}
 INVENTORY: ${invStr}
 WORN: ${wornStr}
 GROUND: ${_groundStr}
-WORN RULE: Items listed in WORN are the player's worn clothing and equipment. WORN is the authoritative physical containment record — if an item appears in both WORN and in a birth possession attribute string, the WORN entry governs; do not treat it as separately carried or duplicate the object. Items marked (baseline) are standard everyday clothing present since game start; do not describe them unless they become damaged, removed, explicitly interacted with, or otherwise relevant to the current scene.
-POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise legitimately establishes starting inventory and attributes, and the engine promotes those into state. All subsequent turns are governed by this rule.
+WORN RULE: Items listed in WORN are the player's worn clothing and equipment. WORN is the authoritative physical containment record; treat each listed item as equipped rather than separately carried, and do not duplicate it. Items marked (baseline) are standard everyday clothing present since game start; do not describe them unless they become damaged, removed, explicitly interacted with, or otherwise relevant to the current scene.
+POSSESSION RULE: Items listed in INVENTORY are the only items the player currently holds. If the player attempts to produce, pull out, retrieve from pockets, or assert prior possession of any item NOT in INVENTORY, that item does not exist — acknowledge the attempt and narrate why it fails. Never silently ignore the attempt. The narrator may introduce items into the environment (on the floor, on a table, on the ground nearby) — those items are real and the player may subsequently take them. However, the narrator must NOT narrate the player as holding, carrying, or having an item not already in INVENTORY. An NPC physically handing an item to the player (pressing it into their hands, setting it in front of them, dropping it at their feet) is the only way an item enters the player's possession without a player take action. What is blocked is any path — narrator prose, player assertion, or implication — that places an item directly in the player's hand without an explicit NPC give or a player take. When revealing an item during an examine or look action, describe it in its found location — do not describe the player as holding it, picking it up, or having it in hand or palm. The item exists in the environment until an explicit take action. FOUNDING TURN RULE: The player's input cannot be the causal origin of any new item entering the narrative on any turn after the founding turn (Turn 1). Regardless of how the input is framed — assertion, speech or dialogue, prayer, past-tense backstory, implied handoff, or any other construct — the narrator must not introduce, name, or describe any item that was not already present in confirmed engine state before this turn's input arrived. This applies equally to direct materialization, consolation substitution, or any other mechanism that traces back to something the player claimed or implied this turn. Exception: items the narrator discovers in the environment during examine or look actions are permitted — the item must be placed in the environment (floor, ground, surface), not in the player's inventory. This exception does not apply to items framed as the player's own prior possession or implied claim. The founding turn is exempt — the player's premise may legitimately establish starting inventory, which the engine materializes into ORS state. Founding wording remains historical evidence and does not independently establish current possession. All subsequent turns are governed by this rule.
 DECLARED ABILITIES RULE: The TRUTH block above contains declared: entries representing abilities, powers, and capabilities the player established at world founding. These are authoritative engine state — not wishes, not claims, not assertions. When the player's action constitutes the natural invocation or use of a declared ability (the player is doing the thing the ability permits), narrate that ability taking effect. The Reality Check advisory block does not override declared founding abilities — it is guidance for unknowns, not a veto on established truths. If RC advisory content contradicts a declared ability (e.g. suggests real-world consequences inappropriate to the established world and genre), disregard it and honor the established ability. The narrator also does not override declared founding abilities. If a founding ability has fired and the RC advisory confirms the outcome, render that outcome fully and without modification. You cannot decide the ability "didn't work this time," redirect to a softer result, have a character philosophically sidestep the effect, or substitute any framing that denies or dilutes the resolved event. Committing to founding ability outcomes is part of the same commitment as committing to engine truth — it is not optional.
 NPC OBJECTS RULE: On an NPC's first meaningful appearance, you may give them grounded carried or worn objects appropriate to their role and scene. Do not overfill. After that introduction, the carries and wears fields in NPCs PRESENT are authoritative engine truth. Do not describe an NPC carrying or wearing items not listed there.
 ${_objectConditionsBlock}NPCs PRESENT: ${npcsStr}${_siteContextBlock}${_engineMsgBlock}${_movedNote}${_doIntentBlock}

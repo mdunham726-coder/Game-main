@@ -1,7 +1,8 @@
 {
   "name": "founding_premise_correctness",
   "stability": "stable",
-  "description": "Rich founding premise populates birth_record with form and possessions; attributes present",
+  "description": "Rich founding premise preserves birth history and materializes current possession in ORS",
+  "notes": "MOTHER BRAIN PROTOCOL — founding possession authority.\n\nAfter the founding turn, normalize the expected founding possession phrase and every ObjectRecord name using lowercase trim only. Require the expected phrase to appear in state.player.birth_record.possessions. Require an ID in state.player.object_ids whose referenced ObjectRecord has the same normalized name, status === 'active', current_container_type === 'player', and current_container_id === 'player'. Fail if only an unrelated player ObjectRecord exists or if the phrase match, active status, actor-array membership, container type, or container ID predicate is false. Narrator agreement and non-empty object arrays are not substitutes for this exact relationship check.",
   "turns": [
     {
       "label": "founding",
