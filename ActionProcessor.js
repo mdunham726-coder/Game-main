@@ -1204,9 +1204,10 @@ function resolveCellItemByName(state, query){
   }
   // v1.84.79: environment attribute fallback — checks CB-promoted env: features in the current location record.
   // Conservative exact-word-boundary match only: tokenize on whitespace/hyphens/underscores, then require
-  // strict equality. No fuzzy/levenshtein. Minimum length 3 on both query and token.
+  // a contiguous ordered exact/prefix token run. No fuzzy/levenshtein. Minimum token length 3.
   // Prefer false negatives: partial substrings ("stone" in "milestone") must not match.
   if (q && q.length >= 3) {
+    const _eQueryTokens = q.split(/[\s\-_]+/).filter(t => t.length >= 3);
     const _envLocRec = (state?.world?.active_local_space) || (state?.world?.active_site) || getL0Cell(state) || null;
     if (_envLocRec && typeof _envLocRec.attributes === 'object') {
       for (const [_eKey, _eAttr] of Object.entries(_envLocRec.attributes)) {
@@ -1214,10 +1215,14 @@ function resolveCellItemByName(state, query){
         const _eVal = typeof _eAttr.value === 'string' ? _eAttr.value : '';
         if (!_eVal) continue;
         const _eTokens = _eVal.toLowerCase().split(/[\s\-_]+/).filter(t => t.length >= 3);
-        // v1.84.81: two-path match — exact token equality (fast path) or prefix variant (handles
-        // plurals/light suffixes e.g. "rose"→"roses"); length differential cap ≤2 prevents
-        // short queries matching longer unrelated tokens ("bar" in "barrier" → diff 4 → blocked).
-        const _eMatch = _eTokens.includes(q) || _eTokens.some(t => t.startsWith(q) && t.length - q.length <= 2);
+        const _eMatch = _eQueryTokens.length > 0 && _eTokens.some((_, start) =>
+          start + _eQueryTokens.length <= _eTokens.length &&
+          _eQueryTokens.every((queryToken, offset) => {
+            const valueToken = _eTokens[start + offset];
+            return valueToken === queryToken ||
+              (valueToken.startsWith(queryToken) && valueToken.length - queryToken.length <= 2);
+          })
+        );
         if (_eMatch) {
           return { targetType: 'environmentFeature', label: q, featureValue: _eVal, _found: true };
         }

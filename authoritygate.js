@@ -18,8 +18,9 @@
  * Strict boundaries (DO NOT SOFTEN):
  *   - Returns JSON only. Never generates narrator instruction text.
  *   - index.js owns all translation from gate result to narrator blocks.
- *   - Does not read full turn history, full continuity, or world gen state.
- *   - Object existence checks use existing AP helpers only — no parallel lookup.
+ *   - Reads frozen turn history only through structured historical-object receipts;
+ *     raw archive names can recognize a reference but never authorize it.
+ *   - Current historical-object availability is read directly by audited ORS ID and exact container scope.
  */
 
 const axios = require('axios');
@@ -102,13 +103,19 @@ function _buildEvidence(gameState, rawInput, parsedAction, turnNumber) {
   const inventoryNames = [
     ...(gameState?.player?.object_ids || []).map(id => {
       const rec = gameState?.objects?.[id];
-      return (rec && rec.status === 'active') ? rec.name : null;
+      return (rec &&
+        rec.status === 'active' &&
+        rec.current_container_type === 'player' &&
+        rec.current_container_id === 'player') ? rec.name : null;
     }).filter(Boolean),
   ].slice(0, 10);
 
   const wornNames = (gameState?.player?.worn_object_ids || []).map(id => {
     const rec = gameState?.objects?.[id];
-    return (rec && rec.status === 'active') ? rec.name : null;
+    return (rec &&
+      rec.status === 'active' &&
+      rec.current_container_type === 'player_worn' &&
+      rec.current_container_id === 'player_worn') ? rec.name : null;
   }).filter(Boolean).slice(0, 10);
 
   const visibleNpcNames = (() => {
@@ -149,6 +156,7 @@ function _hasWornMatch(gameState, target) {
   for (const id of wornIds) {
     const rec = orReg[id];
     if (!rec || rec.status !== 'active') continue;
+    if (rec.current_container_type !== 'player_worn' || rec.current_container_id !== 'player_worn') continue;
     if (aliasScore(target, rec.name || '', rec.aliases || [], 2) >= 6) return true;
   }
   return false;
@@ -373,12 +381,228 @@ Return the JSON schema described in your instructions. No prose.`;
   return result;
 }
 
+function _historicalObjectNameMatches(reference, historicalName) {
+  if (typeof reference !== 'string' || typeof historicalName !== 'string') return false;
+  const normalizedReference = reference.trim().toLowerCase();
+  const normalizedHistoricalName = historicalName.trim().toLowerCase();
+  if (!normalizedReference || !normalizedHistoricalName) return false;
+  return aliasScore(normalizedReference, normalizedHistoricalName, [], 2) >= 10;
+}
+
+const _HISTORICAL_OBJECT_AUDIT_ID_FIELDS = Object.freeze({
+  promote_suppressed_transfer_conflict: 'object_id',
+  promote_suppressed_transfer_name_collision: 'object_id',
+  promote_skipped_name_match: 'object_id',
+  promote_skipped_soft_match: 'object_id',
+  promote_skipped_token_subset: 'object_id',
+  promote_skipped_tsl_dedup: 'object_id',
+  promote_skipped_existing: 'object_id',
+  promote_skipped_resolved_name_match: 'existing_object_id',
+  promoted: 'object_id',
+});
+
+function _extractHistoricalAuditObjectId(entry) {
+  const idField = _HISTORICAL_OBJECT_AUDIT_ID_FIELDS[entry?.action];
+  if (!idField) return null;
+  const objectId = entry?.[idField];
+  return typeof objectId === 'string' && objectId.trim() ? objectId : null;
+}
+
+function _classifyCurrentHistoricalObjectAvailability(gameState, objectId) {
+  const objects = (gameState?.objects && typeof gameState.objects === 'object') ? gameState.objects : {};
+  const record = objects[objectId] || null;
+  if (!record) {
+    return { record: null, available: false, current_scope: null, reason_code: 'ors_record_missing' };
+  }
+  if (record.status !== 'active') {
+    return { record, available: false, current_scope: null, reason_code: 'ors_record_inactive' };
+  }
+
+  const playerObjectIds = Array.isArray(gameState?.player?.object_ids) ? gameState.player.object_ids : [];
+  if (
+    record.current_container_type === 'player' &&
+    record.current_container_id === 'player' &&
+    playerObjectIds.includes(objectId)
+  ) {
+    return { record, available: true, current_scope: 'player_inventory', reason_code: 'ors_object_currently_available' };
+  }
+
+  const wornObjectIds = Array.isArray(gameState?.player?.worn_object_ids) ? gameState.player.worn_object_ids : [];
+  if (
+    record.current_container_type === 'player_worn' &&
+    record.current_container_id === 'player_worn' &&
+    wornObjectIds.includes(objectId)
+  ) {
+    return { record, available: true, current_scope: 'player_worn', reason_code: 'ors_object_currently_available' };
+  }
+
+  const groundDepth = gameState?.world?.active_local_space ? 3 : gameState?.world?.active_site ? 2 : 1;
+  const worldPosition = gameState?.world?.position;
+  const gridCellKey = worldPosition
+    ? `LOC:${worldPosition.mx},${worldPosition.my}:${worldPosition.lx},${worldPosition.ly}`
+    : null;
+
+  let siteFloorKey = null;
+  if (groundDepth === 2) {
+    const activeSite = gameState?.world?.active_site;
+    const playerX = gameState?.player?.position?.x;
+    const playerY = gameState?.player?.position?.y;
+    const siteId = activeSite?.site_id || activeSite?.id?.replace(/\/l2$/, '');
+    if (siteId != null && playerX != null && playerY != null) {
+      siteFloorKey = `${siteId}:${playerX},${playerY}`;
+    }
+  }
+
+  const localSpaceKey = groundDepth === 3
+    ? (gameState?.world?.active_local_space?.local_space_id || null)
+    : null;
+  const onCurrentGround = (
+    (groundDepth === 1 &&
+      record.current_container_type === 'grid' &&
+      record.current_container_id === gridCellKey) ||
+    (record.current_container_type === 'site' &&
+      siteFloorKey !== null &&
+      record.current_container_id === siteFloorKey) ||
+    (record.current_container_type === 'localspace' &&
+      localSpaceKey !== null &&
+      record.current_container_id === localSpaceKey)
+  );
+  if (onCurrentGround) {
+    return { record, available: true, current_scope: 'current_ground', reason_code: 'ors_object_currently_available' };
+  }
+
+  if (record.current_container_type === 'npc') {
+    const depth = gameState?.world?.current_depth ?? 1;
+    const visibleNpcs = (depth >= 3)
+      ? (gameState?.world?.active_local_space?._visible_npcs || [])
+      : (depth >= 2)
+        ? (gameState?.world?.active_site?._visible_npcs || [])
+        : (gameState?.world?._visible_npcs || []);
+    const owningNpc = (Array.isArray(visibleNpcs) ? visibleNpcs.slice(0, 5) : [])
+      .find(npc => npc?.id === record.current_container_id);
+    if (
+      owningNpc &&
+      Array.isArray(owningNpc.object_ids) &&
+      owningNpc.object_ids.includes(objectId)
+    ) {
+      return { record, available: true, current_scope: 'visible_npc_held', reason_code: 'ors_object_currently_available' };
+    }
+  }
+
+  return { record, available: false, current_scope: null, reason_code: 'ors_object_outside_current_scope' };
+}
+
+function _resolveHistoricalObjectReceipt(reference, gameState) {
+  const originalReference = typeof reference === 'string' ? reference : '';
+  const candidateObjectIds = new Set();
+  const matchedTurns = new Set();
+  let recognized = false;
+
+  const sortedObjectIds = () => [...candidateObjectIds].sort();
+  const sortedMatchedTurns = () => [...matchedTurns].sort((a, b) => a - b);
+  const makeReceipt = ({
+    outcome,
+    reason_code,
+    object_id = null,
+    record = null,
+    current_scope = null,
+  }) => ({
+    schema_version: 'ag_historical_object_receipt_v1',
+    reference: originalReference,
+    outcome,
+    reason_code,
+    object_id,
+    candidate_object_ids: sortedObjectIds(),
+    matched_turns: sortedMatchedTurns(),
+    current_status: record?.status ?? null,
+    current_container_type: record?.current_container_type ?? null,
+    current_container_id: record?.current_container_id ?? null,
+    current_scope,
+  });
+
+  try {
+    const normalizedReference = originalReference.trim().toLowerCase();
+    if (!normalizedReference) {
+      return makeReceipt({ outcome: 'not_found', reason_code: 'no_historical_match' });
+    }
+
+    const history = Array.isArray(gameState?.turn_history) ? gameState.turn_history : [];
+    for (const turn of history) {
+      const outerTurnNumber = Number.isFinite(turn?.turn_number)
+        ? turn.turn_number
+        : Number.isFinite(turn?.turn) ? turn.turn : null;
+      const matchingCandidateTempRefs = new Set();
+      const recordRecognition = (turnNumber) => {
+        recognized = true;
+        if (Number.isFinite(turnNumber)) matchedTurns.add(turnNumber);
+      };
+      const inspectCandidates = (entries, collectTempRefs) => {
+        for (const entry of (Array.isArray(entries) ? entries : [])) {
+          if (!_historicalObjectNameMatches(normalizedReference, entry?.name)) continue;
+          recordRecognition(outerTurnNumber);
+          if (collectTempRefs && entry?.temp_ref != null) {
+            matchingCandidateTempRefs.add(entry.temp_ref);
+          }
+        }
+      };
+
+      const packet = turn?.narration_debug?.extraction_packet;
+      inspectCandidates(packet?.object_candidates, true);
+      inspectCandidates(packet?.visible_objects, false);
+      inspectCandidates(turn?.object_reality?.cb_candidates, true);
+
+      const auditEntries = Array.isArray(turn?.object_reality?.audit) ? turn.object_reality.audit : [];
+      for (const auditEntry of auditEntries) {
+        if (!Object.prototype.hasOwnProperty.call(_HISTORICAL_OBJECT_AUDIT_ID_FIELDS, auditEntry?.action)) continue;
+
+        const auditNameMatches = (
+          _historicalObjectNameMatches(normalizedReference, auditEntry?.object_name) ||
+          _historicalObjectNameMatches(normalizedReference, auditEntry?.existing_object_name)
+        );
+        if (auditNameMatches) {
+          const auditTurnNumber = outerTurnNumber ?? (Number.isFinite(auditEntry?.turn) ? auditEntry.turn : null);
+          recordRecognition(auditTurnNumber);
+        }
+
+        const tempRefMatches = auditEntry?.temp_ref != null && matchingCandidateTempRefs.has(auditEntry.temp_ref);
+        if (!auditNameMatches && !tempRefMatches) continue;
+
+        const objectId = _extractHistoricalAuditObjectId(auditEntry);
+        if (objectId) candidateObjectIds.add(objectId);
+      }
+    }
+
+    const objectIds = sortedObjectIds();
+    if (!recognized) {
+      return makeReceipt({ outcome: 'not_found', reason_code: 'no_historical_match' });
+    }
+    if (objectIds.length === 0) {
+      return makeReceipt({ outcome: 'unresolved', reason_code: 'historical_match_without_audited_identity' });
+    }
+    if (objectIds.length > 1) {
+      return makeReceipt({ outcome: 'ambiguous', reason_code: 'multiple_audited_object_ids' });
+    }
+
+    const objectId = objectIds[0];
+    const availability = _classifyCurrentHistoricalObjectAvailability(gameState, objectId);
+    return makeReceipt({
+      outcome: availability.available ? 'resolved_available' : 'resolved_unavailable',
+      reason_code: availability.reason_code,
+      object_id: objectId,
+      record: availability.record,
+      current_scope: availability.current_scope,
+    });
+  } catch (_) {
+    return makeReceipt({ outcome: 'unresolved', reason_code: 'resolver_error' });
+  }
+}
+
 // ── Post-LLM evidence validator (v1.91.44) ────────────────────────────────────
 // Deterministic. No LLM calls. No raw player input as evidence.
-// Three-tier check per referenced object:
+// Two-tier check per referenced object:
 //   Tier 1: inventory names | worn names | current cell objects → supported
-//   Tier 2: prior turn_history extraction_packet mentions → continuity_backed (NOT overridden)
-//   Zero Tier 1 AND zero Tier 2 → unsupported → override turn to freeform deny.
+//   Tier 2: structured historical receipt → only resolved_available is continuity_backed
+//   Tier 1 miss plus any non-positive receipt → unsupported → override turn to freeform deny.
 // Take exemption: parsedAction === 'take' without cell match → skip (AP env-gather path).
 function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
   // Only validate Layer-2 (LLM-called) allow_rc results with referenced objects
@@ -395,17 +619,19 @@ function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
   const _target = gameState?._lastParsedTarget || null;
   if (parsedAction === 'take' && _target && !_hasCellMatch(gameState, _target)) {
     result.evidence.take_exemption_applied          = true;
-    result.evidence.referenced_object_support_basis  = 'deterministic_post_llm_check__tiered_v3';
+    result.evidence.referenced_object_support_basis  = 'deterministic_post_llm_check__tiered_v4_historical_receipts';
     result.evidence.validator_applied                = true;
     result.evidence.supported_referenced_objects     = [];
     result.evidence.unsupported_referenced_objects   = [];
     result.evidence.continuity_backed_objects        = [];
+    result.evidence.historical_object_receipts       = [];
     return result;
   }
 
-  const supported        = [];
-  const unsupported      = [];
-  const continuityBacked = [];
+  const supported         = [];
+  const unsupported       = [];
+  const continuityBacked  = [];
+  const historicalReceipts = [];
 
   for (const ref of refs) {
     if (!ref || typeof ref !== 'string') continue;
@@ -419,8 +645,7 @@ function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
     if (!tier1 && Array.isArray(evidence.inventoryNames)) {
       for (const name of evidence.inventoryNames) {
         if (!name) continue;
-        const nameLower = name.toLowerCase();
-        if (nameLower.includes(refLower) || refLower.includes(nameLower)) {
+        if (aliasScore(refLower, name, [], 2) >= 10) {
           tier1 = true;
           break;
         }
@@ -431,8 +656,7 @@ function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
     if (!tier1 && Array.isArray(evidence.wornNames)) {
       for (const name of evidence.wornNames) {
         if (!name) continue;
-        const nameLower = name.toLowerCase();
-        if (nameLower.includes(refLower) || refLower.includes(nameLower)) {
+        if (aliasScore(refLower, name, [], 2) >= 10) {
           tier1 = true;
           break;
         }
@@ -449,45 +673,15 @@ function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
       continue;
     }
 
-    // ── Tier 2: Prior continuity evidence ──────────────────────────────────
-    let tier2 = false;
-    try {
-      const history = Array.isArray(gameState?.turn_history) ? gameState.turn_history : [];
-      for (const turn of history) {
-        const packet = turn?.narration_debug?.extraction_packet;
-        if (!packet) continue;
-
-        // Check object_candidates
-        const candidates = Array.isArray(packet.object_candidates) ? packet.object_candidates : [];
-        for (const c of candidates) {
-          if (c?.name && c.name.toLowerCase().includes(refLower)) { tier2 = true; break; }
-        }
-        if (tier2) break;
-
-        // Check visible_objects
-        const visObjs = Array.isArray(packet.visible_objects) ? packet.visible_objects : [];
-        for (const v of visObjs) {
-          if (v?.name && v.name.toLowerCase().includes(refLower)) { tier2 = true; break; }
-        }
-        if (tier2) break;
-
-        // Check environmental_features
-        const envFeatures = Array.isArray(packet.environmental_features) ? packet.environmental_features : [];
-        for (const ef of envFeatures) {
-          if (ef?.name && ef.name.toLowerCase().includes(refLower)) { tier2 = true; break; }
-        }
-        if (tier2) break;
-      }
-    } catch (_) {
-      // Tier 2 unavailable — do not fabricate support; treat as no continuity evidence
-    }
-
-    if (tier2) {
+    // ── Tier 2: Structured historical receipt ──────────────────────────────
+    const historicalReceipt = _resolveHistoricalObjectReceipt(ref, gameState);
+    historicalReceipts.push(historicalReceipt);
+    if (historicalReceipt.outcome === 'resolved_available') {
       continuityBacked.push(ref);
       continue;
     }
 
-    // ── Zero evidence — pure exploit ───────────────────────────────────────
+    // ── Non-positive historical receipt — unsupported ──────────────────────
     unsupported.push(ref);
   }
 
@@ -495,7 +689,8 @@ function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
   result.evidence.supported_referenced_objects     = supported;
   result.evidence.unsupported_referenced_objects   = unsupported;
   result.evidence.continuity_backed_objects        = continuityBacked;
-  result.evidence.referenced_object_support_basis  = 'deterministic_post_llm_check__tiered_v3';
+  result.evidence.historical_object_receipts       = historicalReceipts;
+  result.evidence.referenced_object_support_basis  = 'deterministic_post_llm_check__tiered_v4_historical_receipts';
   result.evidence.validator_applied                = true;
   result.evidence.take_exemption_applied           = false;
 
