@@ -605,9 +605,12 @@ function _resolveHistoricalObjectReceipt(reference, gameState) {
 //   Tier 1 miss plus any non-positive receipt → unsupported → override turn to freeform deny.
 // Take exemption: parsedAction === 'take' without cell match → skip (AP env-gather path).
 function _validateReferencedObjects(result, evidence, gameState, parsedAction) {
-  // Only validate Layer-2 (LLM-called) allow_rc results with referenced objects
+  // Validate eligible Layer-2 (LLM-called) results with referenced objects.
+  // Non-TAKE allow_no_rc results still require deterministic object authority.
   if (!result._llm_called) return result;
-  if (result.decision !== 'allow_rc') return result;
+  const _eligibleDecision = result.decision === 'allow_rc'
+    || (result.decision === 'allow_no_rc' && parsedAction !== 'take');
+  if (!_eligibleDecision) return result;
 
   const refs = Array.isArray(result.referenced_objects) ? result.referenced_objects : [];
   if (refs.length === 0) return result;

@@ -389,17 +389,23 @@ function validate({
   state,
   inventoryNames = [],
   wornNames = [],
-  parsedAction = 'examine'
+  parsedAction = 'examine',
+  decision = 'allow_rc',
+  route = decision === 'allow_no_rc' ? 'narrator' : 'reality_check',
+  rcAllowed = decision === 'allow_no_rc' ? false : true,
+  inputType = decision === 'allow_no_rc' ? 'valid_low_risk' : 'player_attempt',
+  reasonCode = 'valid_player_action',
+  evidence = {}
 }) {
   const result = {
     _llm_called: true,
-    decision: 'allow_rc',
-    route: 'reality_check',
-    rc_allowed: true,
-    input_type: 'player_attempt',
-    reason_code: 'valid_player_action',
+    decision,
+    route,
+    rc_allowed: rcAllowed,
+    input_type: inputType,
+    reason_code: reasonCode,
     referenced_objects: references,
-    evidence: {}
+    evidence
   };
   return clone(validatorSandbox.__validateReferencedObjects(
     result,
@@ -526,4 +532,174 @@ test('4.7 raw Tier-2 archive authorization loop is absent from the validator', (
     (validatorSource.match(/_resolveHistoricalObjectReceipt\(ref, gameState\)/g) || []).length,
     1
   );
+});
+
+test('4.8 non-TAKE allow_no_rc Tier 1 support preserves the original result tuple', () => {
+  const result = validate({
+    references: ['silver key'],
+    state: baseState(),
+    inventoryNames: ['silver key'],
+    decision: 'allow_no_rc'
+  });
+  assert.equal(result.decision, 'allow_no_rc');
+  assert.equal(result.route, 'narrator');
+  assert.equal(result.rc_allowed, false);
+  assert.equal(result.input_type, 'valid_low_risk');
+  assert.equal(result.reason_code, 'valid_player_action');
+  assert.equal(result.evidence.validator_applied, true);
+  assert.deepEqual(result.evidence.supported_referenced_objects, ['silver key']);
+  assert.deepEqual(result.evidence.continuity_backed_objects, []);
+  assert.deepEqual(result.evidence.unsupported_referenced_objects, []);
+  assert.deepEqual(result.evidence.historical_object_receipts, []);
+});
+
+test('4.9 non-TAKE allow_no_rc resolved_available receipt preserves the original result tuple', () => {
+  const result = validate({
+    references: ['silver key'],
+    state: stateWithAuditedObject(),
+    decision: 'allow_no_rc'
+  });
+  assert.equal(result.decision, 'allow_no_rc');
+  assert.equal(result.route, 'narrator');
+  assert.equal(result.rc_allowed, false);
+  assert.equal(result.input_type, 'valid_low_risk');
+  assert.equal(result.reason_code, 'valid_player_action');
+  assert.deepEqual(result.evidence.supported_referenced_objects, []);
+  assert.deepEqual(result.evidence.continuity_backed_objects, ['silver key']);
+  assert.deepEqual(result.evidence.unsupported_referenced_objects, []);
+  assert.equal(result.evidence.historical_object_receipts.length, 1);
+  assert.equal(result.evidence.historical_object_receipts[0].outcome, 'resolved_available');
+});
+
+test('4.10 non-TAKE allow_no_rc non-positive receipts fail closed with exact receipt reasons', () => {
+  const outsideScope = stateWithAuditedObject({
+    type: 'localspace',
+    containerId: 'other_room',
+    membership: false
+  });
+  const missingRecord = baseState();
+  missingRecord.turn_history = [auditTurn(2, auditedEntry('promoted', 'missing_1'))];
+  const inactiveRecord = stateWithAuditedObject({ status: 'retired' });
+  const notFound = baseState();
+  const unresolved = baseState();
+  unresolved.turn_history = [auditTurn(2, null, {
+    packetCandidates: [{ name: 'silver key', temp_ref: 'raw' }]
+  })];
+  const ambiguous = baseState();
+  ambiguous.turn_history = [
+    auditTurn(2, auditedEntry('promoted', 'obj_a')),
+    auditTurn(3, auditedEntry('promoted', 'obj_b'))
+  ];
+
+  for (const [expectedOutcome, expectedReason, state] of [
+    ['resolved_unavailable', 'ors_object_outside_current_scope', outsideScope],
+    ['resolved_unavailable', 'ors_record_missing', missingRecord],
+    ['resolved_unavailable', 'ors_record_inactive', inactiveRecord],
+    ['not_found', 'no_historical_match', notFound],
+    ['unresolved', 'historical_match_without_audited_identity', unresolved],
+    ['ambiguous', 'multiple_audited_object_ids', ambiguous]
+  ]) {
+    const result = validate({
+      references: ['silver key'],
+      state,
+      decision: 'allow_no_rc'
+    });
+    assert.equal(result.decision, 'freeform', expectedReason);
+    assert.equal(result.route, 'freeform', expectedReason);
+    assert.equal(result.rc_allowed, false, expectedReason);
+    assert.equal(result.input_type, 'unsupported_world_authoring', expectedReason);
+    assert.equal(result.reason_code, 'unsupported_referenced_object', expectedReason);
+    assert.equal(result.evidence.engine_supported, false, expectedReason);
+    assert.deepEqual(result.evidence.unsupported_referenced_objects, ['silver key'], expectedReason);
+    assert.equal(result.evidence.historical_object_receipts.length, 1, expectedReason);
+    assert.equal(result.evidence.historical_object_receipts[0].outcome, expectedOutcome, expectedReason);
+    assert.equal(result.evidence.historical_object_receipts[0].reason_code, expectedReason, expectedReason);
+  }
+});
+
+test('4.11 non-TAKE allow_no_rc resolver errors fail closed', () => {
+  const state = baseState();
+  Object.defineProperty(state, 'turn_history', {
+    configurable: true,
+    get() {
+      throw new Error('forced history read failure');
+    }
+  });
+  const result = validate({
+    references: ['silver key'],
+    state,
+    decision: 'allow_no_rc'
+  });
+  assert.equal(result.decision, 'freeform');
+  assert.equal(result.reason_code, 'unsupported_referenced_object');
+  assert.equal(result.evidence.historical_object_receipts[0].outcome, 'unresolved');
+  assert.equal(result.evidence.historical_object_receipts[0].reason_code, 'resolver_error');
+});
+
+test('4.12 one non-positive reference denies a mixed allow_no_rc turn', () => {
+  const result = validate({
+    references: ['silver key', 'unknown token'],
+    state: baseState(),
+    inventoryNames: ['silver key'],
+    decision: 'allow_no_rc'
+  });
+  assert.equal(result.decision, 'freeform');
+  assert.deepEqual(result.evidence.supported_referenced_objects, ['silver key']);
+  assert.deepEqual(result.evidence.continuity_backed_objects, []);
+  assert.deepEqual(result.evidence.unsupported_referenced_objects, ['unknown token']);
+  assert.deepEqual(
+    result.evidence.historical_object_receipts.map(receipt => receipt.reference),
+    ['unknown token']
+  );
+});
+
+test('4.13 original freeform results remain byte-structurally excluded', () => {
+  const evidence = { engine_supported: true, matched_records: [] };
+  const expected = {
+    _llm_called: true,
+    decision: 'freeform',
+    route: 'freeform',
+    rc_allowed: false,
+    input_type: 'unsupported_world_authoring',
+    reason_code: 'some_other_reason',
+    referenced_objects: ['silver key'],
+    evidence
+  };
+  const result = validate({
+    references: ['silver key'],
+    state: stateWithAuditedObject(),
+    decision: 'freeform',
+    route: 'freeform',
+    rcAllowed: false,
+    inputType: 'unsupported_world_authoring',
+    reasonCode: 'some_other_reason',
+    evidence
+  });
+  assert.deepEqual(result, expected);
+});
+
+test('4.14 original allow_no_rc TAKE results remain byte-structurally excluded', () => {
+  const evidence = { engine_supported: true, matched_records: [] };
+  const expected = {
+    _llm_called: true,
+    decision: 'allow_no_rc',
+    route: 'narrator',
+    rc_allowed: false,
+    input_type: 'valid_low_risk',
+    reason_code: 'valid_player_action',
+    referenced_objects: ['silver key'],
+    evidence
+  };
+  const state = stateWithAuditedObject();
+  state._lastParsedTarget = 'silver key';
+  const result = validate({
+    references: ['silver key'],
+    state,
+    parsedAction: 'take',
+    decision: 'allow_no_rc',
+    evidence
+  });
+  assert.deepEqual(result, expected);
+  assert.equal(Object.hasOwn(result.evidence, 'validator_applied'), false);
+  assert.equal(Object.hasOwn(result.evidence, 'historical_object_receipts'), false);
 });
