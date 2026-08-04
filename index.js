@@ -34,6 +34,7 @@ const { validateAndQueueIntent, parseIntent } = require('./ActionProcessor.js');
 const { normalizeUserIntent, resolveEnterTarget, _enrichPrimaryAction } = require('./SemanticParser.js');
 const NC = require('./NarrativeContinuity');
 const CB = require('./ContinuityBrain'); // v1.70.0
+const CP = require('./ContinuityProjector'); // continuity projection — shadow mode, not on the live path
 const ObjectHelper = require('./ObjectHelper'); // v1.84.52
 const ConditionBot = require('./conditionbot'); // v1.84.19
 const AuthorityGate = require('./authoritygate'); // v1.88.0
@@ -4471,7 +4472,55 @@ OUTPUT FORMAT — return ONLY valid JSON, no prose, no markdown:
       NC.pushAlert({ severity: 'Info', type: 'continuity_eviction', description: `Continuity evicted (${_continuityEvictionReason})`, entity_ref: null, turn: (gameState.turn_history ? gameState.turn_history.length : 0) + 1 });
     }
     const _cbMeta = {};  // v1.84.31: accumulator for CB diagnostic passback
+    // ── Continuity projection — SHADOW MODE ────────────────────────────────
+    // Read-only-first ordering is the whole shadow mechanism. The existing assembler is
+    // impure — it clears _lastPhaseBLoc, rewrites _lastIdentityTruthLine and writes the
+    // diagnostic passback — so whichever implementation runs first consumes state the
+    // second needs. CP.project(..., { shadow: true }) performs NO writes at all, so CB
+    // below sees exactly the state it would have seen with no projector present, and its
+    // output is what reaches the narrator. Reversing this order produces a false C-8
+    // difference that has nothing to do with either implementation's correctness.
+    // The projector's own string is discarded; only the comparison is kept.
+    let _cpProjection = null;
+    let _cpShadowReport = null;
+    try {
+      const _cbShadowMeta = {};
+      _cpProjection = CP.project(gameState, _cbShadowMeta, { shadow: true });
+    } catch (_cpErr) {
+      // project() is contractually non-throwing, but this block is pure diagnostics running
+      // alongside a live turn: a contract violation must degrade to a missing shadow report,
+      // never a dead turn. Containment only — no classification logic lives here.
+      console.warn('[CP-SHADOW] projection threw (contract violation):', _cpErr?.message);
+    }
     const _continuityBlock = CB.assembleContinuityPacket(gameState, _cbMeta); // v1.70.0
+    try {
+      _cpShadowReport = CP.compareToBaseline(_cpProjection ? _cpProjection.packet : null, _continuityBlock);
+      const _cpEx = _cpShadowReport.exclusions || {};
+      const _cpSt = _cpShadowReport.structural || {};
+      // Two independent gate signals. compat_equal answers "does the projector reproduce the
+      // assembler byte for byte"; structural_ok answers "is every live-vs-compat consequence
+      // an approved one". Neither implies the other — a run is clean only when both hold.
+      console.log('[CP-SHADOW] turn=%s compat_equal=%s structural_ok=%s c1=%s c2=%s c3=%s unrecognized=%s failure=%s first_diff_line=%s error=%s',
+        _cpShadowReport.turn ?? '?', _cpShadowReport.compatEqual, _cpSt.approved,
+        _cpEx.c1 ?? 0, _cpEx.c2 ?? 0, _cpEx.c3 ?? 0, _cpEx.unrecognizedBucket ?? 0,
+        _cpProjection?.failure ? _cpProjection.failure.stage : 'none',
+        _cpShadowReport.firstDiff ? _cpShadowReport.firstDiff.lineIndex : 'none',
+        _cpShadowReport.error ?? 'none');
+      if (_cpShadowReport.firstDiff) {
+        console.log('[CP-SHADOW] first_diff baseline=%j compat=%j',
+          _cpShadowReport.firstDiff.baseline, _cpShadowReport.firstDiff.compat);
+      }
+      if (_cpSt.approved === false && Array.isArray(_cpSt.differences)) {
+        for (const _d of _cpSt.differences) {
+          if (_d && _d.approved !== true) {
+            console.warn('[CP-SHADOW] unapproved_structural line=%s kind=%s type=%s reasons=%j',
+              _d.lineKey, _d.kind, _d.type, _d.reasons);
+          }
+        }
+      }
+    } catch (_cpCmpErr) {
+      console.warn('[CP-SHADOW] comparison threw (contract violation):', _cpCmpErr?.message);
+    }
     diag.setLastRenderedBlock(_continuityBlock);  // Cluster 5: state repatriated to diagnostics.js
     diag.pushContinuityBlock(turnNumber, _continuityBlock, _continuityBlock.length);
     diag.setLastGameState(gameState);              // Cluster 5: live ref passed to diagnostics owner
@@ -8307,6 +8356,26 @@ ${_emoteInventoryFailBlock}${_emoteRemoveBlock}${_conditionBlock}${_authorityGat
         } : null,
         cb_schema_drift: _cbSchemaDrift.length > 0 ? _cbSchemaDrift : undefined,  // v1.88.40
       },
+      // ── Continuity projection archive ──────────────────────────────────────
+      // A SIBLING of narration_debug, deliberately not nested inside it: narration_debug
+      // is a debug surface, while this packet is the inspectability substrate INV-2
+      // depends on, and burying it under a debug key invites future trimming.
+      // Placed inside this literal — before the push below and before the flight-recorder
+      // JSONL is serialized from turnObject — so the packet lands in BOTH turn_history and
+      // the JSONL for the same turn. A key added after serialization would be absent from
+      // the JSONL exactly as arbiter_verdict is.
+      // The envelope exists because the packet can be null: project() returns packet: null
+      // on an early construction failure, and a failure record cannot hang off a null.
+      // `ok` also gives last-good replay a single field to test rather than inferring
+      // success from the presence of a key.
+      continuity_packet: {
+        ok:      !!(_cpProjection && !_cpProjection.failure),
+        packet:  _cpProjection ? (_cpProjection.packet ?? null) : null,
+        failure: _cpProjection ? (_cpProjection.failure ?? null) : null,
+      },
+      // Shadow comparison result. Removed at Phase 4 cutover — read-only-first cannot
+      // survive the projector becoming a writer.
+      continuity_shadow: _cpShadowReport,
       logs: turnLogs,
       reality_check: {
         fired: _realityAnchor !== null,
