@@ -63,3 +63,10 @@ node_modules/
 /tests/scenarios/drop_validation_matrix_v3.json
 /tests/scenarios/drop_validation_matrix_v4.json
 /tests/scenarios/partial_stack_take_validation.json
+
+# Continuity projection planning docs (local-only)
+/CONTINUITY_PROJECTION_REQUIREMENTS.md
+/CONTINUITY_PROJECTION_HANDOFF.md
+/CONTINUITY_PROJECTION_IMPLEMENTATION_PLAN.md
+/CONTINUITY_PROJECTION_PLAN_INPUTS.md
+/CONTINUITY_PROJECTION_PLANNING_CHARTER.md
