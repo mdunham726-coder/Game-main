@@ -12,28 +12,38 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Download whisper.cpp binary
+      - name: Download and diagnose
+        shell: bash
         run: |
-          set -euxo pipefail
-          curl -L --fail --retry 3 -o whisper-bin.tar.gz \
-            https://github.com/ggml-org/whisper.cpp/releases/download/b4938/whisper-bin-ubuntu-x64.tar.gz
-          mkdir whisper-bin
-          tar -xzf whisper-bin.tar.gz -C whisper-bin
-          find whisper-bin -maxdepth 3 -type f -print
+          set +e
+          : > diag.txt
+          echo "runner=$(uname -a)" >> diag.txt
+          echo "Downloading whisper.cpp binary" >> diag.txt
+          curl -L --fail --retry 2 -o whisper-bin.tar.gz \
+            https://github.com/ggml-org/whisper.cpp/releases/download/b4938/whisper-bin-ubuntu-x64.tar.gz >>diag.txt 2>&1
+          echo "binary_curl_exit=$?" >> diag.txt
+          mkdir -p whisper-bin
+          tar -xzf whisper-bin.tar.gz -C whisper-bin >>diag.txt 2>&1
+          echo "binary_tar_exit=$?" >> diag.txt
+          find whisper-bin -maxdepth 3 -type f -ls >> diag.txt 2>&1
 
-      - name: Download base.en model
-        run: |
-          set -euxo pipefail
-          curl -L --fail --retry 3 -o ggml-base.en.bin \
-            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
-          ls -lh ggml-base.en.bin
+          echo "Downloading tiny.en model" >> diag.txt
+          curl -L --fail --retry 2 -o ggml-tiny.en.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin >>diag.txt 2>&1
+          echo "model_curl_exit=$?" >> diag.txt
+          ls -lh whisper-bin.tar.gz ggml-tiny.en.bin >> diag.txt 2>&1
+          cat diag.txt
+          exit 0
 
       - name: Upload bootstrap artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: whisper-bootstrap
           path: |
             whisper-bin/**
-            ggml-base.en.bin
+            ggml-tiny.en.bin
+            diag.txt
+          if-no-files-found: warn
           compression-level: 0
           retention-days: 1
