@@ -1,0 +1,39 @@
+name: ChatGPT Whisper Bootstrap
+
+on:
+  push:
+    branches:
+      - chatgpt-whisper-bootstrap
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download whisper.cpp binary
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o whisper-bin.tar.gz \
+            https://github.com/ggml-org/whisper.cpp/releases/download/b4938/whisper-bin-ubuntu-x64.tar.gz
+          mkdir whisper-bin
+          tar -xzf whisper-bin.tar.gz -C whisper-bin
+          find whisper-bin -maxdepth 3 -type f -print
+
+      - name: Download base.en model
+        run: |
+          set -euxo pipefail
+          curl -L --fail --retry 3 -o ggml-base.en.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+          ls -lh ggml-base.en.bin
+
+      - name: Upload bootstrap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-bootstrap
+          path: |
+            whisper-bin/**
+            ggml-base.en.bin
+          compression-level: 0
+          retention-days: 1
